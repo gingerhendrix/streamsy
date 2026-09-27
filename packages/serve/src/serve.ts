@@ -356,10 +356,10 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         catch: () => ({
           _tag: "WireEncodeFailed" as const,
           route: path,
-          detail: "Document is not finite JSON",
+          detail: "Value is not finite JSON",
         }),
       });
-      const etag = Contract.documentEtag(canonical);
+      const etag = Contract.valueEtag(canonical);
       const responseHeaders = { ...headers, "cache-control": cacheControl, etag };
       const conditional = request.headers["if-none-match"]
         ?.split(",")
@@ -374,7 +374,7 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         ValueUnavailable: () =>
           Effect.succeed(
             errorResponse(
-              { _tag: "DocumentUnavailable", route: path, detail: "Document unavailable" },
+              { _tag: "ValueUnavailable", route: path, detail: "Value unavailable" },
               503,
               headers,
             ),
@@ -383,7 +383,7 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         SchemaError: () =>
           Effect.succeed(
             errorResponse(
-              { _tag: "WireEncodeFailed", route: path, detail: "Document cannot be encoded" },
+              { _tag: "WireEncodeFailed", route: path, detail: "Value cannot be encoded" },
               500,
               headers,
             ),

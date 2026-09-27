@@ -23,6 +23,6 @@ export const PublicErrorSchema: Schema.Codec<PublicError> = Schema.Union([
     recovery: Schema.Literal("refetch"),
   }),
   Schema.TaggedStruct("TransportUnavailable", { route: Schema.String, detail: Schema.String }),
-  Schema.TaggedStruct("DocumentUnavailable", { route: Schema.String, detail: Schema.String }),
+  Schema.TaggedStruct("ValueUnavailable", { route: Schema.String, detail: Schema.String }),
   Schema.TaggedStruct("WireEncodeFailed", { route: Schema.String, detail: Schema.String }),
 ]);

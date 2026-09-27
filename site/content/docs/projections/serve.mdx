@@ -1,6 +1,6 @@
 ---
 title: Serve
-description: Publish streams, Durable State changes and documents with Effect HttpRouter route layers.
+description: Publish streams, Durable State changes and values with Effect HttpRouter route layers.
 ---
 
 `Serve.stream`, `Serve.state` and `Serve.value` return route Layers. Join them with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`. See [HTTP](/docs/runtime/http) for hosting.
@@ -77,7 +77,7 @@ const OutputRoutes = Layer.mergeAll(
 );
 ```
 
-The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.at({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.at({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `ValueUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
 
 Fixed addresses and targets using fewer parameters share a stream across the matching bound projections, each writing with its own producer id, and Serve exposes that stream at every matching URL.
 
@@ -95,9 +95,9 @@ const Mine = Serve.stream(Events, "/me", {
 
 `SeatAuth` declares that it provides `CurrentSeat`, checks the token, and either answers 401 or provides the service around its handler. The params Effect replaces the complete parameter set. Its typed failures remain router request errors for application middleware. A runnable host must satisfy the identity requirement. Protect raw protocol routes too if they expose private data; `Http.routes` serves only the streams in the group you pass, with the access rule you set. An on-demand projection run belongs in application middleware.
 
-## Documents
+## Values
 
-A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.value(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail internally with `ValueUnavailable` and return 503 `DocumentUnavailable`.
+A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.value(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values return 503 `ValueUnavailable`.
 
 A projection declaration with `state:` gives `declaration.state`, a value source over the saved state, as in `Serve.value(tracker.state, "/summary/:seat")` above. It answers 503 until the projection has saved its first unit, where `Projection.read` gives the initial value. Its fingerprint is sent in the `x-streamsy-value-contract` header.
 
@@ -105,7 +105,7 @@ The Cloudflare and Alchemy hosts reconcile alarms after PUT, POST and DELETE, in
 
 ## Browser contract and CORS
 
-Import header constants and `decodePublicError` from `@streamsy/serve/contract`; it loads neither Effect nor core. The server's `PublicErrorSchema` is on the package root. Errors distinguish invalid params, incompatible protocol/contract, failed resume, unavailable data and document encoding failures. State and stream errors use replay recovery; documents use refetch.
+Import header constants and `decodePublicError` from `@streamsy/serve/contract`; it loads neither Effect nor core. The server's `PublicErrorSchema` is on the package root. Errors distinguish invalid params, incompatible protocol/contract, failed resume, unavailable data and value encoding failures. State and stream errors use replay recovery; values use refetch.
 
 The `@durable-streams/state` 0.3.1 StreamDB binding merges upserts on an existing key: a field omitted by a later row retains its old value, live and on replay.
 

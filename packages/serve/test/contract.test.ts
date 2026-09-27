@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, anti-slop/no-unknown-parameters -- The drift test feeds intentionally invalid JSON to both decoders; the bundle test owns Bun.build. */
 import { describe, expect, test } from "bun:test";
-import { canonicalJson, contractFingerprint, documentEtag } from "@streamsy/serve/contract";
+import { canonicalJson, contractFingerprint, valueEtag } from "@streamsy/serve/contract";
 
 describe("canonical encoding", () => {
   test("sorts object keys and preserves array order", () => {
@@ -28,10 +28,10 @@ describe("digests", () => {
   });
 
   test("an entity tag is a quoted sixteen-hex validator that changes with the bytes", () => {
-    const tag = documentEtag('{"issues":1}');
+    const tag = valueEtag('{"issues":1}');
     expect(tag).toMatch(/^"[0-9a-f]{16}"$/);
-    expect(documentEtag('{"issues":1}')).toBe(tag);
-    expect(documentEtag('{"issues":2}')).not.toBe(tag);
+    expect(valueEtag('{"issues":1}')).toBe(tag);
+    expect(valueEtag('{"issues":2}')).not.toBe(tag);
   });
 });
 
@@ -68,8 +68,8 @@ const errors: readonly PublicError[] = [
   },
   { _tag: "ContractChanged", route: "/doc", recovery: "refetch" },
   { _tag: "TransportUnavailable", route: "/feed", detail: "unavailable" },
-  { _tag: "DocumentUnavailable", route: "/doc", detail: "unavailable" },
-  { _tag: "WireEncodeFailed", route: "/doc", detail: "invalid" },
+  { _tag: "ValueUnavailable", route: "/value", detail: "unavailable" },
+  { _tag: "WireEncodeFailed", route: "/value", detail: "invalid" },
 ];
 test("S-4 server Schema and browser decoder agree on the wire JSON domain", () => {
   const server = Schema.decodeUnknownSync(PublicErrorSchema);

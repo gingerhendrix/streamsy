@@ -2,7 +2,7 @@
 /**
  * Canonical encoding and the change-detection digests served routes need.
  *
- * A contract fingerprint and a document ETag answer the same question — "is
+ * A contract fingerprint and a value ETag answer the same question — "is
  * this still the thing you were holding?" — so both are computed from one
  * canonical encoding. Object keys are sorted and array order is preserved, so
  * two values that differ only in property order encode identically and cannot
@@ -61,11 +61,11 @@ export function contractFingerprint(value: CanonicalValue): string {
  * Sixteen lowercase hex characters, as a strong entity tag body.
  *
  * Two FNV-1a passes with different offset bases are concatenated, because a
- * cache validator that collides serves a stale document: eight hex characters
+ * cache validator that collides serves a stale value: eight hex characters
  * are enough to notice that a contract changed, but not enough to key a
  * consumer's cache on.
  */
-export function documentEtag(canonical: string): string {
+export function valueEtag(canonical: string): string {
   return `"${hex(fnv1a(canonical, 0x81_1c_9d_c5))}${hex(fnv1a(canonical, 0x01_00_01_93))}"`;
 }
 
@@ -112,7 +112,7 @@ export type PublicError =
     }
   | { readonly _tag: "ContractChanged"; readonly route: string; readonly recovery: "refetch" }
   | {
-      readonly _tag: "TransportUnavailable" | "DocumentUnavailable" | "WireEncodeFailed";
+      readonly _tag: "TransportUnavailable" | "ValueUnavailable" | "WireEncodeFailed";
       readonly route: string;
       readonly detail: string;
     };
@@ -122,7 +122,7 @@ export const PUBLIC_ERROR_TAGS = [
   "ResumeRejected",
   "ContractChanged",
   "TransportUnavailable",
-  "DocumentUnavailable",
+  "ValueUnavailable",
   "WireEncodeFailed",
 ] as const;
 export type PublicErrorTag = PublicError["_tag"];
@@ -164,10 +164,10 @@ export function decodePublicError(value: unknown): PublicError {
       return { _tag, route, reason, recovery: "replay-from-start" };
     }
     case "ContractChanged":
-      if (field("recovery") !== "refetch") throw new TypeError("Invalid document recovery");
+      if (field("recovery") !== "refetch") throw new TypeError("Invalid refetch recovery");
       return { _tag, route, recovery: "refetch" };
     case "TransportUnavailable":
-    case "DocumentUnavailable":
+    case "ValueUnavailable":
     case "WireEncodeFailed":
       return { _tag, route, detail: string("detail") };
     default:

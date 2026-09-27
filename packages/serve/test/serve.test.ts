@@ -146,20 +146,20 @@ test("state has collection fingerprint, replay headers and no snapshot reset", a
   }
 });
 
-test("document encodes canonical JSON and conditional HEAD", async () => {
+test("value encodes canonical JSON and conditional HEAD", async () => {
   const source = {
     id: "summary",
     paramSchema: Schema.Struct({}),
     schema: Schema.Struct({ b: Schema.Finite, a: Schema.String }),
     resolve: () => Effect.succeed({ b: 2, a: "one" }),
   };
-  const web = HttpRouter.toWebHandler(Serve.value(source, "/document"), { disableLogger: true });
+  const web = HttpRouter.toWebHandler(Serve.value(source, "/value"), { disableLogger: true });
   try {
-    const response = await web.handler(new Request("http://host/document"));
+    const response = await web.handler(new Request("http://host/value"));
     expect(await response.text()).toBe('{"a":"one","b":2}');
     const etag = response.headers.get("etag")!;
     const cached = await web.handler(
-      new Request("http://host/document", {
+      new Request("http://host/value", {
         method: "HEAD",
         headers: { "if-none-match": `W/${etag}` },
       }),

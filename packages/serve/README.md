@@ -1,6 +1,6 @@
 # @streamsy/serve
 
-Effect HttpRouter routes for streams, Durable State and JSON documents, plus Bun
+Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun
 and Cloudflare host glue and durable action delivery. Requires Effect
 `4.0.0-rc.115`.
 
@@ -36,7 +36,7 @@ BunRuntime.runMain(
 no snapshot. `Serve.value` takes a value source with a Schema and a
 `resolve(params)` Effect, including the `state` of a projection declaration; it serves canonical JSON with a deterministic ETag.
 Reads check outputs only: an initially absent stream answers 404 and an absent
-value answers 503 `DocumentUnavailable`. They create no stream, checkpoint or state row.
+value answers 503 `ValueUnavailable`. They create no stream, checkpoint or state row.
 Path parameters decode with the stream's original Schema codecs. An explicit
 `params` Effect on stream/state can instead read a service provided by
 `HttpRouter.middleware`. Auth and on-demand projection runs are application
