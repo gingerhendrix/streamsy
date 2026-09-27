@@ -1,10 +1,21 @@
 import { expect, it } from "bun:test";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import * as Producer from "../../src/toolkit/producer.ts";
-import { DecodeFault, EncodeFault } from "../../src/fault.ts";
+import { DecodeFault, EncodeFault, TransportFault } from "../../src/fault.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/tags.ts";
 import { StreamsTest, layerTest } from "../../src/testing/streams-test.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
@@ -217,6 +228,111 @@ it("follow echoes the cursor from each live read on the next live read", () =>
       expect(sent[1]).toBeString();
       expect(sent.slice(1)).toEqual(returned.slice(0, sent.length - 1));
     }).pipe(Effect.scoped),
+  ));
+
+const lost = (operation: string) =>
+  new TransportFault({ operation, reason: "response", message: "lost reply" });
+
+for (const point of ["read", "readNext"] as const) {
+  it(`follow retries a TransportFault on ${point} from the same offset`, () =>
+    check(
+      Effect.gen(function* () {
+        yield* Streams.create(address);
+        yield* Streams.append(address, [{ n: 1 }]);
+        const control = yield* StreamsTest;
+        const inner = yield* StreamsReader;
+        let failures = 0;
+        const failOnce = <A, E>(call: Effect.Effect<A, E>): Effect.Effect<A, E | TransportFault> =>
+          Effect.suspend(() => (failures++ === 0 ? Effect.fail(lost(point)) : Effect.void)).pipe(
+            Effect.andThen(call),
+          );
+        const flaky = StreamsReader.of({
+          ...inner,
+          read: (id, options) =>
+            point === "read" ? failOnce(inner.read(id, options)) : inner.read(id, options),
+          readNext: (id, options) =>
+            point === "readNext"
+              ? failOnce(inner.readNext(id, options))
+              : inner.readNext(id, options),
+        });
+        const fiber = yield* Streams.follow(address, { retry: Schedule.recurs(3) }).pipe(
+          Streams.items,
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.provideService(StreamsReader, flaky),
+          Effect.forkScoped,
+        );
+        yield* control.snapshot;
+        yield* Streams.append(address, [{ n: 2 }]);
+        expect(yield* Fiber.join(fiber)).toEqual([{ n: 1 }, { n: 2 }]);
+        expect(failures).toBeGreaterThan(1);
+      }).pipe(Effect.scoped),
+    ));
+}
+
+it("follow's default retry waits on the clock and then reads again", () =>
+  check(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 1 }]);
+      const inner = yield* StreamsReader;
+      let reads = 0;
+      const flaky = StreamsReader.of({
+        ...inner,
+        read: (id, options) =>
+          Effect.suspend(() =>
+            reads++ === 0 ? Effect.fail(lost("read")) : inner.read(id, options),
+          ),
+      });
+      const fiber = yield* Streams.follow(address).pipe(
+        Streams.items,
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.provideService(StreamsReader, flaky),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust(0);
+      expect(reads).toBe(1);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      // The first delay is 200 ms, jittered to at most 240 ms.
+      yield* TestClock.adjust(240);
+      expect(yield* Fiber.join(fiber)).toEqual([{ n: 1 }]);
+      expect(reads).toBe(2);
+    }).pipe(Effect.scoped),
+  ));
+
+it("follow does not retry a missing stream or a decode failure", () =>
+  check(
+    Effect.gen(function* () {
+      const inner = yield* StreamsReader;
+      let reads = 0;
+      const counting = StreamsReader.of({
+        ...inner,
+        read: (id, options) => Effect.suspend(() => (reads++, inner.read(id, options))),
+      });
+      const retry = Schedule.recurs(3);
+      const missing = yield* Streams.follow(address, { retry }).pipe(
+        Stream.runCollect,
+        Effect.provideService(StreamsReader, counting),
+        Effect.flip,
+      );
+      expect(missing._tag).toBe("StreamNotFound");
+      expect(reads).toBe(1);
+
+      yield* Streams.create(address);
+      yield* (yield* StreamsWriter).append(address.id, {
+        contentType: "application/json",
+        data: new TextEncoder().encode('{"n":"wrong"}'),
+      });
+      reads = 0;
+      const decode = yield* Streams.follow(address, { retry }).pipe(
+        Stream.runCollect,
+        Effect.provideService(StreamsReader, counting),
+        Effect.flip,
+      );
+      expect(Schema.is(DecodeFault)(decode)).toBe(true);
+      expect(reads).toBe(1);
+    }),
   ));
 
 it("follow yields an empty close that arrives while its live read is parked", () =>

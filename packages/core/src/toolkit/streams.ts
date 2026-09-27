@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Schema, Stream } from "effect";
+import { Duration, Effect, Option, Predicate, Schedule, Schema, Stream } from "effect";
 import { DecodeFault, EncodeFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import type {
@@ -105,29 +105,65 @@ export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: Read
     }),
   );
 }
+export interface FollowOptions extends ReadOptions {
+  /**
+   * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.
+   * Default: exponential from 200 ms, jittered, capped at 30 s, forever. Other
+   * failures end the stream at once.
+   */
+  readonly retry?: Schedule.Schedule<unknown, unknown>;
+}
+
+const capAt30Seconds = Schedule.modifyDelay(({ duration }: { duration: Duration.Duration }) =>
+  Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
+);
+/** Same shape as `Projection.follow`'s default; kept as a copy until a third user appears. */
+const defaultFollowRetry = Schedule.exponential("200 millis").pipe(
+  capAt30Seconds,
+  Schedule.jittered,
+  // Jitter ranges up to 1.2; clamp again so actual waits never exceed 30 s.
+  capAt30Seconds,
+);
+const isStreamsFault = (error: { readonly _tag: string }) =>
+  Predicate.isTagged(error, "TransportFault") || Predicate.isTagged(error, "StorageFault");
+
 interface FollowState {
   readonly offset: string | undefined;
   readonly live: boolean;
   /** Last `Stream-Cursor` from a live read; echoed on the next one for CDN collapsing. */
   readonly cursor: string | undefined;
 }
-/** Catch up, then wait one readNext at a time, filtering empty open batches. */
-export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: ReadOptions = {}) {
+/**
+ * Catch up, then wait one readNext at a time, filtering empty open batches.
+ * A read that fails with a transport or storage fault is retried from the same
+ * offset, so a restart or network drop yields each item once.
+ */
+export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: FollowOptions = {}) {
+  const { retry = defaultFollowRetry, ...readOptions } = options;
+  const retrying = <T, E extends { readonly _tag: string }, R>(read: Effect.Effect<T, E, R>) =>
+    read.pipe(
+      Effect.tapError((error) =>
+        isStreamsFault(error) ? Effect.logWarning("Streams.follow retry", error) : Effect.void,
+      ),
+      Effect.retry({ while: isStreamsFault, schedule: retry }),
+    );
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
-      const initial: FollowState = { offset: options.offset, live: false, cursor: undefined };
+      const initial: FollowState = { offset: readOptions.offset, live: false, cursor: undefined };
       const live = (state: FollowState) =>
         reader
           .readNext(address.id, { offset: state.offset ?? "-1", cursor: state.cursor })
           .pipe(Effect.map((result) => [result, result.cursor] as const));
       const catchUp = (state: FollowState) =>
         reader
-          .read(address.id, { ...options, offset: state.offset })
+          .read(address.id, { ...readOptions, offset: state.offset })
           .pipe(Effect.map((result) => [result, state.cursor] as const));
       return Stream.paginate(initial, (state) =>
         Effect.gen(function* () {
-          const [result, cursor] = yield* state.live ? live(state) : catchUp(state);
+          // Retry only this step's read. The offset in `state` is kept, so a retried
+          // read returns nothing the stream has already yielded.
+          const [result, cursor] = yield* retrying(state.live ? live(state) : catchUp(state));
           const batch = yield* decode(address, result);
           const next: FollowState = { offset: batch.nextOffset, live: batch.upToDate, cursor };
           return [

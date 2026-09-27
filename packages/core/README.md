@@ -39,6 +39,12 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
   `Appended` / `Duplicate`. Protocol failures are tagged errors
   (`StreamNotFound`, `StreamGone`, `OffsetMismatch`, `AppendConflict`) for
   `Effect.catchTag`.
+- `Streams.follow(address, { offset, retry })` catches up and then waits for new
+  items. When a read fails with a `TransportFault` or `StorageFault`, it tries
+  that read again from the same offset, so a server restart or network drop
+  yields each item once. The default `retry` schedule starts at 200 ms, adds
+  jitter, stops growing at 30 s and never gives up. Other failures end the
+  stream. One-shot reads are not retried.
 - `Producer.Position` describes a producer tuple. `Producer.next` advances its sequence after acknowledgement.
 - `Streamsy` and storage layers that take a group bind each stream to its backend.
 
