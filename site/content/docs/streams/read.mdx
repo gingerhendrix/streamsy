@@ -1,9 +1,9 @@
 ---
-title: Reading
-description: Read stored batches after an offset, follow a stream for new messages, and fold it into a value.
+title: Read
+description: Read stored batches after an offset, follow a stream for new messages, and fold a stream into a value.
 ---
 
-A read starts after an offset and returns batches of decoded items. `follow` keeps reading after catch-up until the stream closes.
+A read starts after an offset and gives batches of decoded items.
 
 ```ts
 interface Batch<A> {
@@ -14,13 +14,18 @@ interface Batch<A> {
 }
 ```
 
-Reads are after-exclusive. The message at the given offset is not included. Omit the offset to read from the start. Store `nextOffset` when you have to resume later.
+Reads do not include the message at the given offset. Omit the offset to read from the start. Keep `nextOffset` to continue later.
 
-`head(params)` returns the tail and the configuration without messages. It does not renew a TTL.
+| Method                                 | Ends                              |
+| -------------------------------------- | --------------------------------- |
+| `read(params, { offset?, limit? })`    | At the current tail               |
+| `follow(params, { offset? })`          | When the stream closes            |
+| `session(params, { offset, cursor? })` | After one long-poll wait          |
+| `head(params)`                         | Returns the tail with no messages |
+
+`head` does not restart a TTL.
 
 ## Read
-
-`read(params, { offset?, limit? })` is an Effect `Stream` of batches. Nothing runs until a sink such as `Stream.runCollect` runs it. It ends when a batch reports `upToDate`.
 
 ```ts
 import { Effect, Stream } from "effect";
@@ -41,11 +46,9 @@ const tail = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-`Stream.flatMap` with `Stream.fromIterable` flattens batches into items. Keep the batches when `nextOffset` or `closed` matter. `limit` bounds one batch to that many stored messages.
+`read` is an Effect `Stream`. It does nothing until a sink runs it. `limit` sets the maximum number of stored messages in one batch.
 
 ## Follow
-
-`follow(params, options?)` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. Empty batches that are not closed are filtered, whether from a timed-out wait or a catch-up read of an empty stream, and the follow waits again; a closed batch is always yielded and ends the stream. Use `session` directly when an application needs to observe empty waits as liveness signals.
 
 ```ts
 import { Effect, Stream } from "effect";
@@ -64,11 +67,9 @@ const consumer = Effect.gen(function* () {
 });
 ```
 
-The scope owns the wait. Interrupting the fiber releases a parked wait, so run a live consumer inside a scope with an explicit shutdown. `Stream.take` bounds a follow so a program terminates.
+`follow` catches up, then waits. It does not give empty batches. A closed batch ends the stream. Interrupt the fiber to release a parked wait. Use `Stream.take` to stop after a number of batches.
 
 ## Session
-
-`session(params, { offset, cursor? })` is one raw long-poll wait for an application that owns its own polling loop. It returns the protocol result, with raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
 
 ```ts
 import { Effect } from "effect";
@@ -77,9 +78,9 @@ import { Notes } from "./streams.ts";
 const once = (offset: string) => Effect.flatMap(Notes, (notes) => notes.session({}, { offset }));
 ```
 
-## Fold
+`session` is one long-poll wait, for an application with its own poll loop. The result has raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
 
-A fold over `follow` reduces a stream into a value. It completes when the stream closes. Fold over `read` instead to stop at the current tail.
+## Fold
 
 ```ts
 import { Effect, Stream } from "effect";
@@ -96,12 +97,20 @@ const count = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
+A fold over `follow` completes when the stream closes. Fold over `read` to stop at the current tail.
+
 ## Errors
 
-A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the stream codec. A decode failure stops that read. The application picks the offset to restart from.
+| Error            | When                               |
+| ---------------- | ---------------------------------- |
+| `StreamNotFound` | The stream does not exist          |
+| `StreamGone`     | The stream was removed             |
+| `DecodeFault`    | A message does not match the codec |
 
-A Durable State reader accepts `insert` and `update` operations from other producers and reports both as `upsert`.
+A `DecodeFault` stops the read. The application selects the offset to continue from.
+
+A Durable State read gives `insert` and `update` operations from other producers as `upsert`.
 
 ## Over HTTP
 
-`GET` on the stream path with `offset` reads a batch. Add `live=long-poll` or `live=sse` to follow. Every access rule allows reads. See [HTTP](/docs/runtime/http) and [PROTOCOL.md sections 5.6 to 5.8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#56-read-stream---catch-up).
+`GET` on the stream path with `offset` reads one batch. Add `live=long-poll` or `live=sse` to follow. All access rules allow reads. See [Protocol routes](/docs/http/routes).

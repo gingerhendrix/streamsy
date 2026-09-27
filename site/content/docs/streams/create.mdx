@@ -1,9 +1,9 @@
 ---
-title: Creating
-description: Create a stream with its content type and lifecycle, fork a child from a source, or remove a stream.
+title: Create and fork
+description: Create a stream with an optional lifecycle, fork a child stream from a source, and remove a stream.
 ---
 
-`create(params, options?)` makes the address stream with the stream content type and an optional lifecycle.
+## Create
 
 ```ts
 import { Effect } from "effect";
@@ -16,56 +16,31 @@ const ensure = Effect.gen(function* () {
 });
 ```
 
-`Created` means the stream is new. `Exists` means a stream with the same id and the same configuration was already there. Both carry `nextOffset`, `contentType`, and `closed`, so you can continue from either one. A different configuration on the same id fails with `CreateConflict`.
+| Result    | Meaning                                                    |
+| --------- | ---------------------------------------------------------- |
+| `Created` | The stream is new                                          |
+| `Exists`  | A stream with this id and the same configuration was there |
 
-`closed: true` creates a closed stream. `initialData` seeds the first messages in the same write.
+Both results carry `nextOffset`, `contentType`, and `closed`. A different configuration on the same id fails with `CreateConflict`.
 
-## Durable State streams
+| Option        | Effect                                              |
+| ------------- | --------------------------------------------------- |
+| `ttlSeconds`  | Time to live. Each append and each read restarts it |
+| `expiresAt`   | A fixed expiry date                                 |
+| `closed`      | Creates the stream closed                           |
+| `initialData` | Writes the first messages in the same operation     |
 
-`Streamsy.state` describes JSON streams of change events that
-`@durable-streams/state` can materialize. One stream holds several collections,
-each named by the `type` field on its events. Give the stream a record of
-collections: the record key is the type, and each entry has the value schema and
-the value field used as the event key.
-
-```ts
-import { Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-
-const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
-const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
-
-export class Workspace extends Streamsy.state<Workspace>()(
-  "Tracker/Workspace",
-  "workspaces/:workspaceId",
-  {
-    params: { workspaceId: Schema.String },
-    collections: {
-      project: { schema: Project, key: "id" },
-      issue: { schema: Issue, key: "id" },
-    },
-  },
-) {}
-```
-
-The stream reads and writes the typed change events of every collection, as a union
-discriminated by `type`. Construct those changes with the `State` helpers
-described on the [Writing](/docs/streams/writing) page. A stream with one
-collection is a record with one entry.
+Set `ttlSeconds` or `expiresAt`, not both.
 
 ## Expiry
 
-`ttlSeconds` sets a time to live. The clock restarts on every append and every read. `expiresAt` sets a fixed date that never moves. Set one or the other.
+An expired stream answers `StreamNotFound` on the next access. On Cloudflare, the object alarm also sweeps expired streams. The Bun host has no sweeper.
 
-An expired stream answers `StreamNotFound` on the next access. The check runs when the stream is touched. A store with an expiry index also sweeps. On Cloudflare the object runs that sweep from an alarm. The Bun host has no sweeper, so an untouched stream expires on its next access. See [Cloudflare](/docs/runtime/cloudflare).
-
-A projection that reads its source continuously keeps the source alive. A paused projection can lose it. That shows up as `history-unavailable` on the [Projections](/docs/projections/projections) page.
+A projection that stops reading can lose an expired input. It then stops with `history-unavailable`. See [Faults](/docs/projections/state#faults).
 
 ## Fork
 
-A fork is a child stream that starts with a prefix of a source stream. The child has the source content type. New appends go to the child only, and the source is not changed.
-
-`fork(params, source, options?)` takes the parameters of the child, then the parameters of the source. Both are addresses of one stream.
+A fork is a child stream that starts with a prefix of a source stream. Appends to the child do not change the source.
 
 ```ts
 import { Effect } from "effect";
@@ -82,18 +57,35 @@ const branch = Effect.gen(function* () {
 });
 ```
 
-The child inherits every source message up to and including `forkOffset`. Without `forkOffset` the child starts empty and records where it came from. The result is `Created`, or `Exists` when the same fork was already made.
+`fork(params, source, options?)` takes the child parameters, then the source parameters. Both are addresses of one stream class. The child gets every source message up to and including `forkOffset`. With no `forkOffset`, the child starts empty.
 
-Where a fork works depends on the backend. The memory Layer and SQLite share the prefix with the source by lineage. A constrained memory store copies it. A backend without fork support fails with `NotSupported`. On Cloudflare the source and the child must be placed on the same object. A stream lives on one storage Layer, so a fork never crosses two backends. See [Cloudflare](/docs/runtime/cloudflare) and [Runtime](/docs/runtime/introduction).
+| Backend            | Fork                                |
+| ------------------ | ----------------------------------- |
+| Memory             | Shares the prefix                   |
+| Constrained memory | Copies the prefix                   |
+| SQLite             | Shares the prefix                   |
+| Cloudflare         | Source and child on the same object |
 
-Errors you meet here: `ForkSourceNotFound` when the source is missing or outside the stream, `CreateConflict` when the child id is taken with a different configuration, and `NotSupported`.
+A fork never crosses two storage Layers.
 
-The upstream [fork page](https://durablestreams.com/fork) describes the protocol side, including what a child inherits from the source expiry.
+| Error                | When                                              |
+| -------------------- | ------------------------------------------------- |
+| `ForkSourceNotFound` | The source is missing or outside the stream class |
+| `CreateConflict`     | The child id has a different configuration        |
+| `NotSupported`       | The backend has no fork support                   |
+
+See the upstream [fork page](https://durablestreams.com/fork).
 
 ## Remove
 
-`remove(params)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is soft-deleted, and the storage is released when the last child goes.
+`remove(params)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is kept until its last child is removed.
 
 ## Over HTTP
 
-`PUT` on the stream path creates a stream. `PUT` with `Stream-Forked-From` forks one. `DELETE` removes it. The host serves these methods only for a stream with `full` access. See [HTTP](/docs/runtime/http).
+| Method                          | Operation | Access |
+| ------------------------------- | --------- | ------ |
+| `PUT`                           | Create    | `full` |
+| `PUT` with `Stream-Forked-From` | Fork      | `full` |
+| `DELETE`                        | Remove    | `full` |
+
+See [Protocol routes](/docs/http/routes).

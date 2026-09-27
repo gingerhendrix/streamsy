@@ -1,0 +1,49 @@
+---
+title: Fetch client
+description: Provide stream services from a remote Durable Streams host with the fetch Layer.
+---
+
+`Fetch.layer(options, group)` gives the stream services of a group from a remote host.
+
+```ts
+import { Layer } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as Fetch from "@streamsy/core/fetch";
+import { game } from "./streams.ts";
+
+const remote = Fetch.layer(
+  {
+    baseUrl: "https://streams.example.com/streams",
+    capabilities: { expectedOffset: true, producer: true },
+  },
+  game,
+).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+A program runs over `remote` with no change.
+
+## Options
+
+| Option                        | Value                           |
+| ----------------------------- | ------------------------------- |
+| `baseUrl`                     | The protocol prefix of the host |
+| `headers`                     | Headers for each request        |
+| `capabilities.expectedOffset` | Sends `Stream-Expected-Offset`  |
+| `capabilities.producer`       | Sends the producer headers      |
+
+Capabilities are statements about the host. The Layer does not discover them.
+
+## Limits
+
+| Feature                           | Over fetch                                                |
+| --------------------------------- | --------------------------------------------------------- |
+| Writes                            | Need `append` or `full` access on the host                |
+| `Projection.follow`               | Works. One poll for each input each `repairIntervalMs`    |
+| `Projection.watch`                | Does not compile. There are no `Streamsy.ChangeFeed` keys |
+| Projection outputs, `Checkpoints` | Not on fetch streams. Inputs only                         |
+
+`Fetch.layerProtocol(options)` gives the generic reader and writer, for protocol tools.
+
+## Browsers
+
+Browser applications use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client) and `@durable-streams/state`.

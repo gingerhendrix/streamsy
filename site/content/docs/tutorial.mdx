@@ -1,13 +1,11 @@
 ---
-title: Introduction
-description: A small Streamsy application from a typed stream to a served projection, one step at a time.
+title: Tutorial
+description: Build one small Streamsy application, from a typed stream to a served projection.
 ---
 
-This page walks through one small application. Each step shows the call and links the guide that explains it. The program is the same on every host; only the Layer at the end changes.
+This page builds one small shop application. Each step links to the page with the details.
 
 ## 1. Declare streams
-
-A stream class names a set of streams with one id template and one codec. The class is also the service key that a program acquires. A group lists the streams that one host provides and serves.
 
 ```ts
 import { Schema } from "effect";
@@ -33,9 +31,9 @@ export class OrderEvents extends Streamsy.json<OrderEvents>()(
 export const shop = Streamsy.group(Orders, OrderTotals, OrderEvents);
 ```
 
-`Orders` has one address, because its template has no parameters. `OrderEvents` has one address per `orderId`. The first argument is a global service name, so give it an application namespace.
+`Orders` has one stream. `OrderEvents` has one stream for each `orderId`. The group lists the streams that one host keeps and serves.
 
-See [Streams](/docs/streams/introduction).
+See [Declare streams](/docs/streams/declare).
 
 ## 2. Create and append
 
@@ -51,11 +49,11 @@ export const write = Effect.gen(function* () {
 });
 ```
 
-Every method takes the parameters of one address first. `write` requires the `Orders` service, and the compiler reports a Layer that does not provide it.
+The first argument of each method is the stream parameters.
 
-See [Creating](/docs/streams/creating) and [Writing](/docs/streams/writing).
+See [Create and fork](/docs/streams/create) and [Write](/docs/streams/write).
 
-## 3. Read and follow
+## 3. Follow
 
 ```ts
 import { Effect, Stream } from "effect";
@@ -69,7 +67,7 @@ const watch = Effect.flatMap(Orders, (orders) =>
 );
 ```
 
-See [Reading](/docs/streams/reading).
+See [Read](/docs/streams/read).
 
 ## 4. Project one stream into another
 
@@ -92,13 +90,11 @@ const projection = Projection.atomic({
 export const catchUp = Projection.run(projection.at({}));
 ```
 
-`Orders` names the projection input, and `projection.at({})` binds a projection with no parameters. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
+The appends and the checkpoint commit in one transaction. `Projection.run` stops when the input is caught up.
 
-See [Projections](/docs/projections/introduction).
+See [How projections work](/docs/projections).
 
 ## 5. Provide a Layer and run
-
-Start with the memory Layer. Swap it for SQLite when the data has to survive a restart.
 
 ```ts
 import { Effect } from "effect";
@@ -109,7 +105,7 @@ import { write } from "./write.ts";
 await Effect.runPromise(write.pipe(Effect.provide(Memory.layer({}, shop))));
 ```
 
-`Checkpoints` comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, over the same storage Layer:
+A projection also needs `Checkpoints`. Merge its Layer over the same storage:
 
 ```ts
 import { Effect, Layer } from "effect";
@@ -123,6 +119,8 @@ const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, sho
 await Effect.runPromise(catchUp.pipe(Effect.provide(host)));
 ```
 
+Use SQLite when the data must survive a restart:
+
 ```ts
 import * as BunStorage from "@streamsy/storage/bun";
 import { shop } from "./streams.ts";
@@ -130,42 +128,43 @@ import { shop } from "./streams.ts";
 export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop);
 ```
 
-See [Runtime](/docs/runtime/introduction).
+See [Layers and storage](/docs/hosting).
 
 ## 6. Serve on Bun
 
 ```ts
 import { Layer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { BunRuntime } from "@effect/platform-bun";
 import { Http } from "@streamsy/core";
+import { listener } from "@streamsy/serve/bun";
 import { storage } from "./storage.ts";
 import { shop } from "./streams.ts";
 
 const server = HttpRouter.serve(Http.routes(shop, { prefix: "/streams", access: "read" })).pipe(
   Layer.provide(storage),
-  Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
+  Layer.provide(listener({ port: 3000 })),
 );
 
 BunRuntime.runMain(Layer.launch(server));
 ```
 
-`Http.routes` serves only the streams in the group. `access: "read"` allows GET and HEAD. An id that no stream owns answers 404, and a write answers 405.
+`access: "read"` allows GET and HEAD. A write answers 405.
 
-See [HTTP](/docs/runtime/http).
+See [Protocol routes](/docs/http/routes) and [Bun](/docs/hosting/bun).
 
 ## 7. Deploy to Cloudflare
 
-The same `Http.routes` Layer runs inside a Durable Object. An Alchemy stack declares the object and the Worker in front of it, and `alchemy dev` runs both on your machine.
+The same routes run inside a Durable Object. An Alchemy stack declares the object and the Worker.
 
 ```bash
 alchemy dev
 alchemy deploy
 ```
 
-See [Alchemy](/docs/runtime/alchemy).
+See [Cloudflare](/docs/hosting/cloudflare).
 
-## 8. Read it back from anywhere
+## 8. Read from another process
 
 ```ts
 import { Layer } from "effect";
@@ -182,17 +181,6 @@ export const remote = Fetch.layer(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-The remote Layer provides the same stream services, so `watch` runs over it without change. A write through it needs `append` or `full` access on the host.
+`remote` gives the same stream services, so `watch` runs over it with no change.
 
-See [HTTP](/docs/runtime/http).
-
-## Choosing a Layer
-
-| Layer                                        | Persists              | Use                 |
-| -------------------------------------------- | --------------------- | ------------------- |
-| `Memory.layer({}, group)`                    | no                    | one process, tests  |
-| `BunStorage.layer(options, group)`           | SQLite file           | Bun host            |
-| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | Cloudflare          |
-| `Fetch.layer({ baseUrl }, group)`            | remote                | any conformant host |
-
-The program does not change between Layers. To put streams on different backends, merge one Layer per backend; see [Runtime](/docs/runtime/introduction). For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).
+See [Fetch client](/docs/http/fetch).

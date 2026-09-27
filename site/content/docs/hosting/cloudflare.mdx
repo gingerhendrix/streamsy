@@ -1,9 +1,9 @@
 ---
 title: Cloudflare
-description: Route protocol paths to Durable Objects that own their HttpRouter application and SQLite storage.
+description: Route protocol paths from a Worker to Durable Objects that own their SQLite storage and route app.
 ---
 
-The Worker placement router forwards each raw protocol path to one Durable Object. The object owns its SQLite, alarm and HttpRouter application.
+A Worker router sends each protocol path to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app.
 
 ```ts
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
@@ -28,18 +28,95 @@ export default router<Env>({
 });
 ```
 
-The second type parameter of `StreamsyObject.make` names the services that the app needs from the object Layer. `Streamsy.Services<typeof game>` is the union of the group's stream services.
+The second type parameter of `StreamsyObject.make` is the services that the app needs. `Streamsy.Services<typeof game>` is the stream services of the group.
 
-Each object lazily acquires one successful storage context and builds `HttpRouter.toWebHandler` once for that acquisition. Concurrent accesses share it. A failed acquisition closes its attempted scope, returns 503 with `retry-after: 1`, and can retry on the next access. The compiled handler and its context share ownership. Object eviction has no universal asynchronous disposal hook. Request logging is disabled in this host.
+## Storage
 
-The host installs global mutation middleware around the application. PUT, POST and DELETE reconcile the alarm in an uninterruptible finalizer, including after an interrupted committed mutation. Reconciliation also runs for rejected PUT, POST and DELETE requests, including a Serve 405. A reconciliation failure cannot replace a committed response. Defects return 500 with the common security headers. The platform alarm calls the expiry sweep directly; no URL or forged request header can invoke it. Sweep failures are left to platform retry and retain the healthy context.
+```ts
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { shop } from "./streams.ts";
 
-## Placement and limits
+const storage = DurableObjectStorage.layer({ client: { storage: ctx.storage } }, shop);
+```
 
-`Placement.byStream()` is the default. `Placement.byKey(fn)` groups stream paths. `Placement.byRoute([rule({ stream: Events, owner: ({ seat }) => seat })])` takes a stream class as the route and decodes its params before selecting an owner. The first matching rule wins. Empty or unmatched owner keys return 400; throwing placement functions return 500.
+Pass the full `ctx.storage` handle. The driver needs its transaction API. The long-poll timeout is 25 s.
 
-Fork source and child must share an object. Placement determines the transaction owner, and must remain stable while data lives under its object names. No cross-object writes are added.
+## Placement
 
-The Worker helper understands protocol URLs only. Serve routes inside an object require application-written Worker routing to select that object; placement does not automatically infer an output owner from a Serve URL. Authenticate before forwarding, and protect every public path to private data.
+| Placement                                      | Object name                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `Placement.byStream()`                         | One object for each stream. The default                                |
+| `Placement.byKey(fn)`                          | The key that `fn` returns for the stream path                          |
+| `Placement.byRoute([rule({ stream, owner })])` | `owner` of the decoded stream parameters. The first matching rule wins |
 
-Projection work runs in an application request middleware or a platform alarm. Use the same storage/SqlClient Layer as its checkpoints and writes. A long-lived follow fiber is not the object hosting model. See [Alchemy](/docs/runtime/alchemy) for the Effect-native host.
+| Result                    | Response |
+| ------------------------- | -------- |
+| Empty or no owner key     | 400      |
+| Placement function throws | 500      |
+
+Rules:
+
+- A fork source and its child must be on the same object.
+- Keep placement stable while data lives on an object.
+- There are no writes across objects.
+- The router understands protocol paths only. Route Serve paths to their object in your own Worker code.
+- Authenticate before the router forwards a request.
+
+## Object lifecycle
+
+| Event             | Behaviour                                                 |
+| ----------------- | --------------------------------------------------------- |
+| First access      | Acquires storage and builds the handler once              |
+| Acquisition fails | 503 with `retry-after: 1`. The next access tries again    |
+| PUT, POST, DELETE | Reconciles the alarm after the request, also on rejection |
+| Alarm             | Runs the expiry sweep. Failures use platform retry        |
+| Defect            | 500 with security headers                                 |
+
+Request logging is off. No URL or request header can start the sweep.
+
+## Projections
+
+Run projections in request middleware or in the alarm, over the same storage Layer as their checkpoints. See [Triggers](/docs/projections/define#triggers). A long-lived `follow` fiber does not suit an object.
+
+## Alchemy
+
+`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack.
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { Effect, Layer } from "effect";
+import { Streamsy, Http } from "@streamsy/core";
+import * as Host from "@streamsy/serve/alchemy";
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+export class Streams extends Cloudflare.DurableObject<Streams>()(
+  "Streams",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.suspend(() =>
+      Host.objectHandlers({
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
+        layer: Layer.mergeAll(
+          DurableObjectStorage.layer({ client: { storage: state.raw.storage } }, streams),
+          Host.alarmLayer(state.raw.storage),
+        ),
+      }),
+    );
+  }),
+) {}
+```
+
+The outer generator declares resources. The inner Effect acquires storage for each instance. `objectHandlers` shares one acquisition across fetch and alarm, and releases it when the instance scope closes.
+
+The Worker gets the `Streams` namespace during construction. Its fetch uses `Host.router({ objects, prefix: "/streams", placement })`. The router is an `HttpEffect`, so authentication can run before it.
+
+| Command          | Does                                |
+| ---------------- | ----------------------------------- |
+| `alchemy dev`    | Runs the Worker and objects locally |
+| `alchemy deploy` | Deploys the stack                   |
+
+The pinned Alchemy version is `2.0.0-beta.79`.
+
+A remote client uses [`Fetch.layer`](/docs/http/fetch) with the Worker protocol prefix as `baseUrl`.

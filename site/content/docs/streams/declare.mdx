@@ -1,24 +1,15 @@
 ---
-title: Introduction
-description: What a stream is, how a stream names a set of streams, and how stream methods report results and errors.
+title: Declare streams
+description: Declare a stream class with an id template and a codec, and list stream classes in a group.
 ---
 
-A stream is an ordered, append-only sequence of messages under one id. A stream names a set of streams with one id template and one codec. A program acquires the stream as an Effect service and calls its methods with the parameters of one address. The stream encodes what you append and decodes what you read.
-
-Streamsy implements the [Durable Streams](https://durablestreams.com/) protocol. The protocol model, its six operations, and its live read modes are described at [durablestreams.com/concepts](https://durablestreams.com/concepts). This page does not restate them.
-
-## Offsets
-
-Every message has an offset. An offset is an opaque string that sorts within one stream. `ZERO_OFFSET` is the position before the first message. Never compare an offset from one stream with an offset from another. See [PROTOCOL.md section 8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#8-offsets).
-
-## Streams
+A stream is an ordered, append-only sequence of messages under one id. A stream class declares a set of streams with one id template and one codec. The protocol model is on [durablestreams.com/concepts](https://durablestreams.com/concepts).
 
 ```ts
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 
 export const Note = Schema.Struct({ id: Schema.String, text: Schema.String });
-const NoteRow = Schema.Struct({ id: Schema.String, text: Schema.String, updatedAt: Schema.String });
 
 export class Notes extends Streamsy.json<Notes>()("Notes/Notes", "notes", {
   params: {},
@@ -28,26 +19,22 @@ export class Blobs extends Streamsy.bytes<Blobs>()("Notes/Blobs", "blobs/:blobId
   params: { blobId: Schema.String },
   contentType: "image/png",
 }) {}
-export class NoteIndex extends Streamsy.state<NoteIndex>()("Notes/NoteIndex", "note-index", {
-  params: {},
-  collections: { note: { schema: NoteRow, key: "id" } },
-}) {}
 ```
 
-A stream class holds no resource and opens no connection. The first argument is the stream name. Names are global service identities, so two classes with one name are one service. Give each name an application namespace.
+The first argument is the service name. Names are global, so give each one an application namespace.
 
-| Factory                                                           | Items                                            | Upstream mode                                             |
-| ----------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| `Streamsy.json<Self>()(name, template, { params, schema })`       | one message per item                             | [JSON mode](https://durablestreams.com/json-mode)         |
-| `Streamsy.bytes<Self>()(name, template, { params })`              | items joined into one message                    | [byte stream](https://durablestreams.com/concepts)        |
-| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change events, typed by collection | [Durable State](https://durablestreams.com/durable-state) |
-| `Streamsy.custom<Self>()(name, { parse, address })`               | the items of the address that `address` builds   | a grammar that a template cannot express                  |
+## Factories
 
-`bytes` also takes an optional `contentType`. The id is a path. Segments are separated by `/`. A segment cannot be empty, `.`, or `..`, and the id cannot contain `%`, `?`, `#`, or `\`. Over HTTP the id is the stream path under the host prefix, so `notes` is served at `/notes`.
+| Factory                                                           | Items                                           | Upstream                                                  |
+| ----------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
+| `Streamsy.json<Self>()(name, template, { params, schema })`       | One message for each item                       | [JSON mode](https://durablestreams.com/json-mode)         |
+| `Streamsy.bytes<Self>()(name, template, { params })`              | All items of one append in one message          | [Byte stream](https://durablestreams.com/concepts)        |
+| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change events                     | [Durable State](https://durablestreams.com/durable-state) |
+| `Streamsy.custom<Self>()(name, { parse, address })`               | The items of the address that `address` returns | An id grammar that a template cannot express              |
 
 ## Templates and addresses
 
-A template is relative. Each `:name` is exactly one segment, and there are no wildcards. The set of `:name` parameters and the keys of `params` must agree, and the compiler checks that. A template with no parameters has exactly one address, with `{}` as its parameters.
+Each `:name` in a template is one path segment. The `:name` parameters and the keys of `params` must agree. The compiler checks this.
 
 ```ts
 import { Option, Schema } from "effect";
@@ -66,61 +53,83 @@ const params = OrderEvents.parse("orders/o-17/events"); // Option.some({ orderId
 const owns = OrderEvents.match("notes"); // false
 ```
 
-`at(params)` returns the address: a `StreamAddress` for one stream, with the stream key attached. Projection inputs and outputs, `DurableState.changes`, and Serve take addresses. A parameter that does not decode makes `parse` return `None`.
+| Method       | Returns                              |
+| ------------ | ------------------------------------ |
+| `at(params)` | The `StreamAddress` of one stream    |
+| `parse(id)`  | The decoded parameters, or `None`    |
+| `match(id)`  | `true` when the template owns the id |
 
-A state stream builds Durable State addresses whose refs keep their collections, so `DurableState.changes` accepts the address and stamps changes described by `DurableState.upsert`:
+A template with no parameters has one address, `at({})`. Projection inputs, `DurableState.changes`, and Serve routes take addresses.
+
+Id rules:
+
+- Segments are separated by `/`.
+- A segment cannot be empty, `.`, or `..`.
+- An id cannot contain `%`, `?`, `#`, or `\`.
+
+## Durable State streams
+
+A state stream holds several collections. The record key is the collection type. Each entry gives the value schema and the key field.
 
 ```ts
-import { DurableState } from "@streamsy/core";
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
 
-class WorkspaceOrders extends Streamsy.state<WorkspaceOrders>()(
-  "Shop/WorkspaceOrders",
-  "workspaces/:workspaceId/orders",
+const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
+const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
+
+export class Workspace extends Streamsy.state<Workspace>()(
+  "Tracker/Workspace",
+  "workspaces/:workspaceId",
   {
     params: { workspaceId: Schema.String },
-    collections: { order: { schema: OrderEvent, key: "orderId" } },
+    collections: {
+      project: { schema: Project, key: "id" },
+      issue: { schema: Issue, key: "id" },
+    },
   },
 ) {}
-const changes = DurableState.changes(
-  WorkspaceOrders.at({ workspaceId: "acme" }),
-  { offset: "source-offset" },
-  [DurableState.upsert("order", { type: "placed", orderId: "o-17" })],
-);
 ```
 
-The stream also decides where its streams live. The storage Layer that provides a stream stores all of its addresses, and `Placement.byRoute` uses the stream to name the Durable Object that owns a stream. Both are on the [Runtime](/docs/runtime/introduction) pages.
+The stream reads and writes change events as a union discriminated by `type`. To make changes, see [Durable State changes](/docs/streams/write#durable-state-changes).
 
 ## Groups
 
-`Streamsy.group(...streams)` lists the streams that one host provides and serves. Storage Layers, `Fetch.layer`, and `Http.routes` all take a group.
+`Streamsy.group(...streams)` lists the streams that one host keeps and serves. Storage Layers, `Http.routes`, and `Fetch.layer` take a group.
 
 ```ts
 import { Streamsy } from "@streamsy/core";
-import { Blobs, NoteIndex, Notes } from "./streams.ts";
+import { Blobs, Notes } from "./streams.ts";
 
-export const notesApp = Streamsy.group(Notes, Blobs, NoteIndex);
+export const notesApp = Streamsy.group(Notes, Blobs);
 ```
 
-A group refuses two streams with the same name, the same template, or templates that can match one id. `Streamsy.Wildcard` is a built-in stream that owns every id. It must be the last stream in a group, so it owns only the ids that no other stream owns. Streams from `Streamsy.custom` cannot be checked for overlap; the first match wins.
+A group refuses two streams with the same name, or two templates that can match one id. `Streamsy.Wildcard` owns every id. Put it last in a group. `Streamsy.custom` streams are not checked for overlap. The first match wins.
 
-## What you can do with a stream
+## Methods
 
-Acquire the stream with `yield* Notes`, then call:
+Get the service with `yield* Notes`, then call:
 
-- `create(params, options?)` makes the stream. See [Creating](/docs/streams/creating).
-- `fork(params, source, options?)` makes a child stream from a source address. See [Creating](/docs/streams/creating).
-- `append(params, items, options?)` writes items as one atomic append. See [Writing](/docs/streams/writing).
-- `read(params, options?)` returns stored batches after an offset. See [Reading](/docs/streams/reading).
-- `follow(params, options?)` reads, then waits for more. See [Reading](/docs/streams/reading).
-- `session(params, { offset })` is one raw long-poll wait. See [Reading](/docs/streams/reading).
-- `head(params)` returns the tail and the configuration without messages.
-- `remove(params)` deletes the stream. See [Creating](/docs/streams/creating).
+| Method                            | Does                                   | Page                                    |
+| --------------------------------- | -------------------------------------- | --------------------------------------- |
+| `create(params, options?)`        | Makes the stream                       | [Create and fork](/docs/streams/create) |
+| `fork(params, source, options?)`  | Makes a child stream from a source     | [Create and fork](/docs/streams/create) |
+| `remove(params)`                  | Deletes the stream                     | [Create and fork](/docs/streams/create) |
+| `append(params, items, options?)` | Writes items as one atomic append      | [Write](/docs/streams/write)            |
+| `read(params, options?)`          | Reads stored batches after an offset   | [Read](/docs/streams/read)              |
+| `follow(params, options?)`        | Reads, then waits for more             | [Read](/docs/streams/read)              |
+| `session(params, { offset })`     | One raw long-poll wait                 | [Read](/docs/streams/read)              |
+| `head(params)`                    | Returns the tail and the configuration | [Read](/docs/streams/read)              |
 
-A stream service reaches only the ids of its own template. It cannot read or write the streams of another stream.
+A stream service reaches only the ids of its own template.
+
+## Offsets
+
+Each message has an offset. An offset is an opaque string that sorts within one stream. `ZERO_OFFSET` is the position before the first message. Do not compare offsets from two different streams.
 
 ## Results and errors
 
-`create` succeeds with `Created` or `Exists`. `append` succeeds with `Appended` or `Duplicate`. Every other outcome is a typed error in the Effect error channel. Each error carries the stream `id` and a `_tag`, so you match on the tag.
+`create` succeeds with `Created` or `Exists`. `append` succeeds with `Appended` or `Duplicate`. All other outcomes are typed errors with a `_tag` and the stream `id`.
 
 ```ts
 import { Effect } from "effect";
@@ -136,10 +145,13 @@ const tolerant = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-Each page names the errors you meet on that page. Infrastructure failures keep a `Fault` suffix: `StorageFault` from a local store, `TransportFault` from the fetch Layer, and `EncodeFault` or `DecodeFault` from the stream codec. The full set is in the reference.
+| Fault            | Source                |
+| ---------------- | --------------------- |
+| `StorageFault`   | A local store         |
+| `TransportFault` | The fetch Layer       |
+| `EncodeFault`    | The codec, on a write |
+| `DecodeFault`    | The codec, on a read  |
 
-## Layers
+## Protocol services
 
-A program that acquires `Notes` requires the `Notes` service. A Layer provides it, and the Layer decides where the data lives: `Memory.layer({}, Notes)`, a SQLite Layer, or `Fetch.layer`. The program does not change between Layers. See [Runtime](/docs/runtime/introduction).
-
-The generic `StreamsReader` and `StreamsWriter` services, the `Streams` functions over a raw `StreamAddress`, and `Protocol.layer` are on the `@streamsy/core/protocol` subpath. They are for storage adapters, protocol tests, and HTTP internals. An application uses streams.
+`@streamsy/core/protocol` has the generic `StreamsReader` and `StreamsWriter` services, the `Streams` functions over a raw `StreamAddress`, and `Protocol.layer`. Storage adapters, protocol tests, and HTTP internals use them. An application uses stream classes.

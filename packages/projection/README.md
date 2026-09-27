@@ -59,14 +59,14 @@ binds it, and runners take the bound value. An input or output that names a stre
 declaration is resolved with the same params. A fixed address is used as it is.
 A projection with no parameters uses `params: {}` and `.at({})`. The handler reads
 the decoded values from `unit.params`. See
-[Parameters](https://streamsy.dev/docs/projections/projections#parameters).
+[Parameters](https://streamsy.dev/docs/projections/define#parameters).
 
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
 `Projection.run(projection, options)` runs one caller at a time per canonical key;
-see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
+see [Triggers](https://streamsy.dev/docs/projections/define#triggers).
 `Projection.watch` runs a bound projection from same-owner storage change feeds; see
-[Triggers](https://streamsy.dev/docs/projections/projections#triggers).
+[Triggers](https://streamsy.dev/docs/projections/define#triggers).
 
 [src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
 this example; the package tests execute it.
@@ -104,7 +104,7 @@ and retires the process lock after its existing callers drain.
 The state is one value, and each unit rewrites all of it. Keep it small: a counter,
 a summary, or up to a few hundred rows. Put large row sets in application tables
 through the shared `SqlClient` in an atomic projection.
-See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
+See [State and checkpoints](https://streamsy.dev/docs/projections/state) for transaction,
 size, generation, and retirement rules.
 
 ## Read, decide, append
@@ -125,7 +125,7 @@ const command = Effect.gen(function* () {
 }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
 ```
 
-See [Read, decide, append](https://streamsy.dev/docs/projections/projections#read-decide-append).
+See [Read, decide, append](https://streamsy.dev/docs/projections/state#read-decide-append).
 
 ## Outputs
 
@@ -171,7 +171,7 @@ across outputs. Two outputs cannot share a stream or name one of the projection'
 
 Producer ids are `id/v<version>[/canonicalParamsJson]`, including `/v1`.
 A new version or generation should write to a new event stream.
-See [Outputs](https://streamsy.dev/docs/projections/projections#outputs) for a complete declaration.
+See [Output projections](https://streamsy.dev/docs/projections/define#output-projections) for a complete declaration.
 
 ## Choose a host
 
@@ -217,7 +217,7 @@ lifetime.
 For calls to another system, use `unit.key` as an idempotency key. The key is
 stable across pinned outputs retries; an atomic retry re-reads and may see a
 longer input range. See
-[Guarantees](https://streamsy.dev/docs/projections/projections#guarantees).
+[Guarantees](https://streamsy.dev/docs/projections/define#guarantees).
 
 ## Good to know
 

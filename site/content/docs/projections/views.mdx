@@ -1,18 +1,16 @@
 ---
 title: Views
-description: Declare a keyed relation over sources as data, compile it to a plan, and maintain its rows incrementally.
+description: Declare a keyed relation as data, compile it to a plan, and maintain its rows incrementally.
 ---
 
-`@streamsy/views` declares a keyed relation over sources as data. Its three pure parts are relation authoring, serializable plan IR, and an incremental engine. Declarations and engine steps do no I/O.
+`@streamsy/views` declares keyed relations as data. Declarations and engine steps do no I/O.
 
-| Entry                                | Purpose                                                  |
-| ------------------------------------ | -------------------------------------------------------- |
-| `@streamsy/views`                    | Keyed relation declarations and the plan compiler        |
-| `@streamsy/views/ir`                 | JSON plan, expression, and row-change contracts          |
-| `@streamsy/views/engine`             | Incremental maintenance over normalized source changes   |
-| `@streamsy/views/engine/conformance` | Full-recompute reference implementation for engine tests |
-
-The examples below build on the declarations in the preceding snippets.
+| Entry                                | Contents                                    |
+| ------------------------------------ | ------------------------------------------- |
+| `@streamsy/views`                    | Relation declarations and the plan compiler |
+| `@streamsy/views/ir`                 | JSON plan, expression, and row change types |
+| `@streamsy/views/engine`             | Incremental maintenance                     |
+| `@streamsy/views/engine/conformance` | A full-recompute reference for engine tests |
 
 ## Declare a source
 
@@ -39,7 +37,12 @@ export const orders = source("shop.orders", {
 });
 ```
 
-`mode` is `facts` or `state`. A fact source feeds `reduceByKey`, which folds events into one row per key. A state source is already keyed rows. `partitionBy` names the field that keeps rows together, so a `top` or a join stays inside one partition. `schemaRef` names the row schema and its version, and the plan carries it.
+| Option        | Value                                                  |
+| ------------- | ------------------------------------------------------ |
+| `schemaRef`   | The row schema name and version. The plan carries it   |
+| `key`         | The row key                                            |
+| `mode`        | `facts` for events, `state` for keyed rows             |
+| `partitionBy` | The field that keeps rows together for `top` and joins |
 
 ## Build a relation
 
@@ -55,13 +58,19 @@ export const openOrders = view(
 );
 ```
 
-`from(source)` starts a relation. `where`, `select`, `join`, `leftJoin`, `groupBy().aggregate()`, and `top` build it. Expressions come from `selectors<Row>()`. `top` is bounded, and its last sort term must be a stable key.
+| Operator                        | Does                                                   |
+| ------------------------------- | ------------------------------------------------------ |
+| `from(source)`                  | Starts a relation                                      |
+| `where`                         | Filters rows                                           |
+| `select`                        | Maps rows                                              |
+| `join`, `leftJoin`              | Joins two relations                                    |
+| `groupBy().aggregate()`         | Groups and aggregates                                  |
+| `top`                           | Keeps the first rows. The last sort term must be a key |
+| `reduceByKey({ key, reducer })` | Folds a fact source into one row for each key          |
 
-`reduceByKey({ key, reducer })` folds a fact source into per-key state with a declared reducer. It is available directly on a fact source.
+Expressions come from `selectors<Row>()`.
 
-## Define a view
-
-`view(name, { schema, schemaRef, key }, relation)` names the result and declares its output key. `defineView` adds parameters.
+## Define a view with parameters
 
 ```ts
 import { defineView, parameter } from "@streamsy/views";
@@ -82,11 +91,9 @@ export const ordersForCustomer = defineView({
 });
 ```
 
-`changes(relation)` declares a relation's change stream in arrival order. The host writes those events to a stream and publishes that stream with [`Serve.stream`](/docs/projections/serve).
+`changes(relation)` declares the change stream of a relation. The host writes it to a stream and publishes it with [`Serve.stream`](/docs/http/serve).
 
 ## Check the plan
-
-A declaration carries its `plan`. `checkPlan` reports every issue it can detect before anything runs. `planHash` is a change-detection identity over the canonical plan, not a security digest or an automatic projection generation.
 
 ```ts
 import { Effect } from "effect";
@@ -98,9 +105,9 @@ const checked = Effect.gen(function* () {
 });
 ```
 
-## Maintain the view
+`checkPlan` reports every issue it can find before anything runs. `planHash` identifies the canonical plan, for change detection. It is not a security digest.
 
-`maintainGraph` is a pure step. It takes the plan, the prior operator state, and one batch of source changes, and returns the new state, the row `changes`, and the current `rows`.
+## Maintain the view
 
 ```ts
 import { maintainGraph } from "@streamsy/views/engine";
@@ -120,14 +127,10 @@ const result = maintainGraph({
 // result.state, result.changes, result.rows
 ```
 
-Pass `result.state` as `state` on the next call. Omitting it starts from empty state. The engine accepts complete-row `enter`, `update`, and `exit` changes; converting domain events to those changes is the application's responsibility.
+`maintainGraph` takes the plan, the previous operator state, and one batch of source changes. It gives the new `state`, the row `changes`, and the current `rows`. Pass `result.state` to the next call.
 
-## Persisted state and rows
+The engine accepts complete-row `enter`, `update`, and `exit` changes. The application converts domain events into these changes.
 
-For a projection's state between passes, declare [`state:`](/docs/projections/projections#state). State holds one encoded value per projection key. Persist row sets in application tables through the shared `SqlClient`, with a `Projection.atomic` handler so those writes and the checkpoint share a transaction.
+## Persistence
 
-A host integrating the engine owns the encoding and persistence of operator state, application rows, and any change history it needs. The pure engine does not acquire a database, advance projection checkpoints, or wire itself into a runner. Choose a new projection generation when changing the plan requires rebuilding derived data.
-
-## Serving a relation
-
-[Serve](/docs/projections/serve) reads the streams that a projection writes. A document route resolves a value through the application's services.
+The host stores operator state and rows. For rows, use application tables in a [`Projection.atomic`](/docs/projections/define#atomic-projections) handler, so the writes commit with the checkpoint. When a plan change needs a rebuild, use a new projection generation.

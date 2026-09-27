@@ -71,7 +71,7 @@ export const routes = {
 
 At startup the server creates the five streams for each configured workspace. One Bun SQLite file holds the streams, the projection checkpoints and the application tables.
 
-See [Streams](/docs/streams/introduction) for templates and parameters.
+See [Declare streams](/docs/streams/declare) for templates and parameters.
 
 ## 2. Append a command
 
@@ -112,7 +112,7 @@ curl -X POST http://localhost:1340/api/workspaces/live/commands \
   --data '{"type":"create","commandId":"c1","issueId":"i1","projectId":"p1","title":"First issue"}'
 ```
 
-See [Read, fold, append](/docs/streams/writing#read-fold-append) for the recipe.
+See [Read, fold, append](/docs/streams/write#read-fold-append) for the recipe.
 
 ## 3. Write SQL rows with `issueRows`
 
@@ -145,7 +145,7 @@ export const issueRows = Projection.atomic({
 
 `applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. `@streamsy/projection` owns only the tables that start with `streamsy_projection_v1_`.
 
-See [Projections](/docs/projections/projections) for the two forms and [Commit with your own tables](/docs/runtime/storage#commit-with-your-own-tables).
+See [Atomic projections](/docs/projections/define#atomic-projections) and [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
 
 ## 4. Write output streams with `tracker`
 
@@ -175,7 +175,7 @@ export const tracker = Projection.outputs({
 
 The handler returns `Output.upsert(row)` for each card or count that changed, and `Output.remove(labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
 
-See [Outputs](/docs/projections/projections#outputs) and [State](/docs/projections/projections#state).
+See [Output projections](/docs/projections/define#output-projections) and [State and checkpoints](/docs/projections/state).
 
 ## 5. Run both projections
 
@@ -206,7 +206,7 @@ At startup the server runs each projection once for each workspace, then watches
 
 `Projection.run` allows one runner for each projection key in the process. The command path and the watcher share that permit, so they do not run the same projection at the same time. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
 
-See [Running](/docs/projections/projections#running) and [Triggers](/docs/projections/projections#triggers).
+See [Running](/docs/projections/define#running) and [Triggers](/docs/projections/define#triggers).
 
 ## 6. Serve the results
 
@@ -244,7 +244,7 @@ Read the board from the start:
 curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
 ```
 
-See [Serve](/docs/projections/serve) and [HTTP access](/docs/runtime/http#access).
+See [Serve routes](/docs/http/serve) and [Access](/docs/http/routes#access).
 
 ## Limits
 

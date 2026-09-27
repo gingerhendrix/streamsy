@@ -44,7 +44,7 @@ persistence.
 For fold state between projection passes, declare `state:` on a projection from
 `@streamsy/projection`. Persist row sets in application tables through the
 shared `SqlClient`; see the
-[State guide](https://streamsy.dev/docs/projections/projections#state).
+[State and checkpoints guide](https://streamsy.dev/docs/projections/state).
 
 Guide: [streamsy.dev/docs/projections/views](https://streamsy.dev/docs/projections/views).
 

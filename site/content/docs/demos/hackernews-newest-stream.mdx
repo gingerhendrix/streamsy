@@ -41,7 +41,7 @@ the changes with `expectedOffset`. `Serve.state` publishes the stream at
 `createStreamDB`, then follows live upserts and deletes.
 
 The poller is the working example of the
-[read, decide, append](/docs/projections/projections#read-decide-append) recipe.
+[read, decide, append](/docs/projections/state#read-decide-append) recipe.
 
 Each number in the diagram is a section below.
 
@@ -99,7 +99,7 @@ const sqliteHostLayer = Layer.unwrap(
 With `HN_DB=memory`, the host is `ProjectionMemory.layer` over
 `Memory.layer(options, streams)` in its place.
 
-See [Streams](/docs/streams/introduction) and [Storage](/docs/runtime/storage).
+See [Declare streams](/docs/streams/declare) and [Layers and storage](/docs/hosting).
 
 ## 2. Fold the stream into rows
 
@@ -120,7 +120,7 @@ export const newestRows = Projection.atomic({
 `applyChange` is a pure function. An upsert sets the row at its key, and a
 delete removes it. The state row and the checkpoint commit in one transaction.
 The newest set holds about 50 rows, so one state value is small enough. See
-[State](/docs/projections/projections#state) for when to use application tables
+[State and checkpoints](/docs/projections/state) for when to use application tables
 in its place.
 
 The projection has no outputs. The stream that it reads is the stream that the
@@ -153,7 +153,7 @@ export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(functi
 and upserts new or changed stories. An unchanged story gives no change. If a
 story fetch fails, the row stays while its id is still in the newest set.
 
-See [Read, decide, append](/docs/projections/projections#read-decide-append).
+See [Read, decide, append](/docs/projections/state#read-decide-append).
 
 ## 4. Retry on a conflict
 
@@ -192,7 +192,7 @@ const conflictRetries = Schedule.recurs(3).pipe(
 After the last retry, status records the error and the next scheduled poll
 tries again. Other errors are not retried.
 
-See [Writing](/docs/streams/writing).
+See [Write](/docs/streams/write).
 
 ## 5. Serve the stream
 
@@ -220,7 +220,7 @@ You can read the route with `curl`:
 curl -i 'http://localhost:1339/state/newest?offset=-1'
 ```
 
-See [Serve](/docs/projections/serve).
+See [Serve routes](/docs/http/serve).
 
 ## 6. Follow the stream in the browser
 
@@ -286,5 +286,5 @@ function HnApp({ db }: { db: HnDb }) {
   News fetches of two processes by freshness. Steady contention can use up the
   three retries.
 - `HN_DB=memory` starts fresh after every restart.
-- The demo has no hosted deployment. See [Cloudflare](/docs/runtime/cloudflare)
+- The demo has no hosted deployment. See [Cloudflare](/docs/hosting/cloudflare)
   for the host path.

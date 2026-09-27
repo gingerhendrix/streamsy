@@ -9,7 +9,7 @@ publishes the stream at `/state/newest`. The React browser replays from `-1`
 into TanStack DB through `createStreamDB`, then follows live changes.
 
 The poller is the working example of the "Read, decide, append" recipe in the
-[projections docs](https://streamsy.dev/docs/projections/projections#read-decide-append).
+[projections docs](https://streamsy.dev/docs/projections/state#read-decide-append).
 
 ```text
 HN API --fetch--> poller --diff--> append(expectedOffset: offsets.input) --> hackernews/newest

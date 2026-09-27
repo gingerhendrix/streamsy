@@ -1,43 +1,20 @@
 ---
-title: Introduction
-description: What a projection is, the two kinds of stream it connects, and the pages that cover each part.
+title: How projections work
+description: A projection reads input streams in checkpointed units and writes derived streams or state.
 ---
 
-A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. A projection can declare optional state with `state:`, kept in the same owner transaction as the checkpoint; see [State](/docs/projections/projections#state).
+A projection reads one or more input streams and writes derived data. It works in units. Each unit reads a slice of each input, runs a handler, and commits a checkpoint. A restart continues from the last checkpoint.
 
-The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
+One pass:
 
-- `Projection.atomic` is the atomic form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
-- `Projection.outputs` is the declared-output form. The handler returns items for named outputs: `Output.stream` for typed items and `Output.rows` for Durable State changes. The kernel pins the unit's input ranges in the checkpoint, then appends each output under its own producer tuple. A retry reproduces the pinned ranges and sends the same tuples, so each output sees each unit once. The output streams must share the checkpoint owner; the runner checks that before any write. See [Outputs](/docs/projections/projections#outputs).
+1. Load the checkpoint.
+2. Read each input after its checkpoint offset, in declaration order.
+3. Run the handler over the unit.
+4. Commit the checkpoint.
 
-Both forms take the optional `state:` and are read with `Projection.read`, which returns the state and the input offsets it is at. The [guarantees table](/docs/projections/projections#guarantees) lists what each form promises.
+## Atomic projections
 
-## Inputs, unit, checkpoint
-
-Inputs are a map of names to addresses, such as `Orders.at({})`. Use `inputs: { input: Orders.at({}) }` for a single input. A runner requires the stream service of every input, plus `Checkpoints`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for an outputs projection the pending pin and producer sequence.
-
-## Fact streams and state streams
-
-A fact stream records what happened. Each message is a domain event, appended once and never rewritten. It is the source of truth, and every other stream can be rebuilt from it. Declare it with `Streamsy.json` and an event schema.
-
-A state stream carries the current value of keyed rows. Its items are Durable State change events, and a browser reads it with `@durable-streams/state`. Declare it with `Streamsy.state` and the row schema of the events the projection writes.
-
-```json
-{
-  "type": "order",
-  "key": "o-17",
-  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
-  "headers": { "operation": "upsert" }
-}
-```
-
-A state stream is a projection of the facts. A rebuild from the facts writes a new generation of it. See [Durable State](https://durablestreams.com/durable-state).
-
-## Serve
-
-`Serve.stream`, `Serve.state` and `Serve.value` publish streams, Durable State changes and documents as route layers; see [Serve](/docs/projections/serve). `@streamsy/serve/action` delivers external effects.
-
-## A minimal projection
+`Projection.atomic` runs the handler inside the checkpoint transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -53,7 +30,6 @@ export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "double
   schema: Schema.Finite,
 }) {}
 
-/** A stateless atomic map inside the checkpoint transaction. */
 export const minimal = Effect.gen(function* () {
   const numbers = yield* Numbers;
   const doubled = yield* Doubled;
@@ -78,11 +54,85 @@ export const minimal = Effect.gen(function* () {
 });
 ```
 
-Provide `ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, Numbers, Doubled)))`, with `ProjectionMemory` from `@streamsy/projection/memory`. One run yields `[2, 4, 6]` on `doubled`. Compiled source: `packages/projection/src/examples/minimal.ts`.
+One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/examples/minimal.ts`.
+
+## Output projections
+
+`Projection.outputs` gives named outputs. The handler returns items for each output, and the runner appends them.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+import { Numbers } from "./minimal.ts";
+
+class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const tripled = Projection.outputs({
+  id: "tripled",
+  params: {},
+  inputs: { input: Numbers },
+  outputs: { output: Output.stream(Schema.Finite, { stream: Tripled }) },
+  process: (batch) => Effect.succeed({ output: batch.input.items.map((n) => n * 3) }),
+});
+```
+
+| Output          | Items                     |
+| --------------- | ------------------------- |
+| `Output.stream` | Typed items               |
+| `Output.rows`   | Durable State row changes |
+
+Each output append has its own producer position, so a retry does not write a unit twice.
+
+## State
+
+Either projection can declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
+
+## Fact streams and state streams
+
+A fact stream records what happened. Each message is a domain event, appended once. Declare it with `Streamsy.json`.
+
+A state stream carries the current value of keyed rows as Durable State change events. Declare it with `Streamsy.state`. A browser reads it with `@durable-streams/state`.
+
+```json
+{
+  "type": "order",
+  "key": "o-17",
+  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
+  "headers": { "operation": "upsert" }
+}
+```
+
+A projection can rebuild a state stream from the facts.
+
+## Hosts
+
+A projection needs the `Checkpoints` service. Provide it over the storage Layer:
+
+| Storage        | Checkpoints Layer                     |
+| -------------- | ------------------------------------- |
+| `Memory.layer` | `@streamsy/projection/memory` `layer` |
+| SQLite storage | `@streamsy/projection/sqlite` `layer` |
+
+```ts
+import { Layer } from "effect";
+import { Memory, Streamsy } from "@streamsy/core";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+import { Doubled, Numbers } from "./minimal.ts";
+
+export const host = ProjectionMemory.layer.pipe(
+  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
+);
+```
 
 ## Pages
 
-- [Projections](/docs/projections/projections): define, run, follow, and recover a projection.
-- [Views](/docs/projections/views): declare a keyed relation and maintain its rows.
-- [Serve](/docs/projections/serve): publish streams, state changes and documents over HTTP.
-- [Action sink](/docs/projections/action-sink): deliver an external effect at least once.
+| Page                                             | Contents                                              |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| [Define and run](/docs/projections/define)       | Declarations, handlers, guarantees, runners, triggers |
+| [State and checkpoints](/docs/projections/state) | State, read, decide, append, generations, faults      |
+| [Views](/docs/projections/views)                 | Keyed relations and incremental maintenance           |
+| [Actions](/docs/projections/actions)             | External effects through a durable outbox             |

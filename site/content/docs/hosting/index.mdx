@@ -1,13 +1,13 @@
 ---
-title: Introduction
-description: Every Streamsy program is an Effect that needs a Layer. Build it once, run the program, and dispose the runtime at shutdown.
+title: Layers and storage
+description: Provide stream services with a storage Layer, choose a backend, and commit application rows with stream writes.
 ---
 
-Every Streamsy program is an Effect that needs a Layer. The application builds that Layer once, runs the program, and disposes the runtime at shutdown.
+A Streamsy program is an Effect that needs stream services. A Layer provides them and decides where the data is kept.
 
 ```ts
 import { ManagedRuntime } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
+import { Memory } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
@@ -19,32 +19,38 @@ try {
 }
 ```
 
-## Two shapes
+| Program shape  | Runtime                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| Script or test | `ManagedRuntime`, as above                                              |
+| Server         | `Layer.launch` under `BunRuntime.runMain`. See [Bun](/docs/hosting/bun) |
 
-A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch` under `BunRuntime.runMain`, where the listener, a projection, and an outbox drain are Layers in one graph. The launched scope owns every fiber and every subscription, and closing it is the shutdown. See [HTTP](/docs/runtime/http).
+## Layers
 
-## How the services fit
+| Layer                                        | Persists              | Package                            | Page                                   |
+| -------------------------------------------- | --------------------- | ---------------------------------- | -------------------------------------- |
+| `Memory.layer(options, group)`               | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
+| `BunStorage.layer(options, group)`           | SQLite file           | `@streamsy/storage/bun`            | [Bun](/docs/hosting/bun)               |
+| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
+| `Fetch.layer(options, group)`                | Remote                | `@streamsy/core/fetch`             | [Fetch client](/docs/http/fetch)       |
 
-`Storage` is the backend. A storage Layer builds the protocol over its `Storage` and binds the streams that you pass to it, so a program sees only stream services. It also provides a `Streamsy.ChangeFeed` key for each stream, which `Projection.watch` needs. `Http.routes` serves a group of streams with one access rule per stream. `Fetch.layer` provides the same stream services from a remote host, without `Streamsy.ChangeFeed` keys.
+A storage Layer also gives a `Streamsy.ChangeFeed` key for each stream. `Projection.watch` needs these keys.
 
-| Layer                                        | Persists              | Use                 | Page                                   |
-| -------------------------------------------- | --------------------- | ------------------- | -------------------------------------- |
-| `Memory.layer({}, group)`                    | no                    | one process, tests  | [Storage](/docs/runtime/storage)       |
-| `BunStorage.layer(options, group)`           | SQLite file           | Bun host            | [Storage](/docs/runtime/storage)       |
-| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | Cloudflare          | [Cloudflare](/docs/runtime/cloudflare) |
-| `Fetch.layer({ baseUrl }, group)`            | remote                | any conformant host | [HTTP](/docs/runtime/http)             |
+## Memory
 
-Each Layer takes a group from `Streamsy.group`.
+`Memory.layer(options, group)` keeps streams in the process. The data is lost when the Layer is disposed.
 
-The generic `StreamsReader` and `StreamsWriter` services, `Protocol.layer`, and the `Streams` functions are on the `@streamsy/core/protocol` subpath. The SQLite storage modules and the fetch module also export `layerProtocol(options)`, which provides that generic pair without streams; for memory it is `Streams.layerMemory()` on the protocol subpath. `Protocol.bind(graph, group)` from `@streamsy/core/protocol` binds streams to such a graph. These are for storage adapters, protocol tests, and HTTP internals.
+| Option              | Effect                                                         |
+| ------------------- | -------------------------------------------------------------- |
+| `constrained`       | Copies fork prefixes, polls for wakes, and has no expiry index |
+| `pollIntervalMs`    | The poll interval in constrained mode. Default 25 ms           |
+| `readLimit`         | The largest catch-up page. Default 1000 messages               |
+| `longPollTimeoutMs` | The long-poll wait. Default 30 s                               |
 
-## Testing
-
-Application tests provide `Memory.layer({}, group)` and run the same program. `@streamsy/core/testing` has protocol-tier tools. `layerTest` and `StreamsTest` provide the generic services over a fresh memory store and let a test observe change subscriptions; bind streams to them with `Protocol.bind(layerTest(), group)`. `StorageContract.run` exercises a storage adapter against the contract; see [Writing a storage adapter](/docs/advanced/storage-adapter).
+Each mutation copies the whole store, so an append takes linear time. Use memory for development and tests. Use `constrained: true` in tests to check that a program does not depend on the default capabilities.
 
 ## Several backends
 
-A stream lives on the storage Layer that binds it. To put streams on different backends, merge one Layer per backend:
+Merge one Layer for each backend:
 
 ```ts
 import { Layer } from "effect";
@@ -58,15 +64,62 @@ export const layer = Layer.merge(
 );
 ```
 
-A program that needs `Drafts` and `Journal` runs over the merged Layer. A missing stream is a type error at the edge.
+A missing stream service is a type error.
 
-A group checks only the streams it contains: two templates that can match one id fail at `Streamsy.group`. Put every served stream in one group for `Http.routes`, so the check covers all of them. An id that no stream owns answers 404 over HTTP. To own every other id, put `Streamsy.Wildcard` last in a group. A fork stays inside one stream, so it never crosses backends. A fetch Layer keeps its own `capabilities`, so set the flags on that Layer.
+Rules:
 
-Projections have one more rule: `Checkpoints`, atomic stream writes, and declared outputs must share one storage owner. See [Projections](/docs/projections/projections#several-backends).
+- A group checks overlap only among its own streams. Put all served streams in one group.
+- A fork stays inside one storage Layer.
+- A fetch Layer has its own `capabilities`.
+- A projection keeps `Checkpoints`, atomic writes, and outputs on one storage owner. See [Several backends](/docs/projections/state#several-backends).
 
-## Pages
+## Commit with your own tables
 
-- [Storage](/docs/runtime/storage): memory, Bun SQLite, and Durable Object SQLite.
-- [HTTP](/docs/runtime/http): `Http.routes`, access rules, scoped listeners, and the fetch Layer.
-- [Alchemy](/docs/runtime/alchemy): the Cloudflare stack in TypeScript.
-- [Cloudflare](/docs/runtime/cloudflare): the Worker, placement, and the Durable Object.
+The SQLite Layers give `CommitBoundary`. `withTransaction` runs application SQL and a stream mutation in one transaction.
+
+```ts
+import { Effect } from "effect";
+import { Storage, type Mutation } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/storage";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+declare const mutation: Mutation;
+
+const program = Effect.gen(function* () {
+  const boundary = yield* CommitBoundary;
+  const storage = yield* Storage;
+  const sql = yield* SqlClient.SqlClient;
+  return yield* boundary
+    .withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe("INSERT INTO application_rows(id) VALUES (?)", ["example"]);
+        return yield* storage.mutate(mutation);
+      }),
+    )
+    .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
+});
+```
+
+A `MutationRejected` that leaves the boundary rolls back both writes. Catch it outside the boundary. Nested calls join the outer transaction and make no savepoints.
+
+## Testing
+
+Application tests provide `Memory.layer({}, group)` and run the same program.
+
+| Tool                       | Module                   | Use                                                             |
+| -------------------------- | ------------------------ | --------------------------------------------------------------- |
+| `layerTest`, `StreamsTest` | `@streamsy/core/testing` | Protocol tests with visible subscriptions                       |
+| `StorageContract.run`      | `@streamsy/core/testing` | [Storage adapter](/docs/hosting/storage-adapter) contract tests |
+
+Bind streams to a test graph with `Protocol.bind(layerTest(), group)`.
+
+## Protocol tier
+
+| Name                          | Module                    | Gives                                              |
+| ----------------------------- | ------------------------- | -------------------------------------------------- |
+| `Protocol.layer`              | `@streamsy/core/protocol` | `StreamsReader` and `StreamsWriter` over `Storage` |
+| `Protocol.bind(graph, group)` | `@streamsy/core/protocol` | Stream services over a protocol graph              |
+| `layerProtocol(options)`      | SQLite and fetch modules  | The generic pair, with no streams                  |
+| `Streams.layerMemory()`       | `@streamsy/core/protocol` | The generic pair over memory                       |
+
+Storage adapters, protocol tests, and HTTP internals use these.
