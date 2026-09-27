@@ -15,6 +15,8 @@ import {
   type Mutation,
   type MutationApplied,
   MutationRejected,
+  Mutations,
+  OperationResults,
   type OperationResult,
   type RecordPatch,
 } from "@streamsy/core";
@@ -390,7 +392,7 @@ const applyMutation = (
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
       const current = records.get(id) ?? Option.getOrThrow(yield* readRecord(sql, id));
       if (Predicate.isTagged(operation, "Create")) {
-        results.push({ _tag: "Created", record: copyRecord(current) });
+        results.push(OperationResults.Created({ record: copyRecord(current) }));
         continue;
       }
       if (Predicate.isTagged(operation, "Append")) {
@@ -417,21 +419,21 @@ const applyMutation = (
             ],
           );
         records.set(id, next);
-        results.push({ _tag: "Appended", record: next });
+        results.push(OperationResults.Appended({ record: next }));
         continue;
       }
       if (yield* hasDependents(sql, id)) {
         const next = patchRecord(current, { lifecycle: { softDeleted: true } });
         yield* updateRecord(sql, next);
-        results.push({ _tag: "SoftDeleted", record: next });
+        results.push(OperationResults.SoftDeleted({ record: next }));
       } else {
-        results.push({ _tag: "Purged", record: current });
+        results.push(OperationResults.Purged({ record: current }));
         yield* purge(sql, current);
       }
     }
     const [first, ...rest] = results;
     if (first === undefined) return yield* Effect.die(new Error("Empty mutation"));
-    return { _tag: "Applied" as const, results: [first, ...rest] };
+    return Mutations.Applied({ results: [first, ...rest] });
   });
 
 interface MessageDatabaseRow {
@@ -559,7 +561,7 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
         .mutation({
           keys: [STORAGE_KEY],
           effect: applyMutation(sql, mutation),
-          retryable: (error) => error._tag === "StorageFault" && error.retryable,
+          retryable: (error) => Predicate.isTagged(error, "StorageFault") && error.retryable,
         })
         .pipe(
           Effect.catchIf(isSqlError, (error) => Effect.fail(sqlFault("mutate.transaction", error))),
