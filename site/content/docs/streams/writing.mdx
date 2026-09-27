@@ -119,27 +119,42 @@ The loop reads the stream, decides, and appends against the tail it read. A comp
 
 ### Read, fold, append
 
-For application validation, make the conditional append a named transaction
-recipe. The issue tracker reads and folds the workspace, builds its response or
-event from that view, and retries only a moved tail:
+For application validation, make the conditional append one named recipe. The
+[issue tracker](/docs/demos/issue-tracker#5-read-fold-append) does this in
+`IssueTracker.mutate`. It folds the workspace stream, gives the state to a
+validation step, and appends the change with the head it read as
+`expectedOffset`:
 
 ```ts
-const mutateWorkspace = (workspaceId, attempt) =>
+const mutate = <A, E>(
+  workspaceId: string,
+  attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
+) =>
   Effect.gen(function* () {
-    const { state, headOffset } = yield* materializeWorkspace(workspaceId);
-    const outcome = attempt(state);
-    if ("response" in outcome) return outcome.response;
-    const ack = yield* appendWorkspaceEvent(workspaceId, outcome.event, headOffset, headOffset);
-    return outcome.respond({ offset: ack.offset });
-  }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));
+    const { state, headOffset } = yield* materialize(workspaceId);
+    const { change, value } = yield* attempt(state);
+    const ack = yield* append(workspaceId, change, headOffset);
+    return { value, awaitOffset: ack.offset };
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.recurs(3),
+      while: Predicate.isTagged("OffsetMismatch"),
+    }),
+    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
+    Effect.withSpan("IssueTracker.mutate"),
+  );
 ```
 
-The attempt runs again after a conflict, so validation and event construction
-use the new state rather than values captured before the retry. One state
-stream types the read events and the conditional append.
-The tracker has no upstream source stream, so it records the workspace head it
-just read as the change's source offset. Its builders override `txid` with the
-browser UUID and add the server timestamp.
+`attempt` has no side effects. It returns the change to append and the value to
+answer with, or it fails with a typed error. The retry runs only on
+`OffsetMismatch`, and it runs the whole recipe again. So validation and the
+change use the new state, and no value from before the retry. After three
+retries, `mutate` fails with `WriteConflict`.
+
+One state stream types the read changes and the conditional append. The tracker
+has no upstream source stream, so each change records the head that it was
+validated against as its source offset. A request chooses its id, time and txid
+once, before the first attempt, so every retry writes the same values.
 
 `expectedOffset` is a Streamsy extension to the protocol. See the extensions note on the [HTTP](/docs/runtime/http) page.
 
