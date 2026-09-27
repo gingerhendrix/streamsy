@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
 import {
   StreamId,
   Offset,
@@ -73,3 +73,13 @@ export type Mutation = typeof Mutation.Type;
 export type OperationResult = typeof OperationResult.Type;
 
 export type MutationApplied = typeof MutationApplied.Type;
+
+/**
+ * Constructors and matchers for the storage values above. They build plain
+ * objects and do not validate; storage decodes at its own boundary.
+ */
+export const Operations = Data.taggedEnum<Operation>();
+
+export const OperationResults = Data.taggedEnum<OperationResult>();
+
+export const Mutations = Data.taggedEnum<MutationApplied>();

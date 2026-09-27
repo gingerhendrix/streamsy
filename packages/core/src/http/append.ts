@@ -1,4 +1,4 @@
-import type { AppendResult } from "../protocol/results.ts";
+import { AppendResult } from "../protocol/results.ts";
 import { isValid } from "../offset/index.ts";
 import * as ProducerHeaders from "./producer-header-parser.ts";
 import type { ProducerHeaderResult } from "./producer-header-parser.ts";
@@ -37,30 +37,26 @@ export function toResponse(
   producerHeaders: ProducerHeaderResult,
   isEmpty: boolean,
 ): Response {
-  switch (result._tag) {
-    case "Duplicate":
-      const duplicateHeaders = new Headers({
-        "stream-next-offset": result.offset,
-        "producer-epoch": String(result.producerEpoch),
-        "producer-seq": String(result.producerSeq),
-      });
-      if (result.closed) duplicateHeaders.set("stream-closed", "true");
-      return responses.empty(204, duplicateHeaders);
-    case "Appended": {
+  return AppendResult.$match(result, {
+    Duplicate: (duplicate) => {
       const headers = new Headers({
-        "stream-next-offset": result.offset,
+        "stream-next-offset": duplicate.offset,
+        "producer-epoch": String(duplicate.producerEpoch),
+        "producer-seq": String(duplicate.producerSeq),
       });
-      if (result.closed) headers.set("stream-closed", "true");
-      if (result.producerEpoch !== undefined)
-        headers.set("producer-epoch", String(result.producerEpoch));
-      if (result.producerSeq !== undefined) headers.set("producer-seq", String(result.producerSeq));
+      if (duplicate.closed) headers.set("stream-closed", "true");
+      return responses.empty(204, headers);
+    },
+    Appended: (appended) => {
+      const headers = new Headers({
+        "stream-next-offset": appended.offset,
+      });
+      if (appended.closed) headers.set("stream-closed", "true");
+      if (appended.producerEpoch !== undefined)
+        headers.set("producer-epoch", String(appended.producerEpoch));
+      if (appended.producerSeq !== undefined)
+        headers.set("producer-seq", String(appended.producerSeq));
       return responses.empty(producerHeaders.kind === "ok" && !isEmpty ? 200 : 204, headers);
-    }
-  }
-
-  return exhaustive(result);
-}
-
-function exhaustive(value: never): never {
-  throw new TypeError(`Unexpected result: ${String(value)}`);
+    },
+  });
 }

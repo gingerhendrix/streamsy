@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 
 /** Omit `offset` and `txid` rather than setting them to `undefined`. */
@@ -92,16 +92,19 @@ export interface StateAddress<
   readonly collections: C;
 }
 
+/** The address constructors. Each class owns the `_tag` of one address kind. */
+const JsonAddress = Data.TaggedClass("Json");
+const BytesAddress = Data.TaggedClass("Bytes");
+
 export function json<A, I, RD, RE>(
   id: string,
   options: { readonly schema: Schema.Codec<A, I, RD, RE> },
 ): StreamAddress<A, RD, RE> {
-  return {
-    _tag: "Json",
+  return new JsonAddress<Omit<StreamAddress<A, RD, RE>, "_tag">>({
     id: StreamId.make(id),
     contentType: "application/json",
     codec: Schema.fromJsonString(Schema.toCodecJson(options.schema)),
-  };
+  });
 }
 
 /**
@@ -162,10 +165,13 @@ export function state<const C extends Collections>(
     CollectionsDecodingServices<C>,
     CollectionsEncodingServices<C>
   >;
-  return {
-    ...json(id, { schema }),
+  const address = json(id, { schema });
+  return new JsonAddress<Omit<StateAddress<C>, "_tag">>({
+    id: address.id,
+    contentType: address.contentType,
+    codec: address.codec,
     collections: options.collections,
-  };
+  });
 }
 
 /** Items from one bytes append are joined into one stored message. */
@@ -173,10 +179,9 @@ export function bytes(
   id: string,
   options: { readonly contentType?: string } = {},
 ): StreamAddress<Uint8Array> {
-  return {
-    _tag: "Bytes",
+  return new BytesAddress<Omit<StreamAddress<Uint8Array>, "_tag">>({
     id: StreamId.make(id),
     contentType: options.contentType ?? "application/octet-stream",
     codec: Schema.Uint8Array,
-  };
+  });
 }

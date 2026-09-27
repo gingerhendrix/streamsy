@@ -3,6 +3,9 @@ import { attachOwner, ownerOf } from "../../internal/owner.ts";
 import { Storage } from "../storage.ts";
 import {
   MutationRejected,
+  Mutations,
+  OperationResults,
+  Operations,
   type Mutation,
   type MutationApplied,
   type Operation,
@@ -111,35 +114,32 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
           const entry = state.entries.get(id);
           if (!entry) throw new Error("Mutation target disappeared after preflight");
           changed.add(id);
-          const { _tag: tag } = operation;
-          switch (tag) {
-            case "Create":
-              results.push({ _tag: "Created", record: copyRecord(entry.record) });
-              break;
-            case "Append": {
-              entry.messages.push(...operation.messages.map(copyMessage));
-              entry.record = patchRecord(entry.record, operation.patch);
-              if (operation.producer)
-                entry.producers.set(operation.producer.producerId, { ...operation.producer.next });
-              results.push({ _tag: "Appended", record: copyRecord(entry.record) });
-              break;
-            }
-            case "Delete": {
+          Operations.$match(operation, {
+            Create: () => {
+              results.push(OperationResults.Created({ record: copyRecord(entry.record) }));
+            },
+            Append: (append) => {
+              entry.messages.push(...append.messages.map(copyMessage));
+              entry.record = patchRecord(entry.record, append.patch);
+              if (append.producer)
+                entry.producers.set(append.producer.producerId, { ...append.producer.next });
+              results.push(OperationResults.Appended({ record: copyRecord(entry.record) }));
+            },
+            Delete: () => {
               if (chain && hasDependents(state, id)) {
                 entry.record = patchRecord(entry.record, { lifecycle: { softDeleted: true } });
-                results.push({ _tag: "SoftDeleted", record: copyRecord(entry.record) });
+                results.push(OperationResults.SoftDeleted({ record: copyRecord(entry.record) }));
               } else {
-                results.push({ _tag: "Purged", record: copyRecord(entry.record) });
+                results.push(OperationResults.Purged({ record: copyRecord(entry.record) }));
                 purge(state, entry.record, chain, changed);
               }
-              break;
-            }
-          }
+            },
+          });
         }
         if (chain) indexDeadlines(state);
         const [first, ...rest] = results;
         if (!first) throw new Error("Empty mutation");
-        return { outcome: { _tag: "Applied", results: [first, ...rest] }, changed };
+        return { outcome: Mutations.Applied({ results: [first, ...rest] }), changed };
       };
       const storage = Storage.of({
         capabilities: {

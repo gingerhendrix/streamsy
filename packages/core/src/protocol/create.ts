@@ -9,7 +9,8 @@ import { ForkPlanBuilder, type ForkDescriptor } from "../policy/fork-plan-builde
 import { frameMessages } from "../policy/message-framer.ts";
 import type { CreateOptions } from "./options.ts";
 import { CreateConflict, ForkSourceNotFound, NotSupported, type CreateError } from "./errors.ts";
-import type { CreateResult } from "./results.ts";
+import { CreateResult } from "./results.ts";
+import { Operations, type Operation } from "../storage/mutation.ts";
 import { expireIfNeeded } from "./expiry.ts";
 
 type WritableConfig = { -readonly [K in keyof StreamConfig]: StreamConfig[K] };
@@ -51,12 +52,11 @@ const existingResult = Effect.fn("Protocol.existingResult")(function* (
       reason: "config-mismatch",
       message: "Stream exists with different configuration",
     });
-  return {
-    _tag: "Exists",
+  return CreateResult.Exists({
     nextOffset: record.currentOffset,
     contentType: record.config.contentType,
     closed: record.lifecycle.closed,
-  };
+  });
 });
 export const create = Effect.fn("Protocol.create")(function* (
   storage: typeof Storage.Service,
@@ -69,7 +69,7 @@ export const create = Effect.fn("Protocol.create")(function* (
   const existing = yield* expireIfNeeded(storage, id);
   if (Option.isSome(existing)) return yield* existingResult(existing.value, options);
   const now = yield* Clock.currentTimeMillis;
-  let plan: Extract<import("../storage/mutation.ts").Operation, { _tag: "Create" }>;
+  let plan: Extract<Operation, { _tag: "Create" }>;
   if (options.forkedFrom !== undefined) {
     const sourceId = StreamId.make(options.forkedFrom);
     const source = yield* expireIfNeeded(storage, sourceId);
@@ -88,11 +88,10 @@ export const create = Effect.fn("Protocol.create")(function* (
     if (storage.capabilities.fork === "copy") {
       const prefix = yield* storage.messages(sourceId, { until: plan.record.lifecycle.forkOffset });
       // The child keeps provenance for config idempotency; copy storage has no lineage edge.
-      plan = {
-        _tag: "Create",
+      plan = Operations.Create({
         record: plan.record,
         initialMessages: [...prefix, ...plan.initialMessages],
-      };
+      });
     }
   } else {
     const type = options.contentType ?? "application/octet-stream";
@@ -101,8 +100,7 @@ export const create = Effect.fn("Protocol.create")(function* (
     const initialMessages = (
       options.initialData ? frameMessages(options.initialData, type) : []
     ).map((data) => ({ data, offset: (offset = next(offset)), timestamp: now }));
-    plan = {
-      _tag: "Create",
+    plan = Operations.Create({
       record: {
         id: record.id,
         config: record.config,
@@ -110,18 +108,17 @@ export const create = Effect.fn("Protocol.create")(function* (
         currentOffset: offset,
       },
       initialMessages,
-    };
+    });
   }
   return yield* storage.mutate({ operations: [plan] }).pipe(
     Effect.uninterruptible,
     Effect.map((result): CreateResult => {
       const record = result.results[0].record;
-      return {
-        _tag: "Created",
+      return CreateResult.Created({
         nextOffset: record.currentOffset,
         contentType: record.config.contentType,
         closed: record.lifecycle.closed,
-      };
+      });
     }),
     Effect.catchTag("MutationRejected", (rejection): Effect.Effect<CreateResult, CreateError> => {
       if (rejection.reason === "exists" && Option.isSome(rejection.record))

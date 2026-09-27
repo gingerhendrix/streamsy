@@ -1,3 +1,5 @@
+import { Data } from "effect";
+
 /** Payload-only messages exposed by the public protocol; storage owns offsets and timestamps. */
 export interface ReadMessage {
   readonly data: Uint8Array;
@@ -30,6 +32,9 @@ export type AppendResult =
       readonly producerSeq: number;
       readonly closed: boolean;
     };
+/** Constructors and matchers for the protocol results above. */
+export const CreateResult = Data.taggedEnum<CreateResult>();
+export const AppendResult = Data.taggedEnum<AppendResult>();
 export interface ReadResult {
   readonly contentType: string;
   readonly messages: ReadonlyArray<ReadMessage>;

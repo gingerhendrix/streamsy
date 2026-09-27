@@ -1,5 +1,5 @@
 import { DateTime, Option } from "effect";
-import type { CreateResult } from "../protocol/results.ts";
+import { CreateResult } from "../protocol/results.ts";
 import { streamPath } from "./stream-path-service.ts";
 import * as Responses from "./responses.ts";
 const responses = Responses;
@@ -93,23 +93,12 @@ export function normalizeInitialData(
 }
 
 export function toResponse(result: CreateResult, location: string): Response {
-  switch (result._tag) {
-    case "Created":
-    case "Exists": {
-      const status = result._tag === "Created" ? 201 : 200;
-      const headers = new Headers({
-        "content-type": result.contentType,
-        "stream-next-offset": result.nextOffset,
-      });
-      if (status === 201) headers.set("location", location);
-      if (result.closed) headers.set("stream-closed", "true");
-      return responses.empty(status, headers);
-    }
-  }
-
-  return exhaustive(result);
-}
-
-function exhaustive(value: never): never {
-  throw new TypeError(`Unexpected result: ${String(value)}`);
+  const created = CreateResult.$is("Created")(result);
+  const headers = new Headers({
+    "content-type": result.contentType,
+    "stream-next-offset": result.nextOffset,
+  });
+  if (created) headers.set("location", location);
+  if (result.closed) headers.set("stream-closed", "true");
+  return responses.empty(created ? 201 : 200, headers);
 }

@@ -6,7 +6,7 @@
  * a stated invariant at the assertion site.
  */
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This module is the checked boundary between an author's codec record and the decoded parameter set; every widening below is guarded by the invariant in its own comment. */
-import { Option, Schema } from "effect";
+import { Data, Option, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 import * as StreamAddress from "./address.ts";
 import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-internal.ts";
@@ -45,6 +45,9 @@ export type PathSchema<P> = Schema.Codec<
   never
 >;
 type WithPathSchema<P> = { readonly paramSchema: PathSchema<P> };
+
+/** The route constructor. It owns the `StreamRoute` tag of every route. */
+const Route = Data.TaggedClass("StreamRoute");
 
 function pathSchema<C extends ParamCodecs>(codecs: C): PathSchema<Params<C>> {
   // SAFETY: Struct decodes exactly the codec record keys into Params<C>; each encoded field is a string.
@@ -198,14 +201,15 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
-  return {
-    _tag: "StreamRoute",
+  return new Route<
+    Omit<StreamRoute<Params<Codecs>, A, RD, RE, Template> & WithPathSchema<Params<Codecs>>, "_tag">
+  >({
     template,
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     address: (params) => StreamAddress.json(buildId(template, segments, codecs, params), options),
-  };
+  });
 }
 
 export function state<
@@ -222,15 +226,16 @@ export function state<
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
-  return {
-    _tag: "StreamRoute",
+  return new Route<
+    Omit<StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>>, "_tag">
+  >({
     template,
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     collections: options.collections,
     address: (params) => StreamAddress.state(buildId(template, segments, codecs, params), options),
-  };
+  });
 }
 
 export function bytes<const Template extends string, Codecs extends ParamCodecs>(
@@ -244,8 +249,13 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
-  return {
-    _tag: "StreamRoute",
+  return new Route<
+    Omit<
+      StreamRoute<Params<Codecs>, Uint8Array, never, never, Template> &
+        WithPathSchema<Params<Codecs>>,
+      "_tag"
+    >
+  >({
     template,
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
@@ -254,7 +264,7 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
       StreamAddress.bytes(buildId(template, segments, codecs, params), {
         contentType: options.contentType ?? "application/octet-stream",
       }),
-  };
+  });
 }
 
 /** Escape hatch for a grammar a template cannot express, such as a regex stream. */
@@ -262,11 +272,10 @@ export function custom<RouteParams, A, RD, RE>(options: {
   readonly parse: (id: string) => Option.Option<RouteParams>;
   readonly address: (params: RouteParams) => StreamAddress.StreamAddress<A, RD, RE>;
 }): StreamRoute<RouteParams, A, RD, RE> {
-  return {
-    _tag: "StreamRoute",
+  return new Route<Omit<StreamRoute<RouteParams, A, RD, RE>, "_tag">>({
     template: "",
     match: (id) => Option.isSome(options.parse(id)),
     parse: options.parse,
     address: options.address,
-  };
+  });
 }

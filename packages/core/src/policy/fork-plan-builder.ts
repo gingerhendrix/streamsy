@@ -1,7 +1,7 @@
-import { Predicate } from "effect";
+import { Data } from "effect";
 /** Fork-side validation and plan building. */
 
-import type { Operation } from "../storage/mutation.ts";
+import { Operations, type Operation } from "../storage/mutation.ts";
 import type { CreateOptions } from "./options.ts";
 import {
   ForkSourceNotFound,
@@ -9,7 +9,7 @@ import {
   InvalidForkRequest,
   type CreateError,
 } from "../protocol/errors.ts";
-import type { CreateResult } from "../protocol/results.ts";
+import { CreateResult } from "../protocol/results.ts";
 import { Offset, type StoredMessage, type StreamId, type StreamRecord } from "../schema/index.ts";
 interface Clock {
   now(): number;
@@ -30,13 +30,23 @@ export interface ForkExpiryOptions {
   expiresAt?: string;
 }
 
-export type ForkBuildResult =
-  | { _tag: "Rejected"; error: CreateError }
-  | {
-      _tag: "Fork";
-      plan: Extract<Operation, { _tag: "Create" }>;
-      toResult: (record: StreamRecord) => CreateResult;
-    };
+export type ForkBuildResult = Data.TaggedEnum<{
+  Rejected: { readonly error: CreateError };
+  Fork: {
+    readonly plan: Extract<Operation, { _tag: "Create" }>;
+    readonly toResult: (record: StreamRecord) => CreateResult;
+  };
+}>;
+
+export const ForkBuildResult = Data.taggedEnum<ForkBuildResult>();
+
+/** The partial-message prefix addressed by `forkSubOffset`, or why it is invalid. */
+type ForkPrefix = Data.TaggedEnum<{
+  Prefix: { readonly messages: Uint8Array[] };
+  Invalid: { readonly errorMessage: string };
+}>;
+
+const ForkPrefix = Data.taggedEnum<ForkPrefix>();
 
 export interface ForkPlanBuilderDeps {
   clock: Clock;
@@ -72,64 +82,58 @@ export class ForkPlanBuilder {
     sourceTail?: StoredMessage[],
   ): ForkBuildResult {
     if (!source)
-      return {
-        _tag: "Rejected",
+      return ForkBuildResult.Rejected({
         error: new ForkSourceNotFound({ id: targetId, source: sourcePath }),
-      };
+      });
     if (source.lifecycle.softDeleted) {
-      return {
-        _tag: "Rejected",
+      return ForkBuildResult.Rejected({
         error: new CreateConflict({
           id: targetId,
           reason: "fork-source-soft-deleted",
           message: `Source stream is soft-deleted: ${sourcePath}`,
         }),
-      };
+      });
     }
 
     const forkOffset = options.forkOffset ?? source.currentOffset;
     if (!isValid(forkOffset)) {
-      return {
-        _tag: "Rejected",
+      return ForkBuildResult.Rejected({
         error: new InvalidForkRequest({
           id: targetId,
           message: "Invalid Stream-Fork-Offset format",
         }),
-      };
+      });
     }
     if (
       compareOffsets(forkOffset, ZERO_OFFSET) < 0 ||
       compareOffsets(forkOffset, source.currentOffset) > 0
     ) {
-      return {
-        _tag: "Rejected",
+      return ForkBuildResult.Rejected({
         error: new InvalidForkRequest({
           id: targetId,
           message: "Stream-Fork-Offset exceeds source tail",
         }),
-      };
+      });
     }
 
     let contentType = options.contentType;
     if (!contentType || contentType.trim() === "") contentType = source.config.contentType;
     else if (!contentTypeMatches(contentType, source.config.contentType)) {
-      return {
-        _tag: "Rejected",
+      return ForkBuildResult.Rejected({
         error: new CreateConflict({
           id: targetId,
           reason: "fork-content-type",
           message: "Fork Content-Type does not match source",
         }),
-      };
+      });
     }
 
     const subOffset = options.forkSubOffset;
     const prefix = this.materializePrefix(subOffset, contentType, sourceTail);
-    if (Predicate.isTagged(prefix, "Invalid")) {
-      return {
-        _tag: "Rejected",
+    if (ForkPrefix.$is("Invalid")(prefix)) {
+      return ForkBuildResult.Rejected({
         error: new InvalidForkRequest({ id: targetId, message: prefix.errorMessage }),
-      };
+      });
     }
 
     const expiry = resolveForkExpiry(options, source);
@@ -146,23 +150,21 @@ export class ForkPlanBuilder {
       baseRecord.currentOffset,
     );
     const child = this.withInitialTail(baseRecord, initialMessages);
-    const plan: Extract<Operation, { _tag: "Create" }> = {
-      _tag: "Create",
+    const plan = Operations.Create({
       record: child,
       initialMessages,
       forkSource: { id: sourcePath, liveAtOffset: Offset.make(forkOffset) },
-    };
+    });
 
-    return {
-      _tag: "Fork",
+    return ForkBuildResult.Fork({
       plan,
-      toResult: (record) => ({
-        _tag: "Created",
-        nextOffset: record.currentOffset,
-        contentType,
-        closed: record.lifecycle.closed,
-      }),
-    };
+      toResult: (record) =>
+        CreateResult.Created({
+          nextOffset: record.currentOffset,
+          contentType,
+          closed: record.lifecycle.closed,
+        }),
+    });
   }
 
   /**
@@ -176,29 +178,26 @@ export class ForkPlanBuilder {
     subOffset: number | undefined,
     contentType: string,
     sourceTail: StoredMessage[] | undefined,
-  ): { _tag: "Prefix"; messages: Uint8Array[] } | { _tag: "Invalid"; errorMessage: string } {
-    if (subOffset === undefined || subOffset === 0) return { _tag: "Prefix", messages: [] };
+  ): ForkPrefix {
+    if (subOffset === undefined || subOffset === 0) return ForkPrefix.Prefix({ messages: [] });
     const tail = sourceTail ?? [];
     if (contentType.toLowerCase().startsWith("application/json")) {
       if (subOffset > tail.length)
-        return {
-          _tag: "Invalid",
+        return ForkPrefix.Invalid({
           errorMessage: "Stream-Fork-Sub-Offset exceeds source message count",
-        };
-      return { _tag: "Prefix", messages: tail.slice(0, subOffset).map((m) => m.data) };
+        });
+      return ForkPrefix.Prefix({ messages: tail.slice(0, subOffset).map((m) => m.data) });
     }
     const first = tail[0];
     if (!first)
-      return {
-        _tag: "Invalid",
+      return ForkPrefix.Invalid({
         errorMessage: "Stream-Fork-Sub-Offset has no source message to fork",
-      };
+      });
     if (subOffset > first.data.byteLength)
-      return {
-        _tag: "Invalid",
+      return ForkPrefix.Invalid({
         errorMessage: "Stream-Fork-Sub-Offset exceeds source message length",
-      };
-    return { _tag: "Prefix", messages: [first.data.subarray(0, subOffset)] };
+      });
+    return ForkPrefix.Prefix({ messages: [first.data.subarray(0, subOffset)] });
   }
 
   private initialMessages(

@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { attachStorage } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
+import { Operations } from "../storage/mutation.ts";
 import { StreamsReader, StreamsWriter } from "./tags.ts";
 import { create } from "./create.ts";
 import { append } from "./append.ts";
@@ -41,7 +42,7 @@ export const layer = (
         > {
           yield* expireIfNeeded(storage, id);
           yield* storage
-            .mutate({ operations: [{ _tag: "Delete", streamId: id, reason: "delete" }] })
+            .mutate({ operations: [Operations.Delete({ streamId: id, reason: "delete" })] })
             .pipe(
               Effect.uninterruptible,
               Effect.catchTag(

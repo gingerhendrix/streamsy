@@ -1,5 +1,6 @@
 import { Clock, Effect, Option } from "effect";
 import { Storage } from "../storage/storage.ts";
+import { Operations } from "../storage/mutation.ts";
 import { isExpired } from "../policy/expiry-policy.ts";
 import type { StreamId, StreamRecord } from "../schema/index.ts";
 
@@ -17,12 +18,11 @@ export const expireIfNeeded = Effect.fn("Protocol.expireIfNeeded")(function* (
     yield* storage
       .mutate({
         operations: [
-          {
-            _tag: "Delete",
+          Operations.Delete({
             streamId: id,
             reason: "expiry",
             expectedExpiresAtMs: record.value.lifecycle.expiresAtMs,
-          },
+          }),
         ],
       })
       .pipe(
@@ -44,13 +44,12 @@ export const touch = Effect.fn("Protocol.touch")(function* (
   yield* storage
     .mutate({
       operations: [
-        {
-          _tag: "Append",
+        Operations.Append({
           streamId: record.id,
           messages: [],
           expectedOffset: record.currentOffset,
           patch: { lifecycle: { expiresAtMs: now + record.config.ttlSeconds * 1000 } },
-        },
+        }),
       ],
     })
     .pipe(
@@ -70,12 +69,11 @@ export const expireDue = Effect.fn("Protocol.expireDue")(function* () {
     yield* storage
       .mutate({
         operations: [
-          {
-            _tag: "Delete",
+          Operations.Delete({
             streamId: deadline.value.streamId,
             reason: "expiry",
             expectedExpiresAtMs: deadline.value.at,
-          },
+          }),
         ],
       })
       .pipe(

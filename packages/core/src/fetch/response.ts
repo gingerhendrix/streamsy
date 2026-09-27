@@ -1,12 +1,12 @@
 /** Decode standard HTTP successes and fail with the protocol details carried by the wire. */
 import { DateTime, Effect, Option } from "effect";
-import type {
+import {
   AppendResult,
   CreateResult,
-  HeadResult,
-  ReadMessage,
-  ReadNextResult,
-  ReadResult,
+  type HeadResult,
+  type ReadMessage,
+  type ReadNextResult,
+  type ReadResult,
 } from "../protocol/results.ts";
 import { StreamId } from "../schema/index.ts";
 import {
@@ -86,12 +86,8 @@ export const create = (
       const contentType = yield* Wire.contentType(operation, response);
       const nextOffset = yield* Wire.offset(operation, response);
       const closed = yield* Wire.closedHeader(operation, response);
-      return {
-        _tag: response.status === 201 ? ("Created" as const) : ("Exists" as const),
-        nextOffset,
-        contentType,
-        closed,
-      };
+      const fields = { nextOffset, contentType, closed };
+      return response.status === 201 ? CreateResult.Created(fields) : CreateResult.Exists(fields);
     }
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
@@ -137,10 +133,10 @@ export const append = (
       );
       const closed = yield* Wire.closedHeader(operation, response);
       if (response.status === 200)
-        return { _tag: "Appended" as const, offset, producerEpoch, producerSeq, closed };
+        return AppendResult.Appended({ offset, producerEpoch, producerSeq, closed });
       // Close-only writes use 204 too; an already closed stream carries no tuple.
       if (context.producer !== true || (producerEpoch === undefined && producerSeq === undefined))
-        return { _tag: "Appended" as const, offset, closed };
+        return AppendResult.Appended({ offset, closed });
       if (producerEpoch === undefined || producerSeq === undefined)
         return yield* Effect.fail(
           Wire.failure(
@@ -149,7 +145,7 @@ export const append = (
             "Duplicate acknowledgement is missing producer state",
           ),
         );
-      return { _tag: "Duplicate" as const, offset, producerEpoch, producerSeq, closed };
+      return AppendResult.Duplicate({ offset, producerEpoch, producerSeq, closed });
     }
     if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
     if (response.status === 410) return yield* new StreamGone({ id: context.id });

@@ -20,7 +20,8 @@ import {
   InvalidAppendRequest,
   type AppendError,
 } from "./errors.ts";
-import type { AppendResult } from "./results.ts";
+import { AppendResult } from "./results.ts";
+import { Operations } from "../storage/mutation.ts";
 
 export const append = Effect.fn("Protocol.append")(function* (
   storage: typeof Storage.Service,
@@ -42,13 +43,12 @@ export const append = Effect.fn("Protocol.append")(function* (
       : undefined;
     // A retried acknowledged tuple wins even over a stale or malformed expected offset.
     if (validation && Predicate.isTagged(validation, "Duplicate"))
-      return {
-        _tag: "Duplicate",
+      return AppendResult.Duplicate({
         offset: record.currentOffset,
         producerEpoch: validation.epoch,
         producerSeq: validation.lastSeq,
         closed: record.lifecycle.closed,
-      };
+      });
     if (validation && !Predicate.isTagged(validation, "Accepted"))
       return yield* rejectionToAppendError(validation, id);
     const wantClose = options.close === true;
@@ -58,7 +58,7 @@ export const append = Effect.fn("Protocol.append")(function* (
     if (options.data.byteLength === 0 && !closeOnly)
       return yield* new InvalidAppendRequest({ id, message: "Empty append" });
     if (closeOnly && record.lifecycle.closed)
-      return { _tag: "Appended", offset: record.currentOffset, closed: true };
+      return AppendResult.Appended({ offset: record.currentOffset, closed: true });
     if (record.lifecycle.closed)
       return yield* new StreamClosed({ id, offset: record.currentOffset });
     if (!closeOnly && !contentTypeMatches(record.config.contentType, options.contentType))
@@ -94,24 +94,23 @@ export const append = Effect.fn("Protocol.append")(function* (
       lifecycle.expiresAtMs = now + record.config.ttlSeconds * 1000;
     const accepted =
       validation && Predicate.isTagged(validation, "Accepted") ? validation : undefined;
-    const operation = {
-      _tag: "Append" as const,
+    const operation = Operations.Append({
       streamId: id,
       messages,
       patch: { currentOffset: offset, lifecycle },
       expectedOffset: record.currentOffset,
       expectedClosed: false,
-    };
+    });
     const withProducer =
       producer && accepted
-        ? {
+        ? Operations.Append({
             ...operation,
             producer: {
               producerId: ProducerId.make(producer.producerId),
               expected: saved,
               next: accepted.proposedState,
             },
-          }
+          })
         : operation;
     const applied = yield* storage.mutate({ operations: [withProducer] }).pipe(
       Effect.uninterruptible,
@@ -119,13 +118,12 @@ export const append = Effect.fn("Protocol.append")(function* (
       Effect.catchTag("MutationRejected", () => Effect.succeed(false)),
     );
     if (applied)
-      return {
-        _tag: "Appended",
+      return AppendResult.Appended({
         offset,
         closed: wantClose,
         producerEpoch: accepted?.proposedState.epoch,
         producerSeq: accepted?.proposedState.lastSeq,
-      };
+      });
   }
   return yield* new StreamBusy({ id });
 });

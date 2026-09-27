@@ -9,5 +9,8 @@ export {
   OperationResult,
   MutationApplied,
   MutationRejected,
+  Operations,
+  OperationResults,
+  Mutations,
 } from "./mutation.ts";
 export * as Memory from "./memory/streams.ts";
