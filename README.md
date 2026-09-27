@@ -40,7 +40,7 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
 Read the [introduction](https://streamsy.dev/docs/introduction) for the path
-from a typed ref to a served projection.
+from a typed stream address to a served projection.
 
 ## Examples
 
@@ -51,6 +51,11 @@ from a typed ref to a served projection.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.
+- [Issue tracker projection](examples/issue-tracker/README.md): five workspace
+  inputs in two checkpointed SQLite projections, with output streams and HTTP
+  routes.
+- [Hex board](examples/hex-board/README.md): a whole game board kept as fold
+  state in the checkpoint transaction, with SQLite restart tests.
 - [Fold agent](examples/fold-agent/README.md): an agent loop whose durable log
   lives in Streamsy and fences competing writers by offset.
 
