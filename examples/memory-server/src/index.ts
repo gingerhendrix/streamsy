@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This executable owns the HTTP listener and process configuration. */
 import { Streamsy, Memory } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
-import { listener } from "@streamsy/serve/bun";
+import { drainOnShutdown, listener } from "@streamsy/serve/bun";
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 
@@ -12,6 +12,7 @@ const runtime = ManagedRuntime.make(
     disableLogger: true,
     disableListenLog: true,
   }).pipe(
+    drainOnShutdown(),
     Layer.provide(Memory.layer({}, streams)),
     Layer.provideMerge(
       listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),

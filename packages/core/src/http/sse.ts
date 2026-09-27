@@ -7,6 +7,7 @@ import { generateCursor } from "../policy/cursor-generator.ts";
 import * as SseEvents from "./sse-event-encoder.ts";
 import type { SseControlData } from "./sse-event-encoder.ts";
 import { concatBytes } from "./message-body-codec.ts";
+import type { ShutdownSignalService } from "./shutdown-signal.ts";
 
 const events = SseEvents;
 
@@ -29,6 +30,7 @@ export function sse(
   offset: string,
   cursor?: string,
   deadlineMs = 60_000,
+  signal?: ShutdownSignalService,
 ) {
   const encoding = {
     isJson: contentType.toLowerCase().startsWith("application/json"),
@@ -81,6 +83,10 @@ export function sse(
         ).pipe(Stream.drain),
         { haltStrategy: "either" },
       ),
+      // A host drain ends the body the same way as the deadline: after a whole batch.
+      Stream.merge(Stream.fromEffect(signal?.draining ?? Effect.never).pipe(Stream.drain), {
+        haltStrategy: "either",
+      }),
     );
   });
   const headers = new Headers({
@@ -89,5 +95,6 @@ export function sse(
     connection: "keep-alive",
   });
   if (encoding.useBase64) headers.set("stream-sse-data-encoding", "base64");
-  return HttpServerResponse.stream(frames, { headers: Object.fromEntries(headers) });
+  const body = signal === undefined ? frames : signal.trackStream(frames);
+  return HttpServerResponse.stream(body, { headers: Object.fromEntries(headers) });
 }

@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- This executable owns process shutdown and the ManagedRuntime boundary. */
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { listener } from "@streamsy/serve/bun";
+import { drainOnShutdown, listener } from "@streamsy/serve/bun";
 import { newestLimit, pollIntervalMs, port, serverIdleTimeoutSeconds } from "./config.ts";
 import { app } from "./http.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
@@ -13,6 +13,7 @@ const applicationLayer = newestStoriesPollerLayer({
 }).pipe(Layer.provideMerge(demoHostLayer));
 const runtime = ManagedRuntime.make(
   HttpRouter.serve(app, { disableLogger: true }).pipe(
+    drainOnShutdown(),
     Layer.provide(applicationLayer),
     Layer.provide(
       listener({ port, idleTimeout: serverIdleTimeoutSeconds, gracefulShutdownTimeout: 1000 }),

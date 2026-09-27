@@ -10,7 +10,7 @@ import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
 import { Http, Streamsy, Memory } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
-import { listener } from "@streamsy/serve/bun";
+import { drainOnShutdown, listener } from "@streamsy/serve/bun";
 
 class Events extends Streamsy.json<Events>()("Readme/Events", "events/:seat", {
   params: { seat: Schema.String },
@@ -24,6 +24,7 @@ const App = Layer.mergeAll(
 BunRuntime.runMain(
   Layer.launch(
     HttpRouter.serve(App).pipe(
+      drainOnShutdown(),
       Layer.provide(Memory.layer({}, streams)),
       Layer.provide(listener({ port: 3000 })),
     ),
@@ -53,11 +54,43 @@ on the pinned Effect/Bun router; client abort releases a parked long poll.
 The caller owns the Layer scope. Tests or custom hosts can use Effect's
 `HttpRouter.toWebHandler(App)` and must call its `dispose` at shutdown.
 
+### Draining live readers on shutdown
+
+Without a drain, closing the serve layer interrupts every handler. A parked
+long poll then gets an empty `503` and an open SSE body is reset with no final
+event. Wrap the serve layer with `drainOnShutdown()` so live readers take
+their normal reconnect path instead:
+
+```ts
+HttpRouter.serve(App).pipe(
+  drainOnShutdown({ timeout: "2 seconds" }),
+  Layer.provide(Memory.layer({}, streams)),
+  Layer.provideMerge(listener({ port: 3000 })),
+);
+```
+
+Apply it to the serve layer itself, before storage and the listener. Layers
+close in the reverse order of their build, so the drain closes first. The
+shutdown order is then:
+
+1. The drain signals every live read. A parked long poll answers `204` with
+   `Stream-Next-Offset`, `Stream-Up-To-Date` and a fresh `Stream-Cursor`, the
+   same as a long-poll timeout. An open SSE body ends after its last whole
+   batch, which ends with a control event.
+2. The drain waits until no live read is running, or until `timeout` passes
+   (default 2 seconds). A live request that arrives in this window gets the
+   same reply at once.
+3. The serve layer closes and interrupts any handler that is still running.
+4. Storage closes, then the listener stops.
+
+The Durable Object host does not get this signal. Streamsy code does not see a
+shutdown there. Without `drainOnShutdown`, the routes keep today's behaviour.
+
 | Entry                                                                   | Exports                                                                         |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `.`                                                                     | `Serve.stream`, `Serve.state`, `Serve.value`, their types; `PublicErrorSchema`  |
 | `/contract`                                                             | Effect-free headers, public errors/decoder, canonical JSON, fingerprints        |
-| `/bun`                                                                  | `listener`, listener options and defaults                                       |
+| `/bun`                                                                  | `listener`, `drainOnShutdown`, their options and defaults                       |
 | `/cloudflare`                                                           | `StreamsyObject`, placement router/rules, alarm service                         |
 | `/alchemy`                                                              | `objectHandlers`, placement router/rules, alarm service                         |
 | `/action`                                                               | Unchanged action declarations                                                   |

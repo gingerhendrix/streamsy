@@ -4,3 +4,8 @@ export { streamPath } from "./stream-path-service.ts";
 export { routes, type RoutesOptions, type Access } from "./routes.ts";
 export { read, checkReadOptions, type ReadOptions } from "./read-program.ts";
 export { securityHeaders } from "./security-headers.ts";
+export {
+  ShutdownSignal,
+  layerShutdownSignal,
+  type ShutdownSignalService,
+} from "./shutdown-signal.ts";

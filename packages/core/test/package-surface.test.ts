@@ -12,8 +12,10 @@ test("public roots expose application tools and isolate internals", () => {
   expect(Object.keys(Protocol.Protocol)).not.toContain("create");
   expect(Object.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
   expect(Object.keys(Http)).toEqual([
+    "ShutdownSignal",
     "app",
     "checkReadOptions",
+    "layerShutdownSignal",
     "read",
     "routes",
     "securityHeaders",

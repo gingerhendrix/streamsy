@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- The executable host owns its SQLite path. */
-import { listener } from "@streamsy/serve/bun";
+import { drainOnShutdown, listener } from "@streamsy/serve/bun";
 import { Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { mkdir } from "node:fs/promises";
@@ -14,6 +14,7 @@ const workspaces = (process.env.ISSUE_TRACKER_WORKSPACES ?? "acme,live").split("
 if (databasePath !== ":memory:") await mkdir(dirname(databasePath), { recursive: true });
 const runtime = ManagedRuntime.make(
   HttpRouter.serve(app(workspaces), { disableLogger: true, disableListenLog: true }).pipe(
+    drainOnShutdown(),
     Layer.provide(applicationLayer(databasePath, workspaces)),
     Layer.provideMerge(listener({ port })),
   ),

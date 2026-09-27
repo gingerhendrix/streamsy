@@ -321,3 +321,89 @@ it("a parked long poll survives past 10 seconds under the default idle timeout",
     await probe.settle(1500);
   }
 }, 20_000);
+
+const drainingHost = async (layer: TestHostOptions["layer"]) => {
+  const host = await Effect.runPromise(
+    testHost({ layer, port: 0, drain: { timeout: Duration.seconds(2) } }),
+  );
+  const created = await fetch(new URL("s", host.url), {
+    method: "PUT",
+    headers: { "content-type": "text/plain" },
+    body: "seed",
+  });
+  const tail = created.headers.get("stream-next-offset");
+  if (!tail) throw new Error("Expected current tail");
+  return { host, tail };
+};
+
+it("a draining host answers a parked long poll with 204, offset and cursor", async () => {
+  const readStarted = Deferred.makeUnsafe<void>();
+  const hold = Deferred.makeUnsafe<void>();
+  const { host, tail } = await drainingHost(parkableLayer(readStarted, hold));
+  try {
+    const url = new URL("s", host.url);
+    url.search = `offset=${tail}&live=long-poll`;
+    const pending = fetch(url);
+    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
+    const startedAt = performance.now();
+    await Effect.runPromise(host.stop);
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    const response = await pending;
+    expect(response.status).toBe(204);
+    expect(response.headers.get("stream-next-offset")).toBe(tail);
+    expect(response.headers.get("stream-up-to-date")).toBe("true");
+    expect(response.headers.get("stream-cursor")).toMatch(/^\d+$/);
+  } finally {
+    Deferred.doneUnsafe(hold, Exit.void);
+    await Effect.runPromise(host.stop);
+  }
+});
+
+it("a draining host ends an open SSE body cleanly after a control event", async () => {
+  const { host } = await drainingHost(memoryLayer());
+  try {
+    const url = new URL("s", host.url);
+    url.search = "offset=-1&live=sse";
+    const response = await fetch(url);
+    if (!response.body) throw new Error("Expected SSE response body");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = decoder.decode((await reader.read()).value);
+    expect(text).toContain("event: control");
+    await Effect.runPromise(host.stop);
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())
+      text += decoder.decode(chunk.value);
+    expect(await reader.closed).toBeUndefined();
+    expect(text).toMatch(/event: control\ndata:\{[^\n]*"streamNextOffset"[^\n]*\}\n\n$/);
+  } finally {
+    await Effect.runPromise(host.stop);
+  }
+});
+
+it("without a drain a parked long poll does not get the drain 204", async () => {
+  const readStarted = Deferred.makeUnsafe<void>();
+  const hold = Deferred.makeUnsafe<void>();
+  const host = await Effect.runPromise(
+    testHost({ layer: parkableLayer(readStarted, hold), port: 0 }),
+  );
+  try {
+    const created = await fetch(new URL("s", host.url), {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: "seed",
+    });
+    const url = new URL("s", host.url);
+    url.search = `offset=${created.headers.get("stream-next-offset")}&live=long-poll`;
+    const outcome = fetch(url).then(
+      (response) => response.status,
+      () => "error",
+    );
+    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
+    await Effect.runPromise(host.stop);
+    // Today's abrupt shutdown: an empty 503 or a reset connection.
+    expect(await outcome).not.toBe(204);
+  } finally {
+    Deferred.doneUnsafe(hold, Exit.void);
+    await Effect.runPromise(host.stop);
+  }
+});

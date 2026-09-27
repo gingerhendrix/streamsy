@@ -194,9 +194,20 @@ try {
   await Bun.sleep(250);
   assert(!settled, "shutdown probe should have a parked long poll");
   await stopServer(server);
-  const interrupted = await parked;
-  assert(interrupted.status === 503, `shutdown long-poll status ${interrupted.status}`);
-  await interrupted.text();
+  // drainOnShutdown answers the parked poll like a long-poll timeout, so the
+  // client reconnects from the same offset instead of seeing an error.
+  const drained = await parked;
+  assert(drained.status === 204, `shutdown long-poll status ${drained.status}`);
+  assert(
+    requiredHeader(drained, "stream-next-offset") === secondOffset,
+    "shutdown long-poll should return the current tail",
+  );
+  assert(
+    drained.headers.get("stream-up-to-date") === "true",
+    "shutdown long-poll should be up to date",
+  );
+  requiredHeader(drained, "stream-cursor");
+  await drained.text();
   server = startServer();
   await waitForServer();
 

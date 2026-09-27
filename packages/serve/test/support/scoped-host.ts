@@ -4,10 +4,17 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { NetAddress } from "effect/unstable/net";
 import { Http } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { listener, type ListenerOptions } from "../../src/bun.ts";
+import {
+  drainOnShutdown,
+  listener,
+  type DrainOptions,
+  type ListenerOptions,
+} from "../../src/bun.ts";
 
 export interface TestHostOptions<E = never> extends ListenerOptions, Http.HttpOptions {
   readonly layer: Layer.Layer<StreamsReader | StreamsWriter, E>;
+  /** Drain live reads before the routes close. Unset keeps the abrupt shutdown. */
+  readonly drain?: DrainOptions;
 }
 export interface TestHost {
   readonly port: number;
@@ -29,8 +36,9 @@ export function testHost<E>(options: TestHostOptions<E>) {
             prefix:
               options.pathPrefix === undefined ? "/" : `/${options.pathPrefix.replace(/^\//, "")}`,
           });
+          const serve = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true });
           const context = yield* Layer.build(
-            HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+            (options.drain === undefined ? serve : serve.pipe(drainOnShutdown(options.drain))).pipe(
               Layer.provide(options.layer),
               Layer.provideMerge(listener(options)),
             ),
