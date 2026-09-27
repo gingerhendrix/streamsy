@@ -181,6 +181,44 @@ it("follow filters a timed-out long poll before yielding the next message", () =
     }).pipe(Effect.scoped),
   ));
 
+it("follow echoes the cursor from each live read on the next live read", () =>
+  check(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 1 }]);
+      const control = yield* StreamsTest;
+      const inner = yield* StreamsReader;
+      const sent: Array<string | undefined> = [];
+      const returned: Array<string> = [];
+      const recording = StreamsReader.of({
+        ...inner,
+        readNext: (id, options) => {
+          sent.push(options.cursor);
+          return inner
+            .readNext(id, options)
+            .pipe(Effect.tap((result) => Effect.sync(() => returned.push(result.cursor))));
+        },
+      });
+      const fiber = yield* Streams.follow(address).pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.provideService(StreamsReader, recording),
+        Effect.forkScoped,
+      );
+      yield* control.snapshot;
+      yield* Streams.append(address, [{ n: 2 }]);
+      yield* control.snapshot;
+      yield* Streams.append(address, [{ n: 3 }]);
+      const batches = yield* Fiber.join(fiber);
+      expect(batches.flatMap((batch) => batch.items)).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+      // The catch-up read has no cursor, so the first live read sends none.
+      expect(sent[0]).toBeUndefined();
+      expect(sent.length).toBeGreaterThanOrEqual(2);
+      expect(sent[1]).toBeString();
+      expect(sent.slice(1)).toEqual(returned.slice(0, sent.length - 1));
+    }).pipe(Effect.scoped),
+  ));
+
 it("follow yields an empty close that arrives while its live read is parked", () =>
   check(
     Effect.gen(function* () {

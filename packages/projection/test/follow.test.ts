@@ -208,6 +208,38 @@ test("a closed and drained input beside an open one does not wake every cycle", 
     }),
   ));
 
+test("a completed wake hint echoes its cursor on the next hint for that input", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.create(output);
+      const cursors: Array<string | undefined> = [];
+      const second = yield* Deferred.make<void>();
+      const fiber = yield* withReader(
+        Projection.follow(positives, { repairIntervalMs: 10_000 }),
+        () => ({
+          readNext: (_id, options) => {
+            cursors.push(options.cursor);
+            return cursors.length === 1
+              ? Effect.succeed({
+                  contentType: "application/json",
+                  messages: [],
+                  nextOffset: options.offset,
+                  upToDate: true,
+                  closed: false,
+                  cursor: "cursor-1",
+                  timedOut: true,
+                })
+              : Deferred.succeed(second, undefined).pipe(Effect.andThen(Effect.never));
+          },
+        }),
+      );
+      yield* Deferred.await(second);
+      expect(cursors).toEqual([undefined, "cursor-1"]);
+      yield* Fiber.interrupt(fiber);
+    }),
+  ));
+
 test("follow rejects invalid options before reading", () =>
   run(
     Effect.gen(function* () {

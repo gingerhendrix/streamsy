@@ -1,6 +1,6 @@
 import { Checkpoints } from "./checkpoint.ts";
 import type { Outputs } from "./outputs.ts";
-import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
+import { Duration, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -28,8 +28,9 @@ export const defaultRetry = Schedule.exponential("200 millis").pipe(
 );
 
 /**
- * One wake hint per input; the response is discarded because the next run is
- * authoritative. A closed input answers `readNext` at once, so a closed and
+ * One wake hint per input; the messages are discarded because the next run is
+ * authoritative. Only the response cursor is kept, so the next hint on that
+ * input echoes it. A closed input answers `readNext` at once, so a closed and
  * drained input parks for the interval instead of waking every cycle; the
  * open inputs, and the interval itself, decide when the next run happens.
  */
@@ -38,7 +39,9 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
   address: Streamsy.Address<unknown, R>,
   offset: string,
   interval: number,
+  cursors: Ref.Ref<Readonly<Record<string, string>>>,
 ) {
+  const cursor = (yield* Ref.get(cursors))[input];
   const { wire: reader } = yield* address.stream;
   const historyUnavailable = () =>
     new ProjectionFault({
@@ -55,7 +58,10 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
       message: `Cannot wait on ${address.id}`,
       cause,
     });
-  return yield* reader.readNext(address.id, { offset }).pipe(
+  return yield* reader.readNext(address.id, { offset, cursor }).pipe(
+    Effect.tap((result) =>
+      Ref.update(cursors, (current) => ({ ...current, [input]: result.cursor })),
+    ),
     Effect.flatMap((result) =>
       result.closed && result.messages.length === 0 ? Effect.never : Effect.void,
     ),
@@ -112,10 +118,11 @@ export const follow = Effect.fn("Projection.follow")(function* <
       reason: "invalid-options",
       message: "repairIntervalMs must be a positive safe integer",
     });
+  const cursors = yield* Ref.make<Readonly<Record<string, string>>>({});
   const wake = (result: Progress<Inputs>) =>
     Effect.raceAllFirst(
       inputEntries(projection.inputs).map(([name, address]) =>
-        hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval),
+        hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval, cursors),
       ),
     );
   const cycle = run(projection, options).pipe(

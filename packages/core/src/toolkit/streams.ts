@@ -105,24 +105,34 @@ export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: Read
     }),
   );
 }
+interface FollowState {
+  readonly offset: string | undefined;
+  readonly live: boolean;
+  /** Last `Stream-Cursor` from a live read; echoed on the next one for CDN collapsing. */
+  readonly cursor: string | undefined;
+}
 /** Catch up, then wait one readNext at a time, filtering empty open batches. */
 export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: ReadOptions = {}) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
-      return Stream.paginate({ offset: options.offset, live: false }, (state) =>
+      const initial: FollowState = { offset: options.offset, live: false, cursor: undefined };
+      const live = (state: FollowState) =>
+        reader
+          .readNext(address.id, { offset: state.offset ?? "-1", cursor: state.cursor })
+          .pipe(Effect.map((result) => [result, result.cursor] as const));
+      const catchUp = (state: FollowState) =>
+        reader
+          .read(address.id, { ...options, offset: state.offset })
+          .pipe(Effect.map((result) => [result, state.cursor] as const));
+      return Stream.paginate(initial, (state) =>
         Effect.gen(function* () {
-          const batch = yield* decode(
-            address,
-            state.live
-              ? yield* reader.readNext(address.id, { offset: state.offset ?? "-1" })
-              : yield* reader.read(address.id, { ...options, offset: state.offset }),
-          );
+          const [result, cursor] = yield* state.live ? live(state) : catchUp(state);
+          const batch = yield* decode(address, result);
+          const next: FollowState = { offset: batch.nextOffset, live: batch.upToDate, cursor };
           return [
             batch.items.length > 0 || batch.closed ? [batch] : [],
-            batch.closed
-              ? Option.none()
-              : Option.some({ offset: batch.nextOffset, live: batch.upToDate }),
+            batch.closed ? Option.none() : Option.some(next),
           ] as const;
         }),
       );
