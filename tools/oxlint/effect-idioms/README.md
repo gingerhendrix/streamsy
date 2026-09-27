@@ -22,7 +22,7 @@ These places may still name `_tag` directly, and the rules do not report them:
 - shorthand properties, such as `{ _tag, route }` in a wire decoder;
 - values inside `expect(...)`, `toEqual`, `toMatchObject`, and similar test assertions.
 
-`.oxlintrc.effect.json` turns the rules off in test files and `src/testing/`. For a deliberate
+`.oxlintrc.json` turns the rules off in test files and `src/testing/`. For a deliberate
 exception elsewhere, such as an external API option, use a line disable with a reason:
 
 ```ts

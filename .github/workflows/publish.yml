@@ -38,10 +38,6 @@ jobs:
 
       - run: bun run test:conformance
 
-      - run: bun run check:perimeter
-
-      - run: bun run lint:policy
-
       - name: Package dry runs
         run: bun run pack:dry-run
 

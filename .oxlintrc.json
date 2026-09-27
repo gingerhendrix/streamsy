@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"],
+  "plugins": ["typescript", "unicorn", "oxc", "effecttsgo"],
   "options": {
     "typeAware": true
   },
@@ -26,8 +27,31 @@
     "anti-slop/no-unknown-type-aliases": "error",
     "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
-    "anti-slop/require-safety-comment-for-type-assertion": "error"
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "anti-slop-effect/no-service-constructor-imports": "error",
+    "effect-idioms/no-tag-comparison": "error",
+    "effect-idioms/no-tag-destructure": "error",
+    "effect-idioms/no-tag-literal": "error",
+    "effect-idioms/no-tag-switch": "error"
   },
+  "overrides": [
+    {
+      "files": ["packages/storage/test/support/do-worker.ts"],
+      "rules": {
+        "anti-slop-effect/no-service-constructor-imports": "off"
+      }
+    },
+    {
+      // Tests and test support assert encoded wire shapes, so they name `_tag` directly.
+      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/src/testing/**"],
+      "rules": {
+        "effect-idioms/no-tag-comparison": "off",
+        "effect-idioms/no-tag-destructure": "off",
+        "effect-idioms/no-tag-literal": "off",
+        "effect-idioms/no-tag-switch": "off"
+      }
+    }
+  ],
   "ignorePatterns": [
     ".agent/**",
     ".agents/**",
@@ -46,6 +70,14 @@
     {
       "name": "anti-slop",
       "specifier": "./tools/oxlint/anti-slop/index.ts"
+    },
+    {
+      "name": "anti-slop-effect",
+      "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
+    },
+    {
+      "name": "effect-idioms",
+      "specifier": "./tools/oxlint/effect-idioms/index.ts"
     }
   ]
 }

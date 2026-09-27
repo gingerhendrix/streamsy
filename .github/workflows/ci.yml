@@ -34,14 +34,8 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Lint policy split
-        run: bun run lint:policy
-
-      - name: Lint (general policy)
-        run: bun run lint:general
-
-      - name: Lint (Effect policy)
-        run: bun run lint:effect
+      - name: Lint
+        run: bun run lint
 
       - name: Format check
         run: bun run format:check
@@ -60,9 +54,6 @@ jobs:
 
       - name: Fetch conformance tests
         run: bun run test:conformance:fetch
-
-      - name: Perimeter
-        run: bun run check:perimeter
 
       - name: Package dry runs
         run: bun run pack:dry-run

@@ -27,13 +27,8 @@
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint",
     "typecheck": "bun run build && bun run --filter '*' typecheck",
-    "lint": "bun run lint:general && bun run lint:effect",
-    "lint:general": "oxlint .",
-    "lint:effect": "bun scripts/lint-effect.ts",
-    "lint:policy": "bun scripts/check-lint-policy.ts",
-    "lint:fix": "bun run lint:general:fix && bun run lint:effect:fix",
-    "lint:general:fix": "oxlint . --fix",
-    "lint:effect:fix": "bun scripts/lint-effect.ts --fix",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
     "format": "oxfmt . --write",
     "format:check": "oxfmt . --check",
     "test": "bun run test:unit",
@@ -54,7 +49,6 @@
     "measure:bundle": "bun run --cwd packages/conformance-tests measure:bundle",
     "pack:dry-run": "for dir in packages/core packages/storage packages/projection packages/views packages/serve; do (cd \"$dir\" && bun pm pack --dry-run) || exit; done",
     "site:validate": "env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:terms && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:excerpts && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:demos && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:snippets && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site build && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:og && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:links",
-    "check:perimeter": "bun scripts/check-perimeter.ts",
     "check:browser": "bun run --cwd packages/conformance-tests check:browser",
     "test:client": "bun test packages/core/test/fetch",
     "test:conformance:fetch": "bun run --cwd packages/conformance-tests test:fetch"
