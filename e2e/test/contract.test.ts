@@ -6,7 +6,7 @@ import {
   decodeWorkerTarget,
   expectedWorkerName,
   isValidStage,
-  makeStage,
+  stageName,
 } from "../src/contract.ts";
 import {
   HttpOperation,
@@ -20,18 +20,18 @@ import {
 import { awaitGone, awaitReady } from "../src/run.ts";
 
 test("stage generation uses the fixed short format and rejects unsafe inputs", () => {
-  const stage = makeStage(1_800_000_000, "abcdef");
+  const stage = stageName(1_800_000_000, "abcdef");
   expect(stage).toBe("c-tro8w0-abcdef");
   expect(stage.length).toBeLessThanOrEqual(16);
   expect(isValidStage(stage)).toBe(true);
-  expect(() => makeStage(-1, "abcdef")).toThrow(ContractError);
-  expect(() => makeStage(1, "ABCDEF")).toThrow(ContractError);
+  expect(() => stageName(-1, "abcdef")).toThrow(ContractError);
+  expect(() => stageName(1, "ABCDEF")).toThrow(ContractError);
   expect(isValidStage("c-s4l6mo-abcdef-collision")).toBe(false);
   expect(expectedWorkerName(stage)).toBe(`streamsy-conf-${stage}`);
 });
 
 test("worker output decoding is schema-backed and distrusts arbitrary targets", () => {
-  const stage = makeStage(1_800_000_000, "abcdef");
+  const stage = stageName(1_800_000_000, "abcdef");
   const workerName = expectedWorkerName(stage);
   expect(
     decodeWorkerTarget({ workerName, url: "https://streamsy.example.workers.dev" }, workerName),

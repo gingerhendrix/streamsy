@@ -6,7 +6,7 @@ export const COMPATIBILITY_DATE = "2026-07-30";
 export const COMPATIBILITY_FLAGS = ["nodejs_compat"] as const;
 export const CONFORMANCE_LONG_POLL_TIMEOUT_MS = 1_500;
 export const HOSTED_STATUS =
-  "Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled in this local package pending independently reviewed live adapters and a reconciled run plan, including destroy/cleanup and required query scope. Hosted acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.";
+  "Deployed e2e run: the prebuilt conformance Worker on a throwaway workers.dev stage, the official suite, then destroy. Cloudflare metadata is not queried. The audit reads Alchemy local state for the stage.";
 
 export class ContractError extends Schema.TaggedError<ContractError>()("ContractError", {
   message: Schema.String,
@@ -21,7 +21,7 @@ export type StackOutput = typeof StackOutput.Type;
 export const isValidStage = (stage: string): boolean =>
   stage.length <= 16 && /^c-[0-9a-z]+-[0-9a-f]{6}$/.test(stage);
 
-export const makeStage = (timestampSeconds: number, runId: string): string => {
+export const stageName = (timestampSeconds: number, runId: string): string => {
   if (!Number.isSafeInteger(timestampSeconds) || timestampSeconds < 0) {
     throw new ContractError({ message: "Stage timestamp must be a nonnegative safe integer" });
   }

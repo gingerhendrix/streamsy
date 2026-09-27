@@ -151,6 +151,7 @@ const checks = [
       "!packages/conformance-tests/test/fetch.conformance.test.ts",
       "!packages/conformance-tests/test/sqlite.conformance.test.ts",
       "!packages/conformance-tests/test/workerd.conformance.test.ts",
+      "!packages/conformance-tests/test/deployed.conformance.test.ts",
     ],
   ),
   scan("no Effect Vitest integration", ["@effect", "vitest"].join("[/]"), [

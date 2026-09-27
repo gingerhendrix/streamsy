@@ -32,3 +32,6 @@ examples/fold-agent/.data/
 # Hacker News example local database
 examples/hackernews-newest-stream/.data/
 examples/issue-tracker-demo/.data/
+
+# Deployed e2e run reports
+e2e/reports/
