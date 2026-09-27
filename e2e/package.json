@@ -1,5 +1,5 @@
 {
-  "name": "@streamsy/hosted-preparation",
+  "name": "@streamsy/e2e",
   "version": "0.4.0",
   "private": true,
   "type": "module",

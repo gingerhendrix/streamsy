@@ -28,7 +28,7 @@ export const effectAreas = [
   "examples/issue-tracker-demo",
   "examples/issue-tracker",
   "examples/memory-server",
-  "hosted",
+  "e2e",
 ] as const;
 
 /** An async function is an Effect diagnostic; `Array#sort()` is a general one. */
@@ -45,7 +45,7 @@ const probeSource = [
 
 const generalProbe = "packages/conformance-tests/src/__lint-policy-probe__.ts";
 const effectProbe = "packages/serve/src/__lint-policy-probe__.ts";
-const hostedEffectProbe = "hosted/src/__lint-policy-probe__.ts";
+const e2eEffectProbe = "e2e/src/__lint-policy-probe__.ts";
 
 interface Diagnostic {
   code: string;
@@ -121,7 +121,7 @@ if (import.meta.main)
   try {
     writeProbe(generalProbe);
     writeProbe(effectProbe);
-    writeProbe(hostedEffectProbe);
+    writeProbe(e2eEffectProbe);
 
     const general = lint(["."]);
     const effect = lint(["--config", ".oxlintrc.effect.json", ...effectAreas]);
@@ -152,10 +152,9 @@ if (import.meta.main)
     );
     check(
       effect.some(
-        (d) =>
-          normalise(d.filename) === hostedEffectProbe && d.code === "effecttsgo(async-function)",
+        (d) => normalise(d.filename) === e2eEffectProbe && d.code === "effecttsgo(async-function)",
       ),
-      "Effect policy reports an Effect violation in hosted",
+      "Effect policy reports an Effect violation in e2e",
     );
     check(
       effect.every((d) => effectAreas.some((area) => normalise(d.filename).startsWith(`${area}/`))),
@@ -168,7 +167,7 @@ if (import.meta.main)
   } finally {
     rmSync(join(repoRoot, generalProbe), { force: true });
     rmSync(join(repoRoot, effectProbe), { force: true });
-    rmSync(join(repoRoot, hostedEffectProbe), { force: true });
+    rmSync(join(repoRoot, e2eEffectProbe), { force: true });
   }
 
 if (import.meta.main) {

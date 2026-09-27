@@ -59,7 +59,7 @@ const checks = [
   scan(
     "no retired names",
     retiredNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-    ["packages/**", "examples/**", "hosted/**", "site/content/docs/**"],
+    ["packages/**", "examples/**", "e2e/**", "site/content/docs/**"],
   ),
   scan(
     "CheckpointRecord stays out of the projection root entry",
@@ -67,11 +67,11 @@ const checks = [
     ["packages/projection/src/index.ts", "packages/projection/src/projection.ts"],
   ),
   scan(
-    "examples and hosted use streams",
+    "examples and e2e use streams",
     String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b|\blayerProtocol\b|\bHttp\.app\b|core/src/(?:protocol|toolkit/streams)`,
     [
       "examples/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
-      "hosted/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+      "e2e/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       ...Object.keys(applicationProtocolAllowlist).map((path) => `!${path}`),
     ],
   ),
@@ -157,7 +157,7 @@ const checks = [
     "!parked/**",
     // Alchemy declares this transitively; authored imports and manifests stay forbidden.
     "!bun.lock",
-    "!hosted/bun.lock",
+    "!e2e/bun.lock",
   ]),
 ];
 for (const path of testKits) {
@@ -226,9 +226,9 @@ for (const path of inputFiles.filter(
 console.log("Lint suppression inventory (existing reasons retained):");
 for (const path of inputFiles.filter(
   (file) =>
-    (file.startsWith("packages/") || file.startsWith("examples/") || file.startsWith("hosted/")) &&
-    !file.startsWith("hosted/node_modules/") &&
-    !file.startsWith("hosted/dist/"),
+    (file.startsWith("packages/") || file.startsWith("examples/") || file.startsWith("e2e/")) &&
+    !file.startsWith("e2e/node_modules/") &&
+    !file.startsWith("e2e/dist/"),
 )) {
   const count = readLines(path).filter((line) => /oxlint-disable/.test(line)).length;
   if (count > 0) console.log(`${path}:${count}`);

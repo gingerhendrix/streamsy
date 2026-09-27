@@ -1,4 +1,4 @@
-# hosted
+# e2e
 
 A private package that prepares hosted Cloudflare runs of the conformance
 Worker with Alchemy v2. It is not published and does not deploy anything yet.
@@ -13,9 +13,9 @@ and shares the same services with alarms; no application copy of that lifecycle
 helper remains.
 
 ```bash
-bun run --cwd hosted typecheck   # the stack declarations
-bun run --cwd hosted test        # validation, polling, measurement, cleanup, reports
-bun run --cwd hosted evidence    # prints the current hosted status and exits 2
+bun run --cwd e2e typecheck   # the stack declarations
+bun run --cwd e2e test        # validation, polling, measurement, cleanup, reports
+bun run --cwd e2e evidence    # prints the current hosted status and exits 2
 ```
 
 Hosted execution is disabled. `evidence` reports that status even when

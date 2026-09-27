@@ -26,10 +26,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install site and hosted dependencies
+      - name: Install site and e2e dependencies
         run: |
           bun install --frozen-lockfile --cwd site
-          bun install --frozen-lockfile --cwd hosted
+          bun install --frozen-lockfile --cwd e2e
 
       - name: Typecheck
         run: bun run typecheck
@@ -87,10 +87,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install site and hosted dependencies
+      - name: Install site and e2e dependencies
         run: |
           bun install --frozen-lockfile --cwd site
-          bun install --frozen-lockfile --cwd hosted
+          bun install --frozen-lockfile --cwd e2e
 
       - name: Build publishable packages
         run: bun run build
@@ -98,5 +98,5 @@ jobs:
       - name: Workerd conformance tests
         run: bun run test:conformance:workerd
 
-      - name: Hosted Durable Object host checks
-        run: bun run hosted:check
+      - name: E2E package checks
+        run: bun run e2e:check
