@@ -62,6 +62,7 @@ const runtime = ManagedRuntime.make(
     disableLogger: true,
     disableListenLog: true,
   }).pipe(
+    drainOnShutdown(),
     Layer.provide(Memory.layer({}, streams)),
     Layer.provideMerge(
       listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
@@ -71,9 +72,11 @@ const runtime = ManagedRuntime.make(
 ```
 
 Full access allows the create and append steps of the walkthrough. The 60-second idle
-timeout allows a 30-second protocol long poll to complete. Shutdown disposes the runtime,
-closing the listener and store. The example README also has an offline smoke test that
-runs all six flows against a child process.
+timeout allows a 30-second protocol long poll to complete. On shutdown, `drainOnShutdown()`
+first answers each parked long poll with 204, as a long-poll timeout does, and ends each
+SSE body after its last batch. Clients then reconnect from their last offset. After that,
+the runtime closes the store and the listener. The example README also has an offline
+smoke test that runs all six flows against a child process.
 
 See [HTTP runtime](/docs/runtime/http) and [Memory](/docs/runtime/storage#memory).
 
