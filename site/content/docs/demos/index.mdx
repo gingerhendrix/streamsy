@@ -13,8 +13,9 @@ poller runs an atomic projection, reads its rows and offsets with
 covers replay, live changes, and a departure during a SQLite restart.
 
 [Issue tracker](/docs/demos/issue-tracker-demo) is a complete stream-backed
-application: Promise-native Bun routes transact against workspace streams, and
-the browser replays each workspace directly into StreamDB.
+application. An Effect `HttpApi` decodes each write, then reads and folds the
+workspace stream and appends with `expectedOffset`. The same router serves the
+stream read-only, and the browser follows it into StreamDB.
 
 [Issue tracker projection](/docs/demos/issue-tracker) feeds five workspace
 inputs into atomic SQL and named-output stream addresses, serves rows, transitions
