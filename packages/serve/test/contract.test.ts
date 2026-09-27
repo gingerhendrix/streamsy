@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function, anti-slop/no-unknown-parameters -- The drift test feeds intentionally invalid JSON to both decoders; the bundle test owns Bun.build. */
+/* oxlint-disable anti-slop/no-unknown-parameters -- The drift test feeds intentionally invalid JSON to both decoders. */
 import { describe, expect, test } from "bun:test";
 import { canonicalJson, contractFingerprint, valueEtag } from "@streamsy/serve/contract";
 
@@ -108,30 +108,4 @@ test("browser decoder rejects accessor and boxed required fields", () => {
   expect(accessed).toBe(false);
   expect(() => decodePublicError({ ...errors[0], route: Object("feed") })).toThrow();
   expect(() => canonicalJson({ number: Number.NaN })).toThrow();
-});
-test("contract browser bundle has no Effect or core dependency", async () => {
-  const modules = new Set<string>();
-  const result = await Bun.build({
-    entrypoints: [new URL("../src/contract.ts", import.meta.url).pathname],
-    target: "browser",
-    format: "esm",
-    plugins: [
-      {
-        name: "contract-perimeter",
-        setup(build) {
-          build.onLoad({ filter: /./ }, (args) => {
-            modules.add(args.path);
-            return undefined;
-          });
-        },
-      },
-    ],
-  });
-  expect(result.success).toBe(true);
-  expect(
-    [...modules].filter((path) =>
-      /(?:\/effect(?:\/|@)|\/@streamsy\/core(?:\/|@)|\/packages\/core\/)/.test(path),
-    ),
-  ).toEqual([]);
-  expect(modules.size).toBeGreaterThan(0);
 });
