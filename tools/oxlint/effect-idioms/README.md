@@ -3,7 +3,7 @@
 Oxlint rules that steer tagged values towards Effect's own utilities. This folder is a vendored
 copy. The rule code and its RuleTester cases live in the `oxlint-rules` repository under
 `plugins/effect-idioms/`. `VENDORED.json` records the source commit and a hash for each file.
-Streamsy owns the severities, scopes, and exceptions in `.oxlintrc.effect.json`.
+Streamsy owns the severities, scopes, and exceptions in `.oxlintrc.json`.
 
 | Rule                 | Reports                                                       | Suggested replacement                                                                                                            |
 | -------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -36,4 +36,4 @@ reasoning: { _tag: "disabled" },
 
 Do not edit the files in this folder. Change the rule and its tests in `oxlint-rules`, run
 `bun run check` there, then copy it back with `bun run vendor effect-idioms <streamsy-worktree>`.
-Run `bun run lint:effect` and `bun run lint:policy` here after each vendor run.
+Run `bun run lint` here after each vendor run.
