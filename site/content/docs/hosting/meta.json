@@ -1,0 +1,4 @@
+{
+  "title": "Hosting",
+  "pages": ["index", "bun", "cloudflare", "storage-adapter"]
+}
