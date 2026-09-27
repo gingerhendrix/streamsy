@@ -4,7 +4,7 @@ import { Effect, Option, Schema } from "effect";
 import { Output, Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { emptySlice } from "../src/batch.ts";
-import { producerId } from "../src/stream-output.ts";
+import { producerId } from "../src/outputs-pass.ts";
 import { unitOf } from "../src/unit.ts";
 
 class facts extends Streamsy.json<facts>()("declaration.test/facts", "facts/:workspaceId", {

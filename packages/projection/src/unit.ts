@@ -16,7 +16,7 @@ export const PinnedRange = Schema.Struct({
 });
 export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
 
-/** A stream-output unit that was pinned before its append; settled by the next pass. */
+/** An outputs unit that was pinned before its append; settled by the next pass. */
 export const PendingUnit = Schema.Struct({
   ranges: Schema.Record(Schema.String, PinnedRange),
   seqs: Schema.Record(Schema.String, Counter),

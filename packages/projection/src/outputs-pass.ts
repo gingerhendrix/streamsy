@@ -76,7 +76,7 @@ const asPin = (fault: ProjectionFault): ProjectionFault =>
     : fault;
 
 /** One pinned unit, with independent tuple sequences and one atomic settle save. */
-export const passStream = Effect.fn("Projection.passStream")(function* <
+export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
   Inputs extends InputMap,
   E,
   R,

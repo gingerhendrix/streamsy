@@ -27,12 +27,8 @@ export type { Declaration } from "./declaration.ts";
 export type { WatchOptions } from "./watch.ts";
 
 /**
- * The handler runs inside the checkpoint owner's transaction. Stream writes are checked
- * individually before they execute. Other side effects, including SQL on another client,
- * and ambient Streams.* / StreamsWriter writes are outside this guard. Bind atomic output
- * streams directly to their storage protocol graph. Binding fails when the exposed
- * Storage does not own the protocol wires. Declared outputs are checked together before the first write. The owner reference is inherited
- * by nested runs and forked fibers; cross-owner nested runs and detached writes are unsupported.
+ * A bound atomic projection. The handler runs in the checkpoint owner's transaction. A
+ * stream write to another owner fails with `process / unsupported-composition`.
  */
 export interface Atomic<Inputs extends InputMap, E, R, S = unknown> {
   readonly _tag: "Atomic";

@@ -7,7 +7,7 @@ import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "
 import { ProjectionFault } from "./fault.ts";
 import type { Atomic, Projection } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
-import { passStream } from "./stream-output.ts";
+import { passOutputs } from "./outputs-pass.ts";
 import type { Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
@@ -105,7 +105,7 @@ export const pass = <Inputs extends InputMap, E, R, OR = never>(
   E | ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs>
 > =>
-  projection._tag === "Atomic" ? passAtomic(projection, options) : passStream(projection, options);
+  projection._tag === "Atomic" ? passAtomic(projection, options) : passOutputs(projection, options);
 
 /**
  * Internal kernel without a permit. Call only while holding the permit or simulating

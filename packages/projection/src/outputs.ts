@@ -29,7 +29,7 @@ import {
 } from "./state.ts";
 import { withParams, type Unit } from "./unit.ts";
 
-/** Normalized outputs declaration consumed by the pinned kernel. */
+/** A bound outputs projection. Runners take this value. */
 export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown> {
   readonly _tag: "Outputs";
   readonly id: string;

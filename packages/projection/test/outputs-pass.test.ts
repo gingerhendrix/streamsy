@@ -1,6 +1,6 @@
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
-import { producerId } from "../src/stream-output.ts";
+import { producerId } from "../src/outputs-pass.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
@@ -28,11 +28,11 @@ import * as Memory from "@streamsy/projection/memory";
  * Inputs, outputs and checkpoints share one owner. The pinned runner still commits
  * appends and checkpoint saves separately, so crash/replay coverage remains essential.
  */
-class In extends Streamsy.json<In>()("stream-output.test/In", "in/:name", {
+class In extends Streamsy.json<In>()("outputs-pass.test/In", "in/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Out extends Streamsy.json<Out>()("stream-output.test/Out", "out/:name", {
+class Out extends Streamsy.json<Out>()("outputs-pass.test/Out", "out/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
