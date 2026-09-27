@@ -15,6 +15,8 @@
     "check:og": "bun run scripts/check-og-image.ts",
     "check:terms": "bun run scripts/check-stale-terms.ts",
     "check:links": "bun run scripts/check-links.ts",
+    "check:demos": "bun run scripts/check-demo-excerpts.ts && bun test test/scripts/check-demo-excerpts.test.ts",
+    "check:snippets": "bun run --cwd .. build && bun run scripts/check-snippets.ts && bun test test/scripts/check-snippets.test.ts",
     "check:excerpts": "bun run --cwd ../packages/core build && bun run --cwd ../packages/storage build && bun run --cwd ../packages/serve build && bun run --cwd ../packages/core typecheck && bun run --cwd ../packages/storage typecheck && bun run --cwd ../packages/serve typecheck && bun run --cwd ../hosted typecheck && bun run scripts/check-excerpts.ts && bun test test/scripts/check-excerpts.test.ts"
   },
   "dependencies": {

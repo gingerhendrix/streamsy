@@ -36,7 +36,7 @@ State serves the Durable State change stream without a snapshot. A new client re
 `Projection.outputs` accepts stream declarations as output targets. Pass the declaration's `outputs` directly to Serve; the stream codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
 
 ```ts
-import { Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
