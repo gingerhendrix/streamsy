@@ -91,6 +91,12 @@ first poll. Resume with the returned `stream-next-offset`; `live=long-poll`
 waits for more. The route is read-only and returns State version and contract
 headers. The browser sends State version 1. There are no raw `/streams` routes.
 
+```bash
+curl -i 'http://localhost:1339/state/newest?offset=-1'
+curl -s http://localhost:1339/api/status
+curl -s -X POST http://localhost:1339/api/poll
+```
+
 `GET /api/status` reports polling, last start/completion times, last error,
 last successful story count, last upserts/deletes, total conflicts retried and
 last accepted/appended offset, plus the stream URL and poll settings. Counters
