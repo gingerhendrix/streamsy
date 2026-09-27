@@ -11,6 +11,9 @@ import {
   type Source,
 } from "./source.ts";
 import { PublicErrorSchema } from "./errors.ts";
+
+/** Validating constructors for the public error bodies. */
+const PublicError = PublicErrorSchema.cases;
 export type { StreamSource, StateSource, PathSource } from "./source.ts";
 
 type RouteLayer<R, E = never> = Layer.Layer<
@@ -85,12 +88,13 @@ function params<P>(schema: StreamRoute.PathSchema<P> | undefined, path: string) 
   if (fields.toSorted().join("\0") !== names.toSorted().join("\0"))
     throw new TypeError("Route params must equal stream params");
   return HttpRouter.schemaPathParams(schema).pipe(
-    Effect.mapError(() => ({
-      _tag: "InvalidParams" as const,
-      route: path,
-      parameter: "params",
-      detail: "Invalid path parameters",
-    })),
+    Effect.mapError(() =>
+      PublicError.InvalidParams.make({
+        route: path,
+        parameter: "params",
+        detail: "Invalid path parameters",
+      }),
+    ),
   );
 }
 function pathNames(path: string): string[] {
@@ -168,13 +172,12 @@ function readRoute<P, E, R, RS>(
     const received = request.headers[versionHeader] ?? "1";
     if (received !== "1")
       return fail(
-        {
-          _tag: "ProtocolVersionUnsupported",
+        PublicError.ProtocolVersionUnsupported.make({
           route: path,
           supported: 1,
           received,
           recovery: "replay-from-start",
-        },
+        }),
         409,
       );
     if (
@@ -182,12 +185,11 @@ function readRoute<P, E, R, RS>(
       request.headers[contractHeader] !== fingerprint
     )
       return fail(
-        {
-          _tag: "ResumeRejected",
+        PublicError.ResumeRejected.make({
           route: path,
           reason: "contract-changed",
           recovery: "replay-from-start",
-        },
+        }),
         409,
       );
     if (source.kind === "state" && request.headers["x-streamsy-state-reset"] === "snapshot")
@@ -200,12 +202,11 @@ function readRoute<P, E, R, RS>(
       offset !== null && offset !== "-1" && offset !== "now" && request.method !== "HEAD";
     if (resume && !Schema.is(Offset)(offset))
       return fail(
-        {
-          _tag: "ResumeRejected",
+        PublicError.ResumeRejected.make({
           route: path,
           reason: "invalid-offset",
           recovery: "replay-from-start",
-        },
+        }),
         409,
       );
     const wire = yield* source.wire;
@@ -217,12 +218,11 @@ function readRoute<P, E, R, RS>(
           Effect.succeed(
             resume
               ? fail(
-                  {
-                    _tag: "ResumeRejected",
+                  PublicError.ResumeRejected.make({
                     route: path,
                     reason: "history-unavailable",
                     recovery: "replay-from-start",
-                  },
+                  }),
                   409,
                 )
               : HttpServerResponse.empty({
@@ -234,12 +234,11 @@ function readRoute<P, E, R, RS>(
           Effect.succeed(
             resume
               ? fail(
-                  {
-                    _tag: "ResumeRejected",
+                  PublicError.ResumeRejected.make({
                     route: path,
                     reason: "history-unavailable",
                     recovery: "replay-from-start",
-                  },
+                  }),
                   409,
                 )
               : HttpServerResponse.empty({
@@ -250,12 +249,11 @@ function readRoute<P, E, R, RS>(
         InvalidReadRequest: () =>
           Effect.succeed(
             fail(
-              {
-                _tag: "ResumeRejected",
+              PublicError.ResumeRejected.make({
                 route: path,
                 reason: "invalid-offset",
                 recovery: "replay-from-start",
-              },
+              }),
               409,
             ),
           ),
@@ -268,12 +266,18 @@ function readRoute<P, E, R, RS>(
           ),
         StorageFault: () =>
           Effect.succeed(
-            fail({ _tag: "TransportUnavailable", route: path, detail: "Storage unavailable" }, 503),
+            fail(
+              PublicError.TransportUnavailable.make({ route: path, detail: "Storage unavailable" }),
+              503,
+            ),
           ),
         TransportFault: () =>
           Effect.succeed(
             fail(
-              { _tag: "TransportUnavailable", route: path, detail: "Transport unavailable" },
+              PublicError.TransportUnavailable.make({
+                route: path,
+                detail: "Transport unavailable",
+              }),
               503,
             ),
           ),
@@ -345,7 +349,7 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         request.headers[Contract.VALUE_CONTRACT_HEADER] !== fingerprint
       )
         return errorResponse(
-          { _tag: "ContractChanged", route: path, recovery: "refetch" },
+          PublicError.ContractChanged.make({ route: path, recovery: "refetch" }),
           409,
           headers,
         );
@@ -353,11 +357,11 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
       const encoded = yield* Schema.encodeEffect(source.schema)(value);
       const canonical = yield* Effect.try({
         try: () => Contract.canonicalJson(encoded),
-        catch: () => ({
-          _tag: "WireEncodeFailed" as const,
-          route: path,
-          detail: "Value is not finite JSON",
-        }),
+        catch: () =>
+          PublicError.WireEncodeFailed.make({
+            route: path,
+            detail: "Value is not finite JSON",
+          }),
       });
       const etag = Contract.valueEtag(canonical);
       const responseHeaders = { ...headers, "cache-control": cacheControl, etag };
@@ -374,7 +378,7 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         ValueUnavailable: () =>
           Effect.succeed(
             errorResponse(
-              { _tag: "ValueUnavailable", route: path, detail: "Value unavailable" },
+              PublicError.ValueUnavailable.make({ route: path, detail: "Value unavailable" }),
               503,
               headers,
             ),
@@ -383,7 +387,7 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
         SchemaError: () =>
           Effect.succeed(
             errorResponse(
-              { _tag: "WireEncodeFailed", route: path, detail: "Value cannot be encoded" },
+              PublicError.WireEncodeFailed.make({ route: path, detail: "Value cannot be encoded" }),
               500,
               headers,
             ),

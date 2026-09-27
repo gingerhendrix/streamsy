@@ -230,10 +230,7 @@ function failureOf<Payload, From extends ActionSinkRelation>(
   entry: OutboxEntry,
   cause: Cause.Cause<ActionSinkDeliveryFailure>,
 ): ActionSinkDeliveryFailure {
-  const declared = cause.reasons.find((reason): reason is Cause.Fail<ActionSinkDeliveryFailure> => {
-    const { _tag: tag } = reason;
-    return tag === "Fail";
-  });
+  const declared = cause.reasons.find(Cause.isFailReason);
   if (declared !== undefined) return declared.error;
   return ActionSinkDeliveryFailure.retryable(
     sink.handler.name,

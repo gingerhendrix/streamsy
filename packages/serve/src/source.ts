@@ -2,6 +2,7 @@ import { Context, Effect, Schema } from "effect";
 import type { Streamsy, StreamId, StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, StreamRoute } from "@streamsy/core/protocol";
 import type { CanonicalValue, PublicError } from "./contract.ts";
+import { PublicErrorSchema } from "./errors.ts";
 
 /** Structural stream consumed by Serve, including bound projection outputs. */
 interface SourceAddress<P> {
@@ -70,12 +71,12 @@ export function normalize<P, F>(
           const address = source.address(params);
           return { id: address.id, descriptor };
         },
-        catch: () => ({
-          _tag: "InvalidParams" as const,
-          route: path,
-          parameter: "params",
-          detail: "Parameters cannot form a canonical stream id",
-        }),
+        catch: () =>
+          PublicErrorSchema.cases.InvalidParams.make({
+            route: path,
+            parameter: "params",
+            detail: "Parameters cannot form a canonical stream id",
+          }),
       }),
   };
 }
