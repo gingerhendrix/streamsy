@@ -1,7 +1,9 @@
 # effect-idioms Oxlint plugin
 
-Repository-owned Oxlint rules that steer tagged values towards Effect's own utilities.
-The plugin is not vendored. Streamsy owns these rules.
+Oxlint rules that steer tagged values towards Effect's own utilities. This folder is a vendored
+copy. The rule code and its RuleTester cases live in the `oxlint-rules` repository under
+`plugins/effect-idioms/`. `VENDORED.json` records the source commit and a hash for each file.
+Streamsy owns the severities, scopes, and exceptions in `.oxlintrc.effect.json`.
 
 | Rule                 | Reports                                                       | Suggested replacement                                                                                                            |
 | -------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,10 +32,8 @@ exception elsewhere, such as an external API option, use a line disable with a r
 reasoning: { _tag: "disabled" },
 ```
 
-## Tests
+## Change a rule
 
-Oxlint's `RuleTester` needs Node 22 or later and does not run under Bun.
-
-```bash
-bun run test:lint-rules
-```
+Do not edit the files in this folder. Change the rule and its tests in `oxlint-rules`, run
+`bun run check` there, then copy it back with `bun run vendor effect-idioms <streamsy-worktree>`.
+Run `bun run lint:effect` and `bun run lint:policy` here after each vendor run.
