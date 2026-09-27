@@ -12,12 +12,12 @@ poller runs an atomic projection, reads its rows and offsets with
 `Projection.read`, and appends the diff with `expectedOffset`. Its offline smoke
 covers replay, live changes, and a departure during a SQLite restart.
 
-[Issue tracker](/docs/demos/issue-tracker-demo) is a complete stream-backed
+[Issue tracker](/docs/demos/issue-tracker) is a complete stream-backed
 application. An Effect `HttpApi` decodes each write, then reads and folds the
 workspace stream and appends with `expectedOffset`. The same router serves the
 stream read-only, and the browser follows it into StreamDB.
 
-[Issue tracker projection](/docs/demos/issue-tracker) feeds five workspace
+[Issue tracker projection](/docs/demos/issue-tracker-projection) feeds five workspace
 inputs into atomic SQL and named-output stream addresses, serves rows, transitions
 and a compact value, and serializes request and change triggers by address key.
 

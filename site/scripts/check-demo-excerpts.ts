@@ -15,8 +15,8 @@ const demos = fileURLToPath(new URL("../content/docs/demos/", import.meta.url));
 export const demoExamples = new Map<string, string>([
   ["hackernews-newest-stream", "examples/hackernews-newest-stream"],
   ["hex-board", "examples/hex-board"],
-  ["issue-tracker", "examples/issue-tracker"],
-  ["issue-tracker-demo", "examples/issue-tracker-demo"],
+  ["issue-tracker", "examples/issue-tracker-demo"],
+  ["issue-tracker-projection", "examples/issue-tracker"],
   ["memory-server", "examples/memory-server"],
   ["fold-agent", "examples/fold-agent"],
 ]);

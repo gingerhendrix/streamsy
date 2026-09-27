@@ -7,7 +7,7 @@ that same stream into TanStack DB with `@durable-streams/state/db`.
 
 ![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Http.routes serves the stream read-only, and createStreamDB follows it in the browser.](../../site/public/docs/demos/issue-tracker-demo-architecture.svg)
 
-The [guide](https://streamsy.dev/docs/demos/issue-tracker-demo) explains each
+The [guide](https://streamsy.dev/docs/demos/issue-tracker) explains each
 numbered step with excerpts from this folder.
 
 ## Run it
@@ -99,4 +99,4 @@ Every mutation replays one complete workspace, so the recipe suits small
 workspaces, not a large-workspace read model. Shared workspace ids are
 unguessable-ish links, not an authorization boundary.
 
-Guide: [streamsy.dev/docs/demos/issue-tracker-demo](https://streamsy.dev/docs/demos/issue-tracker-demo).
+Guide: [streamsy.dev/docs/demos/issue-tracker](https://streamsy.dev/docs/demos/issue-tracker).

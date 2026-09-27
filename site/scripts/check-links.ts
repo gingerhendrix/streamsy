@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import { movedPages } from "../src/lib/moved-pages.ts";
 
 const site = new URL("..", import.meta.url).pathname;
 const routes = new Set(["/", "/articles"]);
@@ -112,6 +113,17 @@ try {
     if (!html.includes("<h1")) throw new Error(`No rendered heading: ${route}`);
     pages.set(route, html);
   }
+  for (const [from, to] of movedPages) {
+    const moved = `/docs/${from}`;
+    if (routes.has(moved)) throw new Error(`Moved page ${moved} still has a page`);
+    if (!routes.has(`/docs/${to}`)) throw new Error(`Moved page ${moved} → /docs/${to}: no page`);
+    const response = await fetch(origin + moved, { redirect: "manual" });
+    const location = response.headers.get("location");
+    if (response.status !== 308 || location !== `/docs/${to}`) {
+      throw new Error(`Moved page ${moved}: ${response.status} → ${location ?? "no location"}`);
+    }
+    await response.body?.cancel();
+  }
   for (const [route, html] of pages) {
     const tags = html.match(/<(?:a|img)\b[^>]*>/g) ?? [];
     for (const tag of tags) {
@@ -144,7 +156,7 @@ try {
     }
   }
   console.log(
-    `Site links: ${routes.size} rendered routes, ${checked} internal links/images and anchors checked.`,
+    `Site links: ${routes.size} rendered routes, ${checked} internal links/images and anchors checked, ${movedPages.size} moved pages redirect.`,
   );
 } catch (error) {
   console.error(output);

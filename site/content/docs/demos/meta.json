@@ -4,8 +4,8 @@
     "index",
     "memory-server",
     "hackernews-newest-stream",
-    "issue-tracker-demo",
     "issue-tracker",
+    "issue-tracker-projection",
     "hex-board",
     "fold-agent"
   ]

@@ -1,11 +1,13 @@
 ---
-title: Issue tracker projection
-description: Send issue commands to a server that keeps SQL tables, board rows, label counts and a change feed up to date.
+title: Issue tracker
+description: Track projects, issues and comments in a shared workspace that every open tab sees change live.
 ---
 
-This demo is the server side of an issue tracker. You send it commands: create an issue, change its status, assign it. The server stores each command as a fact in a stream. Two projections then keep the rest up to date: SQL tables for the API, and output streams with board cards, label counts and a feed of accepted changes. A client can follow those streams over HTTP. The demo has no browser, so this page has no screenshot.
+This demo is a small issue tracker. You create projects, add issues, move an issue between open, in progress and done, and write comments. Each workspace is one Streamsy stream, and the server uses that stream as its database. The page reads the same stream, so every tab on a workspace sees each change. Your own change shows at once, and the server confirms it a moment later. The "New shared workspace" button makes a new workspace with its own stream and a link that you can send to someone else.
 
-The full source is in [`examples/issue-tracker`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker).
+![The issue tracker demo page: a projects list on the left, and on the right the issues of the Streamsy Demo project with a status pill, a status menu and comments on each issue.](/docs/demos/issue-tracker-demo-screenshot.png)
+
+The full source is in [`examples/issue-tracker-demo`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo). Its README lists the settings and the smoke test.
 
 ## Run it
 
@@ -14,244 +16,436 @@ From the repository root:
 ```bash
 bun install --frozen-lockfile
 bun run build
-bun run --cwd examples/issue-tracker start
+bun run --cwd examples/issue-tracker-demo dev
 ```
 
-Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`. Set `ISSUE_TRACKER_DB` to use a different file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker) lists the other settings and the smoke scripts.
+Open http://localhost:1338. The server keeps workspaces in memory, so a restart starts again with the seeded `main` workspace. Set `ISSUE_TRACKER_DB` to a SQLite file path to keep workspaces across restarts.
 
 ## Architecture
 
-![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Triggers run both projections after each command and when an input changes. Serve routes publish the results read-only.](/docs/demos/issue-tracker-projection-architecture.svg)
+![Architecture diagram. In the browser, an action inserts the change into TanStack DB and posts it with a txid to the JSON API. An HttpApi handler calls IssueTracker.mutate, which reads and folds the workspace stream, then appends the change only if the stream tail has not moved. The stream lives in a memory or Bun SQLite store. Http.routes serves the stream read-only from the same Effect router. createStreamDB follows the stream, confirms the txid and fills the TanStack DB collections that React reads with useLiveQuery.](/docs/demos/issue-tracker-demo-architecture.svg)
 
-Each number in the diagram is also a section number below.
+The server has no read API. Writes go through the JSON API, and reads come from the stream. Each number in the diagram is also the number of a section below.
 
-| Step | What happens                                                         | Streamsy feature                                            | File                              |
-| ---- | -------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------- |
-| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                           | `server/streams.ts`               |
-| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                      | `server/state.ts`                 |
-| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.atomic`, `Projection.each`                      | `server/projection.ts`            |
-| 4    | A second projection writes three output streams and a state value    | `Projection.outputs`, `Output.rows`, `Output.stream`        | `server/outputs.ts`               |
-| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                        | `server/app.ts`, `server/host.ts` |
-| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.state`, `Serve.stream`, `Serve.value` | `server/app.ts`                   |
+| Step | What happens                                                                       | Feature                                                        | File                                                              |
+| ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1    | One stream per workspace holds projects, issues and comments                       | `Streamsy.state` with collections                              | `server/streams.ts`                                               |
+| 2    | One layer graph opens the storage, seeds `main` and starts the listener            | `Memory.layer`, `BunStorage.layer`, `Streamsy.group`           | `server/streams.ts`, `server/index.ts`, `server/issue-tracker.ts` |
+| 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                   | `src/db.ts`                                                       |
+| 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                               | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
+| 5    | The service reads and folds the workspace, then appends if the stream did not move | `read`, `DurableState.changes`, `append` with `expectedOffset` | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
+| 6    | The same router serves the stream for reads only                                   | `Http.routes` with `access: "read"`                            | `server/index.ts`                                                 |
+| 7    | The browser follows the stream and confirms its own change                         | Durable State client                                           | `src/db.ts`, `src/App.tsx`                                        |
 
-The code below is from the demo. Lines marked `// ...` are left out.
+The code in each section is from the demo. Lines marked `// ...` are left out.
 
-## 1. Declare the input streams
+## 1. Declare the workspace stream
 
-Each workspace has five input streams. Two are JSON streams of facts: issue events and label events. Three are Durable State streams that hold the catalogs: projects, users and labels. All five take the same `workspaceId` parameter.
+`Workspaces` is a Durable State stream. The id template `workspace/:workspaceId` gives each workspace its own stream, for example `workspace/main`. The stream has three collections. Each collection name is the `type` of its change events, and `key` names the field that identifies a row.
 
 ```ts title="server/streams.ts"
-const params = { workspaceId: Identifier } as const;
-export class Events extends Streamsy.json<Events>()(
-  "IssueTracker/Events",
-  "issue-tracker/:workspaceId/issue-events",
+export class Workspaces extends Streamsy.state<Workspaces>()(
+  "IssueTrackerDemo/Workspaces",
+  "workspace/:workspaceId",
   {
-    params,
-    schema: IssueEvent,
+    params: { workspaceId: Schema.String },
+    collections: {
+      project: { schema: Project, key: "id" },
+      issue: { schema: Issue, key: "id" },
+      comment: { schema: Comment, key: "id" },
+    },
   },
 ) {}
-// ...
-export class Projects extends Streamsy.state<Projects>()(
-  "IssueTracker/Projects",
-  "issue-tracker/:workspaceId/projects",
-  {
-    params,
-    collections: { project: { schema: ProjectRow, key: "projectId" } },
-  },
-) {}
-// ...
-export const routes = {
-  events: Events,
-  labelEvents: LabelEvents,
-  projects: Projects,
-  users: Users,
-  labels: Labels,
-} as const;
+export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspaceId });
 ```
 
-At startup the server creates the five streams for each configured workspace. One Bun SQLite file holds the streams, the projection checkpoints and the application tables.
+`Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `shared/state-schema.ts`. The browser uses the same schemas.
 
-See [Streams](/docs/streams/introduction) for templates and parameters.
+See [Creating streams](/docs/streams/creating#durable-state-streams).
 
-## 2. Append a command
+## 2. Build the storage and boot
 
-`transact` reads the whole issue stream, folds it into issue rows and checks the command. It then appends one fact with `expectedOffset` set to the tail it read. If another command appended first, the append fails with `OffsetMismatch` and `transact` tries again, up to three times.
+`StorageLive` gives the app its storage. With no database path the demo uses the memory store. With `ISSUE_TRACKER_DB` set it uses Bun SQLite. Both take a group of the streams that the app owns.
 
-```ts title="server/state.ts"
-export const transact = (workspaceId: string, command: CommandRequest) =>
-  Effect.gen(function* () {
-    const stream = yield* Events;
-    const batches = yield* stream.read({ workspaceId }).pipe(Stream.runCollect);
-    const items = batches.flatMap((batch) => batch.items);
-    const rows = foldEvents(items);
-    const head = batches.at(-1)?.nextOffset ?? ZERO_OFFSET;
-    const previous = command.type === "create" ? undefined : rows.get(command.issueId);
-    if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
+```ts title="server/streams.ts"
+export const StorageLive = Layer.unwrap(
+  Effect.map(ServerConfig, ({ databasePath }) => storage(databasePath)),
+);
+
+function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, StorageFault> {
+  return Option.match(databasePath, {
+    onNone: () => Memory.layer({}, Streamsy.group(Workspaces)),
+    onSome: (filename) => BunStorage.layer({ client: { filename } }, Streamsy.group(Workspaces)),
+  });
+}
+```
+
+The whole server is one layer graph. `Layer.provide` builds its argument first and releases it last. So the storage opens first, then the `IssueTracker` service, then the seed step, and the listener starts last. On shutdown the order is the reverse, and the storage closes last.
+
+```ts title="server/index.ts"
+const ServerLive = HttpRouter.serve(RoutesLive, { disableLogger: true }).pipe(
+  Layer.provide(ListenerLive),
+  Layer.provide(SeedLive),
+  Layer.provide(IssueTrackerLive),
+  Layer.provide([StorageLive, BunCrypto.layer]),
+);
+
+BunRuntime.runMain(Layer.launch(ServerLive));
+```
+
+A shared workspace exists only as its stream. `POST /api/workspaces` makes a random id, creates the stream and appends a starter project. The seed step does the same for `main` when that stream has no projects.
+
+```ts title="server/issue-tracker.ts"
+const create = Effect.gen(function* () {
+  const bytes = yield* crypto.randomBytes(10);
+  const workspaceId = Array.from(bytes, (byte) => (byte % 36).toString(36)).join("");
+  yield* workspaces.create({ workspaceId });
+  const starter = yield* stamp("proj");
+  yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
+  return workspaceId;
+}).pipe(Effect.orDie, Effect.withSpan("IssueTracker.create"));
+```
+
+See [Storage](/docs/runtime/storage).
+
+## 3. Write in the browser first
+
+The browser uses the Durable State client from `@durable-streams/state`. `createStreamDB` takes actions. Each action has two parts. `onMutate` inserts the new row into the local collection, so the page shows it at once. `mutationFn` posts the row to the API with a txid, then waits for the change with that txid to arrive on the stream.
+
+```ts title="src/db.ts"
+export function createIssueDb(workspaceId: string): IssueDb {
+  return createStreamDB({
     // ...
-    const ack = yield* stream.append({ workspaceId }, [event], { expectedOffset: head });
-    return { event, ack };
-  }).pipe(Effect.retry({ times: 3, while: Predicate.isTagged("OffsetMismatch") }));
-```
-
-The route turns a conflict that is still there after the retries into a 409:
-
-```ts title="server/app.ts"
-      const result = yield* transact(workspaceId, command).pipe(Effect.result);
-      if (Result.isFailure(result)) {
-        if (Predicate.isTagged(result.failure, "UnknownIssue"))
-          return json({ error: "Unknown issue" }, { status: 400 });
-        if (Predicate.isTagged(result.failure, "OffsetMismatch"))
-          return json({ error: "Concurrent command conflict" }, { status: 409 });
-```
-
-Send a command with `curl`:
-
-```bash
-curl -X POST http://localhost:1340/api/workspaces/live/commands \
-  -H 'Content-Type: application/json' \
-  --data '{"type":"create","commandId":"c1","issueId":"i1","projectId":"p1","title":"First issue"}'
-```
-
-See [Read, fold, append](/docs/streams/writing#read-fold-append) for the recipe.
-
-## 3. Write SQL rows with `issueRows`
-
-`issueRows` is an atomic projection over all five inputs. `Projection.each` calls the handler once for each item, and `entry.input` names the input it came from. The handler writes the application tables with the host's `SqlClient`. The projection commits those writes and the new input offsets in one transaction, so a crash cannot keep one without the other.
-
-```ts title="server/projection.ts"
-export const issueRows = Projection.atomic({
-  id: "issue-rows",
-  params: { workspaceId: Identifier },
-  inputs: {
-    events: Events,
-    labelEvents: LabelEvents,
-    projects: Projects,
-    users: Users,
-    labels: Labels,
-  },
-  process: Projection.each((entry, unit) =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      switch (entry.input) {
-        case "events":
-          yield* applyIssue(sql, entry.item);
-          break;
-        // ...
-      }
-    }),
-  ),
-});
-```
-
-`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. `@streamsy/projection` owns only the tables that start with `streamsy_projection_v1_`.
-
-See [Projections](/docs/projections/projections) for the two forms and [Commit with your own tables](/docs/runtime/storage#commit-with-your-own-tables).
-
-## 4. Write output streams with `tracker`
-
-`tracker` reads the same five inputs and declares three outputs. `board` and `labelCounts` are keyed rows, published as Durable State. `transitions` is a plain stream of accepted issue facts. The projection also keeps a private state value, the whole workspace, so that each batch can find which cards and counts changed.
-
-```ts title="server/outputs.ts"
-export const tracker = Projection.outputs({
-  id: "issue-tracker",
-  params: { workspaceId: Identifier },
-  inputs: routes,
-  outputs: {
-    board: Output.rows(ProjectBoardCard, { key: "issueId", stream: Board }),
-    labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: LabelCounts }),
-    transitions: Output.stream(IssueTransition, { stream: Transitions }),
-  },
-  state: {
-    schema: WorkspaceState,
-    initial: ({ workspaceId }) => initialWorkspace(workspaceId),
-  },
-  process: (previous, batch) =>
-    Effect.gen(function* () {
+    state: issueTrackerState,
+    actions: ({ db }) => ({
       // ...
-      return { state, board, labelCounts, transitions };
-    }),
-});
+      createIssue: {
+        onMutate: ({ issue }: CreateIssueAction) => {
+          db.collections.issues.insert(issue);
+        },
+        mutationFn: async ({ issue, txid }: CreateIssueAction) => {
+          const result = await postJson(apiUrl(workspaceId, "/issues"), {
+            ...issue,
+            txid,
+          });
+          await db.utils.awaitTxId(result.txid);
+        },
+      },
 ```
 
-The handler returns `Output.upsert(row)` for each card or count that changed, and `Output.remove(labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
+The component makes a new txid for each action. The browser also picks the issue id, so the local row and the row from the stream have the same key.
 
-See [Outputs](/docs/projections/projections#outputs) and [State](/docs/projections/projections#state).
-
-## 5. Run both projections
-
-A command runs both projections for its workspace to the end of their inputs before the route reads SQL. This is how the response can include the new row.
-
-```ts title="server/app.ts"
-      yield* Projection.run(issueRows.at({ workspaceId }));
-      yield* Projection.run(tracker.at({ workspaceId }));
-      const sql = yield* SqlClient.SqlClient;
-      const rows = yield* sql.unsafe<{
-      // ...
+```tsx title="src/components/IssueTrackerApp.tsx"
+const createIssue = async (issue: Issue) => {
+  await awaitOptimisticAction(db.actions.createIssue, {
+    issue,
+    txid: crypto.randomUUID(),
+  });
+};
 ```
 
-At startup the server runs each projection once for each workspace, then watches the inputs. An append to an input on this host runs the projection again.
+If the API call fails, the action fails and TanStack DB removes the local row.
 
-```ts title="server/host.ts"
-        for (const params of addresses) {
-          const rows = issueRows.at(params);
-          const outputs = tracker.at(params);
-          // Startup and background failures are isolated to their address.
-          yield* Projection.run(rows).pipe(
-          // ...
-          const watched = [
-            { key: Projection.key(rows), fiber: yield* Projection.watch(rows) },
-            { key: Projection.key(outputs), fiber: yield* Projection.watch(outputs) },
-          ];
+## 4. Decode the request in `HttpApi`
+
+The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and three error schemas.
+
+```ts title="shared/api.ts"
+const inWorkspace = { ws: WorkspaceId };
+const writeErrors = [BadRequest, NotFound, Conflict];
+// ...
+export class IssuesApi extends HttpApiGroup.make("issues").add(
+  HttpApiEndpoint.post("create", "/w/:ws/issues", {
+    params: inWorkspace,
+    payload: IssueInput,
+    success: IssueWritten.pipe(HttpApiSchema.status(201)),
+    error: writeErrors,
+  }),
+  HttpApiEndpoint.patch("update", "/w/:ws/issues/:id", {
+    params: { ...inWorkspace, id: Schema.String },
+    payload: IssueInput,
+    success: IssueWritten,
+    error: writeErrors,
+  }),
+) {}
+// ...
+export class IssueTrackerApi extends HttpApi.make("IssueTrackerApi")
+  .add(WorkspacesApi, ProjectsApi, IssuesApi, CommentsApi)
+  .middleware(RequestErrors)
+  .prefix("/api") {}
 ```
 
-`Projection.run` allows one runner for each projection key in the process. The command path and the watcher share that permit, so they do not run the same projection at the same time. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
+A body is a partial row. A missing field takes a server default. A field that is present must match the row schema. The optional `txid` must be a UUID.
 
-See [Running](/docs/projections/projections#running) and [Triggers](/docs/projections/projections#triggers).
+```ts title="shared/api-schema.ts"
+export const TxId = Schema.String.check(Schema.isUUID());
+// ...
+const input = <Fields extends Schema.Struct.Fields>(entity: Schema.Struct<Fields>) =>
+  entity.mapFields((fields) => ({
+    ...Struct.map(fields, Schema.optionalKey),
+    txid: Schema.optionalKey(TxId),
+  }));
+```
 
-## 6. Serve the results
+A request that fails its schema does not reach a handler. The `RequestErrors` middleware turns the schema error into a 400 with an `error` message.
 
-The server merges four sets of routes. `Http.routes` serves the input and output streams read-only under `/streams`. `Serve.state` and `Serve.stream` serve the outputs. `Serve.value` serves a small summary from the `tracker` state, with an ETag.
+```ts title="server/api.ts"
+const RequestErrorsLive = HttpApiMiddleware.layerSchemaErrorTransform(RequestErrors, (error) =>
+  Effect.fail(new BadRequest({ error: requestError(error) })),
+);
+```
 
-```ts title="server/app.ts"
-export const outputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
-    contract: "compact-summary-v1",
+The handler gets the decoded path and body. It makes one stamp for the write: a new id, the time and the txid. Then it passes a validation step to `tracker.mutate`, which is section 5. The stamp is made once for each request, so a retry in section 5 writes the same id and txid. The update handler does the same with `updateIssue`.
+
+```ts title="server/routes/issues.ts"
+export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handlers) =>
+  Effect.gen(function* () {
+    const tracker = yield* IssueTracker;
+    return handlers
+      .handle(
+        "create",
+        Effect.fn("issues.create")(function* ({ params, payload }) {
+          const stamp = yield* tracker.stamp("issue", payload.txid);
+          const written = yield* tracker.mutate(params.ws, createIssue(payload, stamp));
+          return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
+        }, Effect.mapError(toApiError)),
+      )
+      .handle(
+        "update",
+        Effect.fn("issues.update")(function* ({ params, payload }) {
+          const stamp = yield* tracker.stamp("issue", payload.txid);
+          const written = yield* tracker.mutate(params.ws, updateIssue(params.id, payload, stamp));
+          return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
+        }, Effect.mapError(toApiError)),
+      );
   }),
 );
-// ...
-  return Layer.mergeAll(
-    Http.routes(Streamsy.group(...Object.values(routes), ...outputStreams), {
-      prefix: "/streams",
-      access: "read",
-    }),
-    outputRoutes,
-    HttpRouter.add("*", "/api/workspaces/:workspaceId/:resource", api),
 ```
 
-| Route                                                       | Result                                                   |
-| ----------------------------------------------------------- | -------------------------------------------------------- |
-| `/state/workspaces/:workspaceId/issues?offset=-1`           | Board card changes                                       |
-| `/state/workspaces/:workspaceId/label-counts?offset=-1`     | Label count changes                                      |
-| `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts                                     |
-| `/workspaces/:workspaceId/summary`                          | Issue, done, label and project counts, with ETag and 304 |
+`toApiError` maps each typed failure from the domain to an HTTP error from the API declaration.
 
-Read the board from the start:
+```ts title="server/routes/errors.ts"
+export function toApiError(error: DomainError): BadRequest | NotFound | Conflict {
+  return Match.valueTags(error, {
+    WorkspaceNotFound: () => new NotFound({ error: "Unknown workspace" }),
+    IssueNotFound: () => new NotFound({ error: "Issue not found" }),
+    UnknownReference: ({ field }) => new BadRequest({ error: `Unknown ${field}` }),
+    WriteConflict: () => new Conflict({ error: "Concurrent updates, please retry" }),
+  });
+}
+```
+
+## 5. Read, fold, append
+
+The validation step is a function of the workspace state. It returns the change to append and the value to answer with, or it fails with a typed error. It has no side effects, so a retry can run it again.
+
+```ts title="server/state.ts"
+export const createIssue =
+  (input: Partial<Issue>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference> => {
+    const issue = newIssue(input, stamp);
+    if (!state.getProject(issue.projectId)) {
+      return Effect.fail(new UnknownReference({ field: "projectId", id: issue.projectId }));
+    }
+    return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
+  };
+```
+
+To get that state, `materialize` reads the whole workspace stream and applies every change to a `MaterializedState` from `@durable-streams/state`. This is the same fold that the browser does. The server keeps no cache between requests. The offset after the last batch is the head that this state describes. A missing stream becomes `WorkspaceNotFound`.
+
+```ts title="server/issue-tracker.ts"
+const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
+  const batches = yield* workspaces.read({ workspaceId }).pipe(
+    Stream.runCollect,
+    Effect.catch((error) =>
+      Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
+        ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
+        : Effect.die(error),
+    ),
+  );
+  const state = new MaterializedState();
+  for (const batch of batches) for (const event of batch.items) state.apply(event);
+  return {
+    state: {
+      getProject: (projectId: string) => state.get<Project>("project", projectId),
+      getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
+      hasProjects: () => state.getType("project").size > 0,
+    },
+    headOffset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
+  };
+});
+```
+
+`mutate` is the read, fold, append recipe. It appends with `expectedOffset` set to the head it read. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. The retry runs the whole recipe again: read, fold, validate and build the change. So each change is checked against the state at the exact position where it lands. After three retries the service fails with `WriteConflict`, and the API answers 409.
+
+```ts title="server/issue-tracker.ts"
+const mutate = <A, E>(
+  workspaceId: string,
+  attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
+) =>
+  Effect.gen(function* () {
+    const { state, headOffset } = yield* materialize(workspaceId);
+    const { change, value } = yield* attempt(state);
+    const ack = yield* append(workspaceId, change, headOffset);
+    return { value, awaitOffset: ack.offset };
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.recurs(3),
+      while: Predicate.isTagged("OffsetMismatch"),
+    }),
+    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
+    Effect.withSpan("IssueTracker.mutate"),
+  );
+```
+
+`append` keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
+
+```ts title="server/issue-tracker.ts"
+const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
+  appendWorkspaceEvent(workspaceId, change, head, head).pipe(
+    Effect.provideService(Workspaces, workspaces),
+    Effect.catch((error) =>
+      Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+    ),
+  );
+```
+
+`DurableState.changes` turns the change into the wire event for the workspace address. The demo has no upstream stream, so it records the head it read as the source offset.
+
+```ts title="server/streams.ts"
+export function appendWorkspaceEvent(
+  workspaceId: string,
+  change: WorkspaceChange,
+  sourceOffset: string,
+  expectedOffset?: string,
+) {
+  const events = DurableState.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [
+    change,
+  ]);
+  const options = expectedOffset === undefined ? {} : { expectedOffset };
+  return Effect.flatMap(Workspaces, (workspaces) =>
+    workspaces.append({ workspaceId }, events, options),
+  );
+}
+```
+
+The builders put the txid and the server time in the change headers. An issue edit is also an upsert with the full issue.
+
+```ts title="server/state.ts"
+const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });
+// ...
+export const issueUpsert = (issue: Issue, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("issue", issue, headers(stamp));
+```
+
+See [Read, fold, append](/docs/streams/writing#read-fold-append).
+
+## 6. Serve the stream read-only
+
+Bun bundles the HTML page and serves it for every other path. The `false` entries send every `/api` and `/streams` path on to the Effect router.
+
+```ts title="server/index.ts"
+const ListenerLive = Layer.unwrap(
+  Effect.map(ServerConfig, ({ port, isDevelopment }) =>
+    BunHttpServer.layer({
+      port,
+      idleTimeout: serverIdleTimeoutSeconds,
+      // On shutdown the router first interrupts open requests (a parked long
+      // poll answers 503); the listener then stops once those replies are sent.
+      disablePreemptiveShutdown: true,
+      routes: {
+        "/api/*": false,
+        "/streams": false,
+        "/streams/*": false,
+        // Bun bundles the HTML import (scripts, styles, assets) and serves it
+        // for every other path.
+        "/*": index,
+      },
+      // ...
+    }),
+  ),
+);
+```
+
+One router holds the JSON API and the stream routes. `Http.routes` serves the workspace streams under `/streams`. With `access: "read"`, a `PUT`, `POST` or `DELETE` on a stream answers 405, so only the JSON API appends. A path that no declared stream owns answers 404. Both parts use the same `Workspaces` service from the layer graph.
+
+```ts title="server/index.ts"
+const RoutesLive = Layer.mergeAll(
+  ApiLive,
+  ApiNotFoundLive,
+  Http.routes(Streamsy.group(Workspaces), { prefix: streamPrefix, access: "read" }),
+);
+```
+
+You can read a workspace with `curl`. It returns the change events as JSON:
 
 ```bash
-curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
+curl -i 'http://localhost:1338/streams/workspace/main?offset=-1'
 ```
 
-See [Serve](/docs/projections/serve) and [HTTP access](/docs/runtime/http#access).
+See [HTTP](/docs/runtime/http#access).
+
+## 7. Follow the stream in the browser
+
+The state schema maps each change type to a collection. The type names are the same as the collection names in `Workspaces`. The row schemas are the Effect schemas from section 1, converted to Standard Schema.
+
+```ts title="shared/state-schema.ts"
+export const issueTrackerState = createStateSchema({
+  projects: { schema: Schema.toStandardSchemaV1(Project), type: "project", primaryKey: "id" },
+  issues: { schema: Schema.toStandardSchemaV1(Issue), type: "issue", primaryKey: "id" },
+  comments: { schema: Schema.toStandardSchemaV1(Comment), type: "comment", primaryKey: "id" },
+});
+```
+
+`createStreamDB` opens the workspace stream. It reads every change from the start, then follows new ones. This is also how `awaitTxId` sees the change that an action posted.
+
+```ts title="src/db.ts"
+export function createIssueDb(workspaceId: string): IssueDb {
+  return createStreamDB({
+    streamOptions: {
+      url: streamUrl(workspaceId),
+      contentType: "application/json",
+      warnOnHttp: false,
+    },
+    state: issueTrackerState,
+```
+
+The app waits for `preload` before it shows the tracker. A page load has one workspace, so a new workspace means a new page load.
+
+```tsx title="src/App.tsx"
+useEffect(() => {
+  let cancelled = false;
+  const created = createIssueDb(workspaceId);
+
+  void created.preload().then(() => {
+    if (cancelled) {
+      created.close();
+      return;
+    }
+    setDb(created);
+  });
+
+  return () => {
+    cancelled = true;
+    created.close();
+  };
+}, [workspaceId]);
+```
+
+React reads the collections with `useLiveQuery`. When a change arrives from any tab, TanStack DB updates the collection and React renders again.
+
+```tsx title="src/components/IssueTrackerApp.tsx"
+const projectsQuery = useLiveQuery((q) => q.from({ projects: db.collections.projects }));
+const issuesQuery = useLiveQuery((q) => q.from({ issues: db.collections.issues }));
+const commentsQuery = useLiveQuery((q) => q.from({ comments: db.collections.comments }));
+```
 
 ## Limits
 
-- State readers replay from `-1`. There is no snapshot, so replay cost grows with history.
-- The two projections have separate checkpoints. Nothing makes them commit together, and the outputs of `tracker` do not commit together either.
-- The server can accept a command and then fail to project it. Commands have no idempotency key.
-- A failed workspace can serve stale rows or a 503 summary until an operator repairs it. A watcher that stops does not restart.
-- Reads do not run projections. An unknown workspace gets 404 on the API and on output streams that do not exist yet, and 503 on the summary.
-- The `tracker` state holds the whole workspace. It grows with the workspace, and each batch writes it again.
-- The stream routes have no authentication.
+- Every write reads and folds the whole workspace. This is fine for a demo workspace. It does not suit a long history.
+- There is no snapshot. A new page load replays every change in the workspace.
+- The retry has no delay. Many writers on one workspace can use all three retries and get a 409.
+- A storage failure other than a moved tail is a defect, and the API answers 500.
+- The memory store lasts for one server process. Use `ISSUE_TRACKER_DB` to keep workspaces.
+- A workspace link is a random id. It is not access control. Anyone with the link can read and write the workspace.
+- The demo has no hosted deployment.

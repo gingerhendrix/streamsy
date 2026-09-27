@@ -216,7 +216,7 @@ await Effect.runPromise(hand.pipe(Effect.provide(host)));
 
 `Projection.run` allows one process-local runner per canonical projection key. `watch` and `follow` use it, so overlapping requests use the same permit without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
 
-The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) runs a projection with `Projection.run` before each append, reads its rows with `Projection.read`, decides the diff, and appends it with `expectedOffset`.
+The [issue tracker projection](/docs/demos/issue-tracker-projection) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) runs a projection with `Projection.run` before each append, reads its rows with `Projection.read`, decides the diff, and appends it with `expectedOffset`.
 
 ## Parameters
 
@@ -257,7 +257,7 @@ The package keeps no list of bound params. Bind each one and watch it; `Effect.f
 
 Use `Projection.forget(bound)` when a bound projection is retired, after stopping its live triggers; see [State](#state).
 
-Serve reads outputs without checking inputs. An initial read of an absent output stream answers 404; an absent persisted value answers 503 `ValueUnavailable`. Reads create no stream, checkpoint, or state row. Without on-demand run middleware, a bound projection that never ran keeps answering 503 on its value until it runs. See the complete [issue tracker projection](/docs/demos/issue-tracker).
+Serve reads outputs without checking inputs. An initial read of an absent output stream answers 404; an absent persisted value answers 503 `ValueUnavailable`. Reads create no stream, checkpoint, or state row. Without on-demand run middleware, a bound projection that never ran keeps answering 503 on its value until it runs. See the complete [issue tracker projection](/docs/demos/issue-tracker-projection).
 
 ## State
 
@@ -305,7 +305,7 @@ There is one row per key, and every save overwrites it. There is no history, com
 
 The state is one value. Each unit decodes the whole value, and saves the whole value again. This suits small values: a counter, a summary, or a set of up to a few hundred rows. The cost of a unit grows with the size of the value, not with the size of the batch.
 
-Large row sets belong in application tables in an atomic projection, through the shared `SqlClient`; the kernel keeps the cut. The [issue tracker](/docs/demos/issue-tracker) keeps every issue of a workspace in one value, so it is past this size.
+Large row sets belong in application tables in an atomic projection, through the shared `SqlClient`; the kernel keeps the cut. The [issue tracker projection](/docs/demos/issue-tracker-projection) keeps every issue of a workspace in one value, so it is past this size.
 
 An Effect step can write those rows and return the next state inside the atomic transaction:
 
