@@ -68,10 +68,12 @@ test("record keys and producer ids match the values before declarations", () => 
     process: () => Effect.void,
   }).at({ workspaceId: "ws-42", b: "x" });
 
-  expect(recordKey(Projection.key(fixed))).toBe('["streamsy.projection.v1","hex-board","1","{}"]');
+  expect(recordKey(Projection.key(fixed))).toBe(
+    '["streamsy.projection.v1","hex-board","1","1","{}"]',
+  );
   expect(producerId(fixed.id, fixed.version, fixed.params)).toBe("hex-board/v1");
   expect(recordKey(Projection.key(coded))).toBe(
-    '["streamsy.projection.v1","hex-board","1","{\\"gameId\\":\\"game\\"}"]',
+    '["streamsy.projection.v1","hex-board","1","1","{\\"gameId\\":\\"game\\"}"]',
   );
   expect(producerId(coded.id, coded.version, coded.params)).toBe('hex-board/v1/{"gameId":"game"}');
   expect(recordKey(Projection.key(versioned))).toBe(

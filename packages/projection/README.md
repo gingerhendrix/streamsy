@@ -230,7 +230,6 @@ longer input range. See
   errors pass through untouched. Underlying failures are available as `cause`.
   `run` is single-shot; `follow` retries `storage-failure` with logged backoff.
 - A record is keyed by `id`, `version` (default 1), `generation`, and `params`.
-  Version 1 is omitted from the encoded checkpoint key; producer ids always include it.
   To change inputs or start over, declare a new `generation`; it starts from
   offset zero.
 - Input history after the checkpoint must stay readable. Deleting or

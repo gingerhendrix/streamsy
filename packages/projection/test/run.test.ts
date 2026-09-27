@@ -400,7 +400,7 @@ test("handler failure rolls back the output append and the checkpoint", () =>
     }),
   ));
 
-test("version one keeps existing record keys and version two starts a fresh key", () => {
+test("the version is part of the record key, so version two starts a fresh key", () => {
   const definition = {
     id: "versioned",
     params: {},
@@ -411,7 +411,7 @@ test("version one keeps existing record keys and version two starts a fresh key"
   const one = Projection.atomic({ ...definition, version: 1 }).at({});
   const two = Projection.atomic({ ...definition, version: 2 }).at({});
   expect(recordKey(Projection.key(original))).toBe(
-    '["streamsy.projection.v1","versioned","1","{}"]',
+    '["streamsy.projection.v1","versioned","1","1","{}"]',
   );
   expect(recordKey(Projection.key(one))).toBe(recordKey(Projection.key(original)));
   expect(recordKey(Projection.key(two))).not.toBe(recordKey(Projection.key(original)));

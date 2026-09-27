@@ -401,7 +401,7 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 Build the Layer once per host lifetime. Memory is not persistent, so a memory restart starts from zero offsets. A SQLite restart resumes from the stored record.
 
-A record is keyed by `id`, `version`, `generation`, and canonical `params`. Version 1 is omitted from the encoded key to preserve existing records. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
+A record is keyed by `id`, `version`, `generation`, and canonical `params`. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
 
 One runner per key is the supported shape. The record is compare-and-set, so an overlapping runner with stale progress stops with `token-conflict` and writes nothing.
 
