@@ -37,7 +37,7 @@
     "format": "oxfmt . --write",
     "format:check": "oxfmt . --check",
     "test": "bun run test:unit",
-    "test:conformance": "bun run test:conformance:memory && bun run test:conformance:sqlite && bun run test:conformance:workerd && bun run test:conformance:ownership && bun run test:conformance:fetch",
+    "test:conformance": "bun run test:conformance:memory && bun run test:conformance:sqlite && bun run test:conformance:workerd && bun run test:conformance:ownership && bun run test:conformance:fetch && bun run --cwd packages/conformance-tests test:memory:wildcard",
     "test:unit": "bun scripts/test-unit.ts",
     "test:lint-rules": "node --test tools/oxlint/effect-idioms/test/*.test.ts",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
