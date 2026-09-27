@@ -1,5 +1,10 @@
 /** Provider-free deterministic Fold model used by recovery tests and CLI smoke runs. */
-import { customModel, type ActiveModel, type FoldModel } from "@humanlayer/fold-core";
+import {
+  customModel,
+  OpenAiReasoningSetting,
+  type ActiveModel,
+  type FoldModel,
+} from "@humanlayer/fold-core";
 import { Effect, Ref, Stream } from "effect";
 import { LanguageModel, type Response } from "effect/unstable/ai";
 
@@ -31,13 +36,16 @@ export const toolCallTurn = (id: string, name: string, params: unknown): Scripte
   ],
 });
 
+/** Fold's own constructor for the `disabled` reasoning setting. */
+const [DisabledReasoning] = OpenAiReasoningSetting.members;
+
 export const scriptedActiveModel: ActiveModel = {
   providerId: "scripted",
   providerKind: "openai-compatible",
   modelId: "scripted-model",
   role: null,
   requestedReasoningLevel: "off",
-  reasoning: { _tag: "disabled" },
+  reasoning: DisabledReasoning.make({}),
 };
 
 export interface ScriptedModel {

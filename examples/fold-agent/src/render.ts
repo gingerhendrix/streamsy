@@ -1,5 +1,6 @@
 /** Human-readable rendering of durable Fold entries, shared by the CLI commands. */
 import type { LogEntry } from "@humanlayer/fold-core";
+import { Match } from "effect";
 
 const preview = (text: string, limit = 110): string => {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -15,36 +16,34 @@ const renderContent = <Part extends { readonly type: string }>(
   part: (value: Part) => string,
 ): string => (typeof content === "string" ? content : content.map(part).join(" "));
 
-const detail = (entry: LogEntry): string => {
-  switch (entry._tag) {
-    case "session_started":
-      return `session=${entry.sessionId} root=${entry.rootAgentId}`;
-    case "user-message":
-      return renderContent(entry.message.content, (part) =>
-        part.type === "text" ? part.text : `<${part.type}>`,
-      );
-    case "assistant-message":
-      return renderContent(entry.message.content, (part) =>
-        part.type === "text"
-          ? part.text
-          : part.type === "tool-call"
-            ? `calls ${part.name}(${JSON.stringify(part.params)})`
+const detail = (entry: LogEntry): string =>
+  Match.value(entry).pipe(
+    Match.tags({
+      session_started: (started) => `session=${started.sessionId} root=${started.rootAgentId}`,
+      "user-message": (user) =>
+        renderContent(user.message.content, (part) =>
+          part.type === "text" ? part.text : `<${part.type}>`,
+        ),
+      "assistant-message": (assistant) =>
+        renderContent(assistant.message.content, (part) =>
+          part.type === "text"
+            ? part.text
+            : part.type === "tool-call"
+              ? `calls ${part.name}(${JSON.stringify(part.params)})`
+              : `<${part.type}>`,
+        ),
+      "tool-result": (tool) =>
+        renderContent(tool.message.content, (part) =>
+          part.type === "tool-result"
+            ? `${part.name} -> ${JSON.stringify(part.result)}`
             : `<${part.type}>`,
-      );
-    case "tool-result":
-      return renderContent(entry.message.content, (part) =>
-        part.type === "tool-result"
-          ? `${part.name} -> ${JSON.stringify(part.result)}`
-          : `<${part.type}>`,
-      );
-    case "agent-finished":
-      return `${entry.outcome}${entry.resultText === null ? "" : `: ${entry.resultText}`}`;
-    case "model-change":
-      return `${entry.model.providerId}/${entry.model.modelId}`;
-    default:
-      return "";
-  }
-};
+        ),
+      "agent-finished": (finished) =>
+        `${finished.outcome}${finished.resultText === null ? "" : `: ${finished.resultText}`}`,
+      "model-change": (change) => `${change.model.providerId}/${change.model.modelId}`,
+    }),
+    Match.orElse(() => ""),
+  );
 
 /** A one-line summary of one durable entry: its sequence, tag, and a short gist. */
 export const formatEntry = (entry: LogEntry): string =>

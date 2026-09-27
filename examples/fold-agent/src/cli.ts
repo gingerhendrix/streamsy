@@ -20,7 +20,7 @@ import {
   type SubagentNotFoundError,
 } from "@humanlayer/fold-core";
 import { StorageFault } from "@streamsy/core";
-import { Cause, Effect, Exit, Schema } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 import { exampleAgent, MissingCredentialsError, modelFromEnv } from "./agent.ts";
 import { formatEntry } from "./render.ts";
 import {
@@ -170,7 +170,7 @@ if (import.meta.main) {
   if (Exit.isFailure(exit)) {
     const failure = Cause.findErrorOption(exit.cause);
     console.error(
-      failure._tag === "Some" && failure.value instanceof Error
+      Option.isSome(failure) && failure.value instanceof Error
         ? failure.value.message
         : Cause.pretty(exit.cause),
     );

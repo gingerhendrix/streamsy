@@ -5,7 +5,7 @@ import {
   type LogEntry,
 } from "@humanlayer/fold-core";
 import { Streamsy, StreamAddress, ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Option, Schema, Stream } from "effect";
+import { Effect, Option, Predicate, Schema, Stream } from "effect";
 
 export class Sessions extends Streamsy.custom<Sessions>()("Fold/Sessions", {
   parse: (id: string) =>
@@ -33,6 +33,9 @@ export const readHistory = Effect.fn("Fold.readHistory")(function* (params: { st
   };
 });
 
+/** Fold requires exactly one `session_started` entry, and it must be the first. */
+export const isSessionStart = Predicate.isTagged("session_started");
+
 export const decodeLog = Effect.fn("Fold.decodeLog")(function* (values: ReadonlyArray<unknown>) {
   const entries: LogEntry[] = [];
   for (const value of values) {
@@ -41,7 +44,7 @@ export const decodeLog = Effect.fn("Fold.decodeLog")(function* (values: Readonly
       return yield* corrupt(
         `Invalid EventLog sequence: expected ${entries.length}, got ${entry.seq}`,
       );
-    if (entry.seq === 0 ? entry._tag !== "session_started" : entry._tag === "session_started")
+    if (entry.seq === 0 ? !isSessionStart(entry) : isSessionStart(entry))
       return yield* corrupt("Fold log must start with exactly one session_started at seq 0");
     entries.push(entry);
   }

@@ -14,9 +14,16 @@ import {
   type LogEntryInput,
 } from "@humanlayer/fold-core";
 import { StreamNotFound, StreamGone } from "@streamsy/core";
-import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
+import { Context, Effect, Layer, Predicate, Schema, Semaphore, Stream } from "effect";
 import type { StreamsyStore } from "./storage.ts";
-import { Sessions, corrupt, decodeLog, readHistory, unavailable } from "./session-log.ts";
+import {
+  Sessions,
+  corrupt,
+  decodeLog,
+  isSessionStart,
+  readHistory,
+  unavailable,
+} from "./session-log.ts";
 
 export type StreamsyEventLogMode = "create" | "resume";
 export interface StreamsyEventLogOptions {
@@ -34,7 +41,8 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
     return error;
   if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
   if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
-  if (error._tag === "DecodeFault") return corrupt(error.message ?? "Invalid stored JSON");
+  const { message } = error;
+  if (Predicate.isTagged(error, "DecodeFault")) return corrupt(message ?? "Invalid stored JSON");
   return unavailable(
     error.message || error._tag,
     "retryable" in error && error.retryable === true,
@@ -50,7 +58,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
-      if (result._tag === "Exists")
+      if (Predicate.isTagged(result, "Exists"))
         return yield* unavailable(
           `Stream ${params.streamId} already exists or is unavailable: ${result._tag}`,
         );
@@ -68,9 +76,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
       lock.withPermit(
         Effect.gen(function* () {
           if (fenced) return yield* unavailable("This writer is fenced; resume from the log");
-          if (
-            nextEntrySeq === 0 ? input._tag !== "session_started" : input._tag === "session_started"
-          )
+          if (nextEntrySeq === 0 ? !isSessionStart(input) : isSessionStart(input))
             return yield* corrupt("Fold log requires exactly one initial session_started");
           const entry = yield* makeStoredLogEntry(input, nextEntrySeq, ids);
           // Preserve Fold v1 optional-field omission; toCodecJson would encode undefined as null.
@@ -110,7 +116,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
                 const entry = yield* decodeStoredLogEntry(value);
                 if (
                   entry.seq !== seq ||
-                  (seq === 0 ? entry._tag !== "session_started" : entry._tag === "session_started")
+                  (seq === 0 ? !isSessionStart(entry) : isSessionStart(entry))
                 )
                   return yield* corrupt(`Invalid subscribed Fold sequence at ${seq}`);
                 seq++;
