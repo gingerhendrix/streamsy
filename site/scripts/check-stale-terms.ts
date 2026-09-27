@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { staleTerms, retiredCoreNames } from "../../scripts/site-stale-terms";
+import { staleTerms, retiredNames } from "../../scripts/site-stale-terms";
 
 const site = new URL("..", import.meta.url).pathname;
 const repo = dirname(site);
@@ -35,9 +35,9 @@ async function scan(directory: string): Promise<void> {
       const lines = (await readFile(path, "utf8")).split("\n");
       const sitePath = relative(site, path);
       for (const [index, line] of lines.entries()) {
-        for (const term of staleTerms) {
+        for (const term of [...staleTerms, ...retiredNames]) {
           if (
-            retiredCoreNames.includes(term)
+            retiredNames.includes(term)
               ? line.includes(term)
               : line.toLowerCase().includes(term.toLowerCase())
           ) {

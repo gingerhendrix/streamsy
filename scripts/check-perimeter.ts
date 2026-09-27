@@ -1,5 +1,5 @@
 /** Final release perimeter, including all authored site content. */
-import { retiredCoreNames } from "./site-stale-terms.ts";
+import { retiredNames } from "./site-stale-terms.ts";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -56,8 +56,8 @@ const testKits = ["packages/core/src/testing/storage-contract.ts"];
 const applicationProtocolAllowlist: Readonly<Record<string, string>> = {};
 const checks = [
   scan(
-    "no retired batch 1 to 4 names",
-    retiredCoreNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    "no retired names",
+    retiredNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
     ["packages/**", "examples/**", "hosted/**", "site/content/docs/**"],
   ),
   scan(

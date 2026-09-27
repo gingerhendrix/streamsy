@@ -26,8 +26,8 @@ export const staleTerms = [
   "Backend.make",
 ];
 
-/** Retired names from the approved batch 1, 2 and 3 renames. */
-export const retiredCoreNames = [
+/** Retired API names. Matched case-sensitively in the repo and the site. */
+export const retiredNames = [
   "Projection.make",
   "Projection.serialized",
   "Projection.onChange",
@@ -48,10 +48,6 @@ export const retiredCoreNames = [
   "@streamsy/core/Family/",
   "Projection.family",
   ".member(",
-];
-
-/** Retired names from the batch 4 renames: projection kinds and value serving. */
-export const retiredProjectionNames = [
   "Projection.fused",
   "FusedDefinition",
   '"Fused"',
@@ -60,13 +56,11 @@ export const retiredProjectionNames = [
   "DocumentOptions",
   "DOCUMENT_CONTRACT_HEADER",
   "x-streamsy-document-contract",
-  // Phase 2: one place for state and one read.
   "Projection.loadState",
   "Projection.fold",
   "OutputFold",
   "Output.value",
   "progress.record",
   "Pick<CheckpointRecord",
+  "Projection.State",
 ];
-retiredCoreNames.push(...retiredProjectionNames);
-staleTerms.push(...retiredCoreNames);

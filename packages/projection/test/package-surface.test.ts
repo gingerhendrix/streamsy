@@ -51,8 +51,6 @@ test("built public entries and declared files exist", () => {
   expect(Projection.outputs).toBeFunction();
   expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
   expect(Projection.read).toBeFunction();
-  expect("fold" in Projection).toBe(false);
-  expect("loadState" in Projection).toBe(false);
   expect(Projection.forget).toBeFunction();
   expect(Checkpoint.fromStore).toBeFunction();
   expect(Checkpoint.CheckpointRecord).toBeDefined();
@@ -72,10 +70,7 @@ test("built public entries and declared files exist", () => {
   expect(Projection.atomic).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
-  expect("stream" in Projection).toBe(false);
-  expect("fused" in Projection).toBe(false);
   expect(Projection.follow).toBeFunction();
-  expect("family" in Projection).toBe(false);
   expect(Projection.watch).toBeFunction();
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
