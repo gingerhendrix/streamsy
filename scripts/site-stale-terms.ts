@@ -26,6 +26,7 @@ export const staleTerms = [
   "Backend.make",
   "stream form",
   "stream-form",
+  "rung-zero",
 ];
 
 /** Retired API names. Matched case-sensitively in the repo and the site. */
