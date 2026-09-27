@@ -75,10 +75,9 @@ export function makeNewestStoriesPoller(
       yield* pass.pipe(
         Effect.catch((failure) =>
           patchCounters({
-            lastPollError:
-              failure._tag === "NewestStoriesPoller.PollFailure"
-                ? failure.reason
-                : `${failure._tag}: ${errorMessage(failure)}`,
+            lastPollError: Predicate.isTagged(failure, "NewestStoriesPoller.PollFailure")
+              ? failure.reason
+              : `${failure._tag}: ${errorMessage(failure)}`,
           }).pipe(Effect.andThen(Effect.logError("HN poll failed", failure))),
         ),
         Effect.ensuring(

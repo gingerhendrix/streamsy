@@ -84,7 +84,7 @@ export const IssueTrackerLive = Layer.effect(
       appendWorkspaceEvent(workspaceId, change, head, head).pipe(
         Effect.provideService(Workspaces, workspaces),
         Effect.catch((error) =>
-          error._tag === "OffsetMismatch" ? Effect.fail(error) : Effect.die(error),
+          Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
         ),
       );
 
@@ -92,7 +92,7 @@ export const IssueTrackerLive = Layer.effect(
       const batches = yield* workspaces.read({ workspaceId }).pipe(
         Stream.runCollect,
         Effect.catch((error) =>
-          error._tag === "StreamNotFound" || error._tag === "StreamGone"
+          Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
             ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
             : Effect.die(error),
         ),

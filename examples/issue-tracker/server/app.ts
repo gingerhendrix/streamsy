@@ -2,7 +2,7 @@ import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
 import { Projection, type State } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Predicate, Result, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
@@ -55,13 +55,13 @@ export const app = (workspaces: ReadonlyArray<string>) => {
         Effect.flatMap(Schema.decodeUnknownEffect(CommandRequest)),
         Effect.result,
       );
-      if (decoded._tag === "Failure") return json({ error: "Invalid command" }, { status: 400 });
+      if (Result.isFailure(decoded)) return json({ error: "Invalid command" }, { status: 400 });
       const command = decoded.success;
       const result = yield* transact(workspaceId, command).pipe(Effect.result);
-      if (result._tag === "Failure") {
-        if (result.failure._tag === "UnknownIssue")
+      if (Result.isFailure(result)) {
+        if (Predicate.isTagged(result.failure, "UnknownIssue"))
           return json({ error: "Unknown issue" }, { status: 400 });
-        if (result.failure._tag === "OffsetMismatch")
+        if (Predicate.isTagged(result.failure, "OffsetMismatch"))
           return json({ error: "Concurrent command conflict" }, { status: 409 });
         return json({ error: "Internal server error" }, { status: 500 });
       }
