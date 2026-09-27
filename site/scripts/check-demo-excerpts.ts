@@ -18,40 +18,72 @@ export const demoExamples = new Map<string, string>([
   ["issue-tracker", "examples/issue-tracker"],
   ["issue-tracker-demo", "examples/issue-tracker-demo"],
   ["memory-server", "examples/memory-server"],
-  // The fold-agent page is added on another branch. The entry can come first.
   ["fold-agent", "examples/fold-agent"],
 ]);
-
-/**
- * Pages that still have untitled excerpts. Another branch moves them to titled
- * excerpts. The check reports their problems but does not fail on them, and it
- * fails when a listed page passes, so the list gets shorter as pages move.
- * Remove this list when all demo pages use titled excerpts.
- */
-export const notYetMigrated: ReadonlySet<string> = new Set(["hex-board"]);
 
 const excerptLanguages = new Set(["ts", "tsx"]);
 
 /** An excerpt line is `// ...` when it marks lines that the page leaves out. */
 const isElision = (line: string): boolean => line.trim().startsWith("// ...");
 
-/** The excerpt lines that must be in the source: not blank and not an elision. */
-export const excerptLines = (body: string): ReadonlyArray<string> =>
-  body
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim() !== "" && !isElision(line));
+/**
+ * The runs of an excerpt between `// ...` lines. Each run must be a contiguous run of
+ * source lines. Blank lines at the start and end of a run do not count. Lines lose
+ * their trailing spaces.
+ */
+export const excerptSegments = (body: string): ReadonlyArray<ReadonlyArray<string>> => {
+  const segments: Array<Array<string>> = [[]];
+  for (const line of body.split("\n").map((text) => text.trimEnd())) {
+    if (isElision(line)) segments.push([]);
+    else segments.at(-1)?.push(line);
+  }
+  return segments
+    .map((segment) => {
+      const first = segment.findIndex((line) => line !== "");
+      const last = segment.findLastIndex((line) => line !== "");
+      return first === -1 ? [] : segment.slice(first, last + 1);
+    })
+    .filter((segment) => segment.length > 0);
+};
+
+const indented = (line: string, indent: string): string => (line === "" ? "" : `${indent}${line}`);
+
+/**
+ * Where a segment starts in the source at or after `from`, or the first segment line that
+ * no candidate start reaches. A candidate start is a source line equal to the first
+ * segment line. The drifted line is the one after the longest matching prefix.
+ */
+const findSegment = (
+  segment: ReadonlyArray<string>,
+  sourceLines: ReadonlyArray<string>,
+  from: number,
+  indent: string,
+): { readonly at: number } | { readonly missing: string } => {
+  let longest = 0;
+  for (let start = from; start < sourceLines.length; start++) {
+    let matched = 0;
+    while (
+      matched < segment.length &&
+      sourceLines[start + matched] === indented(segment[matched] ?? "", indent)
+    ) {
+      matched++;
+    }
+    if (matched === segment.length) return { at: start };
+    longest = Math.max(longest, matched);
+  }
+  return { missing: segment[longest] ?? "" };
+};
 
 const missingWithIndent = (
-  lines: ReadonlyArray<string>,
+  segments: ReadonlyArray<ReadonlyArray<string>>,
   sourceLines: ReadonlyArray<string>,
   indent: string,
 ): string | undefined => {
   let position = 0;
-  for (const line of lines) {
-    const found = sourceLines.indexOf(`${indent}${line}`, position);
-    if (found === -1) return line;
-    position = found + 1;
+  for (const segment of segments) {
+    const found = findSegment(segment, sourceLines, position, indent);
+    if ("missing" in found) return found.missing;
+    position = found.at + segment.length;
   }
   return undefined;
 };
@@ -59,20 +91,21 @@ const missingWithIndent = (
 const leadingSpaces = (line: string): number => line.length - line.trimStart().length;
 
 /**
- * The first excerpt line that the source does not have after the previous match.
- * Lines compare exactly after trailing spaces are removed. The formatter removes the
- * common indentation of a fence, so the whole excerpt may sit a constant number of
- * spaces to the left of the source. Relative indentation must still match.
- * Returns `undefined` when all lines are an in-order run of source lines.
+ * The first excerpt line that drifted from the source, or `undefined` when the excerpt
+ * matches. Each run between `// ...` lines must be a contiguous run of source lines, and
+ * the runs must be in source order. Lines compare exactly after trailing spaces are
+ * removed. The formatter removes the common indentation of a fence, so the whole excerpt
+ * may sit a constant number of spaces to the left of the source. Relative indentation
+ * must still match.
  */
 export const firstMissingLine = (body: string, source: string): string | undefined => {
   const sourceLines = source.split("\n").map((line) => line.trimEnd());
-  const lines = excerptLines(body);
-  const unshifted = missingWithIndent(lines, sourceLines, "");
+  const segments = excerptSegments(body);
+  const unshifted = missingWithIndent(segments, sourceLines, "");
   if (unshifted === undefined) return undefined;
   const shifts = new Set(sourceLines.map(leadingSpaces).filter((spaces) => spaces > 0));
   for (const shift of shifts) {
-    if (missingWithIndent(lines, sourceLines, " ".repeat(shift)) === undefined) return undefined;
+    if (missingWithIndent(segments, sourceLines, " ".repeat(shift)) === undefined) return undefined;
   }
   return unshifted;
 };
@@ -104,7 +137,8 @@ export const checkDemoPage = (text: string, readSource: SourceReader): ReadonlyA
     }
     const missing = firstMissingLine(fence.value, source);
     if (missing !== undefined) {
-      problems.push(`line ${fence.line}: ${title} has no line, in order: ${missing.trim()}`);
+      const shown = missing.trim() === "" ? "(a blank line)" : missing.trim();
+      problems.push(`line ${fence.line}: ${title} drifts from the source at: ${shown}`);
     }
   }
   return problems;
@@ -126,9 +160,6 @@ export const checkDemoExcerpts = async (): Promise<void> => {
     .filter((name) => name.endsWith(".mdx"))
     .map((name) => name.slice(0, -".mdx".length))
     .toSorted();
-  for (const page of notYetMigrated) {
-    if (!pages.includes(page)) failures.push(`${page}: listed as not yet migrated, but no page`);
-  }
   for (const page of pages) {
     if (page === "index") continue;
     const example = demoExamples.get(page);
@@ -138,14 +169,6 @@ export const checkDemoExcerpts = async (): Promise<void> => {
     }
     const text = await readFile(join(demos, `${page}.mdx`), "utf8");
     const problems = checkDemoPage(text, exampleReader(example));
-    if (notYetMigrated.has(page)) {
-      if (problems.length === 0) {
-        failures.push(`${page}: passes now; remove it from notYetMigrated`);
-      } else {
-        console.log(`not yet migrated ${page}: ${problems.length} problems, not enforced`);
-      }
-      continue;
-    }
     if (problems.length === 0) {
       console.log(`ok demo excerpts ${page} ← ${example}`);
       continue;
