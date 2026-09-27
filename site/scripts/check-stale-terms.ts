@@ -23,6 +23,11 @@ const skipped = new Set([
   ".alchemy",
   ".wrangler",
 ]);
+/**
+ * Published articles that record the API of their date. Gareth owns their text, so the
+ * term scan does not ask for edits to them.
+ */
+const frozenArticles = new Set(["content/articles/the-simplest-possible-sync-engine.mdx"]);
 let files = 0;
 let hits = 0;
 async function scan(directory: string): Promise<void> {
@@ -31,9 +36,10 @@ async function scan(directory: string): Promise<void> {
     if (entry.isDirectory()) {
       if (!skipped.has(entry.name)) await scan(path);
     } else if (/\.(?:mdx?|json|[cm]?[jt]sx?|html|css|svg|txt)$/.test(entry.name)) {
+      const sitePath = relative(site, path);
+      if (frozenArticles.has(sitePath)) continue;
       files++;
       const lines = (await readFile(path, "utf8")).split("\n");
-      const sitePath = relative(site, path);
       for (const [index, line] of lines.entries()) {
         for (const term of [...staleTerms, ...retiredNames]) {
           if (

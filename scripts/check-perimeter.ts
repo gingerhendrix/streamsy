@@ -48,6 +48,8 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
   return passed;
 };
 const authored = ["packages/*/src/**", "!*.test.ts"];
+// Published articles record the API of their date. Gareth owns their text.
+const frozenArticles = ["!site/content/articles/the-simplest-possible-sync-engine.mdx"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = ["packages/core/src/testing/storage-contract.ts"];
 // Application code has no protocol exceptions. Add a file and its concrete reason here only
@@ -82,6 +84,7 @@ const checks = [
   scan(
     "no retired package imports",
     String.raw`@streamsy/(?:http-client|state|streams|tanstack-db|sinks|core/json|derive)\b`,
+    frozenArticles,
   ),
   scan(
     "no legacy storage entry imports",
@@ -106,7 +109,7 @@ const checks = [
       "JsonCodec",
       "streamIdentity",
     ].join("|")})\b`,
-    ["packages/**", "examples/**", "site/**"],
+    ["packages/**", "examples/**", "site/**", ...frozenArticles],
   ),
   scan(
     "runtime conversion only at the host and test edges",

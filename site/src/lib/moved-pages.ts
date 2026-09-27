@@ -3,4 +3,7 @@
  * that replaced it. The docs route answers an old path with a 308 redirect, and
  * `check:links` checks each entry.
  */
-export const movedPages = new Map([["demos/issue-tracker-demo", "demos/issue-tracker"]]);
+export const movedPages = new Map([
+  ["demos/issue-tracker-demo", "demos/issue-tracker"],
+  ["user/durable-state", "streams/creating"],
+]);
