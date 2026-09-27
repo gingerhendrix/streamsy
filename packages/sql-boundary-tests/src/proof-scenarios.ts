@@ -1,5 +1,17 @@
 /* oxlint-disable eslint/no-underscore-dangle -- Proof outcomes follow the accepted Effect-owned `_tag` convention. */
-import { Cause, Schema, Deferred, Effect, Exit, Fiber, Option, Scope, Stream } from "effect";
+import {
+  Cause,
+  Data,
+  Schema,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Predicate,
+  Scope,
+  Stream,
+} from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { CommitBoundary } from "./commit-boundary.ts";
@@ -9,7 +21,8 @@ interface Snapshot {
   readonly expiresAtMs: number;
 }
 
-type MutationApplied = { readonly _tag: "Applied"; readonly ambient: boolean };
+type MutationApplied = Data.TaggedEnum<{ Applied: { readonly ambient: boolean } }>;
+const { Applied } = Data.taggedEnum<MutationApplied>();
 
 class MutationRejected extends Schema.TaggedError<MutationRejected>()("MutationRejected", {
   revision: Schema.Finite,
@@ -106,7 +119,7 @@ const mutate = (
         "UPDATE protocol_state SET revision = ?, expires_at_ms = ? WHERE id = ?",
         [next.revision, next.expiresAtMs, "stream"],
       );
-      return { _tag: "Applied" as const, ambient: Option.isSome(ambient) };
+      return Applied({ ambient: Option.isSome(ambient) });
     }),
   });
 
@@ -347,7 +360,7 @@ export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect
 
     return {
       sharedGraphReads,
-      ambientJoined: committed._tag === "Applied" && committed.ambient,
+      ambientJoined: Predicate.isTagged(committed, "Applied") && committed.ambient,
       rejected: rejected._tag,
       rejectionRolledBackApplicationRow,
       rawAmbientBoundaryRejectedBeforeBody:
