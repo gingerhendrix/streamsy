@@ -61,7 +61,7 @@ Before the append, the kernel pins the unit's non-empty ranges and the producer 
 
 ## Outputs
 
-`Projection.outputs` is the stream form with named outputs. `Output.stream` emits typed items and `Output.rows` emits Durable State changes. `state: { schema, initial }` declares the state. With `state:`, the handler gets the prior state first and returns the next state in the reserved `state` result key. The output name is the rows collection type; `key` selects its row key. The kernel owns no rows table.
+`Projection.outputs` writes to named outputs. `Output.stream` emits typed items and `Output.rows` emits Durable State changes. `state: { schema, initial }` declares the state. With `state:`, the handler gets the prior state first and returns the next state in the reserved `state` result key. The output name is the rows collection type; `key` selects its row key. The kernel owns no rows table.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -99,7 +99,7 @@ const tracker = Projection.outputs({
 });
 ```
 
-Each stream and rows output names its target with a stream declaration or a fixed address. The target supplies the stream id and the storage owner; the output declaration owns the JSON codec, so a `bytes` stream is enough as a target. Every target must share the checkpoint owner, as in the stream form.
+Each stream and rows output names its target with a stream declaration or a fixed address. The target supplies the stream id and the storage owner; the output declaration owns the JSON codec, so a `bytes` stream is enough as a target. Every target must share the checkpoint owner.
 
 The handler returns `{ <outputName>: [...] }` in an Effect. With `state:`, the handler is `(state, batch, unit)` and also returns `state`, which is saved with the checkpoint. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output.
 
@@ -305,7 +305,7 @@ There is one row per key, and every save overwrites it. There is no history, com
 
 The state is one value. Each unit decodes the whole value, and saves the whole value again. This suits small values: a counter, a summary, or a set of up to a few hundred rows. The cost of a unit grows with the size of the value, not with the size of the batch.
 
-Large row sets belong in application tables in an atomic projection, through the shared `SqlClient`; the kernel keeps the cut. The [issue tracker](/docs/demos/issue-tracker) keeps every issue of a workspace in one value, so it is past this size. Keyed state, which saves only the changed rows, is planned.
+Large row sets belong in application tables in an atomic projection, through the shared `SqlClient`; the kernel keeps the cut. The [issue tracker](/docs/demos/issue-tracker) keeps every issue of a workspace in one value, so it is past this size.
 
 An Effect step can write those rows and return the next state inside the atomic transaction:
 
@@ -332,7 +332,7 @@ The application creates and migrates `order_totals`; this snippet uses the `Orde
 
 `Projection.forget(bound)` takes the same process-local permit as `run`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `watch` or `follow` fibers before you call `forget`. Other processes and direct `Projection.pass` calls do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale competing pass can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
 
-Forgetting does not delete streams. Do not forget a stream-form projection while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
+Forgetting does not delete streams. Do not forget an outputs projection while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
 
 Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for atomic projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
 
@@ -401,7 +401,7 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 Build the Layer once per host lifetime. Memory is not persistent, so a memory restart starts from zero offsets. A SQLite restart resumes from the stored record.
 
-A record is keyed by `id`, `version`, `generation`, and canonical `params`. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
+A record is keyed by `id`, `version`, `generation`, and canonical `params`. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for an outputs projection, a new producer epoch. An outputs runner of an older generation fails with `stale-epoch` once a newer one has appended.
 
 One runner per key is the supported shape. The record is compare-and-set, so an overlapping runner with stale progress stops with `token-conflict` and writes nothing.
 
@@ -411,7 +411,7 @@ Failures are `ProjectionFault` values with a `phase` and a `reason`. The phase s
 
 Handler errors are not wrapped: `run` fails with the handler's error or a `ProjectionFault`. `run` does not retry or reset; `follow` retries only `storage-failure`.
 
-Every input must retain its history after the accepted offset, and the stream form also needs every pending pinned range. When that history is gone the projection stops with `history-unavailable` or `range-unreproducible`, and recovery is a new generation. See the expiry rules on [Creating](/docs/streams/creating).
+Every input must retain its history after the accepted offset, and an outputs projection also needs every pending pinned range. When that history is gone the projection stops with `history-unavailable` or `range-unreproducible`, and recovery is a new generation. See the expiry rules on [Creating](/docs/streams/creating).
 
 ## Several backends
 

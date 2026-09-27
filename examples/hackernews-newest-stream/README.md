@@ -132,7 +132,7 @@ nothing.
 
 There is no snapshot. Every new browser replays the full retained history, which
 must remain available and grows as stories change even when the newest set stays
-at 50 rows. A server-side snapshot remains a follow-up. Recovery means closing
+at 50 rows. Recovery means closing
 the old collection and opening a fresh one from `-1`. After a server reset,
 reload the page: it does not automatically reopen its collection.
 
@@ -154,8 +154,6 @@ freshness. Steady contention can use up the three retries. Projection
 checkpoint conflicts and other operational errors are recorded for the next
 scheduled pass, not retried as append conflicts.
 
-An old `.data/hackernews.sqlite` holds the two old streams; this demo starts
-clean under the new stream id `hackernews/newest`. There is no migration or
-cleanup of old streams. `HN_DB=memory` starts fresh on every process restart.
+`HN_DB=memory` starts fresh on every process restart.
 
 Guide: [streamsy.dev/docs/demos/hackernews-newest-stream](https://streamsy.dev/docs/demos/hackernews-newest-stream).

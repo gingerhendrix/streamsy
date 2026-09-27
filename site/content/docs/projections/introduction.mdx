@@ -14,7 +14,7 @@ Both forms take the optional `state:` and are read with `Projection.read`, which
 
 ## Inputs, unit, checkpoint
 
-Inputs are a map of names to addresses, such as `Orders.at({})`. Use `inputs: { input: Orders.at({}) }` for a single input. A runner requires the stream service of every input, plus `Checkpoints`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for the stream form the pending pin and producer sequence.
+Inputs are a map of names to addresses, such as `Orders.at({})`. Use `inputs: { input: Orders.at({}) }` for a single input. A runner requires the stream service of every input, plus `Checkpoints`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for an outputs projection the pending pin and producer sequence.
 
 ## Fact streams and state streams
 

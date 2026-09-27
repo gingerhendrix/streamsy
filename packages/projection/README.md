@@ -73,7 +73,7 @@ this example; the package tests execute it.
 
 ## State
 
-Both forms take `state: { schema, initial }`. `initial` is a value, or a function of
+Both kinds take `state: { schema, initial }`. `initial` is a value, or a function of
 the decoded params, used only when no state is saved yet. The state is saved in the
 same transaction as the checkpoint.
 
@@ -103,7 +103,7 @@ and retires the process lock after its existing callers drain.
 
 The state is one value, and each unit rewrites all of it. Keep it small: a counter,
 a summary, or up to a few hundred rows. Put large row sets in application tables
-through the shared `SqlClient` in an atomic projection. Keyed state is planned.
+through the shared `SqlClient` in an atomic projection.
 See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
 size, generation, and retirement rules.
 
@@ -248,32 +248,6 @@ jittered exponential backoff from 200 ms, capped at 30 s; `retry` accepts a `Sch
 Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
-
-## Migrating from 0.4.0
-
-| 0.4.0                                               | Now                                                                                                  |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| The `fused` constructor                             | `Projection.atomic`                                                                                  |
-| `Projection.stream`                                 | `Projection.outputs` with one `Output.stream`                                                        |
-| `loadState(projection, schema)`                     | `Projection.read(projection)`, which returns `{ state, offsets }`                                    |
-| `record` on `Progress` (`record.inputs`)            | `offsets` on `Progress`                                                                              |
-| The two-argument `fold(initial, step)` in `process` | `state: { schema, initial }` and `fold: (state, entry, unit) => next` on the declaration             |
-| A `value` output in `outputs`                       | `state: { schema, initial }`, and the handler `(state, batch, unit)` returns `{ state, ...outputs }` |
-| `Serve.value` on a bound `value` output             | `Serve.value(declaration.state, path)`                                                               |
-
-In `@streamsy/serve`, the value contract header is now `x-streamsy-value-contract`
-(`VALUE_CONTRACT_HEADER`), and its options type is `ValueOptions`. The old names
-used `document` in place of `value`. Update CORS `allowedHeaders` and
-`exposedHeaders`. A client that sends a fingerprint kept from 0.4.0 gets one 409
-`ContractChanged` and refetches.
-
-**Warning.** A checkpoint written by `Projection.stream` keeps its producer
-position under the output name `stream`. Suppose you move that projection to
-`Projection.outputs` with the same `id`, `version` and `generation`, and name
-the output something else, such as `output`. The new output restarts its
-producer sequence at 0 under the same producer id, and the server drops its
-appends as duplicates, with no error. Name the output `stream`, or declare a
-new `generation`.
 
 ## License
 

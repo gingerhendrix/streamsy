@@ -133,25 +133,6 @@ creates the stream at boot, so the first `GET /state/newest?offset=-1` returns
 lifetime. There is no background watcher: the projection runs only when the
 poller asks for it.
 
-## Replay figure
-
-Batch D2 measured Bun 1.4.2 on Linux x64, SQLite and warm loopback HTTP, on the
-earlier two-stream version of this demo. That version served one change per
-changed story, as this one does. Every poll changed all 50 stories: a
-worst-case workload, not typical HN traffic. Each milestone used five fresh
-sessions and retained 50 current rows. Bytes are uncompressed JSON bodies
-across all pages; timings are medians.
-
-| Polls | Retained changes | Pages | Body bytes | Raw replay | TanStack preload |
-| ----- | ---------------- | ----- | ---------- | ---------- | ---------------- |
-| 100   | 5,000            | 5     | 1,219,205  | 20.7 ms    | 20.8 ms          |
-| 1,000 | 50,000           | 50    | 12,289,350 | 137.1 ms   | 120.3 ms         |
-
-Raw replay includes HTTP, decoding and Map application. TanStack preload runs
-on Bun; these are not browser or WAN latency figures. At one poll per minute,
-1,000 polls span about 16 hours 40 minutes. The same worst case is about 17.7 MB
-of replay after one day. Server-side snapshots remain a follow-up.
-
 ## Limits
 
 There is no snapshot. New sessions replay all retained changes, and history
@@ -168,6 +149,5 @@ poll reconciles later writes. `expectedOffset` refuses a stale append, but it
 does not order the Hacker News fetches of two processes by freshness. Steady
 contention can use up the three retries.
 
-Use a fresh database: earlier stream and checkpoint formats are not migrated.
 `HN_DB=memory` starts fresh after every restart. The demo has no hosted
 deployment; see [Cloudflare](/docs/runtime/cloudflare) for the host path.

@@ -24,6 +24,8 @@ export const staleTerms = [
   "cancelExpiry",
   "layerRouted",
   "Backend.make",
+  "stream form",
+  "stream-form",
 ];
 
 /** Retired API names. Matched case-sensitively in the repo and the site. */
