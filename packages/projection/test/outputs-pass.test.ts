@@ -18,6 +18,7 @@ import {
   Output,
   Projection,
   ProjectionFault,
+  type Identity,
   type State,
   type Unit,
 } from "@streamsy/projection";
@@ -66,7 +67,7 @@ const fault = <A>(result: { readonly _tag: string; readonly failure?: A }): Proj
 };
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
-const stored = (projection: Projection.Identity) =>
+const stored = (projection: Identity) =>
   Effect.gen(function* () {
     const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
     return { token: loaded.token, record: Option.getOrUndefined(loaded.record) };

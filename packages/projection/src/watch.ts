@@ -4,7 +4,7 @@ import { Effect, Fiber, Queue, Stream as EffectStream, type Scope } from "effect
 import { Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./projection.ts";
+import type { Atomic } from "./atomic.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run } from "./run.ts";
 import type { Progress } from "./run.ts";

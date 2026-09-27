@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, type ProjectionFault } from "@streamsy/projection";
+import { Checkpoints, Projection, State, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -17,7 +17,7 @@ const hosts: ReadonlyArray<
       | Checkpoints
       | import("@streamsy/core/protocol").StreamsReader
       | import("@streamsy/core/protocol").StreamsWriter
-      | Projection.State,
+      | State,
       StorageFault | ProjectionFault
     >,
   ]
@@ -90,7 +90,7 @@ for (const [name, host] of hosts) {
             yield* Deferred.succeed(release, undefined);
             expect((yield* Fiber.join(a)).items).toBe(1);
             yield* Fiber.join(forget);
-            expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
+            expect(yield* (yield* State).load(projection)).toEqual(Option.none());
             yield* Projection.run(projection);
             expect((yield* Projection.read(projection)).state).toBe(12);
           } else {

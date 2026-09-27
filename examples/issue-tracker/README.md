@@ -48,7 +48,7 @@ those tables and its checkpoint through the same SQL transaction. The separate
 `labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and the workspace
 value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
 `@streamsy/projection` owns only its `streamsy_projection_v1_*` tables, including the
-persisted value. The command path still reads facts rather than Projection.State.
+persisted value. The command path still reads facts rather than the projection state.
 
 `ProjectBoardCard` extends the issue row with label ids and nullable project/assignee
 names. Label counts count attached memberships of existing issues for each catalog

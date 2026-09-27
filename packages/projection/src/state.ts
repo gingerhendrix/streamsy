@@ -10,14 +10,17 @@ import {
 import { ProjectionFault } from "./fault.ts";
 
 export interface StateApi {
-  /** Internal: read the state through `Projection.read`. */
+  /** Reads the encoded row. Apps read state with `Projection.read`. */
   readonly load: (key: ProjectionKey) => Effect.Effect<Option.Option<string>, ProjectionFault>;
-  /** Internal: overwrites the row; must run inside the owner transaction. */
+  /** Overwrites the row. Runs inside the owner transaction. */
   readonly save: (key: ProjectionKey, encoded: string) => Effect.Effect<void, ProjectionFault>;
-  /** Internal: deletes the row inside the owner transaction. Absent is not an error. */
+  /** Deletes the row inside the owner transaction. Absent is not an error. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
-/** One encoded state row per projection key, sharing the checkpoint's owner transaction. */
+/**
+ * One encoded state row per projection key, sharing the checkpoint's owner transaction.
+ * The host provides it with `Checkpoints`. Layer authors implement it.
+ */
 export class State extends Context.Service<State, StateApi>()("@streamsy/projection/State") {}
 
 export const stateFromStore = (store: EncodedStore): StateApi =>

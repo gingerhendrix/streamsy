@@ -77,7 +77,7 @@ const OutputRoutes = Layer.mergeAll(
 );
 ```
 
-The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.at({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.at({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
 
 Fixed addresses and targets using fewer parameters share a stream across the matching bound projections, each writing with its own producer id, and Serve exposes that stream at every matching URL.
 

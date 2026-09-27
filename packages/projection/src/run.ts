@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic, Projection } from "./projection.ts";
+import type { Atomic } from "./atomic.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passOutputs } from "./outputs-pass.ts";
 import { checkStateOwner } from "./state.ts";
@@ -129,7 +129,6 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
   } while (units < cap);
   return { ...result, status: "limit-reached", units, items };
 });
-export type { Projection };
 
 /** Runs one projection at a time for this canonical key across hosts in the current process. */
 export const run = <Inputs extends InputMap, E, R, OR = never>(

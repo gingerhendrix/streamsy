@@ -4,7 +4,7 @@ export type {
   AtomicDeclaration,
   AtomicDefinition,
   AtomicStateDefinition,
-} from "./projection.ts";
+} from "./atomic.ts";
 export type { Declaration } from "./declaration.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";

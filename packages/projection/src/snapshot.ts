@@ -3,7 +3,7 @@ import type { InputMap } from "./batch.ts";
 import { Checkpoints, restore } from "./checkpoint.ts";
 import type { ProjectionFault } from "./fault.ts";
 import type { Outputs } from "./outputs.ts";
-import type { Atomic } from "./projection.ts";
+import type { Atomic } from "./atomic.ts";
 import { State, checkStateOwner, decodeState } from "./state.ts";
 
 /** The accepted offset of each input, keyed by input name. The next pass reads after these. */

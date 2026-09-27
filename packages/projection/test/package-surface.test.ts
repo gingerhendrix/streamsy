@@ -47,7 +47,6 @@ void acceptsPublicHelperTypes;
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
   expect(Checkpoint.stateFromStore).toBeFunction();
-  expect(Root.State).toBe(Projection.State);
   expect(Root.State.key).toBe("@streamsy/projection/State");
   expect(Projection.outputs).toBeFunction();
   expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
@@ -117,7 +116,6 @@ test("root exports stay explicit", () => {
     "State",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
-    "State",
     "atomic",
     "each",
     "follow",

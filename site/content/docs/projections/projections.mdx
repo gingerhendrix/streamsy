@@ -101,7 +101,7 @@ const tracker = Projection.outputs({
 
 Each stream and rows output names its target with a stream declaration or a fixed address. The target supplies the stream id and the storage owner; the output declaration owns the JSON codec, so a `bytes` stream is enough as a target. Every target must share the checkpoint owner, as in the stream form.
 
-The handler returns `{ <outputName>: [...] }` in an Effect. With `state:`, the handler is `(state, batch, unit)` and also returns `state`, which persists through `Projection.State`. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output.
+The handler returns `{ <outputName>: [...] }` in an Effect. With `state:`, the handler is `(state, batch, unit)` and also returns `state`, which is saved with the checkpoint. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output.
 
 Each output has its own sequence. An empty output gets no append and consumes no sequence. Recovery reprocesses the pinned inputs from the state before the unit, resends each pinned output in declaration order, and saves the new state with the checkpoint only after every append settles. `process` must be deterministic on those inputs and state. There is no atomicity across outputs, and two outputs may not name the same stream or one of the projection's inputs.
 
@@ -261,7 +261,7 @@ Serve reads outputs without checking inputs. An initial read of an absent output
 
 ## State
 
-`Projection.State` keeps one encoded value per projection key beside its checkpoint. A declaration's `state: { schema, initial }` owns that value. In an atomic projection, `fold` loads the value once at the start of the unit, folds every tagged item in declaration order and then stream order, and saves once at the end of the pass.
+A declaration's `state: { schema, initial }` owns one encoded value per projection key. The value is saved beside the checkpoint, in the host's `State` service, and `Projection.read` gives it back. In an atomic projection, `fold` loads the value once at the start of the unit, folds every tagged item in declaration order and then stream order, and saves once at the end of the pass.
 
 ```ts
 import { Effect, Schema } from "effect";

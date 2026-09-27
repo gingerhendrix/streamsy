@@ -4,7 +4,7 @@ import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./projection.ts";
+import type { Atomic } from "./atomic.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 

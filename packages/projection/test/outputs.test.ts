@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, ProjectionFault } from "@streamsy/projection";
+import { Checkpoints, Output, Projection, ProjectionFault, State } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -18,7 +18,7 @@ const hosts: ReadonlyArray<
       | import("@streamsy/projection").Checkpoints
       | import("@streamsy/core/protocol").StreamsReader
       | import("@streamsy/core/protocol").StreamsWriter
-      | Projection.State,
+      | State,
       import("@streamsy/core").StorageFault | ProjectionFault
     >,
   ]
@@ -234,7 +234,7 @@ for (const [name, host] of hosts) {
         expect(failed._tag).toBe("Failure");
         expect(yield* readAll(a)).toEqual([1]);
         expect(yield* readAll(b)).toEqual([]);
-        expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
+        expect(yield* (yield* State).load(projection)).toEqual(Option.none());
         const pinned = yield* (yield* Checkpoints).load(projection);
         expect(Option.getOrThrow(pinned.record).pending?.seqs).toEqual({ a: 0, b: 0 });
         yield* Streams.append(input, [2]);
@@ -296,10 +296,10 @@ for (const [name, host] of hosts) {
           state: { schema: Schema.Finite, initial: 0 },
           process: (state, batch) => Effect.succeed({ state: state + batch.input.items[0]! }),
         }).at({});
-        const state = yield* Projection.State;
+        const state = yield* State;
         const failed = yield* Projection.run(projection).pipe(
           Effect.provideService(
-            Projection.State,
+            State,
             attachOwner(
               {
                 ...state,
@@ -325,7 +325,7 @@ for (const [name, host] of hosts) {
         if (failed._tag === "Failure")
           expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
         expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-        expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
+        expect(yield* (yield* State).load(projection)).toEqual(Option.none());
         yield* Projection.run(projection);
         expect((yield* Projection.read(projection)).state).toBe(1);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),

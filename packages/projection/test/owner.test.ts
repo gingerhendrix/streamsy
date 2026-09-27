@@ -2,7 +2,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Checkpoints, Output, Projection } from "@streamsy/projection";
+import { Checkpoints, Output, Projection, State } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
@@ -135,9 +135,7 @@ for (const method of [
 }
 
 test("declared state on a foreign State owner fails before processing", async () => {
-  const foreignState = Layer.effect(Projection.State, Projection.State).pipe(
-    Layer.provide(Layer.fresh(foreign)),
-  );
+  const foreignState = Layer.effect(State, State).pipe(Layer.provide(Layer.fresh(foreign)));
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
@@ -167,9 +165,7 @@ test("declared state on a foreign State owner fails before processing", async ()
 });
 
 test("atomic state on a foreign State owner fails before folding", async () => {
-  const foreignState = Layer.effect(Projection.State, Projection.State).pipe(
-    Layer.provide(Layer.fresh(foreign)),
-  );
+  const foreignState = Layer.effect(State, State).pipe(Layer.provide(Layer.fresh(foreign)));
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
