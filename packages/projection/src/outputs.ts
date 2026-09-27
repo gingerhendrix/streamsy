@@ -17,14 +17,16 @@ import {
 import type * as Output from "./output.ts";
 import type { RoutedMap } from "./output-internal.ts";
 import { ProjectionFault } from "./fault.ts";
-import { bind, rowsAddress, stateSource, type Bound, type StateSource } from "./output-source.ts";
+import { bind, rowsAddress, type Bound } from "./output-source.ts";
 import {
   State,
   bindState,
   encodeState,
   currentState,
+  stateSource,
   type BoundState,
   type StateDefinition,
+  type StateSource,
 } from "./state.ts";
 import { withParams, type Unit } from "./unit.ts";
 
@@ -225,12 +227,7 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
                 );
         }
         if (state === undefined) return { items };
-        const encoded = yield* encodeState(
-          key,
-          state.schema,
-          (result as { state: unknown }).state,
-          "process",
-        );
+        const encoded = yield* encodeState(key, state.schema, (result as { state: unknown }).state);
         const store = yield* State;
         return { items, saveState: store.save(key, encoded) };
       }),

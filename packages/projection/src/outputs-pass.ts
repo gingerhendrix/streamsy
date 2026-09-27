@@ -15,7 +15,8 @@ import type { Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
 import { checkStateOwner } from "./state.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
-import { offsetsOf, type Progress } from "./run.ts";
+import type { Progress } from "./run.ts";
+import { offsetsOf } from "./snapshot.ts";
 import { canonicalParams, unitOf } from "./unit.ts";
 
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
@@ -248,12 +249,13 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
     inputs: advance(before.record.inputs, ranges),
     adapters: Object.keys(positions).length === 0 ? adapters : { outputs: positions },
   };
-  if (processed.saveState === undefined) yield* owner.save(projection, record, token);
+  const saveState = processed.saveState;
+  if (saveState === undefined) yield* owner.save(projection, record, token);
   else
     yield* owner.withTransaction(
       Effect.gen(function* () {
         yield* owner.save(projection, record, token);
-        if (processed.saveState !== undefined) yield* processed.saveState;
+        yield* saveState;
       }),
     );
   return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(record) };

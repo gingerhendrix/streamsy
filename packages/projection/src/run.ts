@@ -9,7 +9,7 @@ import type { Atomic, Projection } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passOutputs } from "./outputs-pass.ts";
 import { checkStateOwner } from "./state.ts";
-import type { Offsets } from "./snapshot.ts";
+import { offsetsOf, type Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
 export interface Progress<Inputs extends InputMap = InputMap> {
@@ -19,13 +19,6 @@ export interface Progress<Inputs extends InputMap = InputMap> {
   /** The accepted offset of each input after this call. */
   readonly offsets: Offsets<Inputs>;
 }
-
-/** Internal: the offsets of a record, typed by the declared inputs. */
-export const offsetsOf = <Inputs extends InputMap>(record: {
-  readonly inputs: Record<string, string>;
-}): Offsets<Inputs> =>
-  // SAFETY: a restored or advanced record has one offset for every declared input.
-  record.inputs as Offsets<Inputs>;
 
 /** One atomic unit: restore, read every input, then process and checkpoint in the owner transaction. */
 export const passAtomic = Effect.fn("Projection.passAtomic")(function* <

@@ -1,5 +1,6 @@
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Option, Schema } from "effect";
+import type { StreamRoute } from "@streamsy/core/protocol";
 import {
   recordKey,
   type CheckpointsApi,
@@ -115,16 +116,60 @@ export const encodeState = <A>(
   key: ProjectionKey,
   schema: StateSchema<A>,
   value: A,
-  phase: "process" | "checkpoint",
 ): Effect.Effect<string, ProjectionFault> =>
   Schema.encodeEffect(Schema.fromJsonString(schema))(value).pipe(
     Effect.mapError(
       (cause) =>
         new ProjectionFault({
-          phase,
-          reason: phase === "process" ? "invalid-output" : "invalid-record",
+          phase: "process",
+          reason: "invalid-output",
           message: `Cannot encode state for ${key.id}`,
           cause,
         }),
     ),
   );
+
+/** The declared state as a source for `Serve.value`. It fails while the row is absent. */
+export interface StateSource<A, I, P> {
+  readonly id: string;
+  readonly paramSchema: StreamRoute.PathSchema<P>;
+  readonly schema: StateSchema<A, I>;
+  readonly resolve: (
+    params: P,
+  ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, State>;
+}
+
+export const stateSource = <A, I, P>(
+  definition: { readonly id: string; readonly params: StreamRoute.ParamCodecs },
+  state: StateDefinition<A, I, P>,
+  at: (params: P) => ProjectionKey,
+): StateSource<A, I, P> => {
+  const unavailable = (detail: string) => ({ _tag: "ValueUnavailable" as const, detail });
+  return {
+    id: `${definition.id}/state`,
+    // SAFETY: Struct owns exactly the codec keys and their decoded parameter types.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    paramSchema: Schema.Struct(definition.params) as StreamRoute.PathSchema<P>,
+    schema: state.schema,
+    resolve: (params) =>
+      Effect.gen(function* () {
+        const bound = yield* Effect.try({
+          try: () => at(params),
+          catch: () => unavailable("Cannot resolve projection params"),
+        });
+        const key: ProjectionKey = {
+          id: bound.id,
+          version: bound.version,
+          generation: bound.generation,
+          params: bound.params,
+        };
+        const value = yield* Effect.flatMap(State, (store) => store.load(key)).pipe(
+          Effect.flatMap((encoded) => decodeState(key, state.schema, encoded)),
+          Effect.mapError(() => unavailable("Cannot read projection state")),
+        );
+        return Option.isSome(value)
+          ? value.value
+          : yield* Effect.fail(unavailable("Projection state is absent"));
+      }),
+  };
+};

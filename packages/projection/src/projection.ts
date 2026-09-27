@@ -11,13 +11,19 @@ import {
   type Inputs,
 } from "./declaration.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
-import { entries } from "./read.ts";
+import { items } from "./read.ts";
 import type { Outputs } from "./outputs.ts";
 import { withParams, type Unit } from "./unit.ts";
 import type { ProjectionFault } from "./fault.ts";
 import { foldHandler, type Step } from "./fold.ts";
-import { stateSource, type StateSource } from "./output-source.ts";
-import { bindState, type BoundState, type State, type StateDefinition } from "./state.ts";
+import {
+  bindState,
+  stateSource,
+  type BoundState,
+  type State,
+  type StateDefinition,
+  type StateSource,
+} from "./state.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
 export { watch } from "./watch.ts";
@@ -115,7 +121,7 @@ export function atomic<E, R>(
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const bound = state === undefined ? undefined : bindState(state, decoded);
     const handler: AtomicHandler<E | ProjectionFault, R | State> =
-      bound === undefined || fold === undefined ? process! : foldHandler(bound, fold);
+      bound === undefined || fold === undefined ? process! : foldHandler(key, bound, fold);
     return {
       _tag: "Atomic" as const,
       ...key,
@@ -141,12 +147,7 @@ export const key = (projection: Identity): ProjectionKey => ({
   params: projection.params,
 });
 
-/** Tagged items in declaration order, then stream order within each input. */
-export const items = <Inputs extends InputMap>(
-  batch: Slices<Inputs>,
-): ReadonlyArray<Entry<Inputs>> =>
-  // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
-  entries(batch) as ReadonlyArray<Entry<Inputs>>;
+export { items } from "./read.ts";
 
 /** Runs each tagged item in order; keyed output arrays are concatenated in that order. */
 export function each<

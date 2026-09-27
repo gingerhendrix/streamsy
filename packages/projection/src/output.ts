@@ -1,6 +1,7 @@
 import type { Target, TargetServices, RoutedMap } from "./output-internal.ts";
 import { Schema, type Effect } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
+import type { ProjectionFault } from "./fault.ts";
 
 export interface Upsert<A> {
   readonly _tag: "Upsert";
@@ -71,5 +72,5 @@ export type Result<D extends RoutedMap, S = never> = Items<D> &
   ([S] extends [never] ? {} : { readonly state: S });
 export interface Processed {
   readonly items: Readonly<Record<string, ReadonlyArray<unknown>>>;
-  readonly saveState?: Effect.Effect<void, import("./fault.ts").ProjectionFault>;
+  readonly saveState?: Effect.Effect<void, ProjectionFault>;
 }

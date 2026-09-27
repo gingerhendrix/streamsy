@@ -74,11 +74,5 @@ export const unitOf = (
   ]),
 });
 
-const Encoded = Symbol.for("@streamsy/projection/internal/EncodedParams");
-/** The handler view of a kernel unit. The encoded params stay reachable for state keys. */
-export const withParams = <P>(unit: Unit, params: P): Unit<P> =>
-  Object.defineProperty({ ...unit, params }, Encoded, { value: unit.params });
-/** A unit built without `withParams` already carries encoded params. */
-export const encodedParams = (unit: Unit<unknown>): Record<string, string> =>
-  // SAFETY: withParams stores the kernel's encoded record; other units are kernel units.
-  (Encoded in unit ? unit[Encoded] : unit.params) as Record<string, string>;
+/** The handler view of a kernel unit, with the decoded params. */
+export const withParams = <P>(unit: Unit, params: P): Unit<P> => ({ ...unit, params });

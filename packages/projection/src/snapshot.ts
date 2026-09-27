@@ -15,6 +15,13 @@ export interface Snapshot<S, Inputs extends InputMap> {
   readonly offsets: Offsets<Inputs>;
 }
 
+/** Internal: the offsets of a record, typed by the declared inputs. */
+export const offsetsOf = <Inputs extends InputMap>(record: {
+  readonly inputs: Record<string, string>;
+}): Offsets<Inputs> =>
+  // SAFETY: a restored or advanced record has one offset for every declared input.
+  record.inputs as Offsets<Inputs>;
+
 export type StateValue<S> = [S] extends [never] ? undefined : S;
 
 /**
@@ -39,11 +46,9 @@ export const read = Effect.fn("Projection.read")(function* <Inputs extends Input
     declared === undefined
       ? Option.none()
       : yield* decodeState(projection, declared.schema, encoded);
-  // SAFETY: restore gives one offset for every declared input.
-  const offsets = restored.record.inputs as Offsets<Inputs>;
   // SAFETY: the state is undefined exactly when the declaration has no state.
   const state = (
     declared === undefined ? undefined : Option.getOrElse(stored, declared.initial)
   ) as StateValue<S>;
-  return { state, offsets };
+  return { state, offsets: offsetsOf<Inputs>(restored.record) };
 });

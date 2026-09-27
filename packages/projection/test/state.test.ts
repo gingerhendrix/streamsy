@@ -255,7 +255,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       }).at({});
       const failed = yield* Projection.run(invalid).pipe(Effect.result);
       if (failed._tag === "Failure")
-        expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "invalid-record" });
+        expect(failed.failure).toMatchObject({ phase: "process", reason: "invalid-output" });
       expect(failed._tag).toBe("Failure");
       expect(yield* state.load(total)).toEqual(Option.none());
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),

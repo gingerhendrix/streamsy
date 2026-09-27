@@ -9,6 +9,7 @@ import {
 } from "@streamsy/core";
 import {
   inputEntries,
+  type Entry,
   type InputServices,
   type InputMap,
   type Slice,
@@ -223,10 +224,13 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
 });
 
 /** Tagged items in declaration order, then stream order within each input. */
-export const entries = (slices: Record<string, Slice<unknown>>) => {
+export const items = <Inputs extends InputMap>(
+  batch: Slices<Inputs>,
+): ReadonlyArray<Entry<Inputs>> => {
   const out: Array<{ readonly input: string; readonly item: unknown; readonly index: number }> = [];
-  for (const [input, slice] of Object.entries(slices)) {
+  for (const [input, slice] of Object.entries<Slice<unknown>>(batch)) {
     for (const item of slice.items) out.push({ input, item, index: out.length });
   }
-  return out;
+  // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
+  return out as ReadonlyArray<Entry<Inputs>>;
 };
