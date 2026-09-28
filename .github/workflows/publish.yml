@@ -56,7 +56,6 @@ jobs:
           PACKAGES=(
             packages/core
             packages/storage
-            packages/views
             packages/serve
           )
 
@@ -74,7 +73,6 @@ jobs:
           PACKAGES=(
             packages/core
             packages/storage
-            packages/views
             packages/serve
           )
 
