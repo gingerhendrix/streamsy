@@ -1,29 +1,21 @@
-import { Transaction } from "./transaction.ts";
-import { CheckpointStore } from "./checkpoint-store.ts";
-import type { Outputs } from "./outputs.ts";
+import type { Executable } from "./executable.ts";
 import { Effect, Fiber, Predicate, Queue, Stream as EffectStream, type Scope } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./atomic.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run } from "./run.ts";
 import type { Progress } from "./run.ts";
 
 export interface WatchOptions extends RunOptions {}
 
-const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+const watchLoop = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: WatchOptions,
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
-  | R
-  | OR
-  | Transaction
-  | CheckpointStore
-  | InputServices<Inputs>
-  | Streamsy.ChangeFeed<InputServices<Inputs>>
+  Exclude<R, P> | Q | OR | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -110,16 +102,15 @@ const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
-export const watch = <Inputs extends InputMap, E, R, OR = never>(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+export const watch = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: WatchOptions = {},
 ): Effect.Effect<
   Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
-  | R
+  | Exclude<R, P>
+  | Q
   | OR
-  | Transaction
-  | CheckpointStore
   | InputServices<Inputs>
   | Streamsy.ChangeFeed<InputServices<Inputs>>
   | Scope.Scope

@@ -19,7 +19,7 @@ export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
 /** An outputs unit that was pinned before its append; settled by the next pass. */
 export const PendingUnit = Schema.Struct({
   ranges: Schema.Record(Schema.String, PinnedRange),
-  seqs: Schema.Record(Schema.String, Counter),
+  seqs: Schema.optionalKey(Schema.Record(Schema.String, Counter)),
 });
 export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}
 

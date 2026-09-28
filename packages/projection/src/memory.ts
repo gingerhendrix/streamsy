@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option } from "effect";
 import { Streams } from "@streamsy/core/protocol";
-import { MemoryCommitBoundary, ownerOf } from "@streamsy/core/internal/memory";
+import { MemoryCommitBoundary, ownerOf, attachOwner } from "@streamsy/core/internal/memory";
 import { CheckpointStore, fromStore, type EncodedStore } from "./checkpoint-store.ts";
 import { Transaction } from "./transaction.ts";
 
@@ -14,7 +14,9 @@ export const layer = Layer.effectContext(
       remove: boundary.remove,
       withTransaction: boundary.withTransaction,
     };
-    return Context.make(CheckpointStore, fromStore(store)).pipe(
+    const checkpoints = fromStore(store);
+    attachOwner(checkpoints.load, ownerOf(boundary));
+    return Context.make(CheckpointStore, checkpoints).pipe(
       Context.add(Transaction, {
         owner: ownerOf(boundary),
         sql: Option.none(),

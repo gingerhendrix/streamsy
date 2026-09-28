@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { ownerOf } from "@streamsy/core/internal/memory";
+import { ownerOf, attachOwner } from "@streamsy/core/internal/memory";
 import { CommitBoundary } from "@streamsy/storage";
 import { CheckpointStore, fromStore, type EncodedStore } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -55,9 +55,9 @@ const make = (sql: SqlClient.SqlClient, transaction: typeof Transaction.Service)
       remove: remove(TABLE),
       withTransaction: transaction.withTransaction,
     };
-    return Context.make(CheckpointStore, fromStore(store)).pipe(
-      Context.add(Transaction, transaction),
-    );
+    const checkpoints = fromStore(store);
+    attachOwner(checkpoints.load, transaction.owner);
+    return Context.make(CheckpointStore, checkpoints).pipe(Context.add(Transaction, transaction));
   });
 
 /** Checkpoints and transactions on a plain SQL client. */

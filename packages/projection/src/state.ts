@@ -84,27 +84,25 @@ export const encodeState = <A>(
   );
 
 /** The declared state as a source for `Serve.value`. It fails while state is absent. */
-export interface StateSource<A, I, P> {
+export interface StateSource<A, I, P, R = CheckpointStore> {
   readonly id: string;
   readonly paramSchema: StreamRoute.PathSchema<P>;
   readonly schema: StateSchema<A, I>;
   readonly resolve: (
     params: P,
-  ) => Effect.Effect<
-    A,
-    { readonly _tag: "ValueUnavailable"; readonly detail: string },
-    CheckpointStore
-  >;
+  ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, R>;
 }
 
 type ValueUnavailable = Data.TaggedEnum<{ ValueUnavailable: { readonly detail: string } }>;
 const { ValueUnavailable } = Data.taggedEnum<ValueUnavailable>();
 
-export const stateSource = <A, I, P>(
+export const stateSource = <A, I, P, R>(
   definition: { readonly id: string; readonly params: StreamRoute.ParamCodecs },
   state: StateDefinition<A, I, P>,
-  at: (params: P) => Identity,
-): StateSource<A, I, P> => {
+  at: (
+    params: P,
+  ) => Identity & { readonly commit: Pick<import("./commit.ts").Commit<never, never, R>, "load"> },
+): StateSource<A, I, P, R> => {
   const unavailable = (detail: string) => ValueUnavailable({ detail });
   return {
     id: `${definition.id}/state`,
@@ -119,7 +117,7 @@ export const stateSource = <A, I, P>(
           catch: () => unavailable("Cannot resolve projection params"),
         });
         const value = yield* Effect.gen(function* () {
-          const loaded = yield* restore(bound, yield* CheckpointStore);
+          const loaded = yield* restore(bound, bound.commit);
           return yield* decodeState(
             bound,
             state.schema,

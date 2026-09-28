@@ -63,7 +63,6 @@ test("built public entries and declared files exist", () => {
     "PendingUnit",
     "PinnedRange",
     "producerId",
-    "CheckpointRecord",
   ])
     expect(Object.keys(Root)).not.toContain(name);
   expect(Projection.atomic).toBeFunction();
@@ -105,7 +104,10 @@ test("the root entry does not import a SQL driver", async () => {
 
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
+    "CheckpointRecord",
     "CheckpointStore",
+    "Commit",
+    "HandlerFailed",
     "Output",
     "Projection",
     "ProjectionFault",

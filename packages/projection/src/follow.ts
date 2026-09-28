@@ -1,11 +1,8 @@
-import { Transaction } from "./transaction.ts";
-import { CheckpointStore } from "./checkpoint-store.ts";
-import type { Outputs } from "./outputs.ts";
+import type { Executable } from "./executable.ts";
 import { Duration, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./atomic.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 
@@ -102,14 +99,17 @@ export const follow = Effect.fn("Projection.follow")(function* <
   Inputs extends InputMap,
   E,
   R,
+  Q,
+  Result,
+  P,
   OR = never,
 >(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
-  R | OR | Transaction | CheckpointStore | InputServices<Inputs> | Scope.Scope
+  Exclude<R, P> | Q | OR | InputServices<Inputs> | Scope.Scope
 > {
   yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;

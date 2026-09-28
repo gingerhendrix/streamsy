@@ -1,9 +1,10 @@
 import { Effect, Option } from "effect";
 import type { InputMap } from "./batch.ts";
-import { CheckpointStore, restore } from "./checkpoint-store.ts";
+import { restore } from "./checkpoint-store.ts";
 import type { ProjectionFault } from "./fault.ts";
-import type { Outputs } from "./outputs.ts";
-import type { Atomic } from "./atomic.ts";
+import type { Commit } from "./commit.ts";
+import type { Identity } from "./checkpoint-store.ts";
+import type { BoundState } from "./state.ts";
 import { decodeState } from "./state.ts";
 
 /** The accepted offset of each input, keyed by input name. The next pass reads after these. */
@@ -29,12 +30,19 @@ export type StateValue<S> = [S] extends [never] ? undefined : S;
  * always matches the offsets. Before the first unit, the state is the declared initial
  * value and every offset is the start of its input.
  */
-export const read = Effect.fn("Projection.read")(function* <Inputs extends InputMap, S = never>(
-  projection: Atomic<Inputs, unknown, unknown, S> | Outputs<Inputs, unknown, unknown, unknown, S>,
-): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, CheckpointStore> {
-  const owner = yield* CheckpointStore;
+export const read = Effect.fn("Projection.read")(function* <
+  Inputs extends InputMap,
+  S = never,
+  Q = never,
+>(
+  projection: Identity & {
+    readonly inputs: Inputs;
+    readonly state?: BoundState<S>;
+    readonly commit: Pick<Commit<never, never, Q>, "load">;
+  },
+): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Q> {
   const declared = projection.state;
-  const restored = yield* restore(projection, owner);
+  const restored = yield* restore(projection, projection.commit);
   const encoded = Option.fromUndefinedOr(restored.record.state);
   const stored =
     declared === undefined

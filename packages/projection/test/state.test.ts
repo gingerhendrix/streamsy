@@ -144,7 +144,7 @@ for (const [name, host] of hosts) {
     }
   });
 
-  test(`${name}: token conflict at compareAndSet rolls back state and offsets`, async () => {
+  test(`${name}: token conflict at compareAndSet preserves the winning record`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
@@ -157,10 +157,8 @@ for (const [name, host] of hosts) {
           const failed = yield* Projection.run(total).pipe(
             Effect.provideService(CheckpointStore, {
               ...owner,
-              compareAndSet: (key, token, record) =>
-                owner
-                  .compareAndSet(key, token, record)
-                  .pipe(Effect.andThen(owner.compareAndSet(key, token, record))),
+              compareAndSet: (key, _token, record) =>
+                owner.compareAndSet(key, "stale-token", record),
             }),
             Effect.result,
           );
@@ -460,7 +458,7 @@ test("fold saves one record per nonempty pass and skips the initial factory afte
       yield* run;
       yield* Streams.append(input, [7, 11]);
       yield* run;
-      expect({ loads, saves, starts }).toEqual({ loads: 6, saves: 2, starts: 1 });
+      expect({ loads, saves, starts }).toEqual({ loads: 4, saves: 2, starts: 1 });
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });

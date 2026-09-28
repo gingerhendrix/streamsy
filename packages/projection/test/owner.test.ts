@@ -1,8 +1,14 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
-import { Effect, Layer, Option, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, Output, Projection } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Output,
+  Projection,
+  ProjectionFault,
+  Transaction,
+} from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
@@ -31,11 +37,12 @@ const seed = Effect.gen(function* () {
 });
 // All tests exercise the public stream methods; no internal guard is supplied by the fixture.
 for (const sameOwner of [true, false]) {
-  test(`declared outputs ${sameOwner ? "share their checkpoint owner" : "reject a foreign owner before any write"}`, async () => {
+  test(`declared outputs ${sameOwner ? "share their checkpoint owner" : "accept an existing foreign output"}`, async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
         const checkpoints = yield* CheckpointStore;
+        if (!sameOwner) yield* (yield* Foreign).create(params);
         let processed = false;
         const projection = Projection.outputs({
           id: `declared-${sameOwner}`,
@@ -54,15 +61,12 @@ for (const sameOwner of [true, false]) {
             }),
         }).at({});
         const result = yield* Projection.run(projection).pipe(Effect.result);
-        expect(result._tag).toBe(sameOwner ? "Success" : "Failure");
-        expect(processed).toBe(sameOwner);
+        expect(result._tag).toBe("Success");
+        expect(processed).toBe(true);
         const loaded = yield* checkpoints.load(projection);
-        expect(Option.isSome(loaded.record)).toBe(sameOwner);
-        if (result._tag === "Failure") {
-          expect(result.failure.reason).toBe("unsupported-composition");
-          expect((yield* (yield* Local).head(params).pipe(Effect.result))._tag).toBe("Failure");
-          expect((yield* (yield* Foreign).head(params).pipe(Effect.result))._tag).toBe("Failure");
-        }
+        expect(Option.isSome(loaded.record)).toBe(true);
+        const target = sameOwner ? (yield* Local).read({ id: "b" }) : (yield* Foreign).read(params);
+        expect((yield* Stream.runCollect(target)).flatMap((batch) => batch.items)).toEqual([3]);
       }).pipe(Effect.provide(host)),
     );
   });
@@ -147,9 +151,53 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
       }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");
+      if (result._tag === "Failure") expect(result.failure.reason).toBe("invalid-output");
       expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
       expect((yield* (yield* Foreign).head(params).pipe(Effect.result))._tag).toBe("Failure");
     }).pipe(Effect.provide(host)),
   );
 });
+
+test("producer settles a foreign append once after a failed checkpoint without Transaction", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const foreignOutput = yield* Foreign;
+      yield* foreignOutput.create(params);
+      const projection = Projection.outputs({
+        id: "foreign-retry",
+        params: {},
+        inputs: { input: Input },
+        outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
+        process: () => Effect.succeed({ output: [9] }),
+      }).at({});
+      const store = yield* CheckpointStore;
+      const failure = yield* Projection.run(projection).pipe(
+        Effect.provideService(CheckpointStore, {
+          ...store,
+          compareAndSet: (key, token, record) =>
+            record.pending === undefined
+              ? Effect.fail(
+                  new ProjectionFault({
+                    phase: "checkpoint",
+                    reason: "storage-failure",
+                    message: "after foreign append",
+                  }),
+                )
+              : store.compareAndSet(key, token, record),
+        }),
+        Effect.result,
+      );
+      expect(failure._tag).toBe("Failure");
+      yield* Projection.run(projection);
+      expect(
+        (yield* Stream.runCollect(foreignOutput.read(params))).flatMap((batch) => batch.items),
+      ).toEqual([9]);
+      expect(Option.getOrThrow((yield* store.load(projection)).record).pending).toBeUndefined();
+    }).pipe(
+      Effect.updateContext((context: Context.Context<Input | Local | Foreign | CheckpointStore>) =>
+        Context.omit(Transaction)(context),
+      ),
+      Effect.provide(host),
+    ),
+  ));

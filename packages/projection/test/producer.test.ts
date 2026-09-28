@@ -1,6 +1,6 @@
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
-import { producerId } from "../src/outputs-pass.ts";
+import { producerId } from "../src/commit/producer.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
@@ -200,7 +200,7 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const before = yield* stored(s.doubled);
       const pinned = pinnedRecord(before.record);
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs.output).toBe(0);
+      expect(pinned.pending.seqs?.output).toBe(0);
       expect(pinned.pending.ranges.input?.count).toBe(3);
       expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
 
@@ -251,7 +251,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       const before = yield* stored(s.doubled);
       expect(before.token).toBe("2");
-      expect(pinnedRecord(before.record).pending.seqs.output).toBe(0);
+      expect(pinnedRecord(before.record).pending.seqs?.output).toBe(0);
 
       const appends = failingAppends(0);
       const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
@@ -283,7 +283,7 @@ test("the first pin stores the stream epoch before the append; a crash there set
       const pinned = pinnedRecord(before.record);
       expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs.output).toBe(0);
+      expect(pinned.pending.seqs?.output).toBe(0);
       expect(pinned.pending.ranges.input?.from).toBe(ZERO_OFFSET);
       expect(pinned.pending.ranges.input?.count).toBe(3);
       expect(pinned.pending.ranges.input?.nextOffset).not.toBe(ZERO_OFFSET);
@@ -526,7 +526,7 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
       // The pin stays until a new generation takes over; nothing advanced.
-      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs.output).toBe(1);
+      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs?.output).toBe(1);
     }),
   ));
 

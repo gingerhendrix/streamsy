@@ -29,3 +29,13 @@ export { Transaction } from "./transaction.ts";
 
 export * as Output from "./output.ts";
 export type { Outputs, OutputsDeclaration, OutputsDefinition } from "./outputs.ts";
+
+export * as Commit from "./commit.ts";
+export {
+  HandlerFailed,
+  type Folded,
+  type Emitted,
+  type Accumulated,
+  type OutputBatch,
+} from "./commit.ts";
+export { CheckpointRecord } from "./checkpoint-store.ts";

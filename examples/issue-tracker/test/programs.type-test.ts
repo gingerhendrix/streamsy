@@ -25,18 +25,8 @@ const outputRun = (address: ReturnType<typeof tracker.at>) => Projection.run(add
 const sqlWatch = (address: ReturnType<typeof issueRows.at>) => Projection.watch(address);
 const outputWatch = (address: ReturnType<typeof tracker.at>) => Projection.watch(address);
 export type Checks = [
-  Assert<
-    Same<
-      Effect.Services<ReturnType<typeof sqlRun>>,
-      Transaction | CheckpointStore | Inputs | SqlClient.SqlClient
-    >
-  >,
-  Assert<
-    Same<
-      Effect.Services<ReturnType<typeof outputRun>>,
-      CheckpointStore | Inputs | Outputs | Transaction
-    >
-  >,
+  Assert<Same<Effect.Services<ReturnType<typeof sqlRun>>, Transaction | CheckpointStore | Inputs>>,
+  Assert<Same<Effect.Services<ReturnType<typeof outputRun>>, CheckpointStore | Inputs | Outputs>>,
   Assert<
     Same<
       Effect.Services<ReturnType<typeof sqlWatch>>,
@@ -44,7 +34,6 @@ export type Checks = [
       | CheckpointStore
       | Inputs
       | Streamsy.ChangeFeed<Inputs>
-      | SqlClient.SqlClient
       | import("effect").Scope.Scope
     >
   >,
@@ -55,7 +44,6 @@ export type Checks = [
       | Inputs
       | Streamsy.ChangeFeed<Inputs>
       | Outputs
-      | Transaction
       | import("effect").Scope.Scope
     >
   >,
@@ -83,7 +71,7 @@ export type Checks = [
     >
   >,
   Assert<Same<OutputR, HttpRouter.HttpRouter | Outputs | CheckpointStore>>,
-  // Handlers retain their SQL requirements. Runners add declared streams and checkpoints.
+  // Handlers retain SQL; the transaction Commit supplies it to runners.
   Assert<
     Same<
       Effect.Services<ReturnType<ReturnType<typeof issueRows.at>["process"]>>,

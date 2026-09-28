@@ -1,110 +1,121 @@
-import { Transaction } from "./transaction.ts";
-import { withPermit } from "./serialize.ts";
-import type { Outputs } from "./outputs.ts";
-import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
-import { Effect, Predicate } from "effect";
-import type { InputServices, InputMap, Slice } from "./batch.ts";
+import { Effect } from "effect";
 import {
-  CheckpointStore,
-  advance,
-  rangesOf,
-  restore,
-  type CheckpointRecord,
-} from "./checkpoint-store.ts";
+  inputEntries,
+  emptySlice,
+  type InputServices,
+  type InputMap,
+  type Slice,
+  type Slices,
+} from "./batch.ts";
+import { advance, rangesOf, restore } from "./checkpoint-store.ts";
+import { HandlerFailed, type Pending } from "./commit.ts";
+import { isPinned, setDetails, type Details } from "./commit/internal.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./atomic.ts";
-import { readInputs, validateOptions, type RunOptions } from "./read.ts";
-import { passOutputs } from "./outputs-pass.ts";
+import type { Executable } from "./executable.ts";
+import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import { offsetsOf, type Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
+import { withPermit } from "./serialize.ts";
 
 export interface Progress<Inputs extends InputMap = InputMap> {
   readonly status: "progress" | "caught-up" | "source-closed" | "limit-reached";
   readonly units: number;
   readonly items: number;
-  /** The accepted offset of each input after this call. */
   readonly offsets: Offsets<Inputs>;
 }
 
-/** One atomic unit: restore, read every input, then process and checkpoint in the owner transaction. */
-export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
+/** Restore and adapt one input unit; the Commit owns every write. */
+export const pass = Effect.fn("Projection.pass")(function* <
   Inputs extends InputMap,
   E,
   R,
+  Q,
+  Result,
+  P,
+  OR = never,
 >(
-  projection: Atomic<Inputs, E, R>,
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | Transaction | CheckpointStore | InputServices<Inputs>
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
-  const owner = yield* CheckpointStore;
-  const transaction = yield* Transaction;
-  const before = yield* restore(projection, owner);
-  const empty = { units: 0, items: 0, offsets: offsetsOf<Inputs>(before.record) };
-  const read = yield* readInputs(projection.inputs, before.record.inputs);
-  const slices = Object.values<Slice<unknown>>(read.slices);
-  const closed = slices.every((slice) => slice.closed);
-  if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
+  const before = yield* restore(projection, projection.commit);
+  const pending = before.record.pending;
+  if (pending !== undefined && !isPinned(projection.commit))
+    return yield* new ProjectionFault({
+      phase: "load",
+      reason: "invalid-record",
+      message: `Commit ${projection.commit.name} cannot resume a pinned unit`,
+    });
+  let batch: Slices<Inputs>;
+  let count = 0;
+  if (pending !== undefined) {
+    const slices: Record<string, Slice<unknown>> = {};
+    for (const [name, address] of inputEntries(projection.inputs)) {
+      const range = pending.ranges[name];
+      if (range === undefined) slices[name] = emptySlice(before.record.inputs[name] ?? "");
+      else {
+        const read = yield* reproduce(name, address, range);
+        slices[name] = read.slice;
+        count += read.slice.items.length;
+      }
+    }
+    // SAFETY: each slice is reproduced with its declared input codec.
+    batch = slices as Slices<Inputs>;
+  } else {
+    const read = yield* readInputs(projection.inputs, before.record.inputs);
+    batch = read.slices;
+    count = read.items;
+    if (count === 0)
+      return {
+        status: Object.values<Slice<unknown>>(batch).every((slice) => slice.closed)
+          ? "source-closed"
+          : "caught-up",
+        units: 0,
+        items: 0,
+        offsets: offsetsOf<Inputs>(before.record),
+      };
+  }
+  const ranges = pending?.ranges ?? rangesOf(batch);
   const unit = unitOf(
     projection.id,
     projection.version,
     projection.generation,
     projection.params,
-    rangesOf(read.slices),
+    ranges,
   );
-  const record = yield* transaction.withTransaction(
-    Effect.gen(function* () {
-      const again = yield* owner.load(projection);
-      if (again.token !== before.token)
-        return yield* new ProjectionFault({
-          phase: "checkpoint",
-          reason: "token-conflict",
-          message: `Record of ${projection.id} changed while the unit was read`,
-        });
-      const state = yield* projection.process(read.slices, unit, before.record.state).pipe(
-        Effect.provideService(CurrentOwner, transaction.owner),
-        Effect.catchDefect((defect) =>
-          isForeignOwner(defect)
-            ? Effect.fail(
-                new ProjectionFault({
-                  phase: "process",
-                  reason: "unsupported-composition",
-                  message: defect.message,
-                }),
-              )
-            : Effect.die(defect),
-        ),
-      );
-      const inputs = advance(before.record.inputs, read.slices);
-      const { identity, adapters, pending } = before.record;
-      const next: CheckpointRecord =
-        pending === undefined
-          ? { identity, inputs, adapters }
-          : { identity, inputs, adapters, pending };
-      const encoded = projection.state === undefined ? before.record.state : state;
-      if (encoded !== undefined) Object.assign(next, { state: encoded });
-      yield* owner.compareAndSet(projection, before.token, next);
-      return next;
-    }),
+  const { pending: _pending, ...record } = before.record;
+  const next = { ...record, inputs: advance(record.inputs, ranges) };
+  const outputs: Record<string, Details["outputs"][string]> = {};
+  for (const [name, address] of Object.entries(projection.streams ?? {})) {
+    const service = yield* address.stream;
+    outputs[name] = { address, service };
+  }
+  // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
+  const run = Effect.suspend(() => projection.process(batch, unit, before.record.state)).pipe(
+    Effect.mapError((error) => new HandlerFailed({ error })),
+  ) as Effect.Effect<Result, HandlerFailed, P>;
+  const request: Pending<Result, P> = setDetails(
+    { key: projection, unit, loaded: before.loaded, next, run },
+    {
+      outputs,
+      ranges: Object.fromEntries(
+        Object.entries(ranges).map(([name, range]) => [
+          name,
+          { from: range.from, nextOffset: range.nextOffset, count: batch[name]?.items.length ?? 0 },
+        ]),
+      ),
+    },
   );
-  // A non-empty pass is progress; only an empty pass is authoritative for caught-up.
-  return {
-    status: "progress",
-    units: 1,
-    items: read.items,
-    offsets: offsetsOf<Inputs>(record),
-  };
+  yield* projection.commit.apply(request).pipe(
+    Effect.catchTag("HandlerFailed", (failure) =>
+      // SAFETY: this wrapper was made from this declaration's handler error immediately above.
+      Effect.fail(failure.error as E),
+    ),
+  );
+  return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(next) };
 });
-
-/** One unit under the strategy the declaration carries. */
-export const pass = <Inputs extends InputMap, E, R, OR = never>(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
-): Effect.Effect<
-  Progress<Inputs>,
-  E | ProjectionFault,
-  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
-> => (Predicate.isTagged(projection, "Atomic") ? passAtomic(projection) : passOutputs(projection));
 
 /**
  * Internal kernel without a permit. Call only while holding the permit or simulating
@@ -115,14 +126,17 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
   Inputs extends InputMap,
   E,
   R,
+  Q,
+  Result,
+  P,
   OR = never,
 >(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: RunOptions = {},
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
   yield* validateOptions(options);
   const cap = options.limit ?? Number.POSITIVE_INFINITY;
@@ -139,11 +153,11 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
 });
 
 /** Runs one projection at a time for this canonical key across hosts in the current process. */
-export const run = <Inputs extends InputMap, E, R, OR = never>(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+export const run = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: RunOptions = {},
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
 > => withPermit(projection, runKernel(projection, options));

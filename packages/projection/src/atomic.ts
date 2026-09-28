@@ -1,4 +1,9 @@
-import { Data, type Effect } from "effect";
+import * as Commit from "./commit.ts";
+import type { Folded } from "./commit.ts";
+import type { CheckpointStore } from "./checkpoint-store.ts";
+import type { Transaction } from "./transaction.ts";
+import type { SqlClient } from "effect/unstable/sql";
+import { Data, Effect } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
 import {
@@ -25,8 +30,17 @@ import {
  * A bound atomic projection. The handler runs in the checkpoint owner's transaction. A
  * stream write to another owner fails with `process / unsupported-composition`.
  */
-export interface Atomic<Inputs extends InputMap, E, R, S = unknown> {
+export interface Atomic<
+  Inputs extends InputMap,
+  E,
+  R,
+  S = unknown,
+  Q = CheckpointStore | Transaction,
+  P = SqlClient.SqlClient,
+  Result = void | Folded<S>,
+> {
   readonly _tag: "Atomic";
+  readonly commit: Commit.Commit<Result, P, Q>;
   readonly id: string;
   readonly version: number;
   readonly generation: number;
@@ -38,7 +52,7 @@ export interface Atomic<Inputs extends InputMap, E, R, S = unknown> {
     batch: Slices<Inputs>,
     unit: Unit,
     encoded?: string,
-  ) => Effect.Effect<void | string, E, R>;
+  ) => Effect.Effect<Result, E, R>;
 }
 /** The atomic projection constructor. It owns the `Atomic` tag. */
 const AtomicProjection = Data.TaggedClass("Atomic");
@@ -77,8 +91,14 @@ export interface AtomicStateDefinition<
 export type AtomicDeclaration<C extends StreamRoute.ParamCodecs, I extends Inputs, A, SI, E, R> = [
   A,
 ] extends [never]
-  ? Declaration<C, Atomic<Addresses<I>, E, R, never>>
-  : Declaration<C, Atomic<Addresses<I>, E | ProjectionFault, R, A>> & {
+  ? Declaration<
+      C,
+      Atomic<Addresses<I>, E, R, never, CheckpointStore | Transaction, SqlClient.SqlClient, void>
+    >
+  : Declaration<
+      C,
+      Atomic<Addresses<I>, E | ProjectionFault, R, A, CheckpointStore, never, Folded<A>>
+    > & {
       readonly state: StateSource<A, SI, StreamRoute.Params<C>>;
     };
 /** Inert: acquires no service. Defaults are version 1 and generation 1. */
@@ -98,7 +118,7 @@ export function atomic<E, R>(
     readonly process?: AtomicHandler<E, R>;
     readonly fold?: Step<InputMap, unknown, E, R, DecodedParams>;
   },
-): Declaration<StreamRoute.ParamCodecs, Atomic<InputMap, E | ProjectionFault, R>> & {
+): Declaration<StreamRoute.ParamCodecs, unknown> & {
   readonly state?: unknown;
 } {
   const { state, fold, process } = definition;
@@ -109,14 +129,18 @@ export function atomic<E, R>(
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const bound = state === undefined ? undefined : bindState(state, decoded);
     const handler: AtomicHandler<E | ProjectionFault, R> =
-      bound === undefined || fold === undefined ? process! : foldHandler(key, bound, fold);
-    return new AtomicProjection<Omit<Atomic<InputMap, E | ProjectionFault, R>, "_tag">>({
+      bound === undefined || fold === undefined
+        ? (batch, unit) => Effect.asVoid(process!(batch, unit))
+        : foldHandler(key, bound, fold);
+    const properties = {
       ...key,
+      commit: bound === undefined ? Commit.transaction : Commit.checkpoint,
       inputs: addressesOf(definition.inputs, decoded),
       state: bound,
       process: (batch: Slices<InputMap>, unit: Unit, encoded?: string) =>
         handler(batch, withParams(unit, decoded), encoded),
-    });
+    };
+    return new AtomicProjection<typeof properties>(properties);
   });
   return state === undefined
     ? declaration
@@ -126,4 +150,4 @@ type AtomicHandler<E, R> = (
   batch: Slices<InputMap>,
   unit: Unit<DecodedParams>,
   encoded?: string,
-) => Effect.Effect<void | string, E, R>;
+) => Effect.Effect<void | Folded<unknown>, E, R>;

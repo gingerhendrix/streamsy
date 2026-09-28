@@ -77,25 +77,17 @@ export type Checks = [
   Assert<Same<Effect.Services<typeof foldedRead>, CheckpointStore>>,
   Assert<Same<typeof statefulOutputs.state.id, string>>,
   Assert<Same<Effect.Services<typeof atomicRun>, Input | Transaction | CheckpointStore>>,
-  Assert<
-    Same<Effect.Services<typeof namedRun>, Input | Other | Result | Transaction | CheckpointStore>
-  >,
+  Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | CheckpointStore>>,
   Assert<
     Same<
       Effect.Services<typeof namedWatch>,
-      | Input
-      | Other
-      | Streamsy.ChangeFeed<Input | Other>
-      | Result
-      | Transaction
-      | CheckpointStore
-      | Scope.Scope
+      Input | Other | Streamsy.ChangeFeed<Input | Other> | Result | CheckpointStore | Scope.Scope
     >
   >,
   Assert<
     Same<
       Effect.Services<typeof namedFollow>,
-      Input | Other | Result | Transaction | CheckpointStore | Scope.Scope
+      Input | Other | Result | CheckpointStore | Scope.Scope
     >
   >,
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,

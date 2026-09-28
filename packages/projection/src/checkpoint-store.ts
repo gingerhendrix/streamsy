@@ -172,9 +172,9 @@ const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boo
 };
 
 /** The stored record, or the unstored initial record for a fresh key. */
-export const restore = Effect.fn("Projection.restore")(function* (
+export const restore = Effect.fn("Projection.restore")(function* <R>(
   projection: Identity,
-  owner: CheckpointStoreApi,
+  owner: { readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault, R> },
 ) {
   const loaded = yield* owner.load(projection);
   const identity = { inputs: identityOf(projection.inputs) };
@@ -184,7 +184,7 @@ export const restore = Effect.fn("Projection.restore")(function* (
       inputs: Object.fromEntries(Object.keys(projection.inputs).map((name) => [name, ZERO_OFFSET])),
       adapters: {},
     };
-    return { record, token: loaded.token };
+    return { record, token: loaded.token, loaded };
   }
   if (!sameIdentity(loaded.record.value.identity.inputs, identity.inputs))
     return yield* new ProjectionFault({
@@ -201,7 +201,7 @@ export const restore = Effect.fn("Projection.restore")(function* (
         message: `Stored record of ${projection.id} has no offset for ${name}`,
       });
   }
-  return { record: loaded.record.value, token: loaded.token };
+  return { record: loaded.record.value, token: loaded.token, loaded };
 });
 
 /** Accepted offsets after a unit: every read input moves to its `nextOffset`. */

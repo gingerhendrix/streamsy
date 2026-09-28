@@ -1,3 +1,5 @@
+import * as Commit from "./commit.ts";
+import type { CheckpointStore } from "./checkpoint-store.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
 import { Data, Effect, Predicate, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
@@ -32,6 +34,11 @@ import { withParams, type Unit } from "./unit.ts";
 /** A bound outputs projection. Runners take this value. */
 export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown> {
   readonly _tag: "Outputs";
+  readonly commit: Commit.Commit<
+    Commit.Emitted<Commit.OutputNames> | Commit.Accumulated<unknown, Commit.OutputNames>,
+    never,
+    CheckpointStore
+  >;
   readonly id: string;
   readonly version: number;
   readonly generation: number;
@@ -44,7 +51,11 @@ export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown>
     batch: Slices<Inputs>,
     unit: Unit,
     encoded?: string,
-  ) => Effect.Effect<Output.Processed, E, R>;
+  ) => Effect.Effect<
+    Commit.Emitted<Commit.OutputNames> | Commit.Accumulated<unknown, Commit.OutputNames>,
+    E,
+    R
+  >;
 }
 
 /** The outputs projection constructor. It owns the `Outputs` tag. */
@@ -202,6 +213,7 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
     inputs: definition.inputs,
     state,
     streams,
+    commit: Commit.producer,
     process: (batch, unit, previous) =>
       Effect.gen(function* () {
         const view = withParams(unit, decoded);
@@ -231,9 +243,19 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
                   : { type: name, key: String(change.key), headers: { operation: "delete" } },
               );
         }
-        if (state === undefined) return { items };
+        const outputs = Object.fromEntries(
+          Object.entries(streams).map(([name, address]) => [
+            name,
+            { address, items: items[name] ?? [] },
+          ]),
+        );
+        if (state === undefined) return Commit.Emitted({ outputs });
         const encoded = yield* encodeState(key, state.schema, (result as { state: unknown }).state);
-        return { items, state: encoded };
+        return Commit.Accumulated({
+          outputs,
+          encoded,
+          value: (result as { state: unknown }).state,
+        });
       }),
   });
   return result;

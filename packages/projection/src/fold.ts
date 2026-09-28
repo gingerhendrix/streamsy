@@ -1,3 +1,4 @@
+import { Folded } from "./commit.ts";
 import { Effect } from "effect";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint-store.ts";
@@ -24,12 +25,12 @@ export const foldHandler =
     batch: Slices<Inputs>,
     unit: Unit<P>,
     encoded?: string,
-  ): Effect.Effect<string, E | ProjectionFault, R> =>
+  ): Effect.Effect<Folded<A>, E | ProjectionFault, R> =>
     Effect.gen(function* () {
       let value = yield* currentState(key, state, encoded);
       for (const entry of items(batch)) {
         const next = step(value, entry, unit);
         value = Effect.isEffect(next) ? yield* next : next;
       }
-      return yield* encodeState(key, state.schema, value);
+      return { ...Folded({ value, encoded: yield* encodeState(key, state.schema, value) }), value };
     });
