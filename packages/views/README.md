@@ -46,7 +46,7 @@ For fold state between projection passes, declare `state:` on a projection from
 shared `SqlClient`; see the
 [State guide](https://streamsy.dev/docs/projections/projections#state).
 
-Guide: [streamsy.dev/docs/projections/views](https://streamsy.dev/docs/projections/views).
+Guide: [docs/guide.md](docs/guide.md).
 
 ## License
 

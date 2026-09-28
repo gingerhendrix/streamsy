@@ -2,18 +2,19 @@
   "name": "@streamsy/views",
   "version": "0.4.0",
   "description": "Typed keyed relations, serializable plan IR, and a pure incremental engine for Streamsy.",
-  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "homepage": "https://github.com/gingerhendrix/streamsy-extras/tree/main/packages/views#readme",
   "bugs": {
-    "url": "https://github.com/gingerhendrix/streamsy/issues"
+    "url": "https://github.com/gingerhendrix/streamsy-extras/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "url": "git+https://github.com/gingerhendrix/streamsy-extras.git",
     "directory": "packages/views"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "type": "module",
   "sideEffects": false,
