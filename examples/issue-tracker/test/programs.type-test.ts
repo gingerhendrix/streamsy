@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import type { Effect, Layer } from "effect";
 import type { Storage } from "@streamsy/core";
-import { Projection, type State, type Checkpoints } from "@streamsy/projection";
+import { Projection, type Transaction, type CheckpointStore } from "@streamsy/projection";
 import type { HttpRouter } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
 import type { app, outputRoutes, workspaceSummary } from "../server/app.ts";
@@ -26,15 +26,22 @@ const sqlWatch = (address: ReturnType<typeof issueRows.at>) => Projection.watch(
 const outputWatch = (address: ReturnType<typeof tracker.at>) => Projection.watch(address);
 export type Checks = [
   Assert<
-    Same<Effect.Services<ReturnType<typeof sqlRun>>, Checkpoints | Inputs | SqlClient.SqlClient>
+    Same<
+      Effect.Services<ReturnType<typeof sqlRun>>,
+      Transaction | CheckpointStore | Inputs | SqlClient.SqlClient
+    >
   >,
   Assert<
-    Same<Effect.Services<ReturnType<typeof outputRun>>, Checkpoints | Inputs | Outputs | State>
+    Same<
+      Effect.Services<ReturnType<typeof outputRun>>,
+      CheckpointStore | Inputs | Outputs | Transaction
+    >
   >,
   Assert<
     Same<
       Effect.Services<ReturnType<typeof sqlWatch>>,
-      | Checkpoints
+      | Transaction
+      | CheckpointStore
       | Inputs
       | Streamsy.ChangeFeed<Inputs>
       | SqlClient.SqlClient
@@ -44,11 +51,11 @@ export type Checks = [
   Assert<
     Same<
       Effect.Services<ReturnType<typeof outputWatch>>,
-      | Checkpoints
+      | CheckpointStore
       | Inputs
       | Streamsy.ChangeFeed<Inputs>
       | Outputs
-      | State
+      | Transaction
       | import("effect").Scope.Scope
     >
   >,
@@ -66,19 +73,22 @@ export type Checks = [
   Assert<Same<Effect.Services<ReturnType<typeof createInputs>>, Inputs>>,
   Assert<Same<Effect.Services<ReturnType<typeof checkCatalogWorkspace>>, never>>,
   Assert<Same<Effect.Services<typeof prepareSchema>, SqlClient.SqlClient>>,
-  Assert<Same<Effect.Services<ReturnType<typeof workspaceSummary.resolve>>, State>>,
+  Assert<Same<Effect.Services<ReturnType<typeof workspaceSummary.resolve>>, CheckpointStore>>,
   Assert<Same<Layer.Services<ReturnType<typeof applicationLayer>>, never>>,
   Assert<Same<Layer.Services<ReturnType<typeof hostLayer>>, never>>,
   Assert<
-    Same<AppR, HttpRouter.HttpRouter | Inputs | Outputs | State | SqlClient.SqlClient | Checkpoints>
+    Same<
+      AppR,
+      HttpRouter.HttpRouter | Inputs | Outputs | Transaction | SqlClient.SqlClient | CheckpointStore
+    >
   >,
-  Assert<Same<OutputR, HttpRouter.HttpRouter | Outputs | State>>,
-  // Handlers retain their SQL/State requirements. Runners add declared streams and checkpoints.
+  Assert<Same<OutputR, HttpRouter.HttpRouter | Outputs | CheckpointStore>>,
+  // Handlers retain their SQL requirements. Runners add declared streams and checkpoints.
   Assert<
     Same<
       Effect.Services<ReturnType<ReturnType<typeof issueRows.at>["process"]>>,
       SqlClient.SqlClient
     >
   >,
-  Assert<Same<Effect.Services<ReturnType<ReturnType<typeof tracker.at>["process"]>>, State>>,
+  Assert<Same<Effect.Services<ReturnType<ReturnType<typeof tracker.at>["process"]>>, never>>,
 ];

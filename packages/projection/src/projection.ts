@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { Entry, InputMap, Slices } from "./batch.ts";
-import type { Identity, ProjectionKey } from "./checkpoint.ts";
+import type { Identity, ProjectionKey } from "./checkpoint-store.ts";
 import type { Unit } from "./unit.ts";
 import { items } from "./read.ts";
 export { atomic } from "./atomic.ts";

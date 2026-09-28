@@ -2,7 +2,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Checkpoints, Output, Projection, State } from "@streamsy/projection";
+import { CheckpointStore, Output, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
@@ -35,7 +35,7 @@ for (const sameOwner of [true, false]) {
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
-        const checkpoints = yield* Checkpoints;
+        const checkpoints = yield* CheckpointStore;
         let processed = false;
         const projection = Projection.outputs({
           id: `declared-${sameOwner}`,
@@ -84,7 +84,7 @@ for (const method of [
         yield* seed;
         const own = yield* Local;
         const other = yield* Foreign;
-        const checkpoints = yield* Checkpoints;
+        const checkpoints = yield* CheckpointStore;
         yield* own.create(params);
         yield* other.create(params);
         const ref = Foreign.at(params);
@@ -134,70 +134,6 @@ for (const method of [
   });
 }
 
-test("declared state on a foreign State owner fails before processing", async () => {
-  const foreignState = Layer.effect(State, State).pipe(Layer.provide(Layer.fresh(foreign)));
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      let processed = false;
-      const projection = Projection.outputs({
-        id: "foreign-state",
-        params: {},
-        inputs: { input: Input.at({}) },
-        outputs: {},
-        state: { schema: Schema.Finite, initial: 0 },
-        process: () =>
-          Effect.sync(() => {
-            processed = true;
-            return { state: 1 };
-          }),
-      }).at({});
-      const result = yield* Projection.run({ ...projection }).pipe(
-        Effect.provide(foreignState),
-        Effect.result,
-      );
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");
-      expect(processed).toBe(false);
-      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-    }).pipe(Effect.provide(host)),
-  );
-});
-
-test("atomic state on a foreign State owner fails before folding", async () => {
-  const foreignState = Layer.effect(State, State).pipe(Layer.provide(Layer.fresh(foreign)));
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      let folded = false;
-      const projection = Projection.atomic({
-        id: "foreign-atomic-state",
-        params: {},
-        inputs: { input: Input.at({}) },
-        state: { schema: Schema.Finite, initial: 0 },
-        fold: (sum, { item }) => {
-          folded = true;
-          return sum + item;
-        },
-      }).at({});
-      const attempts = [
-        Effect.asVoid(Projection.run(projection)),
-        Effect.asVoid(Projection.read(projection)),
-      ];
-      for (const attempt of attempts) {
-        const result = yield* attempt.pipe(Effect.provide(foreignState), Effect.result);
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
-          expect(result.failure.phase).toBe("load");
-          expect(result.failure.reason).toBe("unsupported-composition");
-        }
-      }
-      expect(folded).toBe(false);
-      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-    }).pipe(Effect.provide(host)),
-  );
-});
-
 test("a pinned stream on a foreign owner fails before pinning or creating it", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -212,7 +148,7 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");
-      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
+      expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
       expect((yield* (yield* Foreign).head(params).pipe(Effect.result))._tag).toBe("Failure");
     }).pipe(Effect.provide(host)),
   );

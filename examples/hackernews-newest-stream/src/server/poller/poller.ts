@@ -1,5 +1,5 @@
 import { Deferred, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect";
-import type { Checkpoints, State } from "@streamsy/projection";
+import type { CheckpointStore, Transaction } from "@streamsy/projection";
 import type { HackerNewsStories } from "../stories.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
 import { errorMessage, nowIso } from "../util.ts";
@@ -20,10 +20,14 @@ type PollClaim = {
 
 export function makeNewestStoriesPoller(
   config: PollerConfig,
-): Effect.Effect<NewestStoriesPollerService, never, HackerNewsStories | Checkpoints | State> {
+): Effect.Effect<
+  NewestStoriesPollerService,
+  never,
+  HackerNewsStories | CheckpointStore | Transaction
+> {
   return Effect.gen(function* () {
     const api = config.api ?? liveHackerNewsApi;
-    const context = yield* Effect.context<HackerNewsStories | Checkpoints | State>();
+    const context = yield* Effect.context<HackerNewsStories | CheckpointStore | Transaction>();
     const countersRef = yield* Ref.make(initialCounters);
     const activeRef = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
 

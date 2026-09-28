@@ -171,7 +171,7 @@ const typeChecks = () => {
   // @ts-expect-error Date is not a JSON encoded value; rejected before requests
   Serve.value(date.state, "/date");
   const missingState = HttpRouter.toWebHandler(Serve.value(tracker.state, "/summary/:seat"));
-  // @ts-expect-error value resolution requires State at the request boundary
+  // @ts-expect-error value resolution requires CheckpointStore at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
   class wrongTarget extends Streamsy.bytes<wrongTarget>()(
     "serve.test/wrongTarget",

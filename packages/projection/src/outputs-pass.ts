@@ -1,3 +1,4 @@
+import { Transaction } from "./transaction.ts";
 import { Effect, Predicate } from "effect";
 import { Producer, type Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -9,11 +10,16 @@ import {
   type Slice,
   type Slices,
 } from "./batch.ts";
-import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
+import {
+  CheckpointStore,
+  advance,
+  rangesOf,
+  restore,
+  type CheckpointRecord,
+} from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
-import { checkStateOwner } from "./state.ts";
 import { readInputs, reproduce } from "./read.ts";
 import type { Progress } from "./run.ts";
 import { offsetsOf } from "./snapshot.ts";
@@ -88,16 +94,16 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs>
+  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
 > {
-  const owner = yield* Checkpoints;
-  yield* checkStateOwner(projection, owner);
+  const owner = yield* CheckpointStore;
+  const transaction = yield* Transaction;
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
   const streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>> = projection.streams;
   for (const output of Object.values(streams)) {
     const service = yield* output.stream;
-    if (service.owner !== owner.owner)
+    if (service.owner !== transaction.owner)
       return yield* new ProjectionFault({
         phase: "load",
         reason: "unsupported-composition",
@@ -151,7 +157,7 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
     projection.params,
     ranges,
   );
-  const processed: Processed = yield* projection.process(batch, unit);
+  const processed: Processed = yield* projection.process(batch, unit, before.record.state);
   const seqs: Record<string, number> =
     pending === undefined
       ? Object.fromEntries(
@@ -231,7 +237,10 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
         ),
       },
     };
-    token = yield* owner.save(projection, pinned, before.token).pipe(Effect.mapError(asPin));
+    if (before.record.state !== undefined) Object.assign(pinned, { state: before.record.state });
+    token = yield* owner
+      .compareAndSet(projection, before.token, pinned)
+      .pipe(Effect.mapError(asPin));
   }
   for (const [name, output] of Object.entries(streams)) {
     const seq = seqs[name];
@@ -248,14 +257,8 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
     inputs: advance(before.record.inputs, ranges),
     adapters: Object.keys(positions).length === 0 ? adapters : { outputs: positions },
   };
-  const saveState = processed.saveState;
-  if (saveState === undefined) yield* owner.save(projection, record, token);
-  else
-    yield* owner.withTransaction(
-      Effect.gen(function* () {
-        yield* owner.save(projection, record, token);
-        yield* saveState;
-      }),
-    );
+  const state = processed.state ?? before.record.state;
+  if (state !== undefined) Object.assign(record, { state });
+  yield* owner.compareAndSet(projection, token, record);
   return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(record) };
 });

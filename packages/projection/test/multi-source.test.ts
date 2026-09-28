@@ -4,7 +4,7 @@ import { Effect, Option, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 import {
-  Checkpoints,
+  CheckpointStore,
   Projection,
   ProjectionFault,
   type Entry,
@@ -118,7 +118,7 @@ test("a single-input projection stores a one-key inputs map", () =>
     Effect.gen(function* () {
       yield* initialize;
       const result = yield* Projection.run(positives);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(positives));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(positives));
       const record = Option.getOrThrow(loaded.record);
       expect(Object.keys(record.inputs)).toEqual(["input"]);
       expect(record.inputs).toEqual(result.offsets);
@@ -143,7 +143,7 @@ test("a missing second input fails the read naming that input", () =>
         expect(result.failure.input).toBe("b");
       }
       expect(seen).toHaveLength(0);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.isNone(loaded.record)).toBe(true);
     }),
   ));

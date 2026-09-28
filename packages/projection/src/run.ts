@@ -1,14 +1,20 @@
+import { Transaction } from "./transaction.ts";
 import { withPermit } from "./serialize.ts";
 import type { Outputs } from "./outputs.ts";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
 import { Effect, Predicate } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
-import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
+import {
+  CheckpointStore,
+  advance,
+  rangesOf,
+  restore,
+  type CheckpointRecord,
+} from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Atomic } from "./atomic.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passOutputs } from "./outputs-pass.ts";
-import { checkStateOwner } from "./state.ts";
 import { offsetsOf, type Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
@@ -30,10 +36,10 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | Checkpoints | InputServices<Inputs>
+  R | Transaction | CheckpointStore | InputServices<Inputs>
 > {
-  const owner = yield* Checkpoints;
-  yield* checkStateOwner(projection, owner);
+  const owner = yield* CheckpointStore;
+  const transaction = yield* Transaction;
   const before = yield* restore(projection, owner);
   const empty = { units: 0, items: 0, offsets: offsetsOf<Inputs>(before.record) };
   const read = yield* readInputs(projection.inputs, before.record.inputs);
@@ -47,7 +53,7 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
     projection.params,
     rangesOf(read.slices),
   );
-  const record = yield* owner.withTransaction(
+  const record = yield* transaction.withTransaction(
     Effect.gen(function* () {
       const again = yield* owner.load(projection);
       if (again.token !== before.token)
@@ -56,8 +62,8 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
           reason: "token-conflict",
           message: `Record of ${projection.id} changed while the unit was read`,
         });
-      yield* projection.process(read.slices, unit).pipe(
-        Effect.provideService(CurrentOwner, owner.owner),
+      const state = yield* projection.process(read.slices, unit, before.record.state).pipe(
+        Effect.provideService(CurrentOwner, transaction.owner),
         Effect.catchDefect((defect) =>
           isForeignOwner(defect)
             ? Effect.fail(
@@ -75,8 +81,10 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
       const next: CheckpointRecord =
         pending === undefined
           ? { identity, inputs, adapters }
-          : { identity, inputs, pending, adapters };
-      yield* owner.save(projection, next, before.token);
+          : { identity, inputs, adapters, pending };
+      const encoded = projection.state === undefined ? before.record.state : state;
+      if (encoded !== undefined) Object.assign(next, { state: encoded });
+      yield* owner.compareAndSet(projection, before.token, next);
       return next;
     }),
   );
@@ -95,7 +103,7 @@ export const pass = <Inputs extends InputMap, E, R, OR = never>(
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs>
+  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
 > => (Predicate.isTagged(projection, "Atomic") ? passAtomic(projection) : passOutputs(projection));
 
 /**
@@ -114,7 +122,7 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs>
+  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
 > {
   yield* validateOptions(options);
   const cap = options.limit ?? Number.POSITIVE_INFINITY;
@@ -137,5 +145,5 @@ export const run = <Inputs extends InputMap, E, R, OR = never>(
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs>
+  R | OR | Transaction | CheckpointStore | InputServices<Inputs>
 > => withPermit(projection, runKernel(projection, options));

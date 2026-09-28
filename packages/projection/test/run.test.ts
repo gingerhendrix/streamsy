@@ -4,7 +4,7 @@ import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
-import { Checkpoints, Output, Projection, ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Output, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { layerMemory } from "@streamsy/projection/memory";
 import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
@@ -312,7 +312,7 @@ test("two competing passes on one memory host: the second conflicts and output i
   run(
     Effect.gen(function* () {
       yield* initialize;
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
@@ -329,12 +329,12 @@ test("two competing passes on one memory host: the second conflicts and output i
       }).at({});
       const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
-      const observing = Checkpoints.of({
+      const observing = CheckpointStore.of({
         ...owner,
         load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
       });
       const second = yield* Effect.forkChild(
-        Projection.pass(positives).pipe(Effect.provideService(Checkpoints, observing)),
+        Projection.pass(positives).pipe(Effect.provideService(CheckpointStore, observing)),
       );
       yield* Deferred.await(loaded);
       yield* Deferred.succeed(release, undefined);
@@ -457,12 +457,12 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
             return { output: batch.input.items };
           }),
       }).at({});
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       let saves = 0;
       const failed = yield* Projection.run(projection).pipe(
-        Effect.provideService(Checkpoints, {
+        Effect.provideService(CheckpointStore, {
           ...owner,
-          save: (key, record, token) => {
+          compareAndSet: (key, token, record) => {
             saves += 1;
             return saves === 2
               ? Effect.fail(
@@ -472,7 +472,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
                     message: "after append",
                   }),
                 )
-              : owner.save(key, record, token);
+              : owner.compareAndSet(key, token, record);
           },
         }),
         Effect.result,

@@ -1,4 +1,5 @@
-import { Checkpoints } from "./checkpoint.ts";
+import { Transaction } from "./transaction.ts";
+import { CheckpointStore } from "./checkpoint-store.ts";
 import type { Outputs } from "./outputs.ts";
 import { Effect, Fiber, Predicate, Queue, Stream as EffectStream, type Scope } from "effect";
 import { Streamsy } from "@streamsy/core";
@@ -17,7 +18,12 @@ const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
+  | R
+  | OR
+  | Transaction
+  | CheckpointStore
+  | InputServices<Inputs>
+  | Streamsy.ChangeFeed<InputServices<Inputs>>
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -112,7 +118,8 @@ export const watch = <Inputs extends InputMap, E, R, OR = never>(
   ProjectionFault,
   | R
   | OR
-  | Checkpoints
+  | Transaction
+  | CheckpointStore
   | InputServices<Inputs>
   | Streamsy.ChangeFeed<InputServices<Inputs>>
   | Scope.Scope

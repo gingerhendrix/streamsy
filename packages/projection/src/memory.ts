@@ -1,26 +1,25 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { Streams } from "@streamsy/core/protocol";
-import { MemoryCommitBoundary, attachOwner, ownerOf } from "@streamsy/core/internal/memory";
-import { Checkpoints, fromStore, type EncodedStore } from "./checkpoint.ts";
-import { State, stateFromStore } from "./state.ts";
+import { MemoryCommitBoundary, ownerOf } from "@streamsy/core/internal/memory";
+import { CheckpointStore, fromStore, type EncodedStore } from "./checkpoint-store.ts";
+import { Transaction } from "./transaction.ts";
 
 /** Requires the exact memory owner retained by Streams.layerMemory(). */
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const boundary = yield* MemoryCommitBoundary;
-    const stateKey = (key: string) => `state:${key}`;
     const store: EncodedStore = {
       read: boundary.read,
       write: boundary.write,
       remove: boundary.remove,
-      readState: (key) => boundary.read(stateKey(key)),
-      writeState: (key, value) => boundary.write(stateKey(key), value),
-      removeState: (key) => boundary.remove(stateKey(key)),
       withTransaction: boundary.withTransaction,
     };
-    attachOwner(store, ownerOf(boundary));
-    return Context.make(Checkpoints, fromStore(store)).pipe(
-      Context.add(State, stateFromStore(store)),
+    return Context.make(CheckpointStore, fromStore(store)).pipe(
+      Context.add(Transaction, {
+        owner: ownerOf(boundary),
+        sql: Option.none(),
+        withTransaction: boundary.withTransaction,
+      }),
     );
   }),
 );

@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { Streamsy } from "@streamsy/core";
 import { Memory as StorageMemory } from "@streamsy/core";
 import { GameEvents } from "../src/board/fold.ts";
@@ -5,9 +6,9 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime, Option, Exit, Cause } from "effect";
-import { Checkpoints, Projection, State } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { type BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
 import { moveId, MOVE_FEED_LIMIT } from "../src/board/projection.ts";
@@ -18,7 +19,7 @@ const board = hexBoard.at({ gameId: "game" });
 const params = { gameId: "game" };
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const sqlite = (filename: string) =>
-  Sqlite.layer.pipe(
+  ProjectionSql.layerStorage.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
   );
 
@@ -30,8 +31,13 @@ const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   });
 const snapshot = Effect.gen(function* () {
   const { state, offsets } = yield* Projection.read(board);
-  const checkpoint = yield* (yield* Checkpoints).load(board);
-  return { state, offsets, checkpoint, encoded: yield* (yield* State).load(board) };
+  const checkpoint = yield* (yield* CheckpointStore).load(board);
+  return {
+    state,
+    offsets,
+    checkpoint,
+    encoded: Option.flatMap(checkpoint.record, (record) => Option.fromUndefinedOr(record.state)),
+  };
 });
 const read = Effect.gen(function* () {
   const { state, offsets, checkpoint, encoded } = yield* snapshot;
@@ -73,7 +79,7 @@ for (const [name, events, cut] of [
   ["450-event game split after 400 events", longGame, 400],
 ] as const) {
   test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, async () => {
-    const directory = mkdtempSync("/tmp/hex-board-");
+    const directory = mkdtempSync(join(tmpdir(), "hex-board-"));
     const filename = join(directory, "board.sqlite");
     try {
       const first = ManagedRuntime.make(sqlite(filename));
@@ -113,7 +119,7 @@ test("memory folds the same game incrementally", async () => {
 });
 
 test("a contradictory AttackResolved leaves SQLite state and checkpoint at the prior cut", async () => {
-  const directory = mkdtempSync("/tmp/hex-board-rollback-");
+  const directory = mkdtempSync(join(tmpdir(), "hex-board-rollback-"));
   const runtime = ManagedRuntime.make(sqlite(join(directory, "board.sqlite")));
   try {
     await runtime.runPromise(seed());

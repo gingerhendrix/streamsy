@@ -1,4 +1,5 @@
-import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
+import { tmpdir } from "node:os";
+import { restore } from "../src/checkpoint-store.ts";
 import { runKernel, run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
@@ -9,9 +10,14 @@ import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, State, type ProjectionFault } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Projection,
+  Transaction,
+  type ProjectionFault,
+} from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { hasLock } from "../src/serialize.ts";
 import { forget } from "../src/forget.ts";
@@ -32,7 +38,9 @@ const total = Projection.atomic({
   fold: (sum, { item }) => sum + item,
 }).at({});
 const sqliteProtocol = (filename = ":memory:") =>
-  Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
+  ProjectionSql.layerStorage.pipe(
+    Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
+  );
 const sqlite = (filename = ":memory:") => FamilyFixture.withFamilies(sqliteProtocol(filename));
 const seed = Effect.gen(function* () {
   yield* Streams.create(input);
@@ -43,8 +51,8 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | Checkpoints
-      | State
+      | CheckpointStore
+      | Transaction
       | import("@streamsy/core").Streamsy.Wildcard
       | StreamsReader
       | StreamsWriter,
@@ -56,18 +64,23 @@ const hosts: ReadonlyArray<
   ["SQLite", sqlite()],
 ];
 for (const [name, host] of hosts) {
-  test(`${name}: fold round trip, version key, State provision, and a failing step saves nothing`, async () => {
+  test(`${name}: fold round trip, version key, CheckpointStore provision, and a failing step saves nothing`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
         Effect.gen(function* () {
-          yield* State;
+          expect(Option.isNone((yield* Transaction).sql)).toBe(name === "memory");
           yield* seed;
           expect((yield* Projection.run(total)).items).toBe(2);
           expect((yield* Projection.read(total)).state).toBe(5);
-          expect(yield* (yield* State).load({ ...total, version: 1 })).toEqual(Option.none());
+          expect(
+            Option.flatMap(
+              (yield* (yield* CheckpointStore).load({ ...total, version: 1 })).record,
+              (record) => Option.fromUndefinedOr(record.state),
+            ),
+          ).toEqual(Option.none());
           expect((yield* Projection.read({ ...total, version: 1 })).state).toBe(0);
-          const checkpoints = yield* Checkpoints;
+          const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
           const failing = Projection.atomic({
@@ -92,14 +105,14 @@ for (const [name, host] of hosts) {
     }
   });
 
-  test(`${name}: handler failure after a real State.save rolls back state and record`, async () => {
+  test(`${name}: handler failure after a record write rolls back state and offsets`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
         Effect.gen(function* () {
           yield* seed;
           yield* Projection.run(total);
-          const checkpoints = yield* Checkpoints;
+          const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7]);
           const saveThenFail = Projection.atomic({
@@ -109,8 +122,14 @@ for (const [name, host] of hosts) {
             inputs: { input },
             process: () =>
               Effect.gen(function* () {
-                const state = yield* State;
-                yield* state.save(total, "999");
+                const store = yield* CheckpointStore;
+                const loaded = yield* restore(total, store);
+                yield* store.compareAndSet(total, loaded.token, {
+                  identity: loaded.record.identity,
+                  inputs: loaded.record.inputs,
+                  adapters: loaded.record.adapters,
+                  state: "999",
+                });
                 return yield* Effect.fail("after save");
               }),
           }).at({});
@@ -125,7 +144,7 @@ for (const [name, host] of hosts) {
     }
   });
 
-  test(`${name}: token conflict at save rolls back the state already written by fold`, async () => {
+  test(`${name}: token conflict at compareAndSet rolls back state and offsets`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
@@ -133,13 +152,15 @@ for (const [name, host] of hosts) {
           yield* seed;
           yield* Projection.run(total);
           yield* Streams.append(input, [7]);
-          const owner = yield* Checkpoints;
+          const owner = yield* CheckpointStore;
           const before = yield* owner.load(total);
           const failed = yield* Projection.run(total).pipe(
-            Effect.provideService(Checkpoints, {
+            Effect.provideService(CheckpointStore, {
               ...owner,
-              save: (key, record, token) =>
-                owner.save(key, record, token).pipe(Effect.andThen(owner.save(key, record, token))),
+              compareAndSet: (key, token, record) =>
+                owner
+                  .compareAndSet(key, token, record)
+                  .pipe(Effect.andThen(owner.compareAndSet(key, token, record))),
             }),
             Effect.result,
           );
@@ -155,7 +176,7 @@ for (const [name, host] of hosts) {
     }
   });
 
-  test(`${name}: forget deletes both rows, prunes the lock, and is idempotent`, async () => {
+  test(`${name}: forget deletes one record, prunes the lock, and is idempotent`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
@@ -166,9 +187,13 @@ for (const [name, host] of hosts) {
           // Source imports share the internal lock map, which is intentionally absent from dist's public surface.
           yield* forget(total);
           expect(hasLock(recordKey(total))).toBe(false);
-          const checkpoints = yield* Checkpoints;
+          const checkpoints = yield* CheckpointStore;
           expect(yield* checkpoints.load(total)).toEqual({ record: Option.none(), token: "0" });
-          expect(yield* (yield* State).load(total)).toEqual(Option.none());
+          expect(
+            Option.flatMap((yield* (yield* CheckpointStore).load(total)).record, (record) =>
+              Option.fromUndefinedOr(record.state),
+            ),
+          ).toEqual(Option.none());
           expect(yield* Projection.read(total)).toEqual({
             state: 0,
             offsets: { input: ZERO_OFFSET },
@@ -183,17 +208,17 @@ for (const [name, host] of hosts) {
     }
   });
 
-  test(`${name}: failed second delete rolls back state and retains the lock`, async () => {
+  test(`${name}: failed record delete rolls back state and retains the lock`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
         Effect.gen(function* () {
           yield* seed;
           yield* runWithPermit(total);
-          const checkpoints = yield* Checkpoints;
+          const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           const result = yield* forget(total).pipe(
-            Effect.provideService(Checkpoints, {
+            Effect.provideService(CheckpointStore, {
               ...checkpoints,
               remove: () => Effect.die("delete failed"),
             }),
@@ -213,7 +238,7 @@ for (const [name, host] of hosts) {
 }
 
 test("SQLite file restart retains folded state and reads zero new items", async () => {
-  const directory = mkdtempSync("/tmp/projection-state-");
+  const directory = mkdtempSync(join(tmpdir(), "projection-state-"));
   const filename = join(directory, "state.sqlite");
   const first = ManagedRuntime.make(sqlite(filename));
   try {
@@ -234,10 +259,16 @@ test("SQLite file restart retains folded state and reads zero new items", async 
 test("invalid JSON and schema-invalid state fail typed reads; invalid encoding rolls back", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const state = yield* State;
-      const checkpoints = yield* Checkpoints;
+      const state = yield* CheckpointStore;
+      const checkpoints = yield* CheckpointStore;
       for (const encoded of ["{broken", '"not a number"']) {
-        yield* checkpoints.withTransaction(state.save(total, encoded));
+        const before = yield* restore(total, checkpoints);
+        yield* checkpoints.compareAndSet(total, before.token, {
+          identity: before.record.identity,
+          inputs: before.record.inputs,
+          adapters: before.record.adapters,
+          state: encoded,
+        });
         const failed = yield* Projection.read(total).pipe(Effect.result);
         expect(failed._tag).toBe("Failure");
         if (failed._tag === "Failure")
@@ -257,7 +288,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       if (failed._tag === "Failure")
         expect(failed.failure).toMatchObject({ phase: "process", reason: "invalid-output" });
       expect(failed._tag).toBe("Failure");
-      expect(yield* state.load(total)).toEqual(Option.none());
+      expect((yield* state.load(total)).record).toEqual(Option.none());
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });
@@ -314,17 +345,27 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
   );
 });
 
-test("State SQL failures retain phase and driver cause", async () => {
+test("Checkpoint SQL failures retain phase and driver cause", async () => {
   const runtime = ManagedRuntime.make(sqlite());
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        const state = yield* State;
-        yield* sql.unsafe("DROP TABLE streamsy_projection_v1_state");
+        const state = yield* CheckpointStore;
+        yield* sql.unsafe("DROP TABLE streamsy_projection_v2_records");
         for (const [phase, operation] of [
           ["load", state.load(total).pipe(Effect.asVoid)],
-          ["checkpoint", state.save(total, "1")],
+          [
+            "load",
+            state
+              .compareAndSet(total, "0", {
+                identity: { inputs: {} },
+                inputs: {},
+                adapters: {},
+                state: "1",
+              })
+              .pipe(Effect.asVoid),
+          ],
           ["checkpoint", state.remove(total)],
         ] as const) {
           const failed = yield* Effect.result(operation);
@@ -351,17 +392,17 @@ test("SQLite competing commit during the read window preserves the winner's stat
         yield* seed;
         yield* Projection.run(total);
         yield* Streams.append(input, [7]);
-        const owner = yield* Checkpoints;
+        const owner = yield* CheckpointStore;
         let firstLoad = true;
         const result = yield* Projection.run(total).pipe(
-          Effect.provideService(Checkpoints, {
+          Effect.provideService(CheckpointStore, {
             ...owner,
             load: (key) =>
               Effect.gen(function* () {
                 const before = yield* owner.load(key);
                 if (firstLoad) {
                   firstLoad = false;
-                  yield* runKernel(total).pipe(Effect.provideService(Checkpoints, owner));
+                  yield* runKernel(total).pipe(Effect.provideService(CheckpointStore, owner));
                 }
                 return before;
               }),
@@ -380,11 +421,11 @@ test("SQLite competing commit during the read window preserves the winner's stat
   }
 });
 
-test("fold performs one load and save per nonempty pass and skips the initial factory after creation", async () => {
+test("fold saves one record per nonempty pass and skips the initial factory after creation", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
-      const state = yield* State;
+      const state = yield* CheckpointStore;
       let loads = 0;
       let saves = 0;
       let starts = 0;
@@ -402,30 +443,24 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
         fold: (sum, { item }) => sum + item,
       }).at({});
       const run = Projection.run(counted).pipe(
-        Effect.provideService(
-          State,
-          attachOwner(
-            {
-              ...state,
-              load: (key) =>
-                Effect.suspend(() => {
-                  loads += 1;
-                  return state.load(key);
-                }),
-              save: (key, value) =>
-                Effect.suspend(() => {
-                  saves += 1;
-                  return state.save(key, value);
-                }),
-            },
-            ownerOf(state),
-          ),
-        ),
+        Effect.provideService(CheckpointStore, {
+          ...state,
+          load: (key) =>
+            Effect.suspend(() => {
+              loads += 1;
+              return state.load(key);
+            }),
+          compareAndSet: (key, token, record) =>
+            Effect.suspend(() => {
+              saves += 1;
+              return state.compareAndSet(key, token, record);
+            }),
+        }),
       );
       yield* run;
       yield* Streams.append(input, [7, 11]);
       yield* run;
-      expect({ loads, saves, starts }).toEqual({ loads: 2, saves: 2, starts: 1 });
+      expect({ loads, saves, starts }).toEqual({ loads: 6, saves: 2, starts: 1 });
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });

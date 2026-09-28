@@ -1,13 +1,18 @@
-import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, ProjectionFault, State } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Output,
+  Projection,
+  ProjectionFault,
+  Transaction,
+} from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { readAll } from "./support/scenarios.ts";
 
@@ -15,10 +20,10 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | import("@streamsy/projection").Checkpoints
+      | import("@streamsy/projection").CheckpointStore
       | import("@streamsy/core/protocol").StreamsReader
       | import("@streamsy/core/protocol").StreamsWriter
-      | State,
+      | Transaction,
       import("@streamsy/core").StorageFault | ProjectionFault
     >,
   ]
@@ -26,7 +31,7 @@ const hosts: ReadonlyArray<
   ["memory", Memory.layerMemory()],
   [
     "SQLite",
-    Sqlite.layer.pipe(
+    ProjectionSql.layerStorage.pipe(
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
     ),
   ],
@@ -96,7 +101,7 @@ for (const [name, host] of hosts) {
           Effect.result,
         );
         expect(failed._tag).toBe("Failure");
-        const owner = yield* Checkpoints;
+        const owner = yield* CheckpointStore;
         const before = yield* owner.load(projection);
         expect(Option.getOrThrow(before.record).pending?.seqs).toEqual({ a: 0 });
         replay = true;
@@ -148,20 +153,20 @@ for (const [name, host] of hosts) {
           ),
         }).at({});
         const saved: import("@streamsy/projection/checkpoint").CheckpointRecord[] = [];
-        const owner = yield* Checkpoints;
+        const owner = yield* CheckpointStore;
         yield* Projection.run(projection).pipe(
-          Effect.provideService(Checkpoints, {
+          Effect.provideService(CheckpointStore, {
             ...owner,
-            save: (key, record, token) => {
+            compareAndSet: (key, token, record) => {
               saved.push(record);
-              return owner.save(key, record, token);
+              return owner.compareAndSet(key, token, record);
             },
           }),
         );
         // An owner may retain the passed record: settling must not mutate that pin.
         expect(saved[0]?.adapters.outputs?.a?.nextSeq).toBe(0);
         expect(saved[1]?.adapters.outputs?.a?.nextSeq).toBe(1);
-        expect(yield* (yield* Checkpoints).load(projection)).toMatchObject({
+        expect(yield* (yield* CheckpointStore).load(projection)).toMatchObject({
           record: Option.some({
             identity: { inputs: expect.anything() },
             inputs: expect.anything(),
@@ -234,8 +239,12 @@ for (const [name, host] of hosts) {
         expect(failed._tag).toBe("Failure");
         expect(yield* readAll(a)).toEqual([1]);
         expect(yield* readAll(b)).toEqual([]);
-        expect(yield* (yield* State).load(projection)).toEqual(Option.none());
-        const pinned = yield* (yield* Checkpoints).load(projection);
+        expect(
+          Option.flatMap((yield* (yield* CheckpointStore).load(projection)).record, (record) =>
+            Option.fromUndefinedOr(record.state),
+          ),
+        ).toEqual(Option.none());
+        const pinned = yield* (yield* CheckpointStore).load(projection);
         expect(Option.getOrThrow(pinned.record).pending?.seqs).toEqual({ a: 0, b: 0 });
         yield* Streams.append(input, [2]);
         const outcomes: string[] = [];
@@ -296,36 +305,30 @@ for (const [name, host] of hosts) {
           state: { schema: Schema.Finite, initial: 0 },
           process: (state, batch) => Effect.succeed({ state: state + batch.input.items[0]! }),
         }).at({});
-        const state = yield* State;
+        const store = yield* CheckpointStore;
         const failed = yield* Projection.run(projection).pipe(
-          Effect.provideService(
-            State,
-            attachOwner(
-              {
-                ...state,
-                save: (key, encoded) =>
-                  state.save(key, encoded).pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ProjectionFault({
-                          phase: "checkpoint",
-                          reason: "storage-failure",
-                          message: "after-state",
-                        }),
-                      ),
-                    ),
-                  ),
-              },
-              ownerOf(state),
-            ),
-          ),
+          Effect.provideService(CheckpointStore, {
+            ...store,
+            compareAndSet: () =>
+              Effect.fail(
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "storage-failure",
+                  message: "before-settle",
+                }),
+              ),
+          }),
           Effect.result,
         );
         expect(failed._tag).toBe("Failure");
         if (failed._tag === "Failure")
           expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
-        expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-        expect(yield* (yield* State).load(projection)).toEqual(Option.none());
+        expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
+        expect(
+          Option.flatMap((yield* (yield* CheckpointStore).load(projection)).record, (record) =>
+            Option.fromUndefinedOr(record.state),
+          ),
+        ).toEqual(Option.none());
         yield* Projection.run(projection);
         expect((yield* Projection.read(projection)).state).toBe(1);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),

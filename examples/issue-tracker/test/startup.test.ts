@@ -67,7 +67,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
 
 test("the host runtime exposes only streams, feeds and application storage services", async () => {
   const { Storage } = await import("@streamsy/core");
-  const { Checkpoints, State } = await import("@streamsy/projection");
+  const { CheckpointStore, Transaction } = await import("@streamsy/projection");
   const { SqlClient } = await import("effect/unstable/sql");
   await Effect.runPromise(
     Effect.scoped(
@@ -77,8 +77,8 @@ test("the host runtime exposes only streams, feeds and application storage servi
         expect([...context.mapUnsafe.keys()].sort()).toEqual(
           [
             Layer.CurrentMemoMap.key,
-            Checkpoints.key,
-            State.key,
+            CheckpointStore.key,
+            Transaction.key,
             SqlClient.SqlClient.key,
             ...streams.streams.map((stream) => stream.key),
             ...streams.streams.map(

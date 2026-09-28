@@ -1,5 +1,4 @@
-import { Context, Effect, Option, Schema } from "effect";
-import { ownerOf } from "@streamsy/core/internal/memory";
+import { Context, Effect, Layer, Option, Schema, Semaphore } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -10,6 +9,7 @@ export const CheckpointRecord = Schema.Struct({
   /** Input key to accepted offset; the next pass reads after these. */
   inputs: Schema.Record(Schema.String, Schema.String),
   pending: Schema.optionalKey(PendingUnit),
+  state: Schema.optionalKey(Schema.String),
   adapters: Schema.Struct({
     outputs: Schema.optionalKey(
       Schema.Record(Schema.String, Schema.Struct({ epoch: Counter, nextSeq: Counter })),
@@ -44,40 +44,55 @@ export interface Loaded {
   readonly record: Option.Option<CheckpointRecord>;
   readonly token: string;
 }
-export interface CheckpointsApi {
-  readonly owner: object;
+export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /** Compare-and-set inside the owner transaction; returns the new token. */
-  readonly save: (
+  readonly compareAndSet: (
     key: ProjectionKey,
-    record: CheckpointRecord,
     ifToken: string,
+    record: CheckpointRecord,
   ) => Effect.Effect<string, ProjectionFault>;
-  /** Deletes the record inside the caller's transaction. */
+  /** Deletes the record. Absent keys are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
-  readonly withTransaction: <A, E, R>(
-    body: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
-/** One host owner supplies the record store and the transaction the atomic handler joins. */
-export class Checkpoints extends Context.Service<Checkpoints, CheckpointsApi>()(
-  "@streamsy/projection/Checkpoints",
-) {}
+/** Stores each projection's offsets and encoded state in one compare-and-set record. */
+export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreApi>()(
+  "@streamsy/projection/CheckpointStore",
+) {
+  static readonly layerMemory = Layer.effect(
+    this,
+    Effect.gen(function* () {
+      const records = new Map<string, string>();
+      const lock = yield* Semaphore.make(1);
+      return fromStore({
+        read: (key) => Effect.sync(() => Option.fromUndefinedOr(records.get(key))),
+        write: (key, value) =>
+          Effect.sync(() => {
+            records.set(key, value);
+          }),
+        remove: (key) =>
+          lock.withPermits(1)(
+            Effect.sync(() => {
+              records.delete(key);
+            }),
+          ),
+        withTransaction: lock.withPermits(1),
+      });
+    }),
+  );
+}
 
 /** The encoded seam a host owner provides; both shipped Layers build on it. */
 export interface EncodedStore {
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
-  readonly readState: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
-  readonly writeState: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
-  readonly removeState: (key: string) => Effect.Effect<void, ProjectionFault>;
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
-export const fromStore = (store: EncodedStore): CheckpointsApi => {
-  const load = Effect.fn("Projection.Checkpoints.load")(function* (key: ProjectionKey) {
+export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
+  const load = Effect.fn("Projection.CheckpointStore.load")(function* (key: ProjectionKey) {
     const encoded = yield* store.read(recordKey(key));
     if (Option.isNone(encoded)) {
       const absent: Loaded = { record: Option.none(), token: ABSENT_TOKEN };
@@ -99,10 +114,10 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
     };
     return loaded;
   });
-  const save = Effect.fn("Projection.Checkpoints.save")(function* (
+  const compareAndSet = Effect.fn("Projection.CheckpointStore.compareAndSet")(function* (
     key: ProjectionKey,
-    record: CheckpointRecord,
     ifToken: string,
+    record: CheckpointRecord,
   ) {
     return yield* store.withTransaction(
       Effect.gen(function* () {
@@ -130,11 +145,9 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
     );
   });
   return {
-    owner: ownerOf(store),
     load,
-    save,
+    compareAndSet,
     remove: (key) => store.remove(recordKey(key)),
-    withTransaction: store.withTransaction,
   };
 };
 
@@ -161,7 +174,7 @@ const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boo
 /** The stored record, or the unstored initial record for a fresh key. */
 export const restore = Effect.fn("Projection.restore")(function* (
   projection: Identity,
-  owner: CheckpointsApi,
+  owner: CheckpointStoreApi,
 ) {
   const loaded = yield* owner.load(projection);
   const identity = { inputs: identityOf(projection.inputs) };
@@ -208,5 +221,3 @@ export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string,
   );
 
 export { PendingUnit, PinnedRange, encodeKey } from "./unit.ts";
-
-export { stateFromStore } from "./state.ts";

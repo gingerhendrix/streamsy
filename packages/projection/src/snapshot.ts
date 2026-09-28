@@ -1,10 +1,10 @@
 import { Effect, Option } from "effect";
 import type { InputMap } from "./batch.ts";
-import { Checkpoints, restore } from "./checkpoint.ts";
+import { CheckpointStore, restore } from "./checkpoint-store.ts";
 import type { ProjectionFault } from "./fault.ts";
 import type { Outputs } from "./outputs.ts";
 import type { Atomic } from "./atomic.ts";
-import { State, checkStateOwner, decodeState } from "./state.ts";
+import { decodeState } from "./state.ts";
 
 /** The accepted offset of each input, keyed by input name. The next pass reads after these. */
 export type Offsets<Inputs extends InputMap> = { readonly [K in keyof Inputs]: string };
@@ -25,23 +25,17 @@ export const offsetsOf = <Inputs extends InputMap>(record: {
 export type StateValue<S> = [S] extends [never] ? undefined : S;
 
 /**
- * Reads the state row and the checkpoint row in one owner transaction, so the state
+ * Reads the state and offsets from one checkpoint record, so the state
  * always matches the offsets. Before the first unit, the state is the declared initial
  * value and every offset is the start of its input.
  */
 export const read = Effect.fn("Projection.read")(function* <Inputs extends InputMap, S = never>(
   projection: Atomic<Inputs, unknown, unknown, S> | Outputs<Inputs, unknown, unknown, unknown, S>,
-): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Checkpoints | State> {
-  const owner = yield* Checkpoints;
-  const store = yield* State;
+): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, CheckpointStore> {
+  const owner = yield* CheckpointStore;
   const declared = projection.state;
-  yield* checkStateOwner(projection, owner);
-  const [restored, encoded] = yield* owner.withTransaction(
-    Effect.all([
-      restore(projection, owner),
-      declared === undefined ? Effect.succeed(Option.none<string>()) : store.load(projection),
-    ]),
-  );
+  const restored = yield* restore(projection, owner);
+  const encoded = Option.fromUndefinedOr(restored.record.state);
   const stored =
     declared === undefined
       ? Option.none()

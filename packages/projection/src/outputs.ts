@@ -19,7 +19,6 @@ import type { RoutedMap } from "./output-internal.ts";
 import { ProjectionFault } from "./fault.ts";
 import { bind, rowsAddress, type Bound } from "./output-source.ts";
 import {
-  State,
   bindState,
   encodeState,
   currentState,
@@ -41,7 +40,11 @@ export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown>
   /** Set when the declaration has `state:`. */
   readonly state?: BoundState<S>;
   readonly streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
-  readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
+  readonly process: (
+    batch: Slices<Inputs>,
+    unit: Unit,
+    encoded?: string,
+  ) => Effect.Effect<Output.Processed, E, R>;
 }
 
 /** The outputs projection constructor. It owns the `Outputs` tag. */
@@ -93,7 +96,7 @@ export type OutputsDeclaration<
   SI,
   E,
   R,
-> = Declaration<C, Outputs<Addresses<I>, E | ProjectionFault, R | State, Output.Services<D>, A>> & {
+> = Declaration<C, Outputs<Addresses<I>, E | ProjectionFault, R, Output.Services<D>, A>> & {
   readonly outputs: Bound<D, StreamRoute.Params<C>>;
 } & ([A] extends [never] ? {} : { readonly state: StateSource<A, SI, StreamRoute.Params<C>> });
 
@@ -169,7 +172,7 @@ interface BoundDefinition<Inputs extends InputMap, Result, E, R> {
 const bindOutputs = <Inputs extends InputMap, Result, E, R>(
   definition: BoundDefinition<Inputs, Result, E, R>,
   decoded: DecodedParams,
-): Outputs<Inputs, E | ProjectionFault, R | State, any> => {
+): Outputs<Inputs, E | ProjectionFault, R, any> => {
   const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
   const state = definition.state;
   for (const [name, output] of Object.entries(definition.outputs)) {
@@ -192,20 +195,20 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
     generation: definition.generation,
     params: definition.params,
   };
-  const result: Outputs<Inputs, E | ProjectionFault, R | State, any> = new OutputsProjection<
-    Omit<Outputs<Inputs, E | ProjectionFault, R | State, any>, "_tag">
+  const result: Outputs<Inputs, E | ProjectionFault, R, any> = new OutputsProjection<
+    Omit<Outputs<Inputs, E | ProjectionFault, R, any>, "_tag">
   >({
     ...key,
     inputs: definition.inputs,
     state,
     streams,
-    process: (batch, unit) =>
+    process: (batch, unit, previous) =>
       Effect.gen(function* () {
         const view = withParams(unit, decoded);
         const result =
           state === undefined
             ? yield* handler(batch, view)
-            : yield* handler(yield* currentState(key, state), batch, view);
+            : yield* handler(yield* currentState(key, state, previous), batch, view);
         const items: Record<string, ReadonlyArray<unknown>> = {};
         for (const [name, output] of Object.entries(definition.outputs)) {
           const entries = (result as Record<string, ReadonlyArray<any>>)[name];
@@ -230,8 +233,7 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
         }
         if (state === undefined) return { items };
         const encoded = yield* encodeState(key, state.schema, (result as { state: unknown }).state);
-        const store = yield* State;
-        return { items, saveState: store.save(key, encoded) };
+        return { items, state: encoded };
       }),
   });
   return result;

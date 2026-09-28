@@ -4,9 +4,9 @@ import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effe
 import { Storage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 
 class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
@@ -17,7 +17,7 @@ class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/
   schema: Schema.Finite,
 }) {}
 const memory = Memory.layerMemory();
-const sqlite = Sqlite.layer.pipe(
+const sqlite = ProjectionSql.layerStorage.pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
 const host = Layer.merge(
@@ -133,7 +133,7 @@ test("a custom stream wire cannot establish the owner of an atomic write", async
       expect(
         (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
       ).toEqual([]);
-      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
+      expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
     }).pipe(Effect.provide(unownedHost)),
   );
 });

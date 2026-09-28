@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, type State } from "@streamsy/projection";
+import { CheckpointStore, Output, Projection, type Transaction } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
@@ -30,8 +30,8 @@ type Services =
     >
   | WatchRoute2
   | WatchRoute1
-  | Checkpoints
-  | State
+  | CheckpointStore
+  | Transaction
   | Storage
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
@@ -77,7 +77,7 @@ test("an append runs an atomic projection and commits its write with the checkpo
       expect(calls).toBe(1);
       expect(yield* readAll(output)).toEqual([1]);
       expect(
-        Option.isSome((yield* (yield* Checkpoints).load(Projection.key(projection))).record),
+        Option.isSome((yield* (yield* CheckpointStore).load(Projection.key(projection))).record),
       ).toBe(true);
       yield* Fiber.interrupt(fiber);
     }),
@@ -124,7 +124,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
       expect(calls).toBe(2);
       expect(yield* readAll(output)).toEqual([1, 2, 3, 4]);
       const tail = yield* Streams.head(input);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
       yield* Fiber.interrupt(fiber);
     }),
@@ -155,7 +155,7 @@ test("a limited wake drains the backlog before waiting for another change", () =
       yield* Projection.run(projection);
       expect(seen).toEqual([1, 2, 3]);
       const tail = yield* Streams.head(input);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
       yield* Fiber.interrupt(fiber);
     }).pipe(

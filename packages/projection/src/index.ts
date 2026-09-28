@@ -17,15 +17,15 @@ export type { StateDefinition, StateSchema, Initial } from "./state.ts";
 export type { StateSource } from "./state.ts";
 export type { Range, Unit } from "./unit.ts";
 export {
-  Checkpoints,
-  type CheckpointsApi,
+  CheckpointStore,
+  type CheckpointStoreApi,
   type Identity,
   type Loaded,
   type ProjectionKey,
-} from "./checkpoint.ts";
+} from "./checkpoint-store.ts";
 export { ProjectionFault } from "./fault.ts";
 
-export { State, type StateApi } from "./state.ts";
+export { Transaction } from "./transaction.ts";
 
 export * as Output from "./output.ts";
 export type { Outputs, OutputsDeclaration, OutputsDefinition } from "./outputs.ts";

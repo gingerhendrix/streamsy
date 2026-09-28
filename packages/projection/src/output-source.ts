@@ -4,7 +4,7 @@ import { Predicate, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import type * as Output from "./output.ts";
-import type { ProjectionKey } from "./checkpoint.ts";
+import type { ProjectionKey } from "./checkpoint-store.ts";
 
 type Collection<Name extends string, A> = {
   readonly [K in Name]: {

@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the ManagedRuntime lifetime. */
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
-import type { Checkpoints, State } from "@streamsy/projection";
+import type { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import type { HnStory } from "../state-schema.ts";
 import { HackerNewsStories, storiesAddress, type StoryChange } from "./stories.ts";
@@ -15,7 +15,7 @@ export async function demoHarness(readLimit = 1000) {
     createStoriesLayer.pipe(Layer.provideMerge(memoryHost({ readLimit }))),
   );
   const context = await runtime.runPromise(
-    Effect.context<Checkpoints | HackerNewsStories | State>(),
+    Effect.context<CheckpointStore | HackerNewsStories | Transaction>(),
   );
   return {
     runtime,

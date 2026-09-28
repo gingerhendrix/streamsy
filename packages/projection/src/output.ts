@@ -1,7 +1,6 @@
 import type { Target, TargetServices, RoutedMap } from "./output-internal.ts";
-import { Data, Schema, type Effect } from "effect";
+import { Data, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
-import type { ProjectionFault } from "./fault.ts";
 
 export type Change<A> = Data.TaggedEnum<{
   Upsert: { readonly row: A };
@@ -80,5 +79,5 @@ export type Result<D extends RoutedMap, S = never> = Items<D> &
   ([S] extends [never] ? {} : { readonly state: S });
 export interface Processed {
   readonly items: Readonly<Record<string, ReadonlyArray<unknown>>>;
-  readonly saveState?: Effect.Effect<void, ProjectionFault>;
+  readonly state?: string;
 }

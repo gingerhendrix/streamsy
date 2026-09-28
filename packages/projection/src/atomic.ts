@@ -17,7 +17,6 @@ import {
   bindState,
   stateSource,
   type BoundState,
-  type State,
   type StateDefinition,
   type StateSource,
 } from "./state.ts";
@@ -35,7 +34,11 @@ export interface Atomic<Inputs extends InputMap, E, R, S = unknown> {
   readonly inputs: Inputs;
   /** Set when the declaration has `state:`. */
   readonly state?: BoundState<S>;
-  readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
+  readonly process: (
+    batch: Slices<Inputs>,
+    unit: Unit,
+    encoded?: string,
+  ) => Effect.Effect<void | string, E, R>;
 }
 /** The atomic projection constructor. It owns the `Atomic` tag. */
 const AtomicProjection = Data.TaggedClass("Atomic");
@@ -75,7 +78,7 @@ export type AtomicDeclaration<C extends StreamRoute.ParamCodecs, I extends Input
   A,
 ] extends [never]
   ? Declaration<C, Atomic<Addresses<I>, E, R, never>>
-  : Declaration<C, Atomic<Addresses<I>, E | ProjectionFault, R | State, A>> & {
+  : Declaration<C, Atomic<Addresses<I>, E | ProjectionFault, R, A>> & {
       readonly state: StateSource<A, SI, StreamRoute.Params<C>>;
     };
 /** Inert: acquires no service. Defaults are version 1 and generation 1. */
@@ -95,7 +98,7 @@ export function atomic<E, R>(
     readonly process?: AtomicHandler<E, R>;
     readonly fold?: Step<InputMap, unknown, E, R, DecodedParams>;
   },
-): Declaration<StreamRoute.ParamCodecs, Atomic<InputMap, E | ProjectionFault, R | State>> & {
+): Declaration<StreamRoute.ParamCodecs, Atomic<InputMap, E | ProjectionFault, R>> & {
   readonly state?: unknown;
 } {
   const { state, fold, process } = definition;
@@ -105,13 +108,14 @@ export function atomic<E, R>(
     throw new RangeError("An atomic projection declares fold together with state");
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const bound = state === undefined ? undefined : bindState(state, decoded);
-    const handler: AtomicHandler<E | ProjectionFault, R | State> =
+    const handler: AtomicHandler<E | ProjectionFault, R> =
       bound === undefined || fold === undefined ? process! : foldHandler(key, bound, fold);
-    return new AtomicProjection<Omit<Atomic<InputMap, E | ProjectionFault, R | State>, "_tag">>({
+    return new AtomicProjection<Omit<Atomic<InputMap, E | ProjectionFault, R>, "_tag">>({
       ...key,
       inputs: addressesOf(definition.inputs, decoded),
       state: bound,
-      process: (batch: Slices<InputMap>, unit: Unit) => handler(batch, withParams(unit, decoded)),
+      process: (batch: Slices<InputMap>, unit: Unit, encoded?: string) =>
+        handler(batch, withParams(unit, decoded), encoded),
     });
   });
   return state === undefined
@@ -121,4 +125,5 @@ export function atomic<E, R>(
 type AtomicHandler<E, R> = (
   batch: Slices<InputMap>,
   unit: Unit<DecodedParams>,
-) => Effect.Effect<void, E, R>;
+  encoded?: string,
+) => Effect.Effect<void | string, E, R>;

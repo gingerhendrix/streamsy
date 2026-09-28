@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Layer } from "effect";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
   AtomicDeclaration,
   AtomicDefinition,
@@ -19,14 +19,14 @@ import type {
   Step,
   WatchOptions,
   RunOptions,
-  StateApi,
+  CheckpointStoreApi,
 } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import manifest from "../package.json";
 
 type PublicHelperTypes =
-  | StateApi
+  | CheckpointStoreApi
   | Checkpoint.EncodedStore
   | Declaration<any, any>
   | AtomicDefinition<any, any, any, any>
@@ -46,8 +46,7 @@ void acceptsPublicHelperTypes;
 
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
-  expect(Checkpoint.stateFromStore).toBeFunction();
-  expect(Root.State.key).toBe("@streamsy/projection/State");
+  expect(Root.Transaction.key).toBe("@streamsy/projection/Transaction");
   expect(Projection.outputs).toBeFunction();
   expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
   expect(Projection.read).toBeFunction();
@@ -75,7 +74,7 @@ test("built public entries and declared files exist", () => {
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();
-  expect(Checkpoints.key).toBe("@streamsy/projection/Checkpoints");
+  expect(CheckpointStore.key).toBe("@streamsy/projection/CheckpointStore");
   expect(
     new ProjectionFault({
       phase: "load",
@@ -85,8 +84,10 @@ test("built public entries and declared files exist", () => {
   ).toBe("ProjectionFault");
   expect(Layer.isLayer(Memory.layer)).toBe(true);
   expect(Memory.layerMemory).toBeFunction();
-  expect(Layer.isLayer(Sqlite.layer)).toBe(true);
-  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sqlite", "./checkpoint"]);
+  expect(Layer.isLayer(ProjectionSql.layerStorage)).toBe(true);
+  expect(Layer.isLayer(ProjectionSql.layer)).toBe(true);
+  expect(Layer.isLayer(CheckpointStore.layerMemory)).toBe(true);
+  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sql", "./checkpoint"]);
   for (const entry of Object.values(manifest.exports)) {
     expect(existsSync(join(import.meta.dir, "..", entry.types))).toBe(true);
     expect(existsSync(join(import.meta.dir, "..", entry.import))).toBe(true);
@@ -104,11 +105,11 @@ test("the root entry does not import a SQL driver", async () => {
 
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
-    "Checkpoints",
+    "CheckpointStore",
     "Output",
     "Projection",
     "ProjectionFault",
-    "State",
+    "Transaction",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
     "atomic",

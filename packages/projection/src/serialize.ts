@@ -1,5 +1,5 @@
 import { Effect, Semaphore } from "effect";
-import { recordKey, type ProjectionKey } from "./checkpoint.ts";
+import { recordKey, type ProjectionKey } from "./checkpoint-store.ts";
 
 /** Users count both holders and waiters, preventing a forgotten key from splitting its queue. */
 const locks = new Map<string, { semaphore: Semaphore.Semaphore; users: number; retire: boolean }>();

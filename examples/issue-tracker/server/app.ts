@@ -1,6 +1,6 @@
 import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
-import { Projection, type State } from "@streamsy/projection";
+import { Projection, type CheckpointStore } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer, Predicate, Result, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -15,7 +15,7 @@ import { transact } from "./state.ts";
 export const workspaceSummary: Serve.ValueSource<
   { readonly workspaceId: string },
   WorkspaceSummary,
-  State
+  CheckpointStore
 > = {
   id: "issue-tracker/summary",
   paramSchema: tracker.state.paramSchema,

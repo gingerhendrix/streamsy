@@ -6,13 +6,19 @@ import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope 
 import { TestClock } from "effect/testing";
 import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, ProjectionFault, type State } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Output,
+  Projection,
+  ProjectionFault,
+  type Transaction,
+} from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { input, output, positives, readAll } from "./support/scenarios.ts";
 
 type Services =
-  | Checkpoints
-  | State
+  | CheckpointStore
+  | Transaction
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
@@ -81,7 +87,7 @@ test("follow cancellation releases parked waits", () =>
         }),
       );
       yield* Deferred.await(hint.released);
-      expect((yield* (yield* Checkpoints).load(Projection.key(positives))).token).toBe("0");
+      expect((yield* (yield* CheckpointStore).load(Projection.key(positives))).token).toBe("0");
     }),
   ));
 
@@ -128,7 +134,7 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.append(b, [2]);
       yield* Deferred.await(woke);
       // The handler signalled inside its transaction; the commit is visible once the token moves.
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       for (let spins = 0; spins < 1000; spins += 1) {
         if ((yield* owner.load(Projection.key(projection))).token === "2") break;
         yield* Effect.yieldNow;

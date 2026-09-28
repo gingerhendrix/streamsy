@@ -3,7 +3,13 @@ import * as Fetch from "@streamsy/core/fetch";
 import { Effect, Schema, type Scope } from "effect";
 import { Streamsy, StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, State, type ProjectionFault } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Output,
+  Projection,
+  Transaction,
+  type ProjectionFault,
+} from "@streamsy/projection";
 class Input extends Streamsy.json<Input>()("ProjectionTypes/Input", "types/input/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
@@ -68,10 +74,12 @@ export type Checks = [
   Assert<Same<SuccessOf<typeof statelessRead>["state"], undefined>>,
   Assert<Same<keyof SuccessOf<typeof statelessRead>["offsets"], "input" | "other">>,
   Assert<Same<keyof SuccessOf<typeof namedRun>["offsets"], "input" | "other">>,
-  Assert<Same<Effect.Services<typeof foldedRead>, Checkpoints | State>>,
+  Assert<Same<Effect.Services<typeof foldedRead>, CheckpointStore>>,
   Assert<Same<typeof statefulOutputs.state.id, string>>,
-  Assert<Same<Effect.Services<typeof atomicRun>, Input | Checkpoints>>,
-  Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | State | Checkpoints>>,
+  Assert<Same<Effect.Services<typeof atomicRun>, Input | Transaction | CheckpointStore>>,
+  Assert<
+    Same<Effect.Services<typeof namedRun>, Input | Other | Result | Transaction | CheckpointStore>
+  >,
   Assert<
     Same<
       Effect.Services<typeof namedWatch>,
@@ -79,15 +87,15 @@ export type Checks = [
       | Other
       | Streamsy.ChangeFeed<Input | Other>
       | Result
-      | State
-      | Checkpoints
+      | Transaction
+      | CheckpointStore
       | Scope.Scope
     >
   >,
   Assert<
     Same<
       Effect.Services<typeof namedFollow>,
-      Input | Other | Result | State | Checkpoints | Scope.Scope
+      Input | Other | Result | Transaction | CheckpointStore | Scope.Scope
     >
   >,
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
@@ -97,7 +105,7 @@ const missing = namedRun.pipe(
 );
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
 // @ts-expect-error the declared output stream must be provided.
-const incomplete: Effect.Effect<unknown, ProjectionFault, Checkpoints | State> = missing;
+const incomplete: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Transaction> = missing;
 void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
 Projection.atomic({
@@ -151,7 +159,8 @@ const withoutFeed = Projection.watch(atomic).pipe(
   Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
 );
 // @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
-const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.Scope> = withoutFeed;
+const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Scope.Scope> =
+  withoutFeed;
 void missingFeed;
 
 const fetchWatch = Projection.watch(atomic).pipe(
@@ -161,7 +170,7 @@ const fetchWatch = Projection.watch(atomic).pipe(
 const missingFetchFeed: Effect.Effect<
   unknown,
   ProjectionFault | import("@streamsy/core").TransportFault,
-  Checkpoints | Scope.Scope | import("effect/unstable/http/HttpClient").HttpClient
+  CheckpointStore | Scope.Scope | import("effect/unstable/http/HttpClient").HttpClient
 > = fetchWatch;
 void missingFetchFeed;
 
@@ -171,14 +180,15 @@ export type FeedChecks = [
   Assert<
     Same<
       Effect.Services<typeof withoutFeed>,
-      Streamsy.ChangeFeed<Input> | Checkpoints | Scope.Scope
+      Streamsy.ChangeFeed<Input> | Transaction | CheckpointStore | Scope.Scope
     >
   >,
   Assert<
     Same<
       Effect.Services<typeof fetchWatch>,
       | Streamsy.ChangeFeed<Input>
-      | Checkpoints
+      | Transaction
+      | CheckpointStore
       | Scope.Scope
       | import("effect/unstable/http/HttpClient").HttpClient
     >

@@ -1,4 +1,5 @@
-import { Checkpoints } from "./checkpoint.ts";
+import { Transaction } from "./transaction.ts";
+import { CheckpointStore } from "./checkpoint-store.ts";
 import type { Outputs } from "./outputs.ts";
 import { Duration, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
@@ -108,7 +109,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
 ): Effect.fn.Return<
   Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
+  R | OR | Transaction | CheckpointStore | InputServices<Inputs> | Scope.Scope
 > {
   yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;

@@ -1,7 +1,7 @@
 import * as Addresses from "./support/addresses.ts";
 import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { contractFingerprint } from "@streamsy/serve/contract";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
@@ -47,7 +47,7 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
           yield* Projection.run(issueRows.at({ workspaceId }));
           yield* Projection.run(tracker.at({ workspaceId }));
         }
-        const owner = yield* Checkpoints;
+        const owner = yield* CheckpointStore;
         const rows = issueRows.at({ workspaceId: "live" });
         const outputs = tracker.at({ workspaceId: "live" });
         const sqlBefore = yield* owner.load(rows);
@@ -96,7 +96,7 @@ test("catalog values cannot write another workspace in either projection", async
           issueRows.at({ workspaceId: "live" }),
           tracker.at({ workspaceId: "live" }),
         ]) {
-          const owner = yield* Checkpoints;
+          const owner = yield* CheckpointStore;
           const before = yield* owner.load(address);
           const result =
             address._tag === "Atomic"
@@ -229,8 +229,8 @@ test("served route fingerprints pin address identity and reject incompatible con
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v1_state")).toEqual([]);
-        const owner = yield* Checkpoints;
+        expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v2_records")).toEqual([]);
+        const owner = yield* CheckpointStore;
         expect((yield* owner.load(tracker.at({ workspaceId: "live" }))).record._tag).toBe("None");
       }),
     );
