@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Database } from "bun:sqlite";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import * as FamilyFixture from "./support/families.ts";
@@ -64,7 +65,8 @@ test("a handler's SQL through the shared client commits and rolls back with the 
         yield* sql.unsafe("CREATE TABLE seen (item INTEGER NOT NULL)");
         yield* Streams.create(input);
         yield* Streams.append(input, [1, -1, 3]);
-        const projection = Projection.atomic({
+        const projection = Projection.process({
+          commit: Commit.transaction,
           id: "seen",
           params: {},
           inputs: { input },
@@ -112,7 +114,8 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
         yield* initialize;
         const written = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const blocking = Projection.atomic({
+        const blocking = Projection.process({
+          commit: Commit.transaction,
           id: positives.id,
           params: {},
           inputs: { input },

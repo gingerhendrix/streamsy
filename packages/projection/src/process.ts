@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
 import type { Effect } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Slices } from "./batch.ts";

@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
@@ -44,7 +45,8 @@ for (const sameOwner of [true, false]) {
         const checkpoints = yield* CheckpointStore;
         if (!sameOwner) yield* (yield* Foreign).create(params);
         let processed = false;
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: `declared-${sameOwner}`,
           params: {},
           inputs: { input: Input.at({}) },
@@ -54,7 +56,7 @@ for (const sameOwner of [true, false]) {
               ? Output.stream(Schema.Finite, { stream: Local.at({ id: "b" }) })
               : Output.stream(Schema.Finite, { stream: Foreign.at(params) }),
           },
-          process: () =>
+          emit: () =>
             Effect.sync(() => {
               processed = true;
               return { local: [2], foreign: [3] };
@@ -106,7 +108,8 @@ for (const method of [
           "wire.fork": other.wire.fork(target.id, ref.id),
           "wire.remove": other.wire.remove(ref.id),
         };
-        const projection = Projection.atomic({
+        const projection = Projection.process({
+          commit: Commit.transaction,
           id: method,
           params: {},
           inputs: { input: Input.at({}) },
@@ -142,12 +145,13 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "foreign-pinned",
         params: {},
         inputs: { input: Input.at({}) },
         outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
-        process: () => Effect.succeed({ output: [1] }),
+        emit: () => Effect.succeed({ output: [1] }),
       }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
@@ -164,12 +168,13 @@ test("producer settles a foreign append once after a failed checkpoint without T
       yield* seed;
       const foreignOutput = yield* Foreign;
       yield* foreignOutput.create(params);
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "foreign-retry",
         params: {},
         inputs: { input: Input },
         outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
-        process: () => Effect.succeed({ output: [9] }),
+        emit: () => Effect.succeed({ output: [9] }),
       }).at({});
       const store = yield* CheckpointStore;
       const failure = yield* Projection.run(projection).pipe(

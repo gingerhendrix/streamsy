@@ -14,7 +14,7 @@ export function applyChange(rows: StoryRows, event: StoryEvent): StoryRows {
 }
 
 /** The small, bounded newest set and its checkpoint commit in one transaction. */
-export const newestRows = Projection.atomic({
+export const newestRows = Projection.fold({
   id: "hn-newest-rows",
   params: {},
   inputs: { input: storiesAddress },

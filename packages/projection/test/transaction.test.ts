@@ -30,7 +30,8 @@ const seed = Effect.gen(function* () {
   yield* input.create({});
   yield* input.append({}, [1]);
 });
-const sqlProcess = Projection.atomic({
+const sqlProcess = Projection.process({
+  commit: Commit.transaction,
   id: "sql",
   params: {},
   inputs: { input: Input },
@@ -93,6 +94,32 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
         ),
       );
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }]);
+      const folded = Projection.fold({
+        id: "sql-fold",
+        params: {},
+        inputs: { input: Input },
+        state: { schema: Schema.Number, initial: 10 },
+        commit: Commit.transaction,
+        fold: (previous, { item }) =>
+          Effect.gen(function* () {
+            const client = yield* SqlClient.SqlClient;
+            yield* client`INSERT INTO effects (value) VALUES (${previous + item})`;
+            return previous + item;
+          }),
+      }).at({});
+      const failedFold = yield* Projection.run(folded).pipe(
+        Effect.provideService(CheckpointStore, {
+          ...store,
+          compareAndSet: () => Effect.fail(failure),
+        }),
+        Effect.result,
+      );
+      expect(failedFold).toMatchObject({ _tag: "Failure", failure });
+      expect((yield* Projection.read(folded)).state).toBe(10);
+      expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }]);
+      yield* Projection.run(folded);
+      expect((yield* Projection.read(folded)).state).toBe(11);
+      expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }, { value: 11 }]);
     }).pipe(Effect.provide(host)),
   );
 });
@@ -102,12 +129,13 @@ test("transaction checks all declared outputs before running the handler", () =>
     Effect.gen(function* () {
       yield* seed;
       let calls = 0;
-      const base = Projection.outputs({
+      const base = Projection.emit({
+        commit: Commit.producer,
         id: "owner",
         params: {},
         inputs: { input: Input },
         outputs: { output: Output.stream(Schema.Number, { stream: Sink }) },
-        process: () =>
+        emit: () =>
           Effect.sync(() => {
             calls += 1;
             return { output: [2] };
@@ -133,14 +161,18 @@ test("transaction commits declared outputs and state together and rolls both bac
       yield* seed;
       const sink = yield* Sink;
       yield* sink.create({});
-      const base = Projection.outputs({
+      const base = Projection.mapAccumBatch({
+        commit: Commit.producer,
         id: "transaction-outputs",
         params: {},
         inputs: { input: Input },
         outputs: { output: Output.stream(Schema.Number, { stream: Sink }) },
         state: { schema: Schema.Number, initial: 0 },
-        process: (state, batch) =>
-          Effect.succeed({ state: state + batch.input.items.length, output: batch.input.items }),
+        mapAccumBatch: (state, batch) =>
+          Effect.succeed([
+            state + batch.input.items.length,
+            { output: batch.input.items },
+          ] as const),
       }).at({});
       const projection = { ...base, commit: Commit.transaction };
       const store = yield* CheckpointStore;

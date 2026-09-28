@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { tmpdir } from "node:os";
 import { restore } from "../src/checkpoint-store.ts";
 import { runKernel, run as runWithPermit } from "../src/run.ts";
@@ -29,7 +30,7 @@ class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:nam
 }) {}
 
 const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
-const total = Projection.atomic({
+const total = Projection.fold({
   id: "state-total",
   params: {},
   version: 2,
@@ -83,7 +84,7 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
-          const failing = Projection.atomic({
+          const failing = Projection.fold({
             id: total.id,
             params: {},
             version: total.version,
@@ -115,7 +116,8 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7]);
-          const saveThenFail = Projection.atomic({
+          const saveThenFail = Projection.process({
+            commit: Commit.transaction,
             id: total.id,
             params: {},
             version: total.version,
@@ -274,7 +276,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       }
       yield* Projection.forget(total);
       yield* seed;
-      const invalid = Projection.atomic({
+      const invalid = Projection.fold({
         id: total.id,
         params: {},
         version: total.version,
@@ -293,7 +295,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
 
 test("stream state rows are separate and initial factory receives params only on first use", async () => {
   const calls: string[] = [];
-  const declared = Projection.atomic({
+  const declared = Projection.fold({
     id: "state-stream",
     params: { name: Schema.String },
     inputs: { numbers },
@@ -324,7 +326,7 @@ test("stream state rows are separate and initial factory receives params only on
 
 test("tagged multi-input fold narrows items and follows declaration order", async () => {
   const words = FamilyFixture.json("state-words", { schema: Schema.String });
-  const projection = Projection.atomic({
+  const projection = Projection.fold({
     id: "tagged",
     params: {},
     inputs: { input, words },
@@ -427,7 +429,7 @@ test("fold saves one record per nonempty pass and skips the initial factory afte
       let loads = 0;
       let saves = 0;
       let starts = 0;
-      const counted = Projection.atomic({
+      const counted = Projection.fold({
         id: "counted",
         params: {},
         inputs: { input },

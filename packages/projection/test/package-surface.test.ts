@@ -6,13 +6,8 @@ import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
-  AtomicDeclaration,
-  AtomicDefinition,
-  AtomicStateDefinition,
   Declaration,
   Offsets,
-  OutputsDeclaration,
-  OutputsDefinition,
   Snapshot,
   StateDefinition,
   StateSource,
@@ -29,16 +24,11 @@ type PublicHelperTypes =
   | CheckpointStoreApi
   | Checkpoint.EncodedStore
   | Declaration<any, any>
-  | AtomicDefinition<any, any, any, any>
-  | AtomicStateDefinition<any, any, any, any, any, any>
-  | AtomicDeclaration<any, any, any, any, any, any>
-  | OutputsDefinition<any, any, any, any, any, any, any, any>
-  | OutputsDeclaration<any, any, any, any, any, any, any>
   | Snapshot<any, any>
   | Offsets<any>
   | StateDefinition<any, any, any>
   | StateSource<any, any, any>
-  | Step<any, any, any>
+  | Step<number, never, never>
   | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
@@ -47,7 +37,7 @@ void acceptsPublicHelperTypes;
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
   expect(Root.Transaction.key).toBe("@streamsy/projection/Transaction");
-  expect(Projection.outputs).toBeFunction();
+  expect(Projection.emit).toBeFunction();
   expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
   expect(Projection.read).toBeFunction();
   expect(Projection.forget).toBeFunction();
@@ -65,7 +55,7 @@ test("built public entries and declared files exist", () => {
     "producerId",
   ])
     expect(Object.keys(Root)).not.toContain(name);
-  expect(Projection.atomic).toBeFunction();
+  expect(Projection.fold).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
   expect(Projection.follow).toBeFunction();
@@ -114,14 +104,17 @@ test("root exports stay explicit", () => {
     "Transaction",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
-    "atomic",
     "each",
+    "emit",
+    "fold",
     "follow",
     "forget",
     "items",
     "key",
-    "outputs",
+    "mapAccum",
+    "mapAccumBatch",
     "pass",
+    "process",
     "read",
     "run",
     "watch",

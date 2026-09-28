@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
@@ -34,7 +35,8 @@ test("an atomic projection reads remote input and writes on its SQLite checkpoin
       yield* source.create(params);
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "mixed-double",
         params: {},
         inputs: { input: Source.at(params) },
@@ -61,7 +63,8 @@ test("watch watches the input's feed even when checkpoints have a different owne
       const params = { name: "watch" };
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "mixed-watch",
         params: {},
         inputs: { input: Source.at(params) },
@@ -79,7 +82,8 @@ test("watch rejects a stream rebound without its matching feed", async () => {
   );
   await Effect.runPromise(
     Effect.gen(function* () {
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "rebound-feed",
         params: {},
         inputs: { input: Source.at({ name: "watch" }) },
@@ -118,7 +122,8 @@ test("a custom stream wire cannot establish the owner of an atomic write", async
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "unowned-write",
         params: {},
         inputs: { input: Source.at(params) },

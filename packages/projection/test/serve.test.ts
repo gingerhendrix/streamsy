@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- These integration tests own the managed runtime and Web handler boundary. */
@@ -22,7 +23,8 @@ class transitions extends Streamsy.bytes<transitions>()(
   { params },
 ) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
-const tracker = Projection.outputs({
+const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "tracker",
   params,
   inputs: { numbers },
@@ -31,14 +33,16 @@ const tracker = Projection.outputs({
     transitions: Output.stream(Schema.FiniteFromString, { stream: transitions }),
   },
   state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
-  process: (state, batch) =>
+  mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
       const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-      return {
-        state: { total },
-        board: [Output.upsert({ id: "total", total }), Output.remove("old")],
-        transitions: [total],
-      };
+      return [
+        { total },
+        {
+          board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+          transitions: [total],
+        },
+      ] as const;
     }),
 });
 class Seat extends Context.Service<Seat, { readonly seat: number }>()("join/Seat") {}
@@ -160,13 +164,14 @@ const typeChecks = () => {
   Serve.stream(tracker.outputs.transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
   // @ts-expect-error a stream declaration does not supply rows collections
   Serve.state(tracker.outputs.transitions, "/board/:seat");
-  const date = Projection.outputs({
+  const date = Projection.mapAccumBatch({
+    commit: Commit.producer,
     id: "date",
     params: {},
     inputs: {},
     outputs: {},
     state: { schema: Schema.Struct({ date: Schema.Date }), initial: { date: new Date(0) } },
-    process: (state) => Effect.succeed({ state }),
+    mapAccumBatch: (state) => Effect.succeed([state, {}] as const),
   });
   // @ts-expect-error Date is not a JSON encoded value; rejected before requests
   Serve.value(date.state, "/date");
@@ -178,23 +183,26 @@ const typeChecks = () => {
     "wrong/:other",
     { params: { other: Schema.String } },
   ) {}
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "wrong",
     params,
     inputs: { numbers },
     // @ts-expect-error an output target cannot require a parameter absent from the projection
     outputs: { events: Output.stream(Schema.Finite, { stream: wrongTarget }) },
-    process: () => Effect.succeed({ events: [1] }),
+    emit: () => Effect.succeed({ events: [1] }),
   });
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "wrong-item",
     params,
     inputs: { numbers },
     outputs: { events: Output.stream(Schema.Finite, { stream: transitions }) },
     // @ts-expect-error output item types are retained through a routed identity
-    process: () => Effect.succeed({ events: ["bad"] }),
+    emit: () => Effect.succeed({ events: ["bad"] }),
   });
-  const fixed = Projection.outputs({
+  const fixed = Projection.mapAccumBatch({
+    commit: Commit.producer,
     id: "fixed",
     params: {},
     inputs: { numbers: numbers.at({ seat: 42 }) },
@@ -203,7 +211,7 @@ const typeChecks = () => {
       transitions: Output.stream(Schema.FiniteFromString, { stream: transitions.at({ seat: 42 }) }),
     },
     state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
-    process: (state) => Effect.succeed({ state, board: [], transitions: [] }),
+    mapAccumBatch: (state) => Effect.succeed([state, { board: [], transitions: [] }] as const),
   });
   Serve.state(fixed.outputs.board, "/board");
   Serve.stream(fixed.outputs.transitions, "/transitions");

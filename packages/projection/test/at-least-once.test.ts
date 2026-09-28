@@ -31,7 +31,8 @@ for (const failHandler of [true, false]) {
         const batches: number[][] = [];
         let failed = false;
         const compensations: string[] = [];
-        const base = Projection.atomic({
+        const base = Projection.process({
+          commit: Commit.atLeastOnce,
           id: "effect",
           params: {},
           inputs: { input: Input },
@@ -90,7 +91,8 @@ test("compensation observes successful void and preserves a store defect", () =>
       yield* seed;
       const defect = new Error("store defect");
       const observed: unknown[] = [];
-      const base = Projection.atomic({
+      const base = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "defect",
         params: {},
         inputs: { input: Input },
@@ -126,7 +128,8 @@ test("a failed pin never runs the handler and a custom Commit cannot inherit pin
     Effect.gen(function* () {
       yield* seed;
       let calls = 0;
-      const base = Projection.atomic({
+      const base = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "pin-first",
         params: {},
         inputs: { input: Input },

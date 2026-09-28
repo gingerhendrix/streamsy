@@ -92,16 +92,19 @@ test("catalog values cannot write another workspace in either projection", async
             headers: { operation: "upsert" },
           },
         ]);
-        for (const address of [
-          issueRows.at({ workspaceId: "live" }),
-          tracker.at({ workspaceId: "live" }),
-        ]) {
+        for (const [address, run] of [
+          [
+            issueRows.at({ workspaceId: "live" }),
+            Projection.run(issueRows.at({ workspaceId: "live" })).pipe(Effect.result),
+          ],
+          [
+            tracker.at({ workspaceId: "live" }),
+            Projection.run(tracker.at({ workspaceId: "live" })).pipe(Effect.result),
+          ],
+        ] as const) {
           const owner = yield* CheckpointStore;
           const before = yield* owner.load(address);
-          const result =
-            address._tag === "Atomic"
-              ? yield* Projection.run(address).pipe(Effect.result)
-              : yield* Projection.run(address).pipe(Effect.result);
+          const result = yield* run;
           expect(result).toMatchObject({
             _tag: "Failure",
             failure: {

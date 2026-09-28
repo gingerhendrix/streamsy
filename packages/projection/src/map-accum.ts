@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Entry, Slices } from "./batch.ts";
 import type { Accumulated } from "./commit.ts";
@@ -36,17 +37,21 @@ export function mapAccum<
   const O extends RoutedMap,
   A,
   SI,
+  X extends Emits<O>,
   E = never,
   R = never,
   P = never,
   Q = never,
 >(
   definition: Definition<C, I, O, A, SI, P, Q> & {
-    readonly mapAccum: (
+    readonly mapAccum: ((
       state: NoInfer<A>,
       entry: Entry<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
-    ) => Step<readonly [A, Emits<O>], E, R>;
+    ) => Step<readonly [A, X], E, R>) &
+      (Exclude<keyof X, keyof O> extends never
+        ? unknown
+        : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
 ): AccumulatingDeclaration<C, I, O, A, SI, E, R, P, Q>;
 export function mapAccum(definition: Parameters<typeof build>[1]): unknown {
@@ -60,17 +65,21 @@ export function mapAccumBatch<
   const O extends RoutedMap,
   A,
   SI,
+  X extends Emits<O>,
   E = never,
   R = never,
   P = never,
   Q = never,
 >(
   definition: Definition<C, I, O, A, SI, P, Q> & {
-    readonly mapAccumBatch: (
+    readonly mapAccumBatch: ((
       state: NoInfer<A>,
       batch: Slices<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
-    ) => Step<readonly [A, Emits<O>], E, R>;
+    ) => Step<readonly [A, X], E, R>) &
+      (Exclude<keyof X, keyof O> extends never
+        ? unknown
+        : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
 ): AccumulatingDeclaration<C, I, O, A, SI, E, R, P, Q>;
 export function mapAccumBatch(definition: Parameters<typeof build>[1]): unknown {

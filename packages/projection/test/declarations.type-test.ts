@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import * as Fetch from "@streamsy/core/fetch";
 import { Effect, Schema, type Scope } from "effect";
@@ -21,18 +22,20 @@ class Other extends Streamsy.json<Other>()("ProjectionTypes/Other", "types/other
 class Result extends Streamsy.bytes<Result>()("ProjectionTypes/Result", "types/result/:id", {
   params: { id: Schema.String },
 }) {}
-const atomic = Projection.atomic({
+const atomic = Projection.process({
+  commit: Commit.transaction,
   id: "types/atomic",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
 }).at({});
-const declared = Projection.outputs({
+const declared = Projection.emit({
+  commit: Commit.producer,
   id: "types/named",
   params: { id: Schema.String },
   inputs: { input: Input, other: Other },
   outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
-  process: (batch) => Effect.succeed({ result: batch.input.items }),
+  emit: (entry) => Effect.succeed({ result: entry.input === "input" ? [entry.item] : [] }),
 });
 const named = declared.at({ id: "a" });
 const atomicRun = Projection.run(atomic);
@@ -40,7 +43,7 @@ const namedRun = Projection.run(named);
 const namedWatch = Projection.watch(named);
 const namedFollow = Projection.follow(named);
 const Totals = Schema.Struct({ sum: Schema.Finite, words: Schema.Array(Schema.String) });
-const folded = Projection.atomic({
+const folded = Projection.fold({
   id: "types/folded",
   params: { id: Schema.String },
   inputs: { input: Input, other: Other },
@@ -51,14 +54,15 @@ const folded = Projection.atomic({
       : { ...totals, words: [...totals.words, entry.item] },
 });
 const foldedRead = Projection.read(folded.at({ id: "a" }));
-const statefulOutputs = Projection.outputs({
+const statefulOutputs = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "types/stateful-outputs",
   params: { id: Schema.String },
   inputs: { input: Input },
   outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
   state: { schema: Schema.Finite, initial: ({ id }) => id.length },
-  process: (count, batch) =>
-    Effect.succeed({ state: count + batch.input.items.length, result: batch.input.items }),
+  mapAccumBatch: (count, batch) =>
+    Effect.succeed([count + batch.input.items.length, { result: batch.input.items }] as const),
 });
 const statefulRead = Projection.read(statefulOutputs.at({ id: "a" }));
 const statelessRead = Projection.read(named);
@@ -100,7 +104,8 @@ const missing = namedRun.pipe(
 const incomplete: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Transaction> = missing;
 void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "bare",
   params: {},
   // @ts-expect-error plain refs do not carry a stream key
@@ -112,7 +117,8 @@ Projection.atomic({
 // oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context -- These negative tests deliberately widen declarations.
 const widenedInputs: import("@streamsy/projection").InputMap = { input: Input.at({ id: "a" }) };
 const widened = Projection.run(
-  Projection.atomic({
+  Projection.process({
+    commit: Commit.transaction,
     id: "widened",
     params: {},
     inputs: widenedInputs,
@@ -123,12 +129,13 @@ const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
   stream: Result.at({ id: "a" }),
 });
 const widenedNamed = Projection.run(
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "widened-output",
     params: {},
     inputs: { input: Input.at({ id: "a" }) },
     outputs: { result: widenedOutput },
-    process: () => Effect.succeed({ result: [1] }),
+    emit: () => Effect.succeed({ result: [1] }),
   }).at({}),
 );
 export type WidenedChecks = [
@@ -187,24 +194,27 @@ export type FeedChecks = [
   >,
 ];
 
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "single-input-removed",
   params: {},
   // @ts-expect-error A projection requires an inputs map.
   input: Input.at({ id: "a" }),
   process: () => Effect.void,
 }).at({});
-Projection.outputs({
+Projection.emit({
+  commit: Commit.producer,
   id: "single-outputs-input-removed",
   params: {},
   // @ts-expect-error An outputs projection also requires an inputs map.
   input: Input.at({ id: "a" }),
   outputs: { output: Output.stream(Schema.String, { stream: Other.at({ id: "a" }) }) },
-  process: () => Effect.succeed({ output: [] }),
+  emit: () => Effect.succeed({ output: [] }),
 }).at({});
 
 // @ts-expect-error every projection declares its params, even when there are none.
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "no-params",
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
@@ -219,21 +229,21 @@ Projection.run(declared);
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/floating-effect
 
 // @ts-expect-error fold needs a state: field
-Projection.atomic({
+Projection.fold({
   id: "fold-without-state",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
-  fold: (sum: number) => sum,
+  fold: () => 0,
 });
-// @ts-expect-error an atomic projection with state: takes fold, not process
-Projection.atomic({
+Projection.fold({
   id: "state-without-fold",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
   state: { schema: Schema.Finite, initial: 0 },
+  // @ts-expect-error fold takes fold, not process
   process: () => Effect.void,
 });
-Projection.atomic({
+Projection.fold({
   id: "fold-returns-wrong-state",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
@@ -241,13 +251,14 @@ Projection.atomic({
   // @ts-expect-error the step returns the declared state type
   fold: () => "wrong",
 });
-Projection.outputs({
+Projection.emit({
+  commit: Commit.producer,
   id: "state-arg-without-state",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
   outputs: {},
   // @ts-expect-error without state: the handler gets no state argument
-  process: (_state: number, _batch: string) => Effect.succeed({}),
+  emit: (_state: number, _batch: string) => Effect.succeed({}),
 });
 // @ts-expect-error a stateless declaration has no state source
 void declared.state;

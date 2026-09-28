@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { tmpdir } from "node:os";
 import { restore } from "../src/checkpoint-store.ts";
 import { runKernel } from "../src/run.ts";
@@ -23,7 +24,7 @@ import * as BunStorage from "@streamsy/storage/bun";
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
 const words = FamilyFixture.json("snapshot-words", { schema: Schema.String });
 const Totals = Schema.Struct({ sum: Schema.Finite, count: Schema.Finite });
-const totals = Projection.atomic({
+const totals = Projection.fold({
   id: "snapshot-totals",
   params: {},
   inputs: { input, words },
@@ -145,19 +146,20 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         const doubled = FamilyFixture.json("snapshot-doubled", { schema: Schema.Finite });
         const seen: number[] = [];
-        const counter = Projection.outputs({
+        const counter = Projection.mapAccumBatch({
+          commit: Commit.producer,
           id: "snapshot-counter",
           params: { start: Schema.FiniteFromString },
           inputs: { input },
           outputs: { doubled: Output.stream(Schema.Finite, { stream: doubled }) },
           state: { schema: Schema.Finite, initial: ({ start }) => start },
-          process: (count, batch) =>
+          mapAccumBatch: (count, batch) =>
             Effect.sync(() => {
               seen.push(count);
-              return {
-                state: count + batch.input.items.length,
-                doubled: batch.input.items.map((n) => n * 2),
-              };
+              return [
+                count + batch.input.items.length,
+                { doubled: batch.input.items.map((n) => n * 2) },
+              ] as const;
             }),
         }).at({ start: 10 });
         yield* seed;
@@ -177,7 +179,8 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
-        const stateless = Projection.atomic({
+        const stateless = Projection.process({
+          commit: Commit.transaction,
           id: "snapshot-stateless",
           params: {},
           inputs: { input },

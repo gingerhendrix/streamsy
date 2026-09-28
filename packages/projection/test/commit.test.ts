@@ -10,7 +10,6 @@ import {
   type Folded,
 } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
-import { stateSource } from "../src/state.ts";
 
 class Input extends Streamsy.json<Input>()("bucket/Input", "bucket/input", {
   params: {},
@@ -72,14 +71,15 @@ const bucket = Commit.make({
       yield* (yield* Bucket).put(recordKey(pending.key), body, pending.loaded.token);
     }),
 });
-const declaration = Projection.atomic({
+const declaration = Projection.fold({
   id: "bucket",
+  commit: bucket,
   params: {},
   inputs: { input: Input },
   state: { schema: Schema.Number, initial: 0 },
   fold: (sum, { item }) => sum + item,
 });
-const bind = () => ({ ...declaration.at({}), commit: bucket });
+const bind = () => declaration.at({});
 
 test("a bucket Commit runs, restarts and reads through its own load without CheckpointStore", () => {
   const objects = new Map<string, { body: string; etag: string }>();
@@ -107,7 +107,7 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
       yield* input.append({}, [7]);
       yield* Projection.run(bind());
       expect((yield* Projection.read(bind())).state).toBe(12);
-      const source = stateSource(declaration, { schema: Schema.Number, initial: 0 }, bind);
+      const source = declaration.state;
       expect(yield* source.resolve({})).toBe(12);
       const before = [...objects.values()];
       yield* input.append({}, [11]);

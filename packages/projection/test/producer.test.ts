@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 import { producerId } from "../src/commit/producer.ts";
@@ -149,12 +150,14 @@ const scenario = (name: string) => {
     inputs: { input },
     outputs: { output: Output.stream(Schema.String, { stream: output }) },
   };
-  const doubled = Projection.outputs({
+  const doubled = Projection.mapAccumBatch({
+    commit: Commit.producer,
     ...definition,
-    process: (batch, unit) =>
+    state: { schema: Schema.Null, initial: null },
+    mapAccumBatch: (_state, batch, unit) =>
       Effect.sync(() => {
         seen.push({ items: batch.input.items, unit });
-        return { output: batch.input.items.map((n) => String(n * 2)) };
+        return [null, { output: batch.input.items.map((n) => String(n * 2)) }] as const;
       }),
   }).at({});
   const initialize = Effect.gen(function* () {
@@ -303,13 +306,14 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
     Effect.gen(function* () {
       const input = In.at({ name: "evens" });
       const output = Out.at({ name: "evens" });
-      const evens = Projection.outputs({
+      const evens = Projection.emit({
+        commit: Commit.producer,
         id: "evens",
         params: {},
         inputs: { input },
         outputs: { output: Output.stream(Schema.String, { stream: output }) },
-        process: (batch) =>
-          Effect.succeed({ output: batch.input.items.filter((n) => n % 2 === 0).map(String) }),
+        emit: (entry) =>
+          Effect.succeed({ output: entry.item % 2 === 0 ? [String(entry.item)] : [] }),
       }).at({});
       yield* Streams.create(input);
       yield* Streams.create(output);
@@ -409,12 +413,13 @@ test("two competing passes with one loaded token: the second pin fails before an
       yield* s.initialize;
       const gate = yield* Deferred.make<void>();
       const reading = yield* Deferred.make<void>();
-      const late = Projection.outputs({
+      const late = Projection.emit({
+        commit: Commit.producer,
         ...s.definition,
-        process: (batch) =>
+        emit: (entry) =>
           Deferred.succeed(reading, undefined).pipe(
             Effect.andThen(Deferred.await(gate)),
-            Effect.as({ output: batch.input.items.map((n) => String(n * 2)) }),
+            Effect.as({ output: [String(entry.item * 2)] }),
           ),
       }).at({});
       const appends = failingAppends(0);
@@ -452,11 +457,12 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const runner = (name: string, role: "leads" | "follows") =>
           withWriter(
             Projection.pass(
-              Projection.outputs({
+              Projection.emit({
+                commit: Commit.producer,
                 ...s.definition,
-                process: (batch) =>
+                emit: (entry) =>
                   (role === "follows" ? Deferred.succeed(loaded, undefined) : Effect.void).pipe(
-                    Effect.as({ output: batch.input.items.map((n) => String(n * 2)) }),
+                    Effect.as({ output: [String(entry.item * 2)] }),
                   ),
               }).at({}),
             ),
@@ -500,10 +506,11 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       yield* s.initialize;
       const recording = recordingAppends();
       yield* withWriter(Projection.run(s.doubled), recording.patch);
-      const second = Projection.outputs({
+      const second = Projection.emit({
+        commit: Commit.producer,
         ...s.definition,
         generation: 2,
-        process: (batch) => Effect.succeed({ output: batch.input.items.map((n) => String(n * 2)) }),
+        emit: (entry) => Effect.succeed({ output: [String(entry.item * 2)] }),
       }).at({});
       const again = yield* withWriter(Projection.run(second), recording.patch);
       expect(again.items).toBe(3);
@@ -560,17 +567,22 @@ test("a two-input pending unit reproduces both ranges", () =>
         readonly b: ReadonlyArray<number>;
         readonly unit: Unit;
       }> = [];
-      const pair = Projection.outputs({
+      const pair = Projection.mapAccumBatch({
+        commit: Commit.producer,
         id: "pair",
         params: {},
         inputs: { a, b },
         outputs: { output: Output.stream(Schema.String, { stream: output }) },
-        process: (batch, unit) =>
+        state: { schema: Schema.Null, initial: null },
+        mapAccumBatch: (_state, batch, unit) =>
           Effect.sync(() => {
             seen.push({ a: batch.a.items, b: batch.b.items, unit });
-            return {
-              output: Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
-            };
+            return [
+              null,
+              {
+                output: Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
+              },
+            ] as const;
           }),
       }).at({});
       yield* Streams.create(a);

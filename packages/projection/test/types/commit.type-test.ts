@@ -19,7 +19,8 @@ class Input extends Streamsy.json<Input>()("commit-types/Input", "commit-types/i
 }) {}
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
-const process = Projection.atomic({
+const process = Projection.process({
+  commit: Commit.transaction,
   id: "types",
   params: {},
   inputs: { input: Input },
@@ -40,7 +41,7 @@ const compensation = Commit.transaction.pipe(
   }),
 );
 const compensated = Projection.run({ ...process, commit: compensation });
-const folded = Projection.atomic({
+const folded = Projection.fold({
   id: "fold",
   params: {},
   inputs: { input: Input },

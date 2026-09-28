@@ -74,10 +74,3 @@ export type Items<D extends RoutedMap> = {
     D[K] extends Stream<infer A, any> ? A : D[K] extends Rows<infer A, any> ? Change<A> : never
   >;
 };
-/** The handler result: one array per output, and the next state when the declaration has `state:`. */
-export type Result<D extends RoutedMap, S = never> = Items<D> &
-  ([S] extends [never] ? {} : { readonly state: S });
-export interface Processed {
-  readonly items: Readonly<Record<string, ReadonlyArray<unknown>>>;
-  readonly state?: string;
-}

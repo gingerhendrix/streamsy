@@ -1,10 +1,4 @@
 export * as Projection from "./projection.ts";
-export type {
-  Atomic,
-  AtomicDeclaration,
-  AtomicDefinition,
-  AtomicStateDefinition,
-} from "./atomic.ts";
 export type { Declaration } from "./declaration.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";
@@ -28,7 +22,6 @@ export { ProjectionFault } from "./fault.ts";
 export { Transaction } from "./transaction.ts";
 
 export * as Output from "./output.ts";
-export type { Outputs, OutputsDeclaration, OutputsDefinition } from "./outputs.ts";
 
 export * as Commit from "./commit.ts";
 export {

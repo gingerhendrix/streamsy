@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { defaultRetry } from "../src/follow.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
@@ -102,7 +103,8 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.create(target);
       yield* Streams.append(a, [1]);
       const woke = yield* Deferred.make<void>();
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "wake",
         params: {},
         inputs: { a, b },
@@ -156,7 +158,8 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.create(target);
       yield* Streams.append(a, [1], { close: true });
       yield* Streams.append(b, [2]);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "closed-open",
         params: {},
         inputs: { a, b },
@@ -280,12 +283,13 @@ for (const point of ["read", "append"] as const) {
           operation: point,
           message: "lost reply",
         });
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: `retry-${point}`,
           params: {},
           inputs: { input },
           outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-          process: (batch) => Effect.succeed({ output: batch.input.items }),
+          emit: (entry) => Effect.succeed({ output: [entry.item] }),
         }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
           FamilyFixture.provideReader({
@@ -349,7 +353,8 @@ test("follow does not retry non-storage faults or handler failures", () =>
         "handler-error",
       ] as const) {
         let calls = 0;
-        const projection = Projection.atomic({
+        const projection = Projection.process({
+          commit: Commit.transaction,
           id: "terminal",
           params: {},
           inputs: { input },
@@ -424,12 +429,13 @@ test("follow resets a finite retry budget after a successful cycle between outag
       yield* Streams.append(input, [1]);
       const parked = yield* Deferred.make<void>();
       let reads = 0;
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "separate-outages",
         params: {},
         inputs: { input },
         outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch) => Effect.succeed({ output: batch.input.items }),
+        emit: (entry) => Effect.succeed({ output: [entry.item] }),
       }).at({});
       const fiber = yield* withReader(
         Projection.follow(projection, { retry: Schedule.recurs(1) }),

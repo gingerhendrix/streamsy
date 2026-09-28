@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
@@ -35,7 +36,8 @@ export class Transitions extends Streamsy.bytes<Transitions>()(
 export const outputStreams = [Board, LabelCounts, Transitions] as const;
 
 /** Declared outputs for one workspace, separate from the SQL rows of issueRows. */
-export const tracker = Projection.outputs({
+export const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "issue-tracker",
   params: { workspaceId: Identifier },
   inputs: routes,
@@ -48,7 +50,7 @@ export const tracker = Projection.outputs({
     schema: WorkspaceState,
     initial: ({ workspaceId }) => initialWorkspace(workspaceId),
   },
-  process: (previous, batch) =>
+  mapAccumBatch: (previous, batch) =>
     Effect.gen(function* () {
       const issues = new Map(previous.issues.map((row) => [row.issueId, row]));
       const memberships = new Map(previous.memberships.map((row) => [row.membershipId, row]));
@@ -161,6 +163,6 @@ export const tracker = Projection.outputs({
       for (const label of previous.labels) {
         if (!labels.has(label.labelId)) labelCounts.push(Output.remove(label.labelId));
       }
-      return { state, board, labelCounts, transitions };
+      return [state, { board, labelCounts, transitions }] as const;
     }),
 });

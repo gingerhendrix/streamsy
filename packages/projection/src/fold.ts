@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Entry } from "./batch.ts";
 import type { Folded } from "./commit.ts";

@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -75,7 +76,8 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
       );
   });
 
-export const issueRows = Projection.atomic({
+export const issueRows = Projection.process({
+  commit: Commit.transaction,
   id: "issue-rows",
   params: { workspaceId: Identifier },
   inputs: {

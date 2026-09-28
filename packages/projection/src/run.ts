@@ -105,11 +105,11 @@ export const pass = Effect.fn("Projection.pass")(function* <
     { key: projection, unit, loaded: before.loaded, next, run },
     {
       outputs,
-      ...(projection.prepare === undefined
-        ? {}
-        : {
-            // SAFETY: Q includes the prepare requirements and is required from the runner's caller.
-            prepare: Effect.suspend(() => projection.prepare!(batch, unit)).pipe(
+      // SAFETY: Q includes prepare requirements and the runner requires Q from its caller.
+      prepare:
+        projection.prepare === undefined
+          ? undefined
+          : (Effect.suspend(() => projection.prepare!(batch, unit)).pipe(
               Effect.tap((value) =>
                 Effect.sync(() => {
                   prepared = value;
@@ -117,8 +117,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
               ),
               Effect.asVoid,
               Effect.mapError((error) => new HandlerFailed({ error })),
-            ) as Effect.Effect<void, HandlerFailed>,
-          }),
+            ) as Effect.Effect<void, HandlerFailed>),
       ranges: Object.fromEntries(
         Object.entries(ranges).map(([name, range]) => [
           name,

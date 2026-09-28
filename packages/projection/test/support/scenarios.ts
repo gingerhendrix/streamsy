@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
 import { StreamAddress } from "@streamsy/core";
@@ -13,7 +14,8 @@ export const input = FamilyFixture.json("projection-input", { schema: Schema.Fin
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
 /** Stateless atomic filter: positive items are copied to `output` inside the transaction. */
-export const positives = Projection.atomic({
+export const positives = Projection.process({
+  commit: Commit.transaction,
   id: "positives",
   params: {},
   inputs: { input },

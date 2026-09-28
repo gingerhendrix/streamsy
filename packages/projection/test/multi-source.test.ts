@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
@@ -30,7 +31,8 @@ const setup = Effect.gen(function* () {
 /** Records every tagged item the handler saw, in order, with the unit it arrived in. */
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
-  const projection = Projection.atomic({
+  const projection = Projection.process({
+    commit: Commit.transaction,
     params: {},
     id,
     inputs,
@@ -87,7 +89,8 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(a, [], { close: true });
       const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
         [];
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "closing",
         params: {},
         inputs: { a, b },
@@ -155,7 +158,8 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       const order: Array<string> = [];
       let active = 0;
       let overlapped = false;
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "sequenced",
         params: {},
         inputs: { b, a },

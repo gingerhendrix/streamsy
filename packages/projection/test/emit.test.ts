@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
@@ -47,7 +48,8 @@ const seed = Streams.create(input).pipe(Effect.andThen(Streams.append(input, [1]
 
 const numbers = FamilyFixture.json("numbers", { schema: Schema.Finite });
 const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
-const tracker = Projection.outputs({
+const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "tracker",
   params: {},
   inputs: { numbers },
@@ -56,14 +58,16 @@ const tracker = Projection.outputs({
     transitions: Output.stream(Schema.Finite, { stream: FamilyFixture.bytes("transitions") }),
   },
   state: { schema: Schema.Finite, initial: 0 },
-  process: (state, batch) =>
+  mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
       const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-      return {
-        state: next,
-        board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
-        transitions: [next],
-      };
+      return [
+        next,
+        {
+          board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
+          transitions: [next],
+        },
+      ] as const;
     }),
 }).at({});
 
@@ -74,12 +78,13 @@ for (const [name, host] of hosts) {
         yield* seed;
         yield* Streams.create(b);
         let replay = false;
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: "changed-replay",
           params: {},
           inputs: { input },
           outputs: declarations,
-          process: () => Effect.succeed({ a: [1], b: replay ? [1] : [] }),
+          emit: () => Effect.succeed({ a: [1], b: replay ? [1] : [] }),
         }).at({});
         const writer = yield* StreamsWriter;
         const failed = yield* Projection.run(projection).pipe(
@@ -118,7 +123,7 @@ for (const [name, host] of hosts) {
         expect(yield* readAll(b)).toEqual([]);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
-  test(`${name}: the Outputs documentation snippet writes rows, events and state`, () =>
+  test(`${name}: mapAccumBatch writes rows, events and state`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
         yield* Streams.create(numbers);
@@ -143,14 +148,13 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: "named",
           params: {},
           inputs: { input },
           outputs: declarations,
-          process: Projection.each(({ item }) =>
-            Effect.succeed({ a: [item * 10], b: item % 2 === 0 ? [item] : [] }),
-          ),
+          emit: ({ item }) => Effect.succeed({ a: [item * 10], b: item % 2 === 0 ? [item] : [] }),
         }).at({});
         const saved: import("@streamsy/projection/checkpoint").CheckpointRecord[] = [];
         const owner = yield* CheckpointStore;
@@ -179,13 +183,14 @@ for (const [name, host] of hosts) {
         expect(yield* readAll(b)).toEqual([2]);
         const ids: string[] = [];
         const writer = yield* StreamsWriter;
-        const v2 = Projection.outputs({
+        const v2 = Projection.emit({
+          commit: Commit.producer,
           id: "named",
           params: {},
           version: 2,
           inputs: { input },
           outputs: declarations,
-          process: (batch) => Effect.succeed({ a: batch.input.items.map((n) => n * 100), b: [] }),
+          emit: (entry) => Effect.succeed({ a: [entry.item * 100], b: [] }),
         }).at({});
         yield* Projection.run(v2).pipe(
           FamilyFixture.provideWriter({
@@ -206,17 +211,18 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         yield* seed;
         const states: number[] = [];
-        const projection = Projection.outputs({
+        const projection = Projection.mapAccumBatch({
+          commit: Commit.producer,
           id: "recover",
           params: {},
           inputs: { input },
           outputs: declarations,
           state: { schema: Schema.Finite, initial: 0 },
-          process: (state, batch) =>
+          mapAccumBatch: (state, batch) =>
             Effect.sync(() => {
               states.push(state);
               const next = state + batch.input.items.reduce((sum, n) => sum + n, 0);
-              return { state: next, a: [next], b: [next] };
+              return [next, { a: [next], b: [next] }] as const;
             }),
         }).at({});
         const writer = yield* StreamsWriter;
@@ -297,13 +303,15 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
-        const projection = Projection.outputs({
+        const projection = Projection.mapAccumBatch({
+          commit: Commit.producer,
           id: "atomic-state",
           params: {},
           inputs: { input },
           outputs: {},
           state: { schema: Schema.Finite, initial: 0 },
-          process: (state, batch) => Effect.succeed({ state: state + batch.input.items[0]! }),
+          mapAccumBatch: (state, batch) =>
+            Effect.succeed([state + batch.input.items[0]!, {}] as const),
         }).at({});
         const store = yield* CheckpointStore;
         const failed = yield* Projection.run(projection).pipe(
@@ -343,12 +351,13 @@ for (const [name, host] of hosts) {
           key: "issueId",
           stream: FamilyFixture.bytes("board"),
         });
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: "rows",
           params: {},
           inputs: { input },
           outputs: { board },
-          process: () =>
+          emit: () =>
             Effect.succeed({
               board: [Output.upsert({ issueId: "one", title: "First" }), Output.remove("old")],
             }),
@@ -367,86 +376,94 @@ for (const [name, host] of hosts) {
     ));
 }
 
-test("the reserved state name fails at declaration; duplicate streams fail at at", () => {
+test("state is an ordinary output name; duplicate streams fail at at", () => {
   expect(() =>
-    Projection.outputs({
+    Projection.emit({
+      commit: Commit.producer,
       id: "bad",
       params: {},
       inputs: { input },
       outputs: { a: declarations.a, b: declarations.a },
-      process: () => Effect.succeed({ a: [], b: [] }),
+      emit: () => Effect.succeed({ a: [], b: [] }),
     }).at({}),
   ).toThrow("same stream");
   expect(() =>
-    Projection.outputs({
+    Projection.emit({
+      commit: Commit.producer,
       id: "bad",
       params: {},
       inputs: { input },
       outputs: { state: declarations.a },
-      process: () => Effect.succeed({ state: [] }),
+      emit: () => Effect.succeed({ state: [] }),
     }),
-  ).toThrow("reserved");
+  ).not.toThrow();
 });
 
 // Compile-only public result constraints. Each invalid handler must be rejected.
 const checkTypes = () => {
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
-    // @ts-expect-error missing b
-    process: () => Effect.succeed({ a: [1] }),
+    emit: () => Effect.succeed({ a: [1] }),
   }).at({});
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
     // @ts-expect-error undeclared c
-    process: () => Effect.succeed({ a: [1], b: [], c: [] }),
+    emit: () => Effect.succeed({ a: [1], b: [], c: [] }),
   }).at({});
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
     // @ts-expect-error wrong a item type
-    process: () => Effect.succeed({ a: ["bad"], b: [] }),
+    emit: () => Effect.succeed({ a: ["bad"], b: [] }),
   }).at({});
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
     // @ts-expect-error each may return only declared output keys
-    process: Projection.each(() => Effect.succeed({ a: [1], b: [], wrong: [] })),
+    emit: () => Effect.succeed({ a: [1], b: [], wrong: [] }),
   }).at({});
-  Projection.outputs({
+  Projection.mapAccumBatch({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
     state: { schema: Schema.Finite, initial: 0 },
     // @ts-expect-error output keys are checked with state too
-    process: (state) => Effect.succeed({ state, a: [], b: [], wrong: [] }),
+    mapAccumBatch: (state) => Effect.succeed([state, { a: [], b: [], wrong: [] }] as const),
   }).at({});
-  Projection.outputs({
+  Projection.mapAccumBatch({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: {},
     state: { schema: Schema.Finite, initial: 0 },
     // @ts-expect-error the returned state must match the declared state schema
-    process: () => Effect.succeed({ state: "bad" }),
+    mapAccumBatch: () => Effect.succeed(["bad", {}] as const),
   }).at({});
-  Projection.outputs({
+  Projection.emit({
+    commit: Commit.producer,
     id: "type",
     params: {},
     inputs: { input },
     outputs: declarations,
     // @ts-expect-error each cannot return a state key
-    process: Projection.each(() => Effect.succeed({ a: [], b: [], state: [] })),
+    emit: () => Effect.succeed({ a: [], b: [], state: [] }),
   }).at({});
 };
 void checkTypes;
@@ -457,12 +474,13 @@ test("named outputs reject an output that names one of their inputs", () => {
     Output.rows(Card, { key: "issueId", stream: input }),
   ]) {
     expect(() =>
-      Projection.outputs({
+      Projection.emit({
+        commit: Commit.producer,
         id: "feedback",
         params: {},
         inputs: { input },
         outputs: { feedback: declaration },
-        process: () => Effect.succeed({ feedback: [] }),
+        emit: () => Effect.succeed({ feedback: [] }),
       }).at({}),
     ).toThrow("An output may not name an input stream");
   }
@@ -471,12 +489,13 @@ test("named outputs reject an output that names one of their inputs", () => {
 test("Output.stream retains an address and uses its declared schema", () => {
   const target = FamilyFixture.bytes("id-only");
   const declaration = Output.stream(Schema.Finite, { stream: target });
-  const declared = Projection.outputs({
+  const declared = Projection.emit({
+    commit: Commit.producer,
     id: "codec-test",
     params: {},
     inputs: { input },
     outputs: { out: declaration },
-    process: () => Effect.succeed({ out: [42] }),
+    emit: () => Effect.succeed({ out: [42] }),
   });
   const projection = declared.at({});
   expect(Schema.encodeSync(declared.outputs.out.address({}).codec)(42)).toBe("42");

@@ -26,6 +26,7 @@ export interface Executable<
     batch: Slices<I>,
     unit: Unit,
     encoded?: string,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Internal transport of the declaration-typed prepare result.
     prepared?: unknown,
   ) => Effect.Effect<Result, E, R | P>;
 }

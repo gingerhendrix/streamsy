@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
@@ -160,7 +161,8 @@ test("identity mismatch on inputs stops without reset", () =>
       const before = yield* inspect;
       const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
-      const changed = Projection.atomic({
+      const changed = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input: other },
@@ -316,7 +318,8 @@ test("two competing passes on one memory host: the second conflicts and output i
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
-      const gated = Projection.atomic({
+      const gated = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
@@ -354,7 +357,8 @@ test("interruption inside the transaction rolls back the output append and the c
       yield* initialize;
       const appended = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const blocking = Projection.atomic({
+      const blocking = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
@@ -386,7 +390,8 @@ test("handler failure rolls back the output append and the checkpoint", () =>
     Effect.gen(function* () {
       yield* initialize;
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
-      const failing = Projection.atomic({
+      const failing = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
@@ -407,9 +412,17 @@ test("the version is part of the record key, so version two starts a fresh key",
     inputs: { input },
     process: () => Effect.void,
   };
-  const original = Projection.atomic(definition).at({});
-  const one = Projection.atomic({ ...definition, version: 1 }).at({});
-  const two = Projection.atomic({ ...definition, version: 2 }).at({});
+  const original = Projection.process({ ...definition, commit: Commit.transaction }).at({});
+  const one = Projection.process({
+    commit: Commit.transaction,
+    ...definition,
+    version: 1,
+  }).at({});
+  const two = Projection.process({
+    commit: Commit.transaction,
+    ...definition,
+    version: 2,
+  }).at({});
   expect(recordKey(Projection.key(original))).toBe(
     '["streamsy.projection.v1","versioned","1","1","{}"]',
   );
@@ -425,7 +438,8 @@ test("run without a limit drains more than one hundred server pages", () =>
         input,
         Array.from({ length: 101 }, (_, n) => n),
       );
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "uncapped",
         params: {},
         inputs: { input },
@@ -445,16 +459,17 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       yield* initialize;
       const versions: number[] = [];
       const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "versioned-stream",
         params: {},
         version: 7,
         inputs: { input },
         outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch, unit) =>
+        emit: (entry, unit) =>
           Effect.sync(() => {
             versions.push(unit.version);
-            return { output: batch.input.items };
+            return { output: [entry.item] };
           }),
       }).at({});
       const owner = yield* CheckpointStore;
@@ -479,9 +494,9 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       );
       expect(failed._tag).toBe("Failure");
       expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeDefined();
-      expect(versions).toEqual([7]);
+      expect(versions).toEqual([7, 7, 7]);
       yield* Projection.run(projection);
-      expect(versions).toEqual([7, 7]);
+      expect(versions).toEqual([7, 7, 7, 7, 7, 7]);
       expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeUndefined();
       expect(yield* readAll(output)).toEqual([1, -1, 3]);
     }),

@@ -1,7 +1,8 @@
+/* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- The public constructor overloads retain exact E, R and prepared types; this adapter is their internal erased implementation. */
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The constructor signatures check each adapter before this internal runtime boundary erases its mapped types. */
 import { Folded } from "./commit.ts";
 import { Effect, Predicate } from "effect";
-import type { Entry, InputMap, Slices } from "./batch.ts";
+import type { InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 import { items } from "./read.ts";
@@ -9,34 +10,6 @@ import { encodeState, currentState, type BoundState } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
 export type Step<X, E = never, R = never> = X | Effect.Effect<X, E, R>;
-
-/** One fold step: the state and one tagged item give the next state. */
-export type FoldStep<Inputs extends InputMap, A, E, R, P = Record<string, string>> = (
-  state: A,
-  entry: Entry<Inputs>,
-  unit: Unit<P>,
-) => A | Effect.Effect<A, E, R>;
-
-/** Internal: the unit loads the state once, folds in unit order, and returns its encoded state for the checkpoint write. */
-export const foldHandler =
-  <Inputs extends InputMap, A, E, R, P>(
-    key: ProjectionKey,
-    state: BoundState<A>,
-    step: FoldStep<Inputs, A, E, R, P>,
-  ) =>
-  (
-    batch: Slices<Inputs>,
-    unit: Unit<P>,
-    encoded?: string,
-  ): Effect.Effect<Folded<A>, E | ProjectionFault, R> =>
-    Effect.gen(function* () {
-      let value = yield* currentState(key, state, encoded);
-      for (const entry of items(batch)) {
-        const next = step(value, entry, unit);
-        value = Effect.isEffect(next) ? yield* next : next;
-      }
-      return { ...Folded({ value, encoded: yield* encodeState(key, state.schema, value) }), value };
-    });
 
 /** Each output keeps its item type here; missing keys emit nothing. */
 export type Emits<O extends import("./output-internal.ts").RoutedMap> = Partial<
@@ -74,7 +47,7 @@ const collect = (
   Effect.gen(function* () {
     for (const [name, entries] of Object.entries(emitted)) {
       const output = outputs[name];
-      if (output === undefined || !Array.isArray(entries))
+      if (!Object.hasOwn(outputs, name) || output === undefined || !Array.isArray(entries))
         return yield* new ProjectionFault({
           phase: "process",
           reason: "invalid-output",
@@ -112,7 +85,9 @@ export const adapt = (
   Effect.gen(function* () {
     if (kind === "process") return yield* Effect.asVoid(handler(batch, unit, prepared));
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
-    const buffers: Record<string, unknown[]> = {};
+    const buffers: Record<string, unknown[]> = Object.fromEntries(
+      Object.keys(outputs).map((name) => [name, []]),
+    );
     const steps = kind === "mapAccumBatch" ? [batch] : items(batch);
     for (const entry of steps) {
       const step = kind === "emit" ? handler(entry, unit) : handler(value, entry, unit);

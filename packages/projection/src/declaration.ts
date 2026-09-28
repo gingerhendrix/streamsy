@@ -1,8 +1,10 @@
+/* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- This internal binding implementation erases the handler and prepared-value types already checked by the constructor overloads. */
 /* oxlint-disable typescript/no-explicit-any, anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Declarations are the checked bridge between stream declarations and their mapped projection inputs; each assertion is documented at its use. */
 import { Option, Schema, type Effect } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { RoutedMap, Target } from "./output-internal.ts";
+import { supportsPrepare } from "./commit/range.ts";
 import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
 import type { ProjectionFault } from "./fault.ts";
@@ -181,7 +183,19 @@ export type RunningDeclaration<
   Q,
   S = never,
   OR = never,
-> = Declaration<C, Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>>;
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare"
+  > & {
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
 export type StatefulDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -205,7 +219,12 @@ export type OutputDeclaration<
   P,
   Q,
   A = never,
-> = RunningDeclaration<C, I, E, R, Result, P, Q, A, Output.Services<O>> & {
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Output.Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Output.Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Output.Services<O>>>>;
+  };
   readonly outputs: Bound<O, StreamRoute.Params<C>>;
 };
 export type AccumulatingDeclaration<
@@ -238,7 +257,7 @@ export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs>
 
 export const build = (kind: Kind, definition: BuildDefinition) => {
   const commit = definition.commit ?? Commit.checkpoint;
-  if (definition.prepare !== undefined && commit.name !== "transaction")
+  if (definition.prepare !== undefined && !supportsPrepare(commit))
     throw new RangeError("prepare requires Commit.transaction");
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
@@ -251,12 +270,11 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
       state,
       streams,
       commit,
-      ...(definition.prepare === undefined
-        ? {}
-        : {
-            prepare: (batch: Slices<InputMap>, unit: Unit) =>
+      prepare:
+        definition.prepare === undefined
+          ? undefined
+          : (batch: Slices<InputMap>, unit: Unit) =>
               definition.prepare!(batch, withParams(unit, decoded)),
-          }),
       process: (batch: Slices<InputMap>, unit: Unit, encoded?: string, prepared?: unknown) =>
         adapt(
           kind,
@@ -286,11 +304,10 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
             }),
           ),
         };
+  if (definition.state === undefined) return { ...declaration, ...sources };
   return {
     ...declaration,
     ...sources,
-    ...(definition.state === undefined
-      ? {}
-      : { state: stateSource(definition, definition.state, declaration.at) }),
+    state: stateSource(definition, definition.state, declaration.at),
   };
 };
