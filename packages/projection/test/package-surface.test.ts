@@ -38,7 +38,7 @@ type PublicHelperTypes =
   | Offsets<any>
   | StateDefinition<any, any, any>
   | StateSource<any, any, any>
-  | Step<any, any, any, any, any>
+  | Step<any, any, any>
   | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;

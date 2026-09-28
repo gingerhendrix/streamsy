@@ -12,7 +12,7 @@ export type { WatchOptions } from "./watch.ts";
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 export type { Progress } from "./run.ts";
 export type { Offsets, Snapshot } from "./snapshot.ts";
-export type { Step } from "./fold.ts";
+export type { Step, Emits } from "./step.ts";
 export type { StateDefinition, StateSchema, Initial } from "./state.ts";
 export type { StateSource } from "./state.ts";
 export type { Range, Unit } from "./unit.ts";

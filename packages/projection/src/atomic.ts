@@ -17,7 +17,7 @@ import {
 } from "./declaration.ts";
 import { withParams, type Unit } from "./unit.ts";
 import type { ProjectionFault } from "./fault.ts";
-import { foldHandler, type Step } from "./fold.ts";
+import { foldHandler, type FoldStep as Step } from "./step.ts";
 import {
   bindState,
   stateSource,

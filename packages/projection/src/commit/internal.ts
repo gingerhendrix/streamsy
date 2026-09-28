@@ -20,6 +20,7 @@ export interface Output {
   };
 }
 export interface Details {
+  readonly prepare?: Effect.Effect<void, import("./model.ts").HandlerFailed>;
   readonly ranges: Record<string, PinnedRange>;
   readonly outputs: Readonly<Record<string, Output>>;
 }

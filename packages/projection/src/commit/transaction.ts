@@ -26,6 +26,8 @@ export const transaction = make<Result, SqlClient.SqlClient, CheckpointStore | T
             message: `Output ${address.id} does not share the transaction owner`,
           });
       }
+      const prepare = detailsOf(pending).prepare;
+      if (prepare !== undefined) yield* prepare;
       yield* tx.withTransaction(
         Effect.gen(function* () {
           const again = yield* store.load(pending.key);

@@ -92,14 +92,33 @@ export const pass = Effect.fn("Projection.pass")(function* <
     const service = yield* address.stream;
     outputs[name] = { address, service };
   }
+  let prepared: unknown;
   // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
-  const run = Effect.suspend(() => projection.process(batch, unit, before.record.state)).pipe(
-    Effect.mapError((error) => new HandlerFailed({ error })),
-  ) as Effect.Effect<Result, HandlerFailed, P>;
+  const run = Effect.suspend(() =>
+    projection.process(batch, unit, before.record.state, prepared),
+  ).pipe(Effect.mapError((error) => new HandlerFailed({ error }))) as Effect.Effect<
+    Result,
+    HandlerFailed,
+    P
+  >;
   const request: Pending<Result, P> = setDetails(
     { key: projection, unit, loaded: before.loaded, next, run },
     {
       outputs,
+      ...(projection.prepare === undefined
+        ? {}
+        : {
+            // SAFETY: Q includes the prepare requirements and is required from the runner's caller.
+            prepare: Effect.suspend(() => projection.prepare!(batch, unit)).pipe(
+              Effect.tap((value) =>
+                Effect.sync(() => {
+                  prepared = value;
+                }),
+              ),
+              Effect.asVoid,
+              Effect.mapError((error) => new HandlerFailed({ error })),
+            ) as Effect.Effect<void, HandlerFailed>,
+          }),
       ranges: Object.fromEntries(
         Object.entries(ranges).map(([name, range]) => [
           name,
