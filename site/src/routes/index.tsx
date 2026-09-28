@@ -73,7 +73,6 @@ function Home() {
               "@streamsy/serve",
               "HttpRouter routes, Bun and Cloudflare hosts, and action delivery.",
             ],
-            ["@streamsy/views", "Keyed relations, plan IR, and a pure incremental engine."],
           ].map(([name, detail]) => (
             <div key={name} className="rounded-xl border p-6">
               <h2 className="font-mono text-lg font-semibold">{name}</h2>

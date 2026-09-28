@@ -33,7 +33,7 @@ const linkedDependencies: ReadonlyArray<readonly [name: string, from: string]> =
   ["@cloudflare/workers-types", "packages/serve"],
   ["alchemy", "packages/serve"],
 ];
-const streamsyPackages = ["core", "storage", "projection", "serve", "views"];
+const streamsyPackages = ["core", "storage", "projection", "serve"];
 const tsc = join(repo, "packages/core/node_modules/typescript/bin/tsc");
 
 const compilerOptions = {

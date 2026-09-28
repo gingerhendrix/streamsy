@@ -168,28 +168,6 @@ export const nothingElse: [Left] extends [never] ? true : false = true;
     },
   ],
   [
-    "projections/views",
-    {
-      renames: { 1: "source.ts" },
-      preludes: {
-        2: `import { selectors } from "@streamsy/views";
-import { OrderRow, orders } from "./source.ts";
-const x = selectors<OrderRow>();
-`,
-        3: `import { Schema } from "effect";
-import { from, selectors } from "@streamsy/views";
-import { OrderRow, orders } from "./source.ts";
-const x = selectors<OrderRow>();
-`,
-        4: `import { openOrders } from "./block02.ts";
-`,
-        5: `import { openOrders } from "./block02.ts";
-import { OrderRow, orders } from "./source.ts";
-`,
-      },
-    },
-  ],
-  [
     "runtime/cloudflare",
     {
       modules: {
