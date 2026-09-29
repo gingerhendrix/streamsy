@@ -25,14 +25,14 @@ Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`
 
 Each number in the diagram is also a section number below.
 
-| Step | What happens                                                         | Streamsy feature                                            | File                              |
-| ---- | -------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------- |
-| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                           | `server/streams.ts`               |
-| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                      | `server/state.ts`                 |
-| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.atomic`, `Projection.each`                      | `server/projection.ts`            |
-| 4    | A second projection writes three output streams and a state value    | `Projection.outputs`, `Output.rows`, `Output.stream`        | `server/outputs.ts`               |
-| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                        | `server/app.ts`, `server/host.ts` |
-| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.state`, `Serve.stream`, `Serve.value` | `server/app.ts`                   |
+| Step | What happens                                                         | Streamsy feature                                              | File                              |
+| ---- | -------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------- |
+| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`               |
+| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                        | `server/state.ts`                 |
+| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`            |
+| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `Rows`         | `server/outputs.ts`               |
+| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts` |
+| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.state`, `Serve.stream`, `Serve.value`   | `server/app.ts`                   |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -116,10 +116,11 @@ See [Read, fold, append](/docs/streams/write#read-fold-append) for the recipe.
 
 ## 3. Write SQL rows with `issueRows`
 
-`issueRows` is an atomic projection over all five inputs. `Projection.each` calls the handler once for each item, and `entry.input` names the input it came from. The handler writes the application tables with the host's `SqlClient`. The projection commits those writes and the new input offsets in one transaction, so a crash cannot keep one without the other.
+`issueRows` uses `Projection.process` with `Commit.transaction` over all five inputs. `Projection.each` calls the handler once for each item, and `entry.input` names the input it came from. The handler writes the application tables with the host's `SqlClient`. The projection commits those writes and the new input offsets in one transaction, so a crash cannot keep one without the other.
 
 ```ts title="server/projection.ts"
-export const issueRows = Projection.atomic({
+export const issueRows = Projection.process({
+  commit: Commit.transaction,
   id: "issue-rows",
   params: { workspaceId: Identifier },
   inputs: {
@@ -143,37 +144,38 @@ export const issueRows = Projection.atomic({
 });
 ```
 
-`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. `@streamsy/projection` owns only the tables that start with `streamsy_projection_v1_`.
+`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. `@streamsy/projection` owns only `streamsy_projection_v2_records`, which holds offsets and encoded state.
 
-See [Atomic projections](/docs/projections/define#atomic-projections) and [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
+See [Commits](/docs/projections/define#commits) and [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
 
 ## 4. Write output streams with `tracker`
 
 `tracker` reads the same five inputs and declares three outputs. `board` and `labelCounts` are keyed rows, published as Durable State. `transitions` is a plain stream of accepted issue facts. The projection also keeps a private state value, the whole workspace, so that each batch can find which cards and counts changed.
 
 ```ts title="server/outputs.ts"
-export const tracker = Projection.outputs({
+export const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "issue-tracker",
   params: { workspaceId: Identifier },
   inputs: routes,
   outputs: {
-    board: Output.rows(ProjectBoardCard, { key: "issueId", stream: Board }),
-    labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: LabelCounts }),
-    transitions: Output.stream(IssueTransition, { stream: Transitions }),
+    board: Board,
+    labelCounts: LabelCounts,
+    transitions: Transitions,
   },
   state: {
     schema: WorkspaceState,
     initial: ({ workspaceId }) => initialWorkspace(workspaceId),
   },
-  process: (previous, batch) =>
+  mapAccumBatch: (previous, batch) =>
     Effect.gen(function* () {
       // ...
-      return { state, board, labelCounts, transitions };
+      return [state, { board, labelCounts, transitions }] as const;
     }),
 });
 ```
 
-The handler returns `Output.upsert(row)` for each card or count that changed, and `Output.remove(labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
+The handler returns `Rows.upsert(row)` for each card or count that changed, and `Rows.remove(labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
 
 See [Output projections](/docs/projections/define#output-projections) and [State and checkpoints](/docs/projections/state).
 
@@ -214,9 +216,9 @@ The server merges four sets of routes. `Http.routes` serves the input and output
 
 ```ts title="server/app.ts"
 export const outputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.state(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.state(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.stream(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
   Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),

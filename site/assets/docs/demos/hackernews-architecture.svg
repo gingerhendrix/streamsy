@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 680" width="980" height="680" role="img" aria-labelledby="title desc">
   <title id="title">Hacker News newest demo architecture</title>
-  <desc id="desc">One Durable State stream, hackernews/newest, holds the story changes. An atomic projection, newestRows, folds the stream into rows. The poller fetches Hacker News, runs and reads the projection, diffs the rows against the fetch and appends the changes with expectedOffset. On OffsetMismatch it retries the pass up to three times. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream, the checkpoint and the state row share one Bun SQLite file.</desc>
+  <desc id="desc">One Durable State stream, hackernews/newest, holds the story changes. A checkpointed fold, newestRows, folds the stream into rows. The poller fetches Hacker News, runs and reads the projection, diffs the rows against the fetch and appends the changes with expectedOffset. On OffsetMismatch it retries the pass up to three times. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -59,14 +59,14 @@
   <!-- Row 2 -->
   <rect class="node" x="468" y="276" width="200" height="84" rx="14"/>
   <text class="node-title" x="568" y="312" text-anchor="middle">newestRows</text>
-  <text class="node-subtitle" x="568" y="332" text-anchor="middle">Projection.atomic</text>
+  <text class="node-subtitle" x="568" y="332" text-anchor="middle">Projection.fold</text>
 
   <path class="flow" d="M 568 236 V 272"/>
   <path class="flow" d="M 466 318 H 298 V 238"/>
   <text class="edge-label" x="382" y="308" text-anchor="middle">run, read rows + offset</text>
 
   <rect class="host" x="208" y="380" width="460" height="42" rx="12"/>
-  <text class="node-subtitle" x="438" y="406" text-anchor="middle">One Bun SQLite file: stream · checkpoint · state row</text>
+  <text class="node-subtitle" x="438" y="406" text-anchor="middle">One Bun SQLite file: stream · checkpoint with state</text>
 
   <!-- Browser group -->
   <rect class="group" x="172" y="470" width="784" height="130" rx="18"/>

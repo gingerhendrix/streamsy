@@ -129,3 +129,7 @@ Then run the upstream [server conformance suite](https://durablestreams.com/buil
 | `atomicScope` | `store`   | `stream`           | `store`            | `store`                       |
 | `wake`        | `push`    | `poll`             | `push` with repair | `push` with repair            |
 | `expiryIndex` | `indexed` | `lazy`             | `indexed`          | `indexed`, swept by the alarm |
+
+## Projection storage
+
+A custom checkpoint Layer can implement `EncodedStore` and call `fromStore` from `@streamsy/projection/checkpoint`. The record contains encoded state and offsets. `Commit.transaction` also needs a SQL `Transaction`; a storage capability flag alone does not provide it. See [Custom Commits](/docs/projections/state#custom-commits).

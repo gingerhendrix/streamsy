@@ -104,6 +104,20 @@ control event. Host-forced interruption and client cancellation remain owned by
 the host. Read results include `contentType`; a fetch long poll returning 204
 without Content-Type resolves it with HEAD.
 
+## Row changes
+
+`Rows` is exported from `@streamsy/core`. Projection outputs use typed routes:
+`Streamsy.json` for items and `Streamsy.state` for row changes.
+
+| Route collections | Upsert                     | Remove                     |
+| ----------------- | -------------------------- | -------------------------- |
+| One               | `Rows.upsert(row)`         | `Rows.remove(key)`         |
+| Several           | `Rows.upsert("card", row)` | `Rows.remove("card", key)` |
+
+`Rows.Change<Collections>` checks the collection and row types. The projection
+encodes changes with `Rows.encode(collections, change)` before appending. The
+route's collection names and key fields define the Durable State wire events.
+
 ## Documentation
 
 - [Declare streams](https://streamsy.dev/docs/streams/declare)

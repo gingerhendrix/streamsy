@@ -1,8 +1,8 @@
 # Hex board
 
-An atomic projection with `state:` and `fold` keeps a complete Hex Domination board
-and the next move ordinal in one schema-encoded state row. The SQLite Layer commits
-that row with its checkpoint. Read it with `Projection.read(board)`.
+A `Projection.fold` with the default `Commit.checkpoint` keeps a complete Hex Domination board
+and the next move ordinal as a schema-encoded value in the checkpoint record.
+The SQLite Layer saves the value and offsets together. Read it with `Projection.read(board)`.
 
 ```sh
 bun run build
@@ -20,8 +20,7 @@ fixture prefix with the aggregate and round-trip its BoardState schema, and
 check combat, map geometry, reinforcement accounting and multi-event move keys.
 
 `test:unit` is discovered by the root workspace test runner. There is no output
-stream or application table: this example uses `streamsy_projection_v1_state`
-and `streamsy_projection_v1_records` supplied by the projection Layer.
+stream or application table: this example uses one `streamsy_projection_v2_records` record for state and offsets supplied by the projection Layer.
 
 ## Fixtures
 

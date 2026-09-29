@@ -73,24 +73,22 @@ See [Read](/docs/streams/read).
 
 ```ts
 import { Effect } from "effect";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
 
-const projection = Projection.atomic({
+const projection = Projection.emit({
   id: "order-totals",
   params: {},
   inputs: { input: Orders },
-  process: Projection.each(({ item }) =>
-    Effect.flatMap(OrderTotals, (totals) =>
-      totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
-    ),
-  ),
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
 });
 
 export const catchUp = Projection.run(projection.at({}));
 ```
 
-The appends and the checkpoint commit in one transaction. `Projection.run` stops when the input is caught up.
+The producer position makes output retries effectively once. The checkpoint records the completed input range. `Projection.run` stops when the input is caught up.
 
 See [How projections work](/docs/projections).
 
@@ -105,18 +103,19 @@ import { write } from "./write.ts";
 await Effect.runPromise(write.pipe(Effect.provide(Memory.layer({}, shop))));
 ```
 
-A projection also needs `Checkpoints`. Merge its Layer over the same storage:
+A projection also needs `CheckpointStore`. Merge its Layer over the same storage:
 
 ```ts
 import { Effect, Layer } from "effect";
 import { Memory } from "@streamsy/core";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { catchUp } from "./projection.ts";
+import { write } from "./write.ts";
 import { shop } from "./streams.ts";
 
 const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
 
-await Effect.runPromise(catchUp.pipe(Effect.provide(host)));
+await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)));
 ```
 
 Use SQLite when the data must survive a restart:

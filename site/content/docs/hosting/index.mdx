@@ -71,7 +71,7 @@ Rules:
 - A group checks overlap only among its own streams. Put all served streams in one group.
 - A fork stays inside one storage Layer.
 - A fetch Layer has its own `capabilities`.
-- A projection keeps `Checkpoints`, atomic writes, and outputs on one storage owner. See [Several backends](/docs/projections/state#several-backends).
+- `Commit.transaction` keeps SQL, output appends, and the checkpoint on one SQL owner. `Commit.producer` can write to existing outputs on other owners. See [Several backends](/docs/projections/state#several-backends).
 
 ## Commit with your own tables
 

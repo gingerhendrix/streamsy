@@ -5,7 +5,7 @@ description: Keep a value with the checkpoint, read it with its offsets, and rec
 
 ## State
 
-`state: { schema, initial }` keeps one value for each projection key. The value is saved in the checkpoint transaction.
+`state: { schema, initial }` keeps one value for each projection key. The encoded value and offsets live in one checkpoint record.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -21,7 +21,7 @@ const program = Effect.gen(function* () {
   const numbers = yield* Numbers;
   yield* numbers.create({});
   yield* numbers.append({}, [1, 2, 3]);
-  const total = Projection.atomic({
+  const total = Projection.fold({
     id: "running-total",
     params: {},
     inputs: { input: Numbers },
@@ -33,14 +33,15 @@ const program = Effect.gen(function* () {
 });
 ```
 
-| Projection           | Step                                                            |
-| -------------------- | --------------------------------------------------------------- |
-| `Projection.atomic`  | `fold: (state, entry, unit) => next`, with no `process`         |
-| `Projection.outputs` | `process: (state, batch, unit)` returns `{ state, ...outputs }` |
+| Projection                 | Step                                                         |
+| -------------------------- | ------------------------------------------------------------ |
+| `Projection.fold`          | `fold(state, entry, unit)` returns the next value            |
+| `Projection.mapAccum`      | `mapAccum(state, entry, unit)` returns `[state, emits]`      |
+| `Projection.mapAccumBatch` | `mapAccumBatch(state, batch, unit)` returns `[state, emits]` |
 
 `fold` can return the next value or an Effect of it. `initial` can be a function of the decoded parameters.
 
-`Projection.read(projection)` gives `{ state, offsets }` from one transaction. `offsets` has one entry for each input: the offset the state is at. Before the first unit, `state` is `initial`. A projection with no `state` reads as `{ state: undefined, offsets }`.
+`Projection.read(projection)` gives `{ state, offsets }` through the Commit's `load`. `offsets` has one entry for each input: the offset the state is at. Before the first unit, `state` is `initial`. A projection with no `state` reads as `{ state: undefined, offsets }`.
 
 After `run` returns `caught-up`, `progress.offsets` equals `Projection.read(projection).offsets`, unless another runner committed a unit between the two calls.
 
@@ -50,13 +51,14 @@ Each save replaces the value. There is no history. A state schema change needs a
 
 Each unit decodes and saves the whole value. Use state for small values, for example a counter, a summary, or a few hundred rows.
 
-Keep large row sets in application tables, in an atomic projection:
+Keep large row sets in application tables, with `Commit.transaction` on a SQL host:
 
 ```ts
 import { SqlClient } from "effect/unstable/sql";
 
-const orderRows = Projection.atomic({
+const orderRows = Projection.fold({
   id: "order-rows",
+  commit: Commit.transaction,
   params: {},
   inputs: { input: Orders },
   state: { schema: Schema.Finite, initial: 0 },
@@ -77,7 +79,7 @@ The [hex board demo](/docs/demos/hex-board) measures state size. Its final encod
 
 ### Forget
 
-`Projection.forget(bound)` deletes the state and the checkpoint in one transaction. It does not delete streams.
+`Projection.forget(bound)` calls the Commit's optional `remove`. Built-in Commits delete the record containing state and offsets; a custom Commit without `remove` fails with `unsupported-composition`. It does not delete streams.
 
 Before you call it:
 
@@ -99,7 +101,7 @@ class Seats extends Streamsy.json<Seats>()("Venue/Seats", "seats", {
   schema: Schema.Struct({ seat: Schema.String }),
 }) {}
 
-const taken = Projection.atomic({
+const taken = Projection.fold({
   id: "taken-seats",
   params: {},
   inputs: { input: Seats },
@@ -128,26 +130,38 @@ Append only to the input that the offset names. The [Hacker News newest demo](/d
 
 ## Checkpoints and generations
 
-`Checkpoints` holds the records and owns the transaction.
+`CheckpointStore` holds the records. `Transaction` supplies the SQL client and transaction boundary.
 
-| Layer                                 | Over                                                           |
-| ------------------------------------- | -------------------------------------------------------------- |
-| `@streamsy/projection/memory` `layer` | The store of `Memory.layer`. Not persistent                    |
-| `@streamsy/projection/sqlite` `layer` | The `CommitBoundary` and `SqlClient` of a SQLite storage Layer |
+| Layer                                     | Over                                                           |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `@streamsy/projection/memory` `layer`     | The store of `Memory.layer`. Not persistent                    |
+| `@streamsy/projection/sql` `layerStorage` | The `CommitBoundary` and `SqlClient` of a SQLite storage Layer |
 
 ```ts
 import { Effect, Layer } from "effect";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import { program } from "./run.ts";
 import { shop } from "./streams.ts";
 
-const host = ProjectionSqlite.layer.pipe(
+const host = ProjectionSql.layerStorage.pipe(
   Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop)),
 );
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
+
+| Layer                            | Provides                            | Requires                              |
+| -------------------------------- | ----------------------------------- | ------------------------------------- |
+| `ProjectionSql.layerStorage`     | `CheckpointStore`, `Transaction`    | `SqlClient`, storage `CommitBoundary` |
+| `ProjectionSql.layer`            | `CheckpointStore`, `Transaction`    | A plain `SqlClient`                   |
+| `ProjectionMemory.layer`         | `CheckpointStore`                   | The memory storage boundary           |
+| `ProjectionMemory.layerMemory()` | `CheckpointStore`, protocol streams | Nothing                               |
+| `CheckpointStore.layerMemory`    | `CheckpointStore`                   | Nothing                               |
+
+Memory Layers provide no `Transaction`. `CheckpointStore.layerMemory` is an independent store for rebuilt values and tests. `ProjectionMemory.layer` joins the stream host, so producer outputs on that owner can be created automatically.
+
+SQL stores state and offsets in `streamsy_projection_v2_records`. There is no separate state table or State service. Old v1 projection tables are not read or migrated; projections rebuild from zero.
 
 Build the Layer once for each host lifetime.
 
@@ -155,7 +169,7 @@ A record key is `id`, `version`, `generation`, and the canonical `params`. The r
 
 There is no reset. Declare a new `generation`. It starts from zero offsets and, for an output projection, a new producer epoch. An older generation then fails with `stale-epoch`.
 
-The record is compare-and-set. An overlapping runner with old progress stops with `token-conflict` and writes nothing.
+The record is compare-and-set. An overlapping runner with old progress stops with `token-conflict`. External effects may already have run.
 
 ## Faults
 
@@ -176,7 +190,7 @@ A failure is a `ProjectionFault` with a `phase` and a `reason`. The underlying f
 | `identity-mismatch`       | An input changed. Use a new generation                                            |
 | `token-conflict`          | Another runner committed first                                                    |
 | `stale-epoch`             | A newer generation has appended                                                   |
-| `unsupported-composition` | A write or output is on other storage                                             |
+| `unsupported-composition` | A Commit cannot perform the requested composition                                 |
 | `invalid-output`          | An output stream is gone or closed                                                |
 | `invalid-options`         | A bad `limit` or `repairIntervalMs`                                               |
 | `invalid-record`          | The stored record does not decode, or an output producer sequence does not follow |
@@ -187,4 +201,111 @@ Handler errors are not wrapped. `run` does not retry. `follow` retries only `sto
 
 ## Several backends
 
-A projection can read inputs from any backend, including a fetch Layer. `Checkpoints`, atomic stream writes, and declared outputs must share one storage owner. Provide `Checkpoints` from the storage Layer that holds the output streams.
+A projection can read inputs from any backend, including a fetch Layer. `Commit.transaction` requires declared outputs on its SQL owner. `Commit.producer` accepts outputs on other owners when those streams already exist. Use separate projections for sinks with different commit guarantees.
+
+## Custom Commits
+
+`Commit.make` defines `load`, `apply`, and optional `remove`. A custom Commit extends the input range on retry; pinning is reserved for built-in Commits.
+
+| Result              | Constructor                 |
+| ------------------- | --------------------------- |
+| `Folded<S>`         | `fold`                      |
+| `void`              | `process`                   |
+| `Emitted<O>`        | `emit`                      |
+| `Accumulated<S, O>` | `mapAccum`, `mapAccumBatch` |
+
+`apply` receives `key`, `unit`, `loaded`, `next`, and `run`. `run` returns the result or `HandlerFailed`; the runner restores the original handler error. Output results contain resolved addresses and encoded items. A custom Commit must append those outputs itself.
+
+Author rules:
+
+1. Never store `next` when `run` fails.
+2. Condition the write on `loaded.token`. A moved token must fail with `checkpoint / token-conflict`.
+3. Declare the guarantee the Commit delivers. Effects outside the atomic write are at least once.
+4. Return token `"0"` when no record exists.
+5. Return stored `state` from `load`, so `Projection.read` and `.state.resolve` can read it.
+
+This bucket Commit stores a pure fold's value and offsets in one conditional object write. The bucket adapter must make `put` atomic, treat token `"0"` as create-if-absent, and map a failed precondition to `checkpoint / token-conflict`.
+
+```ts
+import { Context, Effect, Option, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import {
+  CheckpointRecord,
+  Commit,
+  Projection,
+  ProjectionFault,
+  type Folded,
+} from "@streamsy/projection";
+import { recordKey } from "@streamsy/projection/checkpoint";
+
+class Input extends Streamsy.json<Input>()("bucket/Input", "bucket/input", {
+  params: {},
+  schema: Schema.Number,
+}) {}
+class Bucket extends Context.Service<
+  Bucket,
+  {
+    readonly get: (
+      key: string,
+    ) => Effect.Effect<{ readonly body: string; readonly etag: string } | undefined>;
+    readonly put: (
+      key: string,
+      body: string,
+      ifMatch: string,
+    ) => Effect.Effect<void, ProjectionFault>;
+  }
+>()("test/Bucket") {}
+const json = Schema.fromJsonString(CheckpointRecord);
+const bucket = Commit.make({
+  name: "bucketSnapshot",
+  guarantee: "exactly-once",
+  load: (key) =>
+    Effect.gen(function* () {
+      const found = yield* (yield* Bucket).get(recordKey(key));
+      if (found === undefined) return { record: Option.none<CheckpointRecord>(), token: "0" };
+      const record = yield* Schema.decodeEffect(json)(found.body).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "load",
+              reason: "invalid-record",
+              message: "Bad bucket snapshot",
+              cause,
+            }),
+        ),
+      );
+      return { record: Option.some(record), token: found.etag };
+    }),
+  apply: (pending: Commit.Pending<Folded<unknown>>) =>
+    Effect.gen(function* () {
+      const result = yield* pending.run;
+      const body = yield* Schema.encodeEffect(json)({
+        ...pending.next,
+        state: result.encoded,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "checkpoint",
+              reason: "invalid-record",
+              message: "Bad snapshot encoding",
+              cause,
+            }),
+        ),
+      );
+      yield* (yield* Bucket).put(recordKey(pending.key), body, pending.loaded.token);
+    }),
+});
+const declaration = Projection.fold({
+  id: "bucket",
+  commit: bucket,
+  params: {},
+  inputs: { input: Input },
+  state: { schema: Schema.Number, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+});
+```
+
+`Commit.make` infers the result and required services from `apply` and `load`. If it provides handler services, write the `Result`, `Provides`, and `Requires` type arguments explicitly. The bucket example requires `Bucket`, not `CheckpointStore`.
+
+Layer authors can use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`. Custom Commits can use `recordKey` from that subpath.
