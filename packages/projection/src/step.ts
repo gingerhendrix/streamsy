@@ -1,10 +1,9 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- The public constructor overloads retain exact E, R and prepared types; this adapter is their internal erased implementation. */
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The constructor signatures check each adapter before this internal runtime boundary erases its mapped types. */
 import { Folded } from "./commit.ts";
-import { Effect, Predicate } from "effect";
+import { Effect } from "effect";
 import type { InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint-store.ts";
-import { ProjectionFault } from "./fault.ts";
 import { items } from "./read.ts";
 import { encodeState, currentState, type BoundState } from "./state.ts";
 import type { Unit } from "./unit.ts";
@@ -12,69 +11,19 @@ import type { Unit } from "./unit.ts";
 export type Step<X, E = never, R = never> = X | Effect.Effect<X, E, R>;
 
 /** Each output keeps its item type here; missing keys emit nothing. */
-export type Emits<O extends import("./output-internal.ts").RoutedMap> = Partial<
-  import("./output.ts").Items<O>
->;
-
-import { StreamAddress, type Streamsy } from "@streamsy/core";
-import type * as Output from "./output.ts";
-import { rowsAddress } from "./output-source.ts";
-import { Emitted, Accumulated } from "./commit.ts";
-
-export const outputAddresses = (outputs: Output.Map, inputs: InputMap) => {
-  const streams: Record<string, Streamsy.Address<unknown, any>> = {};
-  for (const [name, output] of Object.entries(outputs)) {
-    streams[name] = Predicate.isTagged(output, "Stream")
-      ? Object.assign(StreamAddress.json(output.stream.id, { schema: output.schema }), {
-          stream: output.stream.stream,
-        })
-      : rowsAddress(name, output);
-  }
-  const ids = Object.values(streams).map((address) => address.id);
-  if (new Set(ids).size !== ids.length)
-    throw new RangeError("Two outputs may not name the same stream");
-  const inputIds = new Set(Object.values(inputs).map((address) => address.id));
-  if (ids.some((id) => inputIds.has(id)))
-    throw new RangeError("An output may not name an input stream");
-  return streams;
+export type Emits<O extends import("./outputs.ts").RoutedMap> = {
+  readonly [K in keyof O]?: ReadonlyArray<import("./outputs.ts").Item<O[K]>>;
 };
 
-const collect = (
-  outputs: Output.Map,
-  buffers: Record<string, unknown[]>,
-  emitted: Readonly<Record<string, ReadonlyArray<any>>>,
-) =>
-  Effect.gen(function* () {
-    for (const [name, entries] of Object.entries(emitted)) {
-      const output = outputs[name];
-      if (!Object.hasOwn(outputs, name) || output === undefined || !Array.isArray(entries))
-        return yield* new ProjectionFault({
-          phase: "process",
-          reason: "invalid-output",
-          message: `Invalid output array ${name}`,
-        });
-      const values = Predicate.isTagged(output, "Stream")
-        ? entries
-        : entries.map((change: Output.Change<any>) =>
-            Predicate.isTagged(change, "Upsert")
-              ? {
-                  type: name,
-                  key: String(change.row[output.key]),
-                  value: change.row,
-                  headers: { operation: "upsert" },
-                }
-              : { type: name, key: String(change.key), headers: { operation: "delete" } },
-          );
-      (buffers[name] ??= []).push(...values);
-    }
-  });
+import type { Streamsy } from "@streamsy/core";
+import { collect } from "./outputs.ts";
+import { Emitted, Accumulated } from "./commit.ts";
 
 /** One adapter invocation is one unit. Per-entry variants thread state and preserve order. */
 export const adapt = (
   kind: "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch",
   key: ProjectionKey,
   state: BoundState<any> | undefined,
-  outputs: Output.Map,
   streams: Record<string, Streamsy.Address<unknown, any>>,
   handler: (...args: any[]) => any,
   batch: Slices<InputMap>,
@@ -86,7 +35,7 @@ export const adapt = (
     if (kind === "process") return yield* Effect.asVoid(handler(batch, unit, prepared));
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
     const buffers: Record<string, unknown[]> = Object.fromEntries(
-      Object.keys(outputs).map((name) => [name, []]),
+      Object.keys(streams).map((name) => [name, []]),
     );
     const steps = kind === "mapAccumBatch" ? [batch] : items(batch);
     for (const entry of steps) {
@@ -96,7 +45,7 @@ export const adapt = (
       else {
         const emitted = kind === "emit" ? result : result[1];
         if (kind !== "emit") value = result[0];
-        yield* collect(outputs, buffers, emitted);
+        yield* collect(streams, buffers, emitted);
       }
     }
     const batchOutputs = Object.fromEntries(

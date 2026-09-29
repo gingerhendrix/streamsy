@@ -9,7 +9,6 @@ import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
-  Output,
   Projection,
   ProjectionFault,
   type Transaction,
@@ -288,7 +287,7 @@ for (const point of ["read", "append"] as const) {
           id: `retry-${point}`,
           params: {},
           inputs: { input },
-          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+          outputs: { output: output },
           emit: (entry) => Effect.succeed({ output: [entry.item] }),
         }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
@@ -434,7 +433,7 @@ test("follow resets a finite retry budget after a successful cycle between outag
         id: "separate-outages",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+        outputs: { output: output },
         emit: (entry) => Effect.succeed({ output: [entry.item] }),
       }).at({});
       const fiber = yield* withReader(

@@ -4,7 +4,7 @@ import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
-import { tracker } from "../server/outputs.ts";
+import { tracker, Board, LabelCounts } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels, Projects, Users } from "../server/streams.ts";
 
 // Pre-index full-scan builders are an oracle for wire payloads and ordering.
@@ -159,8 +159,8 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             ]);
           }),
         ];
-        const boardRef = tracker.outputs.board.address({ workspaceId: "live" });
-        const countsRef = tracker.outputs.labelCounts.address({ workspaceId: "live" });
+        const boardRef = Board.address({ workspaceId: "live" });
+        const countsRef = LabelCounts.address({ workspaceId: "live" });
         const expectedBoard: Array<string | Uint8Array> = [];
         const expectedCounts: Array<string | Uint8Array> = [];
         let previous = initialWorkspace("live");
@@ -204,12 +204,12 @@ test("indexed touched-key output matches full scans byte for byte across catalog
           }
           // Before the first issue, board is correctly absent; label counts already exist.
           if (expectedBoard.length > 0) {
-            const actual = yield* Addresses.readOutput(tracker.outputs.board, "live");
+            const actual = yield* Addresses.readOutput(Board, "live");
             expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
               expectedBoard,
             );
           }
-          const actual = yield* Addresses.readOutput(tracker.outputs.labelCounts, "live");
+          const actual = yield* Addresses.readOutput(LabelCounts, "live");
           expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
             expectedCounts,
           );

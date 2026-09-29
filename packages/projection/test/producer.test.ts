@@ -16,7 +16,6 @@ import {
 } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
-  Output,
   Projection,
   ProjectionFault,
   type Identity,
@@ -148,7 +147,7 @@ const scenario = (name: string) => {
     id: `doubled-${name}`,
     params: {},
     inputs: { input },
-    outputs: { output: Output.stream(Schema.String, { stream: output }) },
+    outputs: { output: output },
   };
   const doubled = Projection.mapAccumBatch({
     commit: Commit.producer,
@@ -311,7 +310,7 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
         id: "evens",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.String, { stream: output }) },
+        outputs: { output: output },
         emit: (entry) =>
           Effect.succeed({ output: entry.item % 2 === 0 ? [String(entry.item)] : [] }),
       }).at({});
@@ -572,7 +571,7 @@ test("a two-input pending unit reproduces both ranges", () =>
         id: "pair",
         params: {},
         inputs: { a, b },
-        outputs: { output: Output.stream(Schema.String, { stream: output }) },
+        outputs: { output: output },
         state: { schema: Schema.Null, initial: null },
         mapAccumBatch: (_state, batch, unit) =>
           Effect.sync(() => {

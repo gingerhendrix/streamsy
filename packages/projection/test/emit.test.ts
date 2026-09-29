@@ -1,3 +1,4 @@
+import { Rows } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -5,13 +6,7 @@ import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import {
-  CheckpointStore,
-  Output,
-  Projection,
-  ProjectionFault,
-  Transaction,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -41,8 +36,8 @@ const input = FamilyFixture.json("named-input", { schema: Schema.Finite });
 const a = FamilyFixture.json("named-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("named-b", { schema: Schema.Finite });
 const declarations = {
-  a: Output.stream(Schema.Finite, { stream: a }),
-  b: Output.stream(Schema.Finite, { stream: b }),
+  a: a,
+  b: b,
 };
 const seed = Streams.create(input).pipe(Effect.andThen(Streams.append(input, [1])));
 
@@ -54,8 +49,10 @@ const tracker = Projection.mapAccumBatch({
   params: {},
   inputs: { numbers },
   outputs: {
-    board: Output.rows(Card, { key: "issueId", stream: FamilyFixture.bytes("board") }),
-    transitions: Output.stream(Schema.Finite, { stream: FamilyFixture.bytes("transitions") }),
+    board: FamilyFixture.state("board", {
+      collections: { board: { schema: Card, key: "issueId" } },
+    }),
+    transitions: FamilyFixture.json("transitions", { schema: Schema.Finite }),
   },
   state: { schema: Schema.Finite, initial: 0 },
   mapAccumBatch: (state, batch) =>
@@ -64,7 +61,7 @@ const tracker = Projection.mapAccumBatch({
       return [
         next,
         {
-          board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
+          board: [Rows.upsert({ issueId: "total", total: next }), Rows.remove("old")],
           transitions: [next],
         },
       ] as const;
@@ -347,9 +344,8 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         yield* seed;
         const RowCard = Schema.Struct({ issueId: Schema.String, title: Schema.String });
-        const board = Output.rows(RowCard, {
-          key: "issueId",
-          stream: FamilyFixture.bytes("board"),
+        const board = FamilyFixture.state("board", {
+          collections: { board: { schema: RowCard, key: "issueId" } },
         });
         const projection = Projection.emit({
           commit: Commit.producer,
@@ -359,7 +355,7 @@ for (const [name, host] of hosts) {
           outputs: { board },
           emit: () =>
             Effect.succeed({
-              board: [Output.upsert({ issueId: "one", title: "First" }), Output.remove("old")],
+              board: [Rows.upsert({ issueId: "one", title: "First" }), Rows.remove("old")],
             }),
         }).at({});
         yield* Projection.run(projection);
@@ -470,8 +466,8 @@ void checkTypes;
 
 test("named outputs reject an output that names one of their inputs", () => {
   for (const declaration of [
-    Output.stream(Schema.Finite, { stream: input }),
-    Output.rows(Card, { key: "issueId", stream: input }),
+    input,
+    FamilyFixture.state(input.id, { collections: { board: { schema: Card, key: "issueId" } } }),
   ]) {
     expect(() =>
       Projection.emit({
@@ -486,9 +482,9 @@ test("named outputs reject an output that names one of their inputs", () => {
   }
 });
 
-test("Output.stream retains an address and uses its declared schema", () => {
-  const target = FamilyFixture.bytes("id-only");
-  const declaration = Output.stream(Schema.Finite, { stream: target });
+test("outputs retain fixed addresses and their route codecs", () => {
+  const target = FamilyFixture.json("id-only", { schema: Schema.Finite });
+  const declaration = target;
   const declared = Projection.emit({
     commit: Commit.producer,
     id: "codec-test",
@@ -498,7 +494,7 @@ test("Output.stream retains an address and uses its declared schema", () => {
     emit: () => Effect.succeed({ out: [42] }),
   });
   const projection = declared.at({});
-  expect(Schema.encodeSync(declared.outputs.out.address({}).codec)(42)).toBe("42");
+  expect(Schema.encodeSync(declared.at({}).streams.out!.codec)(42)).toBe("42");
   expect(projection.streams.out?.stream).toBe(target.stream);
   expect(projection.streams.out?.id).toBe(target.id);
   expect(Schema.encodeSync(projection.streams.out!.codec)(42)).toBe("42");

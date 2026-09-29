@@ -5,7 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
-import { CheckpointStore, Output, Projection, ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { layerMemory } from "@streamsy/projection/memory";
 import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
@@ -465,7 +465,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
         params: {},
         version: 7,
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+        outputs: { output: output },
         emit: (entry, unit) =>
           Effect.sync(() => {
             versions.push(unit.version);

@@ -3,7 +3,7 @@ import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Output, Projection, type Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, type Transaction } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
@@ -71,7 +71,7 @@ test("different keys can run together", () =>
           id: "serialized-two",
           params: { name: Schema.String },
           inputs: { input },
-          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+          outputs: { output: output },
           emit: () =>
             Effect.acquireUseRelease(
               Effect.gen(function* () {

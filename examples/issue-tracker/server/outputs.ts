@@ -1,6 +1,7 @@
+import { Rows } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
-import { Output, Projection } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import { Effect } from "effect";
 import { Identifier, foldIssue, type IssueEvent } from "../domain/issue.ts";
 import {
@@ -16,22 +17,26 @@ import {
 import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
-export class Board extends Streamsy.bytes<Board>()(
+export class Board extends Streamsy.state<Board>()(
   "IssueTracker/Board",
   "issue-tracker/:workspaceId/outputs/board",
   {
     params: { workspaceId: Identifier },
+    collections: { board: { schema: ProjectBoardCard, key: "issueId" } },
   },
 ) {}
-export class LabelCounts extends Streamsy.bytes<LabelCounts>()(
+export class LabelCounts extends Streamsy.state<LabelCounts>()(
   "IssueTracker/LabelCounts",
   "issue-tracker/:workspaceId/outputs/label-counts",
-  { params: { workspaceId: Identifier } },
+  {
+    params: { workspaceId: Identifier },
+    collections: { labelCounts: { schema: LabelCountRow, key: "labelId" } },
+  },
 ) {}
-export class Transitions extends Streamsy.bytes<Transitions>()(
+export class Transitions extends Streamsy.json<Transitions>()(
   "IssueTracker/Transitions",
   "issue-tracker/:workspaceId/outputs/transitions",
-  { params: { workspaceId: Identifier } },
+  { params: { workspaceId: Identifier }, schema: IssueTransition },
 ) {}
 export const outputStreams = [Board, LabelCounts, Transitions] as const;
 
@@ -42,9 +47,9 @@ export const tracker = Projection.mapAccumBatch({
   params: { workspaceId: Identifier },
   inputs: routes,
   outputs: {
-    board: Output.rows(ProjectBoardCard, { key: "issueId", stream: Board }),
-    labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: LabelCounts }),
-    transitions: Output.stream(IssueTransition, { stream: Transitions }),
+    board: Board,
+    labelCounts: LabelCounts,
+    transitions: Transitions,
   },
   state: {
     schema: WorkspaceState,
@@ -144,24 +149,24 @@ export const tracker = Projection.mapAccumBatch({
           touchedLabels.add(row.labelId);
       }
       // Preserve insertion order and builder field order, including for JSON comparisons.
-      const board: Output.Change<ProjectBoardCard>[] = [];
+      const board: Rows.Change<typeof Board.collections>[] = [];
       for (const issue of state.issues) {
         if (!touchedIssues.has(issue.issueId)) continue;
         const row = boardCard(afterIndex, issue);
         const oldIssue = beforeIndex.issues.get(issue.issueId);
         const oldRow = oldIssue === undefined ? undefined : boardCard(beforeIndex, oldIssue);
-        if (JSON.stringify(row) !== JSON.stringify(oldRow)) board.push(Output.upsert(row));
+        if (JSON.stringify(row) !== JSON.stringify(oldRow)) board.push(Rows.upsert(row));
       }
-      const labelCounts: Output.Change<LabelCountRow>[] = [];
+      const labelCounts: Rows.Change<typeof LabelCounts.collections>[] = [];
       for (const label of state.labels) {
         if (!touchedLabels.has(label.labelId)) continue;
         const row = labelCount(afterIndex, label);
         const oldLabel = beforeIndex.labels.get(label.labelId);
         const oldRow = oldLabel === undefined ? undefined : labelCount(beforeIndex, oldLabel);
-        if (JSON.stringify(row) !== JSON.stringify(oldRow)) labelCounts.push(Output.upsert(row));
+        if (JSON.stringify(row) !== JSON.stringify(oldRow)) labelCounts.push(Rows.upsert(row));
       }
       for (const label of previous.labels) {
-        if (!labels.has(label.labelId)) labelCounts.push(Output.remove(label.labelId));
+        if (!labels.has(label.labelId)) labelCounts.push(Rows.remove(label.labelId));
       }
       return [state, { board, labelCounts, transitions }] as const;
     }),

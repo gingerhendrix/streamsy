@@ -1,10 +1,9 @@
 import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, Rows } from "@streamsy/core";
 import {
   CheckpointStore,
   Commit,
-  Output,
   Projection,
   ProjectionFault,
   Transaction,
@@ -65,7 +64,10 @@ const issueRows = Projection.process({
     }),
   ),
 });
-class Board extends Streamsy.bytes<Board>()("demos/Board", "board/:workspaceId", { params }) {}
+class Board extends Streamsy.state<Board>()("demos/Board", "board/:workspaceId", {
+  params,
+  collections: { board: { schema: Schema.Struct({ issueId: Schema.String }), key: "issueId" } },
+}) {}
 class Transitions extends Streamsy.json<Transitions>()(
   "demos/Transitions",
   "transitions/:workspaceId",
@@ -76,11 +78,8 @@ const tracker = Projection.mapAccumBatch({
   params,
   inputs: { events: Events },
   outputs: {
-    board: Output.rows(Schema.Struct({ issueId: Schema.String }), {
-      key: "issueId",
-      stream: Board,
-    }),
-    transitions: Output.stream(Schema.String, { stream: Transitions }),
+    board: Board,
+    transitions: Transitions,
   },
   state: {
     schema: Schema.Struct({ workspaceId: Schema.String, count: Schema.Int }),
@@ -93,7 +92,7 @@ const tracker = Projection.mapAccumBatch({
       return [
         { ...previous, count: previous.count + batch.events.items.length },
         {
-          board: batch.events.items.map(Output.upsert),
+          board: batch.events.items.map((row) => Rows.upsert(row)),
           transitions: batch.events.items.map((e) => e.issueId),
         },
       ] as const;
@@ -107,7 +106,7 @@ class Doubled extends Streamsy.json<Doubled>()("demos/Doubled", "doubled", {
   params: {},
   schema: Schema.Number,
 }) {}
-const outputs = { output: Output.stream(Schema.Number, { stream: Doubled }) };
+const outputs = { output: Doubled };
 const minimal = Projection.emit({
   id: "doubled",
   params: {},

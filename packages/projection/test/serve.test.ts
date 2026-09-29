@@ -1,3 +1,4 @@
+import { Rows } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
@@ -6,7 +7,7 @@ import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Streams } from "@streamsy/core/protocol";
-import { Output, Projection } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import { Serve } from "@streamsy/serve";
 
@@ -15,22 +16,25 @@ class numbers extends Streamsy.json<numbers>()("serve.test/numbers", "numbers/:s
   params,
   schema: Schema.Finite,
 }) {}
-class board extends Streamsy.bytes<board>()("serve.test/board", "board/:seat", { params }) {}
-// This identity intentionally has a different codec; Output.stream owns encoding.
-class transitions extends Streamsy.bytes<transitions>()(
+const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+class board extends Streamsy.state<board>()("serve.test/board", "board/:seat", {
+  params,
+  collections: { board: { schema: Card, key: "id" } },
+}) {}
+// The route owns the transforming codec used by projection writes and served reads.
+class transitions extends Streamsy.json<transitions>()(
   "serve.test/transitions",
   "transitions/:seat",
-  { params },
+  { params, schema: Schema.FiniteFromString },
 ) {}
-const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
 const tracker = Projection.mapAccumBatch({
   commit: Commit.producer,
   id: "tracker",
   params,
   inputs: { numbers },
   outputs: {
-    board: Output.rows(Card, { key: "id", stream: board }),
-    transitions: Output.stream(Schema.FiniteFromString, { stream: transitions }),
+    board: board,
+    transitions: transitions,
   },
   state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
   mapAccumBatch: (state, batch) =>
@@ -39,7 +43,7 @@ const tracker = Projection.mapAccumBatch({
       return [
         { total },
         {
-          board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+          board: [Rows.upsert({ id: "total", total }), Rows.remove("old")],
           transitions: [total],
         },
       ] as const;
@@ -56,22 +60,18 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
 );
 
 test("declared rows, stream and state share one memory app and their declared codecs", async () => {
-  expect(tracker.outputs.board.stream).toBe(board);
-  expect(tracker.outputs.transitions.stream).toBe(transitions);
+  expect(tracker.at({ seat: 42 }).streams.board?.stream.key).toBe(board.key);
+  expect(tracker.at({ seat: 42 }).streams.transitions?.stream.key).toBe(transitions.key);
   const runtime = ManagedRuntime.make(
     FamilyFixture.withFamilies(Memory.layerMemory(), numbers, board, transitions),
   );
   const services = await runtime.runPromise(Effect.context());
   const App = Layer.mergeAll(
-    Serve.state(tracker.outputs.board, "/board/:seat"),
-    Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
+    Serve.state(board, "/board/:seat"),
+    Serve.stream(transitions, "/transitions/:seat"),
     Serve.value(tracker.state, "/summary/:seat"),
-    Serve.stream(tracker.outputs.transitions, "/me", { params: Seat }).pipe(
-      Layer.provide(auth.layer),
-    ),
-    Serve.state(tracker.outputs.board, "/my-board", { params: Seat }).pipe(
-      Layer.provide(auth.layer),
-    ),
+    Serve.stream(transitions, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
+    Serve.state(board, "/my-board", { params: Seat }).pipe(Layer.provide(auth.layer)),
   );
   const web = HttpRouter.toWebHandler(
     App.pipe(HttpRouter.provideRequest(Layer.succeedContext(services))),
@@ -85,7 +85,7 @@ test("declared rows, stream and state share one memory app and their declared co
         yield* Streams.create(bound.inputs.numbers);
         yield* Streams.append(bound.inputs.numbers, [2, 3]);
         yield* Projection.run(bound);
-        const changes = yield* Streams.read(tracker.outputs.board.address({ seat: 42 })).pipe(
+        const changes = yield* Streams.read(board.at({ seat: 42 })).pipe(
           Streams.items,
           Stream.runCollect,
         );
@@ -98,7 +98,7 @@ test("declared rows, stream and state share one memory app and their declared co
           },
           { type: "board", key: "old", headers: { operation: "delete" } },
         ]);
-        const items = yield* Streams.read(tracker.outputs.transitions.address({ seat: 42 })).pipe(
+        const items = yield* Streams.read(transitions.at({ seat: 42 })).pipe(
           Streams.items,
           Stream.runCollect,
         );
@@ -155,15 +155,15 @@ test("declared rows, stream and state share one memory app and their declared co
 // Compile-only probes: bad routes must never reach registration.
 const typeChecks = () => {
   // @ts-expect-error route params must equal stream params
-  Serve.state(tracker.outputs.board, "/board/:wrong");
+  Serve.state(board, "/board/:wrong");
   // @ts-expect-error missing stream parameter
-  Serve.stream(tracker.outputs.transitions, "/transitions");
+  Serve.stream(transitions, "/transitions");
   // @ts-expect-error extra route parameter
   Serve.value(tracker.state, "/summary/:seat/:extra");
   // @ts-expect-error decoded params retain the number codec
-  Serve.stream(tracker.outputs.transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
+  Serve.stream(transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
   // @ts-expect-error a stream declaration does not supply rows collections
-  Serve.state(tracker.outputs.transitions, "/board/:seat");
+  Serve.state(transitions, "/board/:seat");
   const date = Projection.mapAccumBatch({
     commit: Commit.producer,
     id: "date",
@@ -178,18 +178,17 @@ const typeChecks = () => {
   const missingState = HttpRouter.toWebHandler(Serve.value(tracker.state, "/summary/:seat"));
   // @ts-expect-error value resolution requires CheckpointStore at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
-  class wrongTarget extends Streamsy.bytes<wrongTarget>()(
-    "serve.test/wrongTarget",
-    "wrong/:other",
-    { params: { other: Schema.String } },
-  ) {}
+  class wrongTarget extends Streamsy.json<wrongTarget>()("serve.test/wrongTarget", "wrong/:other", {
+    params: { other: Schema.String },
+    schema: Schema.Finite,
+  }) {}
   Projection.emit({
     commit: Commit.producer,
     id: "wrong",
     params,
     inputs: { numbers },
     // @ts-expect-error an output target cannot require a parameter absent from the projection
-    outputs: { events: Output.stream(Schema.Finite, { stream: wrongTarget }) },
+    outputs: { events: wrongTarget },
     emit: () => Effect.succeed({ events: [1] }),
   });
   Projection.emit({
@@ -197,7 +196,7 @@ const typeChecks = () => {
     id: "wrong-item",
     params,
     inputs: { numbers },
-    outputs: { events: Output.stream(Schema.Finite, { stream: transitions }) },
+    outputs: { events: transitions },
     // @ts-expect-error output item types are retained through a routed identity
     emit: () => Effect.succeed({ events: ["bad"] }),
   });
@@ -207,14 +206,14 @@ const typeChecks = () => {
     params: {},
     inputs: { numbers: numbers.at({ seat: 42 }) },
     outputs: {
-      board: Output.rows(Card, { key: "id", stream: board.at({ seat: 42 }) }),
-      transitions: Output.stream(Schema.FiniteFromString, { stream: transitions.at({ seat: 42 }) }),
+      board: board.at({ seat: 42 }),
+      transitions: transitions.at({ seat: 42 }),
     },
     state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
     mapAccumBatch: (state) => Effect.succeed([state, { board: [], transitions: [] }] as const),
   });
-  Serve.state(fixed.outputs.board, "/board");
-  Serve.stream(fixed.outputs.transitions, "/transitions");
+  Serve.state(board, "/board", { params: Effect.succeed({ seat: 42 }) });
+  Serve.stream(transitions, "/transitions", { params: Effect.succeed({ seat: 42 }) });
   Serve.value(fixed.state, "/summary");
 };
 void typeChecks;

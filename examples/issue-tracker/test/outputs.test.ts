@@ -8,7 +8,7 @@ import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { outputRoutes } from "../server/app.ts";
-import { tracker } from "../server/outputs.ts";
+import { tracker, Board, Transitions } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
 
@@ -156,9 +156,9 @@ test("named output replay survives a lost append reply beside the SQL projection
         ]);
         yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         yield* Projection.run(bound);
-        const transitions = yield* Addresses.readOutput(tracker.outputs.transitions, "live");
+        const transitions = yield* Addresses.readOutput(Transitions, "live");
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Addresses.readOutput(tracker.outputs.board, "live");
+        const board = yield* Addresses.readOutput(Board, "live");
         expect(board).toHaveLength(2);
         expect(yield* tracker.state.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
@@ -196,7 +196,7 @@ test("served route fingerprints pin address identity and reject incompatible con
         contractFingerprint({
           kind,
           route,
-          source: `issue-tracker/${name}`,
+          source: `issue-tracker/:workspaceId/outputs/${name === "labelCounts" ? "label-counts" : name}`,
           id: `issue-tracker/live/outputs/${name === "labelCounts" ? "label-counts" : name}`,
           collections: kind === "state" ? { [collection]: key } : null,
           params: ["workspaceId"],

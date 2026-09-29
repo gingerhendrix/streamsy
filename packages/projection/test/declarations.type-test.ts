@@ -6,7 +6,6 @@ import { Streamsy, StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
-  Output,
   Projection,
   Transaction,
   type ProjectionFault,
@@ -19,7 +18,8 @@ class Other extends Streamsy.json<Other>()("ProjectionTypes/Other", "types/other
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
-class Result extends Streamsy.bytes<Result>()("ProjectionTypes/Result", "types/result/:id", {
+class Result extends Streamsy.json<Result>()("ProjectionTypes/Result", "types/result/:id", {
+  schema: Schema.Finite,
   params: { id: Schema.String },
 }) {}
 const atomic = Projection.process({
@@ -34,7 +34,7 @@ const declared = Projection.emit({
   id: "types/named",
   params: { id: Schema.String },
   inputs: { input: Input, other: Other },
-  outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
+  outputs: { result: Result },
   emit: (entry) => Effect.succeed({ result: entry.input === "input" ? [entry.item] : [] }),
 });
 const named = declared.at({ id: "a" });
@@ -59,7 +59,7 @@ const statefulOutputs = Projection.mapAccumBatch({
   id: "types/stateful-outputs",
   params: { id: Schema.String },
   inputs: { input: Input },
-  outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
+  outputs: { result: Result },
   state: { schema: Schema.Finite, initial: ({ id }) => id.length },
   mapAccumBatch: (count, batch) =>
     Effect.succeed([count + batch.input.items.length, { result: batch.input.items }] as const),
@@ -125,9 +125,7 @@ const widened = Projection.run(
     process: () => Effect.void,
   }).at({}),
 );
-const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
-  stream: Result.at({ id: "a" }),
-});
+const widenedOutput: Streamsy.Address<number, unknown> = Result.at({ id: "a" });
 const widenedNamed = Projection.run(
   Projection.emit({
     commit: Commit.producer,
@@ -208,7 +206,7 @@ Projection.emit({
   params: {},
   // @ts-expect-error An outputs projection also requires an inputs map.
   input: Input.at({ id: "a" }),
-  outputs: { output: Output.stream(Schema.String, { stream: Other.at({ id: "a" }) }) },
+  outputs: { output: Other.at({ id: "a" }) },
   emit: () => Effect.succeed({ output: [] }),
 }).at({});
 

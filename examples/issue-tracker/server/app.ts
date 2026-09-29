@@ -8,7 +8,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
 import { issueRows } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
-import { tracker, outputStreams } from "./outputs.ts";
+import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { routes } from "./streams.ts";
 import { transact } from "./state.ts";
 
@@ -33,9 +33,9 @@ export const workspaceSummary: Serve.ValueSource<
 };
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.state(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.state(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.stream(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
   Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),

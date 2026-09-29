@@ -2,7 +2,7 @@ import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { Output, Projection } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { emptySlice } from "../src/batch.ts";
 import { producerId } from "../src/commit/producer.ts";
@@ -27,7 +27,7 @@ test("a declaration binds declared inputs and keeps fixed addresses", () => {
     id: "board",
     params: { workspaceId: Schema.String },
     inputs: { facts, config: config.at({}) },
-    outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+    outputs: { output: output },
     emit: (entry) => Effect.succeed({ output: entry.input === "facts" ? [entry.item] : [] }),
   });
   const bound = board.at({ workspaceId: "ws-42" });

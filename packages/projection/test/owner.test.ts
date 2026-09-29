@@ -3,13 +3,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
-import {
-  CheckpointStore,
-  Output,
-  Projection,
-  ProjectionFault,
-  Transaction,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
@@ -51,10 +45,8 @@ for (const sameOwner of [true, false]) {
           params: {},
           inputs: { input: Input.at({}) },
           outputs: {
-            local: Output.stream(Schema.Finite, { stream: Local.at(params) }),
-            foreign: sameOwner
-              ? Output.stream(Schema.Finite, { stream: Local.at({ id: "b" }) })
-              : Output.stream(Schema.Finite, { stream: Foreign.at(params) }),
+            local: Local.at(params),
+            foreign: sameOwner ? Local.at({ id: "b" }) : Foreign.at(params),
           },
           emit: () =>
             Effect.sync(() => {
@@ -150,7 +142,7 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
         id: "foreign-pinned",
         params: {},
         inputs: { input: Input.at({}) },
-        outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
+        outputs: { output: Foreign.at(params) },
         emit: () => Effect.succeed({ output: [1] }),
       }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
@@ -173,7 +165,7 @@ test("producer settles a foreign append once after a failed checkpoint without T
         id: "foreign-retry",
         params: {},
         inputs: { input: Input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
+        outputs: { output: Foreign.at(params) },
         emit: () => Effect.succeed({ output: [9] }),
       }).at({});
       const store = yield* CheckpointStore;

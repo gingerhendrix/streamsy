@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Commit, Output, Projection } from "../index.ts";
+import { Commit, Projection } from "../index.ts";
 
 export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
   params: {},
@@ -23,7 +23,7 @@ export const minimal = Effect.gen(function* () {
       id: "doubled",
       params: {},
       inputs: { input: Numbers },
-      outputs: { output: Output.stream(Schema.Finite, { stream: Doubled }) },
+      outputs: { output: Doubled },
       commit: Commit.transaction,
       emit: ({ item }) => ({ output: [item * 2] }),
     }).at({}),

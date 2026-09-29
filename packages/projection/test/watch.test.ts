@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Output, Projection, type Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, type Transaction } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
@@ -104,7 +104,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
         id: "change-coalesce",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+        outputs: { output: output },
         state: { schema: Schema.Null, initial: null },
         mapAccumBatch: (_state, batch) =>
           Effect.gen(function* () {
@@ -237,7 +237,7 @@ test("watch and a serialized request share the same key lock", () =>
         id: "change-request",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+        outputs: { output: output },
         emit: (entry) =>
           Effect.sync(() => (calls += 1)).pipe(
             Effect.andThen(Deferred.succeed(entered, undefined)),

@@ -7,7 +7,6 @@ import { Protocol, Streams } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
-  Output,
   Projection,
   ProjectionFault,
   Transaction,
@@ -134,7 +133,7 @@ test("transaction checks all declared outputs before running the handler", () =>
         id: "owner",
         params: {},
         inputs: { input: Input },
-        outputs: { output: Output.stream(Schema.Number, { stream: Sink }) },
+        outputs: { output: Sink },
         emit: () =>
           Effect.sync(() => {
             calls += 1;
@@ -166,7 +165,7 @@ test("transaction commits declared outputs and state together and rolls both bac
         id: "transaction-outputs",
         params: {},
         inputs: { input: Input },
-        outputs: { output: Output.stream(Schema.Number, { stream: Sink }) },
+        outputs: { output: Sink },
         state: { schema: Schema.Number, initial: 0 },
         mapAccumBatch: (state, batch) =>
           Effect.succeed([

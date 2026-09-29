@@ -11,7 +11,7 @@ import {
   type Committing,
   type OutputsWithin,
 } from "./declaration.ts";
-import type { RoutedMap } from "./output-internal.ts";
+import type { RoutedMap } from "./outputs.ts";
 import type { Step, Emits } from "./step.ts";
 import type { Unit } from "./unit.ts";
 

@@ -1,64 +1,16 @@
+import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
 import { Effect, Predicate, Option } from "effect";
-import { Producer, type StreamAddress } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal/memory";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
 import { ProjectionFault } from "../fault.ts";
 import { make, type Emitted, type Accumulated, type OutputNames } from "./model.ts";
 import { canonicalParams } from "../unit.ts";
-import { beforeRecord, detailsOf, load, remove, pin, withState, type Output } from "./internal.ts";
+import { beforeRecord, detailsOf, load, remove, pin, withState } from "./internal.ts";
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
 export const producerId = (id: string, version: number, params: Record<string, string>): string =>
   `${id}/v${version}${Object.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
-
-/** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
-const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
-  output: StreamAddress.StreamAddress<O>,
-  wire: Output["service"]["wire"],
-  items: ReadonlyArray<O>,
-  position: Producer.Position,
-) {
-  const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
-    new ProjectionFault({ phase: "pin", reason, message, cause });
-  return yield* Streams.append(output, items, { producer: position }).pipe(
-    Effect.provideService(StreamsWriter, wire),
-    Effect.catchTags({
-      EncodeFault: () =>
-        new ProjectionFault({
-          phase: "process",
-          reason: "invalid-output",
-          message: `Cannot encode output for ${output.id}`,
-        }),
-      StaleEpoch: (error) =>
-        pin(
-          "stale-epoch",
-          `Epoch ${position.producerEpoch} of ${output.id} is behind ${error.currentEpoch}`,
-        ),
-      ProducerGap: (error) =>
-        pin(
-          "invalid-record",
-          `Sequence ${error.receivedSeq} of ${output.id} does not follow ${error.expectedSeq}`,
-        ),
-      InvalidEpochSeq: () =>
-        pin(
-          "invalid-record",
-          `Epoch ${position.producerEpoch} of ${output.id} must start at seq 0`,
-        ),
-      NotSupported: (error) =>
-        pin("unsupported-composition", `${output.id} does not support ${error.feature}`),
-      StorageFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
-      TransportFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
-      StreamNotFound: () => pin("invalid-output", `Output ${output.id} does not exist`),
-      StreamGone: () => pin("invalid-output", `Output ${output.id} is gone`),
-      StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
-      OffsetMismatch: () => pin("invalid-output", `Output ${output.id} refused the append`),
-      AppendConflict: () => pin("invalid-output", `Output ${output.id} refused the append`),
-      StreamBusy: () => pin("invalid-output", `Output ${output.id} is busy`),
-      InvalidAppendRequest: (error) => pin("invalid-output", error.message),
-    }),
-  );
-});
 
 /** The pin write is the last save before the append, so its conflict is a pin failure. */
 const asPin = (fault: ProjectionFault): ProjectionFault =>

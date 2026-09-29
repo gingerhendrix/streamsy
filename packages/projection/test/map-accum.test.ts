@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
-import { Commit, Output, Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Family from "./support/families.ts";
 import { readAll } from "./support/scenarios.ts";
@@ -12,8 +12,8 @@ const output = Family.json("step-output", { schema: Schema.Number });
 const other = Family.json("step-other", { schema: Schema.Number });
 const host = Family.withFamilies(Memory.layerMemory());
 const outputs = {
-  output: Output.stream(Schema.Number, { stream: output }),
-  other: Output.stream(Schema.Number, { stream: other }),
+  output: output,
+  other: other,
 };
 
 test("mapAccum threads the value and preserves entry and output order", () =>

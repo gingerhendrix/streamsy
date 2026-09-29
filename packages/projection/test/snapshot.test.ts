@@ -12,7 +12,6 @@ import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/co
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
-  Output,
   Projection,
   Transaction,
   type ProjectionFault,
@@ -151,7 +150,7 @@ for (const [name, host] of hosts) {
           id: "snapshot-counter",
           params: { start: Schema.FiniteFromString },
           inputs: { input },
-          outputs: { doubled: Output.stream(Schema.Finite, { stream: doubled }) },
+          outputs: { doubled: doubled },
           state: { schema: Schema.Finite, initial: ({ start }) => start },
           mapAccumBatch: (count, batch) =>
             Effect.sync(() => {

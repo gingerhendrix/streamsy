@@ -6,7 +6,7 @@ import type { Streamsy, StreamId } from "@streamsy/core";
 /** Read one output address through its stream wire and decode with the output codec. Fixtures fit one page. */
 export const readOutput = <A, RD, RE, R>(
   output: {
-    readonly stream: Streamsy.Address<unknown, R>["stream"];
+    readonly at: (params: { readonly workspaceId: string }) => Streamsy.Address<A, R>;
     readonly address: (params: { readonly workspaceId: string }) => {
       readonly id: StreamId;
       readonly codec: Schema.Codec<A, string | Uint8Array, RD, RE>;
@@ -16,7 +16,7 @@ export const readOutput = <A, RD, RE, R>(
 ) =>
   Effect.gen(function* () {
     const address = output.address({ workspaceId });
-    const result = yield* (yield* output.stream).wire.read(address.id);
+    const result = yield* (yield* output.at({ workspaceId }).stream).wire.read(address.id);
     expect(result.upToDate).toBe(true);
     return yield* Effect.forEach(result.messages, (message) =>
       Schema.decodeEffect(address.codec)(new TextDecoder().decode(message.data)),
