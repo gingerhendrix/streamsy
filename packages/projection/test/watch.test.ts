@@ -48,13 +48,13 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
-test("an append runs an atomic projection and commits its write with the checkpoint", () =>
+test("an append runs an transactional projection and commits its write with the checkpoint", () =>
   run(
     Effect.gen(function* () {
-      const input = FamilyFixture.json("change-atomic-input", {
+      const input = FamilyFixture.json("change-transactional-input", {
         schema: Schema.Finite,
       });
-      const output = FamilyFixture.json("change-atomic-output", {
+      const output = FamilyFixture.json("change-transactional-output", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
@@ -63,7 +63,7 @@ test("an append runs an atomic projection and commits its write with the checkpo
       let calls = 0;
       const projection = Projection.process({
         commit: Commit.transaction,
-        id: "change-atomic",
+        id: "change-transactional",
         params: {},
         inputs: { input },
         process: (batch) =>

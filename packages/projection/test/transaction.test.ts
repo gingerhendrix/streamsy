@@ -199,3 +199,15 @@ test("transaction commits declared outputs and state together and rolls both bac
       ]);
     }).pipe(Effect.provide(memory)),
   ));
+
+test("Effect missing-service diagnostic still identifies SqlClient on memory hosts", () => {
+  // SAFETY: deliberately omit SQL to inspect the pinned Effect runtime's defect contract.
+  const missing = Effect.asVoid(SqlClient.SqlClient) as Effect.Effect<void>;
+  const exit = Effect.runSyncExit(missing);
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    const defect = Cause.squash(exit.cause);
+    expect(defect).toBeInstanceOf(Error);
+    expect(defect).toMatchObject({ message: `Service not found: ${SqlClient.SqlClient.key}` });
+  }
+});

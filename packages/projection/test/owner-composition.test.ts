@@ -26,7 +26,7 @@ const host = Layer.merge(
   Protocol.bind(sqlite, Streamsy.group(Output)),
 ).pipe(Layer.provideMerge(sqlite));
 
-test("an atomic projection reads remote input and writes on its SQLite checkpoint owner", async () => {
+test("an transactional projection reads remote input and writes on its SQLite checkpoint owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -110,7 +110,7 @@ const unowned = Layer.effectContext(
   }),
 ).pipe(Layer.provide(memoryGraph));
 
-test("a custom stream wire cannot establish the owner of an atomic write", async () => {
+test("a custom stream wire cannot establish the owner of an transactional write", async () => {
   const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
     Layer.provideMerge(memoryGraph),
   );

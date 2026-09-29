@@ -19,9 +19,8 @@ export const CheckpointRecord = Schema.Struct({
 export interface CheckpointRecord extends Schema.Schema.Type<typeof CheckpointRecord> {}
 
 /** Stored value. The version is the compare-and-set token exposed as a string. */
-export const Envelope = Schema.Struct({ version: Counter, record: CheckpointRecord });
-export interface Envelope extends Schema.Schema.Type<typeof Envelope> {}
-export const EnvelopeJson = Schema.fromJsonString(Envelope);
+const Envelope = Schema.Struct({ version: Counter, record: CheckpointRecord });
+const EnvelopeJson = Schema.fromJsonString(Envelope);
 
 export interface ProjectionKey {
   readonly id: string;
@@ -39,7 +38,7 @@ export const recordKey = (key: ProjectionKey): string =>
   ]);
 
 /** Token "0" means no record is stored yet. */
-export const ABSENT_TOKEN = "0";
+const ABSENT_TOKEN = "0";
 export interface Loaded {
   readonly record: Option.Option<CheckpointRecord>;
   readonly token: string;
@@ -219,5 +218,3 @@ export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string,
       .filter(([, slice]) => slice.items.length > 0)
       .map(([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }]),
   );
-
-export { PendingUnit, PinnedRange, encodeKey } from "./unit.ts";

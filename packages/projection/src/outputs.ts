@@ -3,7 +3,7 @@ import { Effect, Predicate, type Schema } from "effect";
 import { Rows, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import type { Output } from "./commit/internal.ts";
+import type { ResolvedOutput } from "./commit/internal.ts";
 import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 
@@ -70,7 +70,7 @@ export const collect = (
 /** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
 export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
   output: StreamAddress.StreamAddress<O>,
-  wire: Output["service"]["wire"],
+  wire: ResolvedOutput["service"]["wire"],
   items: ReadonlyArray<O>,
   position: Producer.Position,
 ) {

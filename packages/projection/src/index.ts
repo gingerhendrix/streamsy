@@ -30,3 +30,4 @@ export {
   type OutputBatch,
 } from "./commit.ts";
 export { CheckpointRecord } from "./checkpoint-store.ts";
+export { ProjectionRetry } from "./retry.ts";

@@ -2,7 +2,7 @@ import { Context, Effect, Option } from "effect";
 import type { SqlClient } from "effect/unstable/sql";
 import type { ProjectionFault } from "./fault.ts";
 
-/** The transaction and stream owner used by atomic projections. */
+/** The transaction and stream owner used by transaction Commits. */
 export class Transaction extends Context.Service<
   Transaction,
   {

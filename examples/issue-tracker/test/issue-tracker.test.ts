@@ -36,7 +36,7 @@ test("the fold keeps the newest sequence when an older fact arrives later", () =
   expect(foldIssue(first, older)).toBe(first);
 });
 
-test("the atomic handler writes application rows through the SQLite host", async () => {
+test("the transactional handler writes application rows through the SQLite host", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   try {
     await runtime.runPromise(

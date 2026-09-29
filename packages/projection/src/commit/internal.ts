@@ -12,7 +12,7 @@ export type Result =
   | Folded<unknown>
   | Emitted<OutputNames>
   | Accumulated<unknown, OutputNames>;
-export interface Output {
+export interface ResolvedOutput {
   readonly address: StreamAddress.StreamAddress<unknown>;
   readonly service: {
     readonly owner: object;
@@ -22,7 +22,7 @@ export interface Output {
 export interface Details {
   readonly prepare?: Effect.Effect<void, import("./model.ts").HandlerFailed>;
   readonly ranges: Record<string, PinnedRange>;
-  readonly outputs: Readonly<Record<string, Output>>;
+  readonly outputs: Readonly<Record<string, ResolvedOutput>>;
 }
 const DetailsKey = Symbol.for("@streamsy/projection/internal/Pending");
 export const setDetails = <A extends object>(pending: A, value: Details): A =>

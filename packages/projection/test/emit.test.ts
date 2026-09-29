@@ -302,7 +302,7 @@ for (const [name, host] of hosts) {
         yield* seed;
         const projection = Projection.mapAccumBatch({
           commit: Commit.producer,
-          id: "atomic-state",
+          id: "transactional-state",
           params: {},
           inputs: { input },
           outputs: {},

@@ -1,5 +1,6 @@
+import { ProjectionRetry } from "./retry.ts";
 import type { Executable } from "./executable.ts";
-import { Duration, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
+import { Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -12,18 +13,6 @@ export interface FollowOptions extends RunOptions {
   /** Override the forever, capped exponential storage-failure retry. */
   readonly retry?: Schedule.Schedule<unknown, unknown>;
 }
-
-/** Internal default; the package root exports only follow and its options. */
-export const defaultRetry = Schedule.exponential("200 millis").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
-  ),
-  Schedule.jittered,
-  // Jitter ranges up to 1.2; clamp again so actual waits never exceed 30 s.
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
-  ),
-);
 
 /**
  * One wake hint per input; the messages are discarded because the next run is
@@ -132,7 +121,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
   return yield* cycle.pipe(
     Effect.retry({
       while: (fault) => fault instanceof ProjectionFault && fault.reason === "storage-failure",
-      schedule: (options.retry ?? defaultRetry).pipe(
+      schedule: (options.retry ?? (yield* ProjectionRetry)).pipe(
         Schedule.tap(({ input }) =>
           input instanceof ProjectionFault && input.reason === "storage-failure"
             ? Effect.logWarning("Projection.follow retry", input)

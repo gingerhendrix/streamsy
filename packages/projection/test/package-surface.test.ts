@@ -100,6 +100,7 @@ test("root exports stay explicit", () => {
     "HandlerFailed",
     "Projection",
     "ProjectionFault",
+    "ProjectionRetry",
     "Transaction",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
@@ -118,4 +119,28 @@ test("root exports stay explicit", () => {
     "run",
     "watch",
   ]);
+});
+
+test("Commit and storage subpaths expose only their author contracts", () => {
+  expect(Object.keys(Root.Commit).sort()).toEqual([
+    "Accumulated",
+    "Emitted",
+    "Folded",
+    "HandlerFailed",
+    "TypeId",
+    "atLeastOnce",
+    "checkpoint",
+    "make",
+    "producer",
+    "transaction",
+    "withCompensation",
+  ]);
+  expect(Object.keys(Checkpoint).sort()).toEqual([
+    "CheckpointRecord",
+    "CheckpointStore",
+    "fromStore",
+    "recordKey",
+  ]);
+  expect(Object.keys(Memory).sort()).toEqual(["layer", "layerMemory"]);
+  expect(Object.keys(ProjectionSql).sort()).toEqual(["layer", "layerStorage"]);
 });

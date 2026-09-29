@@ -8,7 +8,7 @@ const scratch = Effect.runSync(
   Config.String("STREAMSY_PROJECTION_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 
-test("same-object Durable Object SQLite runs the atomic composition", async () => {
+test("same-object Durable Object SQLite runs the transactional composition", async () => {
   const root = mkdtempSync(join(scratch, "projection-workerd-"));
   const built = await Bun.build({
     entrypoints: [join(import.meta.dir, "support/do-worker.ts")],

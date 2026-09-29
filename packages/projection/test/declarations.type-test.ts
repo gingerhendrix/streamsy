@@ -22,9 +22,9 @@ class Result extends Streamsy.json<Result>()("ProjectionTypes/Result", "types/re
   schema: Schema.Finite,
   params: { id: Schema.String },
 }) {}
-const atomic = Projection.process({
+const transactional = Projection.process({
   commit: Commit.transaction,
-  id: "types/atomic",
+  id: "types/transactional",
   params: {},
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
@@ -38,7 +38,7 @@ const declared = Projection.emit({
   emit: (entry) => Effect.succeed({ result: entry.input === "input" ? [entry.item] : [] }),
 });
 const named = declared.at({ id: "a" });
-const atomicRun = Projection.run(atomic);
+const processRun = Projection.run(transactional);
 const namedRun = Projection.run(named);
 const namedWatch = Projection.watch(named);
 const namedFollow = Projection.follow(named);
@@ -80,7 +80,7 @@ export type Checks = [
   Assert<Same<keyof SuccessOf<typeof namedRun>["offsets"], "input" | "other">>,
   Assert<Same<Effect.Services<typeof foldedRead>, CheckpointStore>>,
   Assert<Same<typeof statefulOutputs.state.id, string>>,
-  Assert<Same<Effect.Services<typeof atomicRun>, Input | Transaction | CheckpointStore>>,
+  Assert<Same<Effect.Services<typeof processRun>, Input | Transaction | CheckpointStore>>,
   Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | CheckpointStore>>,
   Assert<
     Same<
@@ -152,7 +152,7 @@ void cannotRunWidenedOutput;
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   Streams.layerMemory();
-const withoutFeed = Projection.watch(atomic).pipe(
+const withoutFeed = Projection.watch(transactional).pipe(
   Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
 );
 // @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
@@ -160,7 +160,7 @@ const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Sco
   withoutFeed;
 void missingFeed;
 
-const fetchWatch = Projection.watch(atomic).pipe(
+const fetchWatch = Projection.watch(transactional).pipe(
   Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Streamsy.group(Input))),
 );
 // @ts-expect-error Fetch supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.

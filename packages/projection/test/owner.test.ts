@@ -76,7 +76,7 @@ for (const method of [
   "wire.fork",
   "wire.remove",
 ] as const) {
-  test(`atomic ${method} rejects a foreign owner and rolls back prior local writes`, async () => {
+  test(`transactional ${method} rejects a foreign owner and rolls back prior local writes`, async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;

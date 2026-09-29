@@ -1,6 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { defaultRetry } from "../src/follow.ts";
+import { ProjectionRetry } from "@streamsy/projection";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
 import { expect, test } from "bun:test";
 import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
@@ -409,7 +409,7 @@ test("default follow backoff retries a read after the clock advances", () =>
 test("default retry remains jittered, capped and unbounded after many failures", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const step = yield* Schedule.toStep(defaultRetry);
+      const step = yield* Schedule.toStep(yield* ProjectionRetry);
       for (let attempt = 0; attempt < 1100; attempt += 1) {
         const [, delay] = yield* step(attempt, undefined);
         const millis = Duration.toMillis(delay);
@@ -464,3 +464,37 @@ test("follow resets a finite retry budget after a successful cycle between outag
       expect(yield* readAll(output)).toEqual([1, 2]);
     }),
   ));
+
+for (const explicit of [false, true]) {
+  test(`follow ${explicit ? "prefers options.retry over" : "uses"} ProjectionRetry`, () =>
+    run(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        const reader = yield* StreamsReader;
+        let attempts = 0;
+        const broken = {
+          ...reader,
+          read: () =>
+            Effect.suspend(() => {
+              attempts += 1;
+              return Effect.fail(
+                new TransportFault({
+                  reason: "request",
+                  operation: "read",
+                  message: "offline",
+                }),
+              );
+            }),
+        };
+        const fiber = yield* Projection.follow(
+          positives,
+          explicit ? { retry: Schedule.recurs(2) } : {},
+        ).pipe(
+          Effect.provideService(ProjectionRetry, Schedule.recurs(0)),
+          FamilyFixture.provideReader(broken),
+        );
+        expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
+        expect(attempts).toBe(explicit ? 3 : 1);
+      }),
+    ));
+}

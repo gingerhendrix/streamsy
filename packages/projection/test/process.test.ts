@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the memory runtime and transaction instrumentation. */
 import { expect, test } from "bun:test";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
-import { Commit, Projection, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Family from "./support/families.ts";
 
@@ -116,3 +116,53 @@ test("a prepare failure preserves the handler error and never enters the transac
       expect(processed).toBe(false);
     }).pipe(Effect.provide(host)),
   ));
+
+for (const extended of [false, true]) {
+  test(`prepare repeats after a crash; range ${extended ? "extension changes" : "replay preserves"} the key`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        yield* Streams.append(input, [1]);
+        const transaction = yield* Transaction;
+        const store = yield* CheckpointStore;
+        const keys: string[] = [];
+        const batches: number[][] = [];
+        let processed = 0;
+        const declaration = Projection.process({
+          id: "prepare-crash",
+          params: {},
+          inputs: { input },
+          commit: Commit.transaction,
+          prepare: (batch, unit) =>
+            Effect.sync(() => {
+              keys.push(unit.key);
+              batches.push([...batch.input.items]);
+              return batch.input.items.length;
+            }),
+          process: (_batch, _unit, prepared) =>
+            Effect.sync(() => {
+              processed += prepared;
+            }),
+        });
+        const crash = new Error("crash after prepare, before transaction");
+        const exit = yield* Projection.run(declaration.at({})).pipe(
+          Effect.provideService(Transaction, {
+            ...transaction,
+            withTransaction: () => Effect.die(crash),
+          }),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(crash);
+        expect(processed).toBe(0);
+        expect((yield* store.load(declaration.at({}))).token).toBe("0");
+        if (extended) yield* Streams.append(input, [2]);
+        // Rebind after the simulated crash; only the host's stored checkpoint survives.
+        yield* Projection.run(declaration.at({}));
+        expect(keys).toHaveLength(2);
+        expect(keys[1] === keys[0]).toBe(!extended);
+        expect(batches).toEqual(extended ? [[1], [1, 2]] : [[1], [1]]);
+        expect(processed).toBe(extended ? 2 : 1);
+      }).pipe(Effect.provide(host)),
+    ));
+}

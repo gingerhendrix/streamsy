@@ -54,7 +54,7 @@ const withRead = <A, E, R>(
     );
   });
 
-test("fresh ordered run, atomic rollback and restart without repeated output", () =>
+test("fresh ordered run, transactional rollback and restart without repeated output", () =>
   run(
     Effect.gen(function* () {
       const result = yield* composition;

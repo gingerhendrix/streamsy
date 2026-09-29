@@ -13,7 +13,7 @@ import {
 export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
-/** Stateless atomic filter: positive items are copied to `output` inside the transaction. */
+/** Stateless transactional filter: positive items are copied to `output` inside the transaction. */
 export const positives = Projection.process({
   commit: Commit.transaction,
   id: "positives",

@@ -10,6 +10,12 @@ import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
 
 import { withPrepare } from "./range.ts";
 
+// rc.115 Context.serviceNotFoundError creates a plain Error with no service field.
+// Keep the exact message check here; the missing-SQL regression test guards upgrades.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Narrows a runtime defect at the Effect boundary.
+const isMissingSqlClient = (defect: unknown): defect is Error =>
+  defect instanceof Error && defect.message === `Service not found: ${SqlClient.SqlClient.key}`;
+
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
     name: "transaction",
@@ -50,10 +56,7 @@ export const transaction = withPrepare(
             const result = yield* run.pipe(
               Effect.provideService(CurrentOwner, tx.owner),
               Effect.catchDefect((defect) =>
-                isForeignOwner(defect) ||
-                (Option.isNone(tx.sql) &&
-                  defect instanceof Error &&
-                  defect.message === "Service not found: effect/sql/SqlClient")
+                isForeignOwner(defect) || (Option.isNone(tx.sql) && isMissingSqlClient(defect))
                   ? Effect.fail(
                       new ProjectionFault({
                         phase: "process",
