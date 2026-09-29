@@ -82,9 +82,10 @@ for (const entry of await readdir(join(repo, "packages"), { withFileTypes: true 
   }
 }
 const docsIndex = await readFile(join(site, "content", "docs", "index.mdx"), "utf8");
-const documentedPackages = [...docsIndex.matchAll(/^- `(@streamsy\/[^`]+)`:/gm)].map(
-  (match) => match[1],
-);
+// The package list is a list item (`- \`@streamsy/x\`:`) or a table row (`| \`@streamsy/x\` |`).
+const documentedPackages = [
+  ...docsIndex.matchAll(/^(?:- `(@streamsy\/[^`]+)`:|\| `(@streamsy\/[^`]+)` +\|)/gm),
+].map((match) => match[1] ?? match[2]);
 const expectedPackages = packageNames.toSorted();
 const actualPackages = documentedPackages.toSorted();
 if (JSON.stringify(actualPackages) !== JSON.stringify(expectedPackages)) {

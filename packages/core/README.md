@@ -106,10 +106,11 @@ without Content-Type resolves it with HEAD.
 
 ## Documentation
 
-- [Streams](https://streamsy.dev/docs/streams)
-- [Runtime and storage](https://streamsy.dev/docs/runtime)
-- [HTTP and the fetch Layer](https://streamsy.dev/docs/runtime/http)
-- [Writing a storage adapter](https://streamsy.dev/docs/advanced/storage-adapter)
+- [Declare streams](https://streamsy.dev/docs/streams/declare)
+- [Layers and storage](https://streamsy.dev/docs/hosting)
+- [Protocol routes](https://streamsy.dev/docs/http/routes)
+- [Fetch client](https://streamsy.dev/docs/http/fetch)
+- [Write a storage adapter](https://streamsy.dev/docs/hosting/storage-adapter)
 
 Source: https://github.com/gingerhendrix/streamsy
 

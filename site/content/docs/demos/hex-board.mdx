@@ -47,7 +47,7 @@ export class GameEvents extends Streamsy.json<GameEvents>()(
 ) {}
 ```
 
-See [Streams](/docs/streams/introduction).
+See [Declare streams](/docs/streams/declare).
 
 ## 2. Fold each event into the board
 
@@ -82,7 +82,7 @@ export const board = Projection.atomic({
 
 `unit.ranges.input` is always present here. The projection has one input, and an empty read never reaches the handler. Every event in a unit gets the same source offset, the end of the unit. Each move gets its own ordinal, and the ordinal is part of the state, so move ids stay unique after a restart.
 
-See [State](/docs/projections/projections#state).
+See [State and checkpoints](/docs/projections/state).
 
 ## 3. Commit state with the checkpoint
 
@@ -97,7 +97,7 @@ const sqlite = (filename: string) =>
 
 The demo creates no tables. The state row and the checkpoint go into the `streamsy_projection_v1_` tables that the projection layer owns.
 
-See [Bun SQLite](/docs/runtime/storage#bun-sqlite).
+See [SQLite storage](/docs/hosting/bun#sqlite-storage).
 
 ## 4. Run and read the board
 
@@ -117,7 +117,7 @@ const snapshot = Effect.gen(function* () {
 });
 ```
 
-See [Running](/docs/projections/projections#running).
+See [Running](/docs/projections/define#running).
 
 ## 5. Restart and resume
 
@@ -134,7 +134,7 @@ The test closes the first runtime and opens a second one on the same file. The f
 
 The SQLite tests split two games: the 12-event victory game after 5 events, during an attack, and a 450-event four-player game after 400 events. The long case also checks the exact 40 move ids and the ordinal. Another test appends an attack result that does not match the game. The fold fails, and neither the state nor the checkpoint moves.
 
-See [Checkpoints and generations](/docs/projections/projections#checkpoints-and-generations).
+See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).
 
 ## Limits
 

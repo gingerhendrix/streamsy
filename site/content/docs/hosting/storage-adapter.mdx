@@ -1,0 +1,131 @@
+---
+title: Write a storage adapter
+description: Implement the Storage service, bind streams to it, and pass the contract tests.
+---
+
+`Storage` is one Effect service. An adapter that implements it and passes the contract tests is a backend for every Streamsy program.
+
+The protocol, HTTP, forks, expiry, producer fencing, and projection checkpoints are above `Storage`. An adapter stores records and messages and applies mutations.
+
+## The contract
+
+```ts
+import { Effect, Layer, Option, Stream } from "effect";
+import { Storage, type StorageShape } from "@streamsy/core";
+
+const adapter: StorageShape = {
+  capabilities: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+  record: (id) => Effect.succeed(Option.none()),
+  messages: (id, window) => Effect.succeed([]),
+  producer: (id, producerId) => Effect.succeed(Option.none()),
+  mutate: (mutation) => Effect.die("not implemented"),
+  changes: (id) => Stream.empty,
+  nextExpiry: Effect.succeed(Option.none()),
+};
+
+export const layer = Layer.succeed(Storage, adapter);
+```
+
+| Member                     | Returns                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| `record(id)`               | The stream record, or `None`                                                          |
+| `messages(id, window)`     | Messages after `after` (exclusive), up to `until` (inclusive), with an optional limit |
+| `producer(id, producerId)` | The last accepted producer state                                                      |
+| `mutate(mutation)`         | Applies one ordered set of operations in one transaction                              |
+| `changes(id)`              | A level-triggered stream of change snapshots                                          |
+| `nextExpiry`               | The earliest indexed deadline                                                         |
+| `capabilities`             | What the adapter can do                                                               |
+
+Each read must return new values, so a caller cannot change the store through a returned object.
+
+## Bind streams
+
+```ts
+import { Layer } from "effect";
+import { Protocol } from "@streamsy/core/protocol";
+import { layer } from "./adapter.ts";
+import { shop } from "./streams.ts";
+
+export const shopStorage = Protocol.bind(Protocol.layer().pipe(Layer.provideMerge(layer)), shop);
+```
+
+`shopStorage` works like `Memory.layer`. It also gives a `Streamsy.ChangeFeed` key for each stream.
+
+## Capabilities
+
+| Capability    | Values                  | Effect                                                                                |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `fork`        | `none`, `copy`, `chain` | `none` refuses forks with `NotSupported`. `copy` copies the prefix. `chain` shares it |
+| `atomicScope` | `stream`, `store`       | `store` allows one mutation across several streams                                    |
+| `wake`        | `poll`, `push`          | `push` signals on commit. `poll` uses the repair pass                                 |
+| `expiryIndex` | `lazy`, `indexed`       | `indexed` answers `nextExpiry`, so a host can sweep. `lazy` expires on access         |
+
+## Mutations
+
+A mutation is a non-empty ordered list of `Create`, `Append`, and `Delete` operations.
+
+| Precondition          | On            |
+| --------------------- | ------------- |
+| `expectedOffset`      | Append        |
+| `expectedClosed`      | Append        |
+| `producer`            | Append        |
+| `expectedExpiresAtMs` | Expiry delete |
+
+Check every precondition before the mutation, in the same transaction. On the first failure, write nothing and answer `MutationRejected { index, reason, record }`.
+
+| Reason             | When                                                     |
+| ------------------ | -------------------------------------------------------- |
+| `offset`           | The tail is not `expectedOffset`                         |
+| `closed`           | The stream is closed, or `expectedClosed` does not match |
+| `producer`         | The stored producer state is not the expected one        |
+| `exists`           | A create found an existing stream                        |
+| `not-found`        | An append or delete named a missing stream               |
+| `gone`             | The stream was removed                                   |
+| `fork-source-gone` | A create named a removed fork source                     |
+| `expiry-mismatch`  | An expiry delete found a renewed deadline                |
+
+The protocol maps each reason to a typed error. An I/O failure is `StorageFault`, with `retryable`.
+
+## Wakes
+
+Each wake carries a `ChangeSnapshot` with `present`, `currentOffset`, `closed`, and `softDeleted`. A wake with no change is valid.
+
+- Register the subscriber before the first snapshot.
+- A `push` adapter keeps one pending wake for each subscriber.
+- Interrupting the subscriber, or closing the owner, releases the subscription.
+
+## Forks and expiry
+
+A `chain` adapter stores the source id and fork offset, so a child read can join the source prefix. A removed source with live children is soft-deleted until the last child goes.
+
+An `indexed` adapter stores each deadline. An expiry delete carries the deadline it saw. After `expiry-mismatch`, the next `nextExpiry` must move past that deadline.
+
+## Commit boundary
+
+To offer `CommitBoundary.withTransaction`, an adapter needs one transaction owner, a way for `mutate` to join it, and wakes that publish after the outer commit.
+
+## Contract tests
+
+```ts
+import { StorageContract } from "@streamsy/core/testing";
+import { layer } from "./adapter.ts";
+
+StorageContract.run({
+  name: "my adapter",
+  layer,
+  expected: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+});
+```
+
+Run it under Bun. The kit builds a fresh Layer for each case, gives a `TestClock`, and skips cases that `expected` rules out.
+
+Then run the upstream [server conformance suite](https://durablestreams.com/building-a-server) against `Http.routes(Streamsy.group(Streamsy.Wildcard), { access: "full" })` over the adapter.
+
+## Shipped adapters
+
+| Capability    | Memory    | Constrained memory | Bun SQLite         | Durable Object SQLite         |
+| ------------- | --------- | ------------------ | ------------------ | ----------------------------- |
+| `fork`        | `chain`   | `copy`             | `chain`            | `chain`                       |
+| `atomicScope` | `store`   | `stream`           | `store`            | `store`                       |
+| `wake`        | `push`    | `poll`             | `push` with repair | `push` with repair            |
+| `expiryIndex` | `indexed` | `lazy`             | `indexed`          | `indexed`, swept by the alarm |

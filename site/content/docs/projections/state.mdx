@@ -1,0 +1,190 @@
+---
+title: State and checkpoints
+description: Keep a value with the checkpoint, read it with its offsets, and recover a projection by generation.
+---
+
+## State
+
+`state: { schema, initial }` keeps one value for each projection key. The value is saved in the checkpoint transaction.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+class Numbers extends Streamsy.json<Numbers>()("Totals/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+const program = Effect.gen(function* () {
+  const numbers = yield* Numbers;
+  yield* numbers.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  const total = Projection.atomic({
+    id: "running-total",
+    params: {},
+    inputs: { input: Numbers },
+    state: { schema: Schema.Finite, initial: 0 },
+    fold: (sum, { item }) => sum + item,
+  }).at({});
+  yield* Projection.run(total);
+  return yield* Projection.read(total); // { state: 6, offsets: { input: ... } } on a fresh host
+});
+```
+
+| Projection           | Step                                                            |
+| -------------------- | --------------------------------------------------------------- |
+| `Projection.atomic`  | `fold: (state, entry, unit) => next`, with no `process`         |
+| `Projection.outputs` | `process: (state, batch, unit)` returns `{ state, ...outputs }` |
+
+`fold` can return the next value or an Effect of it. `initial` can be a function of the decoded parameters.
+
+`Projection.read(projection)` gives `{ state, offsets }` from one transaction. `offsets` has one entry for each input: the offset the state is at. Before the first unit, `state` is `initial`. A projection with no `state` reads as `{ state: undefined, offsets }`.
+
+After `run` returns `caught-up`, `progress.offsets` equals `Projection.read(projection).offsets`, unless another runner committed a unit between the two calls.
+
+Each save replaces the value. There is no history. A state schema change needs a new generation.
+
+### Size
+
+Each unit decodes and saves the whole value. Use state for small values, for example a counter, a summary, or a few hundred rows.
+
+Keep large row sets in application tables, in an atomic projection:
+
+```ts
+import { SqlClient } from "effect/unstable/sql";
+
+const orderRows = Projection.atomic({
+  id: "order-rows",
+  params: {},
+  inputs: { input: Orders },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO order_totals (order_id, total)
+        VALUES (${item.orderId}, ${item.amount})
+        ON CONFLICT (order_id) DO UPDATE SET total = excluded.total`;
+      return sum + item.amount;
+    }),
+});
+```
+
+The application creates and migrates `order_totals`.
+
+The [hex board demo](/docs/demos/hex-board) measures state size. Its final encoded value is 21,599 B.
+
+### Forget
+
+`Projection.forget(bound)` deletes the state and the checkpoint in one transaction. It does not delete streams.
+
+Before you call it:
+
+1. Stop the `watch` and `follow` fibers for that key.
+2. Wait for other processes and direct `Projection.pass` calls.
+3. For an output projection, delete the output streams first, or use a new generation. Its producer sequence starts again.
+
+## Read, decide, append
+
+A command can use a projection as its view. Run the projection, read the state and offsets, decide, then append to the input with `expectedOffset`.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+class Seats extends Streamsy.json<Seats>()("Venue/Seats", "seats", {
+  params: {},
+  schema: Schema.Struct({ seat: Schema.String }),
+}) {}
+
+const taken = Projection.atomic({
+  id: "taken-seats",
+  params: {},
+  inputs: { input: Seats },
+  state: { schema: Schema.Array(Schema.String), initial: [] },
+  fold: (seats, { item }) => [...seats, item.seat],
+}).at({});
+
+const reserve = (seat: string) =>
+  Effect.gen(function* () {
+    yield* Projection.run(taken);
+    const { state, offsets } = yield* Projection.read(taken);
+    if (state.includes(seat)) return { _tag: "Rejected" as const };
+    const seats = yield* Seats;
+    const appended = yield* seats.append({}, [{ seat }], { expectedOffset: offsets.input });
+    return { _tag: "Reserved" as const, offset: appended.offset };
+  }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+```
+
+1. `Projection.run` brings the state to the tail. Do not set `limit`.
+2. `Projection.read` gives the state and its offsets.
+3. The decision reads only `state`. A rejection writes nothing.
+4. The append uses `expectedOffset: offsets.input`. A new write since the read makes it fail with `OffsetMismatch`.
+5. The retry runs all steps again. Retry only `OffsetMismatch`, with a limit.
+
+Append only to the input that the offset names. The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pattern.
+
+## Checkpoints and generations
+
+`Checkpoints` holds the records and owns the transaction.
+
+| Layer                                 | Over                                                           |
+| ------------------------------------- | -------------------------------------------------------------- |
+| `@streamsy/projection/memory` `layer` | The store of `Memory.layer`. Not persistent                    |
+| `@streamsy/projection/sqlite` `layer` | The `CommitBoundary` and `SqlClient` of a SQLite storage Layer |
+
+```ts
+import { Effect, Layer } from "effect";
+import * as BunStorage from "@streamsy/storage/bun";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import { program } from "./run.ts";
+import { shop } from "./streams.ts";
+
+const host = ProjectionSqlite.layer.pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop)),
+);
+
+await Effect.runPromise(program.pipe(Effect.provide(host)));
+```
+
+Build the Layer once for each host lifetime.
+
+A record key is `id`, `version`, `generation`, and the canonical `params`. The record also keeps the stream id and content type of each input. A change to an input name, stream id, or content type stops the projection with `load / identity-mismatch`. A codec change with the same content type is not detected.
+
+There is no reset. Declare a new `generation`. It starts from zero offsets and, for an output projection, a new producer epoch. An older generation then fails with `stale-epoch`.
+
+The record is compare-and-set. An overlapping runner with old progress stops with `token-conflict` and writes nothing.
+
+## Faults
+
+A failure is a `ProjectionFault` with a `phase` and a `reason`. The underlying failure is in `cause`.
+
+| Phase        | Where the run stopped                             |
+| ------------ | ------------------------------------------------- |
+| `load`       | Record, identity, or options                      |
+| `read`       | Inputs                                            |
+| `pin`        | Pinned save, range reproduction, or output append |
+| `process`    | Output encoding, or storage while the handler ran |
+| `checkpoint` | The save after processing                         |
+
+| Reason                    | Meaning                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `history-unavailable`     | An input no longer has the history after the checkpoint                           |
+| `range-unreproducible`    | A pinned range cannot be read again                                               |
+| `identity-mismatch`       | An input changed. Use a new generation                                            |
+| `token-conflict`          | Another runner committed first                                                    |
+| `stale-epoch`             | A newer generation has appended                                                   |
+| `unsupported-composition` | A write or output is on other storage                                             |
+| `invalid-output`          | An output stream is gone or closed                                                |
+| `invalid-options`         | A bad `limit` or `repairIntervalMs`                                               |
+| `invalid-record`          | The stored record does not decode, or an output producer sequence does not follow |
+| `invalid-source`          | An input read is invalid, does not advance, or does not decode                    |
+| `storage-failure`         | Storage, transport, or SQL failed                                                 |
+
+Handler errors are not wrapped. `run` does not retry. `follow` retries only `storage-failure`. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
+
+## Several backends
+
+A projection can read inputs from any backend, including a fetch Layer. `Checkpoints`, atomic stream writes, and declared outputs must share one storage owner. Provide `Checkpoints` from the storage Layer that holds the output streams.

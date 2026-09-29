@@ -1,9 +1,9 @@
 ---
-title: Streamsy
-description: An Effect implementation of the Durable Streams protocol, with typed streams, projections, and hosts for Bun and Cloudflare.
+title: Overview
+description: Streamsy is an Effect implementation of the Durable Streams protocol, with typed streams, projections, and hosts for Bun and Cloudflare.
 ---
 
-Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol. It gives you typed streams, projections from one stream into another, and hosts for Bun and Cloudflare.
+Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol.
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
@@ -27,19 +27,26 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Notes)))));
 ```
 
-A stream class is the service key. The program acquires it, and the Layer decides where its streams live.
+The stream class is a service key. The program asks for the service, and the Layer decides where the streams are kept.
 
 ## Packages
 
-- `@streamsy/core`: streams and groups, the memory Layer, the HTTP routes, and the fetch Layer. The generic protocol services are on the `@streamsy/core/protocol` subpath.
-- `@streamsy/storage`: SQLite storage for Bun and for Durable Objects.
-- `@streamsy/serve`: HttpRouter routes, Bun and Cloudflare hosts, and action delivery.
-- `@streamsy/projection`: checkpointed projections over one or more streams.
+| Package                | Contents                                                                   |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `@streamsy/core`       | Stream classes, groups, the memory Layer, protocol routes, the fetch Layer |
+| `@streamsy/storage`    | SQLite storage for Bun and for Durable Objects                             |
+| `@streamsy/projection` | Checkpointed projections over one or more streams                          |
+| `@streamsy/serve`      | Serve routes, Bun and Cloudflare hosts, and the action outbox              |
 
-## Where to go
+## Sections
 
-- [Introduction](/docs/introduction): one small application from a stream to a served projection.
-- [Streams](/docs/streams/introduction): create, read, write, and fork.
-- [Runtime](/docs/runtime/introduction): Layers, storage, and hosts.
+| Section                          | Contents                                         |
+| -------------------------------- | ------------------------------------------------ |
+| [Tutorial](/docs/tutorial)       | One small application, from a stream to a deploy |
+| [Streams](/docs/streams/declare) | Declare, create, read, and write streams         |
+| [Projections](/docs/projections) | Derive streams and state from other streams      |
+| [HTTP](/docs/http/routes)        | Protocol routes, Serve routes, the fetch client  |
+| [Hosting](/docs/hosting)         | Layers, storage, Bun, and Cloudflare             |
+| [Demos](/docs/demos)             | Runnable example applications                    |
 
-Effect runs at the server and in the toolkit. In the browser, use the official Durable Streams packages, starting with the [TypeScript client](https://durablestreams.com/typescript-client).
+Effect runs on the server. In the browser, use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client).

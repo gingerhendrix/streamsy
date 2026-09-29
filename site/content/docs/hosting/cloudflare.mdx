@@ -1,0 +1,122 @@
+---
+title: Cloudflare
+description: Route protocol paths from a Worker to Durable Objects that own their SQLite storage and route app.
+---
+
+A Worker router sends each protocol path to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app.
+
+```ts
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Http, Streamsy } from "@streamsy/core";
+import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { Events } from "./streams.ts";
+
+const game = Streamsy.group(Events);
+
+interface Env {
+  readonly STREAMS: DurableObjectNamespace;
+}
+export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof game>>({
+  app: Http.routes(game, { prefix: "/streams", access: "append" }),
+  layer: (state) => DurableObjectStorage.layer({ client: { storage: state.storage } }, game),
+}) {}
+export default router<Env>({
+  prefix: "/streams",
+  namespace: (env) => env.STREAMS,
+  placement: Placement.byKey(() => "streams"),
+});
+```
+
+The second type parameter of `StreamsyObject.make` is the services that the app needs. `Streamsy.Services<typeof game>` is the stream services of the group.
+
+## Storage
+
+```ts
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { shop } from "./streams.ts";
+
+const storage = DurableObjectStorage.layer({ client: { storage: ctx.storage } }, shop);
+```
+
+Pass the full `ctx.storage` handle. The driver needs its transaction API. The long-poll timeout is 25 s.
+
+## Placement
+
+| Placement                                      | Object name                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `Placement.byStream()`                         | One object for each stream. The default                                |
+| `Placement.byKey(fn)`                          | The key that `fn` returns for the stream path                          |
+| `Placement.byRoute([rule({ stream, owner })])` | `owner` of the decoded stream parameters. The first matching rule wins |
+
+| Result                    | Response |
+| ------------------------- | -------- |
+| Empty or no owner key     | 400      |
+| Placement function throws | 500      |
+
+Rules:
+
+- A fork source and its child must be on the same object.
+- Keep placement stable while data lives on an object.
+- There are no writes across objects.
+- The router understands protocol paths only. Route Serve paths to their object in your own Worker code.
+- Authenticate before the router forwards a request.
+
+## Object lifecycle
+
+| Event             | Behaviour                                                 |
+| ----------------- | --------------------------------------------------------- |
+| First access      | Acquires storage and builds the handler once              |
+| Acquisition fails | 503 with `retry-after: 1`. The next access tries again    |
+| PUT, POST, DELETE | Reconciles the alarm after the request, also on rejection |
+| Alarm             | Runs the expiry sweep. Failures use platform retry        |
+| Defect            | 500 with security headers                                 |
+
+Request logging is off. No URL or request header can start the sweep.
+
+## Projections
+
+Run projections in request middleware or in the alarm, over the same storage Layer as their checkpoints. See [Triggers](/docs/projections/define#triggers). A long-lived `follow` fiber does not suit an object.
+
+## Alchemy
+
+`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack.
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { Effect, Layer } from "effect";
+import { Streamsy, Http } from "@streamsy/core";
+import * as Host from "@streamsy/serve/alchemy";
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+export class Streams extends Cloudflare.DurableObject<Streams>()(
+  "Streams",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.suspend(() =>
+      Host.objectHandlers({
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
+        layer: Layer.mergeAll(
+          DurableObjectStorage.layer({ client: { storage: state.raw.storage } }, streams),
+          Host.alarmLayer(state.raw.storage),
+        ),
+      }),
+    );
+  }),
+) {}
+```
+
+The outer generator declares resources. The inner Effect acquires storage for each instance. `objectHandlers` shares one acquisition across fetch and alarm, and releases it when the instance scope closes.
+
+The Worker gets the `Streams` namespace during construction. Its fetch uses `Host.router({ objects, prefix: "/streams", placement })`. The router is an `HttpEffect`, so authentication can run before it.
+
+| Command          | Does                                |
+| ---------------- | ----------------------------------- |
+| `alchemy dev`    | Runs the Worker and objects locally |
+| `alchemy deploy` | Deploys the stack                   |
+
+The pinned Alchemy version is `2.0.0-beta.79`.
+
+A remote client uses [`Fetch.layer`](/docs/http/fetch) with the Worker protocol prefix as `baseUrl`.

@@ -1,0 +1,91 @@
+---
+title: Create and fork
+description: Create a stream with an optional lifecycle, fork a child stream from a source, and remove a stream.
+---
+
+## Create
+
+```ts
+import { Effect } from "effect";
+import { Notes } from "./streams.ts";
+
+const ensure = Effect.gen(function* () {
+  const notes = yield* Notes;
+  const result = yield* notes.create({}, { ttlSeconds: 3600 });
+  return result.nextOffset;
+});
+```
+
+| Result    | Meaning                                                    |
+| --------- | ---------------------------------------------------------- |
+| `Created` | The stream is new                                          |
+| `Exists`  | A stream with this id and the same configuration was there |
+
+Both results carry `nextOffset`, `contentType`, and `closed`. A different configuration on the same id fails with `CreateConflict`.
+
+| Option        | Effect                                              |
+| ------------- | --------------------------------------------------- |
+| `ttlSeconds`  | Time to live. Each append and each read restarts it |
+| `expiresAt`   | A fixed expiry date                                 |
+| `closed`      | Creates the stream closed                           |
+| `initialData` | Writes the first messages in the same operation     |
+
+Set `ttlSeconds` or `expiresAt`, not both.
+
+## Expiry
+
+An expired stream answers `StreamNotFound` on the next access. On Cloudflare, the object alarm also sweeps expired streams. The Bun host has no sweeper.
+
+A projection that stops reading can lose an expired input. It then stops with `history-unavailable`. See [Faults](/docs/projections/state#faults).
+
+## Fork
+
+A fork is a child stream that starts with a prefix of a source stream. Appends to the child do not change the source.
+
+```ts
+import { Effect } from "effect";
+import { Drafts } from "./streams.ts";
+
+const branch = Effect.gen(function* () {
+  const drafts = yield* Drafts;
+  const head = yield* drafts.head({ draftId: "main" });
+  return yield* drafts.fork(
+    { draftId: "copy" },
+    { draftId: "main" },
+    { forkOffset: head.nextOffset },
+  );
+});
+```
+
+`fork(params, source, options?)` takes the child parameters, then the source parameters. Both are addresses of one stream class. The child gets every source message up to and including `forkOffset`. With no `forkOffset`, the child starts empty.
+
+| Backend            | Fork                                |
+| ------------------ | ----------------------------------- |
+| Memory             | Shares the prefix                   |
+| Constrained memory | Copies the prefix                   |
+| SQLite             | Shares the prefix                   |
+| Cloudflare         | Source and child on the same object |
+
+A fork never crosses two storage Layers.
+
+| Error                | When                                              |
+| -------------------- | ------------------------------------------------- |
+| `ForkSourceNotFound` | The source is missing or outside the stream class |
+| `CreateConflict`     | The child id has a different configuration        |
+| `NotSupported`       | The backend has no fork support                   |
+
+See the upstream [fork page](https://durablestreams.com/fork).
+
+## Remove
+
+`remove(params)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is kept until its last child is removed.
+
+## Over HTTP
+
+| Method                          | Operation | Access |
+| ------------------------------- | --------- | ------ |
+| `PUT`                           | Create    | `full` |
+| `PUT` with `Stream-Forked-From` | Fork      | `full` |
+| `DELETE`                        | Remove    | `full` |
+
+See [Protocol routes](/docs/http/routes).

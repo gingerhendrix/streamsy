@@ -1,0 +1,165 @@
+---
+title: Serve routes
+description: Publish streams, Durable State changes, and values as read-only HttpRouter route Layers.
+---
+
+Serve routes publish data at application paths. They are read-only.
+
+```ts
+import { Layer, Schema } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+class Cards extends Streamsy.state<Cards>()("Game/Cards", "cards/:seat", {
+  params: { seat: Schema.String },
+  collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
+}) {}
+export const game = Streamsy.group(Events, Cards);
+
+export const App = Layer.mergeAll(
+  Http.routes(game, { prefix: "/streams", access: "read" }),
+  Serve.stream(Events, "/feed/:seat"),
+  Serve.state(Cards, "/state/:seat"),
+);
+```
+
+| Route                        | Serves                          |
+| ---------------------------- | ------------------------------- |
+| `Serve.stream(source, path)` | The items of a stream           |
+| `Serve.state(source, path)`  | The Durable State change stream |
+| `Serve.value(source, path)`  | One JSON value, with an ETag    |
+
+A Serve route needs the stream it reads. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
+
+| Request                   | Response                    |
+| ------------------------- | --------------------------- |
+| GET, HEAD                 | The data                    |
+| Other methods             | 405 with `allow: GET, HEAD` |
+| Parameter does not decode | 400                         |
+| Path does not match       | 404 from the router         |
+| Absent stream             | 404                         |
+| Absent value              | 503 `ValueUnavailable`      |
+
+The stream codecs decode the path parameters. Two routes with the same shape fail the Layer build. A Serve route does not create a stream, checkpoint, or state row.
+
+## State routes
+
+`Serve.state` serves the change stream with no snapshot. A new client reads from `-1`. On `replay-from-start`, clear local rows and replay from `-1`.
+
+## Projection outputs
+
+Pass the `outputs` and `state` of a projection declaration to Serve.
+
+```ts
+import { Effect, Layer, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+import { Serve } from "@streamsy/serve";
+
+const params = { seat: Schema.FiniteFromString };
+class Numbers extends Streamsy.json<Numbers>()("Seats/Numbers", "numbers/:seat", {
+  params,
+  schema: Schema.Finite,
+}) {}
+class Board extends Streamsy.bytes<Board>()("Seats/Board", "board/:seat", { params }) {}
+class Transitions extends Streamsy.bytes<Transitions>()("Seats/Transitions", "transitions/:seat", {
+  params,
+}) {}
+const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+const tracker = Projection.outputs({
+  id: "tracker",
+  params,
+  inputs: { numbers: Numbers },
+  outputs: {
+    board: Output.rows(Card, { key: "id", stream: Board }),
+    transitions: Output.stream(Schema.FiniteFromString, { stream: Transitions }),
+  },
+  state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
+  process: (state, batch) =>
+    Effect.sync(() => {
+      const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return {
+        state: { total },
+        board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+        transitions: [total],
+      };
+    }),
+});
+const OutputRoutes = Layer.mergeAll(
+  Serve.state(tracker.outputs.board, "/board/:seat"),
+  Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
+  Serve.value(tracker.state, "/summary/:seat"),
+);
+```
+
+Serve does not run the projection. Run it on the host before a read. `Serve.value(tracker.state, path)` answers 503 until the first unit is saved.
+
+The route app needs the output streams and `State` of the projection host. A value schema must encode to JSON.
+
+## Auth and request parameters
+
+```ts
+const Mine = Serve.stream(Events, "/me", {
+  params: Effect.map(CurrentSeat, (seat) => ({ seat: seat.id })),
+}).pipe(Layer.provide(SeatAuth.layer));
+```
+
+`SeatAuth` is `HttpRouter.middleware` that checks the token. It answers 401, or provides `CurrentSeat`. The `params` Effect replaces all route parameters.
+
+Protect the protocol routes too, if they expose private data.
+
+## Values
+
+A value source has `id`, `paramSchema`, a JSON `schema`, and `resolve(params)`.
+
+| Behaviour     | Value                                           |
+| ------------- | ----------------------------------------------- |
+| Body          | Canonical JSON                                  |
+| ETag          | From the body bytes. Strong and weak validators |
+| Cache-Control | `private, max-age=0, must-revalidate`           |
+| Missing value | 503 `ValueUnavailable`                          |
+| Contract      | The `x-streamsy-value-contract` header          |
+
+## Browser clients and CORS
+
+`@streamsy/serve/contract` exports the header names and `decodePublicError`. It does not load Effect.
+
+```ts
+const Cors = HttpRouter.cors({
+  allowedOrigins: ["https://app.example.com"],
+  allowedMethods: ["GET", "HEAD", "OPTIONS"],
+  allowedHeaders: [
+    "authorization",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-value-contract",
+  ],
+  exposedHeaders: [
+    "stream-next-offset",
+    "stream-cursor",
+    "stream-up-to-date",
+    "etag",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-value-contract",
+  ],
+});
+const BrowserApp = Layer.mergeAll(App, Cors);
+```
+
+| Error kind    | Client recovery       |
+| ------------- | --------------------- |
+| Stream, state | Replay from the start |
+| Value         | Fetch again           |
+
+A contract fingerprint covers the stream address and the state collection names and keys. Set `options.contract` when the Schema or resolver changes and the metadata does not.
+
+Use URL-safe stream segments. Serve decodes parameters, and the protocol routes use raw encoded ids.

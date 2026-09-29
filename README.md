@@ -38,7 +38,7 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
-Read the [introduction](https://streamsy.dev/docs/introduction) for the path
+Read the [tutorial](https://streamsy.dev/docs/tutorial) for the path
 from a typed stream address to a served projection.
 
 ## Examples

@@ -1,0 +1,137 @@
+---
+title: How projections work
+description: A projection reads input streams in checkpointed units and writes derived streams or state.
+---
+
+A projection reads one or more input streams and writes derived data. It works in units. Each unit reads a slice of each input, runs a handler, and commits a checkpoint. A restart continues from the last checkpoint.
+
+One pass:
+
+1. Load the checkpoint.
+2. Read each input after its checkpoint offset, in declaration order.
+3. Run the handler over the unit.
+4. Commit the checkpoint.
+
+## Atomic projections
+
+`Projection.atomic` runs the handler inside the checkpoint transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "doubled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const minimal = Effect.gen(function* () {
+  const numbers = yield* Numbers;
+  const doubled = yield* Doubled;
+  yield* numbers.create({});
+  yield* doubled.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  return yield* Projection.run(
+    Projection.atomic({
+      id: "doubled",
+      params: {},
+      inputs: { input: Numbers },
+      process: (batch) =>
+        Effect.flatMap(Doubled, (output) =>
+          output.append(
+            {},
+            batch.input.items.map((n) => n * 2),
+          ),
+        ),
+    }).at({}),
+    { limit: 10 },
+  );
+});
+```
+
+One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/examples/minimal.ts`.
+
+## Output projections
+
+`Projection.outputs` gives named outputs. The handler returns items for each output, and the runner appends them.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+import { Numbers } from "./minimal.ts";
+
+class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const tripled = Projection.outputs({
+  id: "tripled",
+  params: {},
+  inputs: { input: Numbers },
+  outputs: { output: Output.stream(Schema.Finite, { stream: Tripled }) },
+  process: (batch) => Effect.succeed({ output: batch.input.items.map((n) => n * 3) }),
+});
+```
+
+| Output          | Items                     |
+| --------------- | ------------------------- |
+| `Output.stream` | Typed items               |
+| `Output.rows`   | Durable State row changes |
+
+Each output append has its own producer position, so a retry does not write a unit twice.
+
+## State
+
+Either projection can declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
+
+## Fact streams and state streams
+
+A fact stream records what happened. Each message is a domain event, appended once. Declare it with `Streamsy.json`.
+
+A state stream carries the current value of keyed rows as Durable State change events. Declare it with `Streamsy.state`. A browser reads it with `@durable-streams/state`.
+
+```json
+{
+  "type": "order",
+  "key": "o-17",
+  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
+  "headers": { "operation": "upsert" }
+}
+```
+
+A projection can rebuild a state stream from the facts.
+
+## Hosts
+
+A projection needs the `Checkpoints` service. Provide it over the storage Layer:
+
+| Storage        | Checkpoints Layer                     |
+| -------------- | ------------------------------------- |
+| `Memory.layer` | `@streamsy/projection/memory` `layer` |
+| SQLite storage | `@streamsy/projection/sqlite` `layer` |
+
+```ts
+import { Layer } from "effect";
+import { Memory, Streamsy } from "@streamsy/core";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+import { Doubled, Numbers } from "./minimal.ts";
+
+export const host = ProjectionMemory.layer.pipe(
+  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
+);
+```
+
+## Pages
+
+| Page                                             | Contents                                              |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| [Define and run](/docs/projections/define)       | Declarations, handlers, guarantees, runners, triggers |
+| [State and checkpoints](/docs/projections/state) | State, read, decide, append, generations, faults      |
+| [Actions](/docs/projections/actions)             | External effects through a durable outbox             |

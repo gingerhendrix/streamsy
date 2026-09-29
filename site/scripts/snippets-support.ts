@@ -52,7 +52,7 @@ export const write = Effect.gen(function* () {
 /** Support by page path under `content/docs`, without `.mdx`. Pages with no entry compile as they are. */
 export const snippetSupport = new Map<string, PageSupport>([
   [
-    "advanced/storage-adapter",
+    "hosting/storage-adapter",
     {
       renames: { 1: "adapter.ts" },
       modules: {
@@ -61,13 +61,25 @@ export const snippetSupport = new Map<string, PageSupport>([
     },
   ],
   [
-    "introduction",
+    "tutorial",
     {
       renames: { 1: "streams.ts", 2: "write.ts", 4: "projection.ts", 7: "storage.ts" },
     },
   ],
   [
-    "projections/projections",
+    "projections/index",
+    {
+      renames: { 1: "minimal.ts" },
+    },
+  ],
+  [
+    "projections/actions",
+    {
+      renames: { 1: "sink.ts" },
+    },
+  ],
+  [
+    "projections/define",
     {
       renames: { 1: "order-totals.ts" },
       preludes: {
@@ -117,12 +129,34 @@ const orderSchema = S.Struct({ orderId: S.String, amount: S.Finite });
 const totalSchema = S.Struct({ orderId: S.String, total: S.Finite });
 declare const toTotals: (items: ReadonlyArray<typeof orderSchema.Type>) => ReadonlyArray<typeof totalSchema.Type>;
 `,
-        13: `import { Effect, Schema } from "effect";
+      },
+      modules: {
+        "streams.ts": shopStreams,
+      },
+    },
+  ],
+  [
+    "projections/state",
+    {
+      preludes: {
+        2: `import { Effect, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { Orders } from "./streams.ts";
 `,
       },
       modules: {
+        "order-totals.ts": `import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+export const orderTotalsProjection = Projection.atomic({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  process: Projection.each(({ item }) =>
+    Effect.flatMap(OrderTotals, (totals) => totals.append({}, [{ orderId: item.orderId, total: item.amount }])),
+  ),
+}).at({});
+`,
         "run.ts": `import { Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 export const program = Projection.run(orderTotalsProjection, { limit: 10 });
@@ -132,7 +166,7 @@ export const program = Projection.run(orderTotalsProjection, { limit: 10 });
     },
   ],
   [
-    "projections/serve",
+    "http/serve",
     {
       renames: { 1: "app.ts" },
       preludes: {
@@ -168,24 +202,11 @@ export const nothingElse: [Left] extends [never] ? true : false = true;
     },
   ],
   [
-    "runtime/cloudflare",
-    {
-      modules: {
-        "streams.ts": shopStreams,
-      },
-    },
-  ],
-  [
-    "runtime/http",
+    "hosting/cloudflare",
     {
       preludes: {
-        2: `import { Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
-import { Http } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
-import { game } from "./streams.ts";
-const App = Layer.mergeAll(Http.routes(game, { prefix: "/streams", access: "append" }));
-const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
+        2: `import type { DurableObjectState } from "@cloudflare/workers-types";
+declare const ctx: DurableObjectState;
 `,
       },
       modules: {
@@ -194,7 +215,21 @@ const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, g
     },
   ],
   [
-    "runtime/introduction",
+    "http/routes",
+    {
+      renames: { 1: "app.ts" },
+    },
+  ],
+  [
+    "http/fetch",
+    {
+      modules: {
+        "streams.ts": shopStreams,
+      },
+    },
+  ],
+  [
+    "hosting/index",
     {
       modules: {
         "streams.ts": shopStreams,
@@ -215,20 +250,7 @@ export const provided: Effect.Effect<unknown, unknown, never> = program.pipe(Eff
     },
   ],
   [
-    "runtime/storage",
-    {
-      preludes: {
-        3: `import type { DurableObjectState } from "@cloudflare/workers-types";
-declare const ctx: DurableObjectState;
-`,
-      },
-      modules: {
-        "streams.ts": shopStreams,
-      },
-    },
-  ],
-  [
-    "streams/creating",
+    "streams/create",
     {
       modules: {
         "streams.ts": notesStreams,
@@ -236,19 +258,13 @@ declare const ctx: DurableObjectState;
     },
   ],
   [
-    "streams/introduction",
+    "streams/declare",
     {
       renames: { 1: "streams.ts" },
-      preludes: {
-        3: `import { Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-const OrderEvent = Schema.Struct({ type: Schema.String, orderId: Schema.String });
-`,
-      },
     },
   ],
   [
-    "streams/reading",
+    "streams/read",
     {
       modules: {
         "streams.ts": notesStreams,
@@ -264,12 +280,12 @@ export { B2, provided };
     },
   ],
   [
-    "streams/writing",
+    "streams/write",
     {
       preludes: {
-        // Block 5 is `IssueTracker.mutate` from the issue tracker demo. These are the
+        // Block 6 is `IssueTracker.mutate` from the issue tracker demo. These are the
         // shapes of the names it uses from `server/state.ts` and `server/issue-tracker.ts`.
-        5: `import { Effect, Predicate, Schedule, Schema } from "effect";
+        6: `import { Effect, Predicate, Schedule, Schema } from "effect";
 import type { OffsetMismatch } from "@streamsy/core";
 interface WorkspaceState { hasProjects(): boolean }
 interface Mutation<A> { readonly change: string; readonly value: A }

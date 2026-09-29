@@ -1,29 +1,15 @@
 ---
 title: Demos
-description: Runnable examples of Streamsy's HTTP edge and projection toolkit.
+description: Runnable Streamsy example applications, from a plain HTTP host to projection-backed apps.
 ---
 
-[Memory server](/docs/demos/memory-server) is the smallest HTTP host: a Bun
-server, one process-local memory store, and a six-step `curl` walkthrough.
+| Demo                                                             | What it does                                                    | Shows                                                  |
+| ---------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
+| [Memory server](/docs/demos/memory-server)                       | A local stream server that you drive with `curl`                | Protocol routes, the memory Layer                      |
+| [Hacker News newest](/docs/demos/hackernews-newest-stream)       | A live list of the newest Hacker News stories in the browser    | State streams, read, decide, append, SQLite restart    |
+| [Issue tracker](/docs/demos/issue-tracker)                       | A small issue tracker with live updates                         | Read, fold, append, Serve routes, browser state        |
+| [Fold agent](/docs/demos/fold-agent)                             | An agent session log that one process owns at a time            | Conditional writes as a fence                          |
+| [Hex board](/docs/demos/hex-board)                               | A board game whose board survives restarts                      | Projection state, rollback, state size                 |
+| [Issue tracker projection](/docs/demos/issue-tracker-projection) | The issue tracker with derived rows, transitions, and a summary | Atomic SQL, output projections, triggers, Serve values |
 
-[Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories into one
-State stream and serves it to a live browser collection. Before each append, the
-poller runs an atomic projection, reads its rows and offsets with
-`Projection.read`, and appends the diff with `expectedOffset`. Its offline smoke
-covers replay, live changes, and a departure during a SQLite restart.
-
-[Issue tracker](/docs/demos/issue-tracker) is a complete stream-backed
-application. An Effect `HttpApi` decodes each write, then reads and folds the
-workspace stream and appends with `expectedOffset`. The same router serves the
-stream read-only, and the browser follows it into StreamDB.
-
-[Issue tracker projection](/docs/demos/issue-tracker-projection) feeds five workspace
-inputs into atomic SQL and named-output stream addresses, serves rows, transitions
-and a compact value, and serializes request and change triggers by address key.
-
-[Hex board](/docs/demos/hex-board) keeps a complete board as fold state in the
-checkpoint transaction, with SQLite restart and failed-step persistence tests.
-
-[Fold agent](/docs/demos/fold-agent) stores an agent's session log in one
-stream. Each append names the observed tail with `expectedOffset`, so a second
-process that writes the same session fences the first one.
+The first three use streams and HTTP only. The last three add projection features.

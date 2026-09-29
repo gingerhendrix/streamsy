@@ -1,0 +1,90 @@
+---
+title: Actions
+description: Deliver external effects at least once through a durable outbox.
+---
+
+An action is an external effect, for example an email or a webhook. `@streamsy/serve/action` writes each action to a durable outbox, then delivers it in a separate pass.
+
+## Declare a sink
+
+```ts
+import { Schema } from "effect";
+import { defineActionSink } from "@streamsy/serve/action";
+
+export const Welcome = Schema.Struct({ userId: Schema.String, workspaceId: Schema.String });
+export type Welcome = typeof Welcome.Type;
+
+export const welcome = defineActionSink<Welcome, { readonly key: "userId" }>({
+  name: "shop.welcome",
+  from: { key: "userId" },
+  handler: { name: "shop.send-welcome", version: 1 },
+  payload: { encode: JSON.stringify, decode: Schema.decodeUnknownSync(Welcome) },
+  idempotencyKey: (payload) => `welcome/${payload.userId}`,
+  partitionBy: (payload) => payload.workspaceId,
+  delivery: { maxAttempts: 5, initialBackoffMs: 1_000, backoffFactor: 2, maxBackoffMs: 60_000 },
+});
+```
+
+| Field            | Value                                                   |
+| ---------------- | ------------------------------------------------------- |
+| `name`           | The sink name                                           |
+| `from`           | The key of the observed relation                        |
+| `handler`        | The handler name and version                            |
+| `payload`        | The codec between the stored JSON and the typed payload |
+| `idempotencyKey` | A pure function of durable facts                        |
+| `partitionBy`    | The lane. Each lane delivers in enqueue order           |
+| `delivery`       | The bounded retry policy                                |
+
+## Enqueue
+
+```ts
+import { Clock, Effect } from "effect";
+import { OutboxStore } from "@streamsy/serve/action/outbox";
+import { draftsFor } from "@streamsy/serve/action/runtime";
+import { welcome, type Welcome } from "./sink.ts";
+
+const enqueue = (payloads: ReadonlyArray<Welcome>) =>
+  Effect.gen(function* () {
+    const outbox = yield* OutboxStore;
+    const now = yield* Clock.currentTimeMillis;
+    return yield* outbox.enqueue(draftsFor(welcome, payloads, now));
+  });
+```
+
+Enqueue in the same transaction as the fact that causes the action. A draft with a sink and key that are already in the outbox is absorbed.
+
+| Backing                          | Module                          |
+| -------------------------------- | ------------------------------- |
+| `createSqliteOutboxBacking(sql)` | `@streamsy/serve/action/sqlite` |
+| `makeMemoryOutboxBacking()`      | `@streamsy/serve/action/outbox` |
+
+`createSqliteOutboxBacking` uses the `SqlClient` you give it, so an enqueue joins that client's transaction. `migrateOutbox(sql)` creates the tables. `outboxStoreLayer(backing)` provides `OutboxStore`.
+
+## Deliver
+
+```ts
+import { Effect } from "effect";
+import { actionSinkHandler, drain } from "@streamsy/serve/action/runtime";
+import { welcome } from "./sink.ts";
+
+const send = actionSinkHandler(welcome, (delivery, refuse) =>
+  delivery.payload.userId === ""
+    ? Effect.fail(refuse.permanent("no user"))
+    : Effect.log(`welcome ${delivery.payload.userId} (${delivery.idempotencyKey})`),
+);
+
+const deliverOnce = drain(welcome, send, { limit: 100 });
+```
+
+`drain` delivers the due entries of each lane, one at a time, in enqueue order. It gives a `DrainReport` with `claimed`, `delivered`, `retried`, and `deadLettered`.
+
+| Handler result       | Outcome                                        |
+| -------------------- | ---------------------------------------------- |
+| Success              | Delivered                                      |
+| `refuse.retryable`   | Retried after the backoff, until `maxAttempts` |
+| `refuse.permanent`   | Dead-lettered now                              |
+| Payload decode fails | Dead-lettered as `payload-poison`              |
+
+Run one drain for each lane at a time. The host schedules it, for example a scoped fiber beside the Bun listener, or a Durable Object alarm.
+
+Delivery is at least once. The receiver must accept a repeated idempotency key without a second effect.

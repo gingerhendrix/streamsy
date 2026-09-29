@@ -61,7 +61,7 @@ export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspac
 
 `Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `shared/state-schema.ts`. The browser uses the same schemas.
 
-See [Creating streams](/docs/streams/creating#durable-state-streams).
+See [Durable State streams](/docs/streams/declare#durable-state-streams).
 
 ## 2. Build the storage and boot
 
@@ -106,7 +106,7 @@ const create = Effect.gen(function* () {
 }).pipe(Effect.orDie, Effect.withSpan("IssueTracker.create"));
 ```
 
-See [Storage](/docs/runtime/storage).
+See [Layers and storage](/docs/hosting).
 
 ## 3. Write in the browser first
 
@@ -338,7 +338,7 @@ export const issueUpsert = (issue: Issue, stamp: Stamp): WorkspaceChange =>
   DurableState.upsert("issue", issue, headers(stamp));
 ```
 
-See [Read, fold, append](/docs/streams/writing#read-fold-append).
+See [Read, fold, append](/docs/streams/write#read-fold-append).
 
 ## 6. Serve the stream read-only
 
@@ -383,7 +383,7 @@ You can read a workspace with `curl`. It returns the change events as JSON:
 curl -i 'http://localhost:1338/streams/workspace/main?offset=-1'
 ```
 
-See [HTTP](/docs/runtime/http#access).
+See [Access](/docs/http/routes#access).
 
 ## 7. Follow the stream in the browser
 

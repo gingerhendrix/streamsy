@@ -50,7 +50,7 @@ function Home() {
         <div className="mt-8 flex flex-wrap gap-4">
           <a
             className="rounded-lg bg-fd-primary px-5 py-3 text-fd-primary-foreground"
-            href={withBasePath("/docs/introduction")}
+            href={withBasePath("/docs/tutorial")}
           >
             Start with typed streams
           </a>
@@ -91,12 +91,12 @@ function Home() {
           </p>
           <p className="mt-4 leading-7">
             Read the{" "}
-            <a className="underline" href={withBasePath("/docs/streams/introduction")}>
+            <a className="underline" href={withBasePath("/docs/streams/declare")}>
               Streams guide
             </a>{" "}
             or the{" "}
-            <a className="underline" href={withBasePath("/docs/runtime/introduction")}>
-              Runtime guide
+            <a className="underline" href={withBasePath("/docs/hosting")}>
+              Hosting guide
             </a>
             .
           </p>

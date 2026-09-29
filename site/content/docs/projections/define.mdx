@@ -1,0 +1,308 @@
+---
+title: Define and run
+description: Declare a projection over one or more inputs, choose atomic writes or declared outputs, and run it with a trigger.
+---
+
+## Declare
+
+```ts
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.atomic({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  process: Projection.each(({ item }) =>
+    Effect.flatMap(OrderTotals, (totals) =>
+      totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
+    ),
+  ),
+});
+export const orderTotalsProjection = orderTotals.at({});
+```
+
+A declaration is inert. `declaration.at(params)` binds it. A runner executes the bound projection.
+
+| Field        | Value                                                                             |
+| ------------ | --------------------------------------------------------------------------------- |
+| `id`         | The projection name                                                               |
+| `version`    | Default 1                                                                         |
+| `generation` | Default 1. See [generations](/docs/projections/state#checkpoints-and-generations) |
+| `params`     | Parameter codecs. `{}` for none                                                   |
+| `inputs`     | A record of stream classes or fixed addresses                                     |
+| `process`    | The handler                                                                       |
+| `state`      | Optional. See [State and checkpoints](/docs/projections/state)                    |
+
+With one input, use `inputs: { input: Orders }` and read `batch.input.items`. With more inputs, give each one a name, for example `inputs: { orders: Orders, refunds: Refunds }`.
+
+## Handler
+
+`process(batch, unit)` returns an Effect. It can use any service.
+
+| Argument | Contents                                                                               |
+| -------- | -------------------------------------------------------------------------------------- |
+| `batch`  | One slice for each input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed` |
+| `unit`   | `projectionId`, `version`, `generation`, `params`, the non-empty `ranges`, and a `key` |
+
+| Helper                    | Does                                                                     |
+| ------------------------- | ------------------------------------------------------------------------ |
+| `Projection.items(batch)` | Flattens a batch into `{ input, item, index }` entries                   |
+| `Projection.each(handle)` | Makes a handler that runs `handle(entry, unit)` for each entry, in order |
+
+A runner needs the handler services, each input stream service, and `Checkpoints`.
+
+## Atomic projections
+
+`Projection.atomic` runs the handler inside the checkpoint transaction. These commit or roll back with the checkpoint:
+
+- appends to streams on the checkpoint storage
+- SQL through the shared `SqlClient`
+
+A stream write to other storage fails with `process / unsupported-composition` before it runs. Calls to other systems are not checked. They run at least once.
+
+An atomic retry reads the inputs again and can see a longer range. Keep this in mind when you use `unit.key` as an external idempotency key.
+
+## Output projections
+
+`Projection.outputs` declares named outputs. The handler returns items for each output name.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+import { Orders } from "./streams.ts";
+
+export class Amounts extends Streamsy.json<Amounts>()("Shop/Amounts", "amounts", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const amounts = Projection.outputs({
+  id: "amounts",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { output: Output.stream(Schema.Finite, { stream: Amounts }) },
+  process: (batch) => Effect.succeed({ output: batch.input.items.map((event) => event.amount) }),
+});
+```
+
+The runner pins the unit input ranges in the checkpoint, then appends each output with its own producer position. A retry sends the same positions, so the server drops duplicates. The handler must be deterministic on its inputs.
+
+| Producer field | Value                                 |
+| -------------- | ------------------------------------- |
+| id             | `id/v<version>[/canonicalParamsJson]` |
+| epoch          | The generation                        |
+| sequence       | The pinned sequence of that output    |
+
+Several outputs, with `Output.rows` and state:
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+
+class Numbers extends Streamsy.json<Numbers>()("Tracker/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+class Board extends Streamsy.bytes<Board>()("Tracker/Board", "board", { params: {} }) {}
+class Transitions extends Streamsy.bytes<Transitions>()("Tracker/Transitions", "transitions", {
+  params: {},
+}) {}
+
+const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
+const tracker = Projection.outputs({
+  id: "tracker",
+  params: {},
+  inputs: { numbers: Numbers },
+  outputs: {
+    board: Output.rows(Card, { key: "issueId", stream: Board }),
+    transitions: Output.stream(Schema.Finite, { stream: Transitions }),
+  },
+  state: { schema: Schema.Finite, initial: 0 },
+  process: (state, batch) =>
+    Effect.sync(() => {
+      const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return {
+        state: next,
+        board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
+        transitions: [next],
+      };
+    }),
+});
+```
+
+Output rules:
+
+- Each output target must be on the checkpoint storage. A foreign target fails with `load / unsupported-composition` before the first read.
+- The output declaration owns the JSON codec. A `bytes` stream class is enough as a target.
+- For `Output.rows`, the output name is the collection type and `key` is the row key.
+- Return every output key. Use `[]` for an empty output. An empty output uses no sequence.
+- Two outputs cannot name the same stream or an input stream.
+- There is no atomicity across outputs.
+- A gone or closed output fails with `pin / invalid-output`.
+
+## Guarantees
+
+| Effect                                                                                      | Guarantee                                                    |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| SQL on the shared `SqlClient` and appends on the checkpoint storage, in `Projection.atomic` | Exactly once. Commits with the checkpoint                    |
+| The `state` value, in either projection                                                     | Exactly once. Saved with the checkpoint                      |
+| Outputs on the checkpoint storage, in `Projection.outputs`                                  | Effectively once. The server drops duplicate positions       |
+| An output on other storage                                                                  | Refused with `load / unsupported-composition`                |
+| A stream write on other storage, in `Projection.atomic`                                     | Refused with `process / unsupported-composition`             |
+| A call to another system, including SQL on another client                                   | At least once                                                |
+| An [action](/docs/projections/actions)                                                      | At least once. Once in effect if the receiver checks the key |
+
+## Running
+
+```ts
+import { Effect, Layer } from "effect";
+import { Memory } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+import { orderTotalsProjection } from "./order-totals.ts";
+import { shop } from "./streams.ts";
+
+const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const program = Projection.run(orderTotalsProjection, { limit: 10 });
+
+await Effect.runPromise(program.pipe(Effect.provide(host)));
+```
+
+| Runner              | Does                                                        |
+| ------------------- | ----------------------------------------------------------- |
+| `Projection.pass`   | Runs one unit                                               |
+| `Projection.run`    | Runs units until caught up, closed, or at the limit         |
+| `Projection.follow` | Runs to caught up, then waits for a change. Returns a fiber |
+| `Projection.watch`  | Runs from the storage change feed. Returns a fiber          |
+
+`run` and `pass` give a `Progress` with `status`, `units`, `items`, and `offsets`.
+
+| Status          | Meaning                         |
+| --------------- | ------------------------------- |
+| `progress`      | The pass processed a unit       |
+| `caught-up`     | An empty pass                   |
+| `source-closed` | Every input is closed and read  |
+| `limit-reached` | The run processed `limit` units |
+
+`limit` has no default. A bad `limit` or `repairIntervalMs` fails with `load / invalid-options`.
+
+```ts
+import { Effect, Fiber } from "effect";
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+
+const serve = Effect.scoped(
+  Effect.gen(function* () {
+    const fiber = yield* Projection.follow(orderTotalsProjection, {
+      repairIntervalMs: 1000,
+    });
+    return yield* Fiber.join(fiber);
+  }),
+);
+```
+
+`follow` retries `storage-failure` with exponential backoff, from 200 ms to 30 s. The `retry` option takes a `Schedule`. Other faults end the fiber. Close the scope to stop it. Each wait is bounded by `repairIntervalMs`.
+
+## Triggers
+
+A process-lifetime loop:
+
+```ts
+Effect.gen(function* () {
+  const fiber = yield* Projection.follow(orderTotalsProjection);
+});
+```
+
+Bounded work before a request answers:
+
+```ts
+Effect.gen(function* () {
+  yield* Projection.run(orderTotalsProjection, { limit: 5 });
+  return yield* readOrderTotals();
+});
+```
+
+The storage change feed. Wakes during a run join into one more run:
+
+```ts
+Effect.gen(function* () {
+  const projectionFiber = yield* Projection.watch(orderTotalsProjection, { limit: 5 });
+  const workspaceFiber = yield* Projection.watch(ordersByWorkspace.at({ workspaceId: "ws-42" }), {
+    limit: 5,
+  });
+});
+```
+
+A Durable Object alarm:
+
+```ts
+const alarm = Effect.gen(function* () {
+  return yield* Projection.run(orderTotalsProjection, { limit: 10 });
+});
+```
+
+A CLI:
+
+```ts
+const hand = Effect.gen(function* () {
+  return yield* Projection.run(orderTotalsProjection);
+});
+
+await Effect.runPromise(hand.pipe(Effect.provide(host)));
+```
+
+| Trigger  | Needs                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| `watch`  | The `Streamsy.ChangeFeed` key of each input. Storage Layers give them. The fetch Layer does not |
+| `follow` | Any stream Layer, including fetch                                                               |
+| `run`    | Any stream Layer                                                                                |
+
+One process runs one runner for each projection key at a time. A second process is detected by the checkpoint token.
+
+The [issue tracker projection](/docs/demos/issue-tracker-projection) uses request and change triggers on one key.
+
+## Parameters
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Output, Projection } from "@streamsy/projection";
+
+class Facts extends Streamsy.json<Facts>()("Shop/Facts", "facts/:workspaceId", {
+  params: { workspaceId: Schema.String },
+  schema: orderSchema,
+}) {}
+class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId", {
+  params: { workspaceId: Schema.String },
+  schema: totalSchema,
+}) {}
+
+const ordersByWorkspace = Projection.outputs({
+  id: "order-totals",
+  params: { workspaceId: Schema.String },
+  inputs: { facts: Facts },
+  outputs: { output: Output.stream(totalSchema, { stream: Totals }) },
+  process: (batch) => Effect.succeed({ output: toTotals(batch.facts.items) }),
+});
+
+const bound = ordersByWorkspace.at({ workspaceId: "ws-42" });
+const params = ordersByWorkspace.parse("facts/ws-42");
+const watch = Effect.gen(function* () {
+  const fibers = yield* Effect.forEach([{ workspaceId: "ws-42" }], (params) =>
+    Projection.watch(ordersByWorkspace.at(params)),
+  );
+});
+```
+
+Parameter rules:
+
+- Each input and output stream declares a subset of the projection parameter names, with the same types.
+- A stream with fewer parameters is shared by every binding.
+- `parse` tries the input streams in order and gives the decoded subset from the first match.
+- The package keeps no list of bound parameters. Bind and trigger each one.
+
+To keep a dynamic set, keep a registry stream of parameter records. A projection over that stream can start and stop triggers.

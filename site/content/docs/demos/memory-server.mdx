@@ -46,7 +46,7 @@ curl -N 'http://localhost:1337/walkthrough/demo?offset=-1&live=sse'
 
 The full [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/memory-server)
 shows the expected status, headers, and body for every step. The
-[HTTP runtime guide](/docs/runtime/http) explains the wire contract.
+[Protocol routes](/docs/http/routes) page explains the wire contract.
 
 ## How it works
 
@@ -78,7 +78,7 @@ SSE body after its last batch. Clients then reconnect from their last offset. Af
 the runtime closes the store and the listener. The example README also has an offline
 smoke test that runs all six flows against a child process.
 
-See [HTTP runtime](/docs/runtime/http) and [Memory](/docs/runtime/storage#memory).
+See [Protocol routes](/docs/http/routes) and [Memory](/docs/hosting#memory).
 
 ## Limits
 

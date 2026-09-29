@@ -1,0 +1,84 @@
+---
+title: Bun
+description: Run a Streamsy server on Bun with SQLite storage, a scoped listener, and clean shutdown.
+---
+
+```ts
+import { Layer, Schema } from "effect";
+import { HttpRouter } from "effect/unstable/http";
+import { BunRuntime } from "@effect/platform-bun";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { drainOnShutdown, listener } from "@streamsy/serve/bun";
+import * as BunStorage from "@streamsy/storage/bun";
+
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+const game = Streamsy.group(Events);
+
+const App = Layer.mergeAll(
+  Http.routes(game, { prefix: "/streams", access: "append" }),
+  Serve.stream(Events, "/feed/:seat"),
+);
+const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
+
+const Server = HttpRouter.serve(App).pipe(
+  drainOnShutdown(),
+  Layer.provide(storage),
+  Layer.provideMerge(listener({ port: 3000 })),
+);
+
+BunRuntime.runMain(Layer.launch(Server));
+```
+
+The launched scope owns the listener, the storage, and every fiber. A projection or an outbox drain can be one more Layer in the same graph. Closing the scope is the shutdown.
+
+## Listener
+
+`listener(options)` from `@streamsy/serve/bun` is a Bun HTTP server Layer.
+
+| Option                    | Default     | Value                                      |
+| ------------------------- | ----------- | ------------------------------------------ |
+| `port`                    | 3000        | The port                                   |
+| `hostname`                | `127.0.0.1` | The bind address                           |
+| `idleTimeout`             | 0           | 0 keeps parked long polls open             |
+| `gracefulShutdownTimeout` | None        | A bound on the wait for in-flight requests |
+
+A client abort interrupts a parked long poll and releases its subscription. A bind failure is a typed `ServeError`.
+
+## Drain on shutdown
+
+`drainOnShutdown(options)` wraps the serve Layer. At shutdown, a parked long poll answers 204 with its offset and cursor, and an SSE body ends after its last batch. It then waits for live reads to end, up to `timeout` (default 2 s).
+
+Apply it directly to `HttpRouter.serve(...)`, before storage and the listener.
+
+## SQLite storage
+
+`BunStorage.layer(options, group)` keeps streams in one SQLite file.
+
+| Option                     | Default    | Value                                                 |
+| -------------------------- | ---------- | ----------------------------------------------------- |
+| `client`                   | (required) | Options for the Bun SQLite client, such as `filename` |
+| `repairIntervalMs`         | 1000       | The longest delay before a wake from another process  |
+| `transactionRetryAttempts` | 16         | Attempts for a busy transaction                       |
+| `transactionRetryDelayMs`  | 25         | The delay between those attempts, in ms               |
+
+The file uses WAL mode. The driver busy timeout is zero. Streamsy retries a busy transaction itself, so the event loop does not block.
+
+The Layer gives `SqlClient`, `CommitBoundary`, `Storage`, the stream services, and a `Streamsy.ChangeFeed` key for each stream. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
+
+A new file uses the 0.4 format. A file in another format is refused and not changed.
+
+## Several processes
+
+Several processes can share one file. Creates, conditional writes, and epoch fences hold across processes.
+
+| Scope                          | Belongs to one        |
+| ------------------------------ | --------------------- |
+| A port                         | Process               |
+| A projection runner            | Process, for each key |
+| A `CommitBoundary` transaction | Process               |
+
+A commit in one process wakes followers in another process within `repairIntervalMs`.

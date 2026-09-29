@@ -54,7 +54,7 @@ export class Sessions extends Streamsy.custom<Sessions>()("Fold/Sessions", {
 }) {}
 ```
 
-See [Streams](/docs/streams/introduction) for custom streams.
+See [Declare streams](/docs/streams/declare) for custom streams.
 
 ## 2. Open a store
 
@@ -69,7 +69,7 @@ export const openStore = (options: StreamsyStoreOptions = {}) => {
 };
 ```
 
-See [Storage](/docs/runtime/storage).
+See [Layers and storage](/docs/hosting).
 
 ## 3. Give Fold the Streamsy log
 
@@ -150,7 +150,7 @@ Each append passes the stored tail as `expectedOffset`. If the stream still ends
 
 The semaphore keeps the appends of one writer in order. The offset check works across processes, because it is part of the append in the store.
 
-See [Conditional writes](/docs/streams/writing#conditional-writes).
+See [Conditional writes](/docs/streams/write#conditional-writes).
 
 ## 6. A second writer fences the first
 

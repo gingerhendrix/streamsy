@@ -1,0 +1,125 @@
+---
+title: Layers and storage
+description: Provide stream services with a storage Layer, choose a backend, and commit application rows with stream writes.
+---
+
+A Streamsy program is an Effect that needs stream services. A Layer provides them and decides where the data is kept.
+
+```ts
+import { ManagedRuntime } from "effect";
+import { Memory } from "@streamsy/core";
+import { shop } from "./streams.ts";
+import { write } from "./write.ts";
+
+const runtime = ManagedRuntime.make(Memory.layer({}, shop));
+try {
+  await runtime.runPromise(write);
+} finally {
+  await runtime.dispose();
+}
+```
+
+| Program shape  | Runtime                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| Script or test | `ManagedRuntime`, as above                                              |
+| Server         | `Layer.launch` under `BunRuntime.runMain`. See [Bun](/docs/hosting/bun) |
+
+## Layers
+
+| Layer                                        | Persists              | Package                            | Page                                   |
+| -------------------------------------------- | --------------------- | ---------------------------------- | -------------------------------------- |
+| `Memory.layer(options, group)`               | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
+| `BunStorage.layer(options, group)`           | SQLite file           | `@streamsy/storage/bun`            | [Bun](/docs/hosting/bun)               |
+| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
+| `Fetch.layer(options, group)`                | Remote                | `@streamsy/core/fetch`             | [Fetch client](/docs/http/fetch)       |
+
+A storage Layer also gives a `Streamsy.ChangeFeed` key for each stream. `Projection.watch` needs these keys.
+
+## Memory
+
+`Memory.layer(options, group)` keeps streams in the process. The data is lost when the Layer is disposed.
+
+| Option              | Effect                                                         |
+| ------------------- | -------------------------------------------------------------- |
+| `constrained`       | Copies fork prefixes, polls for wakes, and has no expiry index |
+| `pollIntervalMs`    | The poll interval in constrained mode. Default 25 ms           |
+| `readLimit`         | The largest catch-up page. Default 1000 messages               |
+| `longPollTimeoutMs` | The long-poll wait. Default 30 s                               |
+
+Each mutation copies the whole store, so an append takes linear time. Use memory for development and tests. Use `constrained: true` in tests to check that a program does not depend on the default capabilities.
+
+## Several backends
+
+Merge one Layer for each backend:
+
+```ts
+import { Layer } from "effect";
+import { Memory, Streamsy } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
+import { Drafts, Journal } from "./streams.ts";
+
+export const layer = Layer.merge(
+  Memory.layer({}, Streamsy.group(Drafts)),
+  BunStorage.layer({ client: { filename: "./journal.sqlite" } }, Streamsy.group(Journal)),
+);
+```
+
+A missing stream service is a type error.
+
+Rules:
+
+- A group checks overlap only among its own streams. Put all served streams in one group.
+- A fork stays inside one storage Layer.
+- A fetch Layer has its own `capabilities`.
+- A projection keeps `Checkpoints`, atomic writes, and outputs on one storage owner. See [Several backends](/docs/projections/state#several-backends).
+
+## Commit with your own tables
+
+The SQLite Layers give `CommitBoundary`. `withTransaction` runs application SQL and a stream mutation in one transaction.
+
+```ts
+import { Effect } from "effect";
+import { Storage, type Mutation } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/storage";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+declare const mutation: Mutation;
+
+const program = Effect.gen(function* () {
+  const boundary = yield* CommitBoundary;
+  const storage = yield* Storage;
+  const sql = yield* SqlClient.SqlClient;
+  return yield* boundary
+    .withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe("INSERT INTO application_rows(id) VALUES (?)", ["example"]);
+        return yield* storage.mutate(mutation);
+      }),
+    )
+    .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
+});
+```
+
+A `MutationRejected` that leaves the boundary rolls back both writes. Catch it outside the boundary. Nested calls join the outer transaction and make no savepoints.
+
+## Testing
+
+Application tests provide `Memory.layer({}, group)` and run the same program.
+
+| Tool                       | Module                   | Use                                                             |
+| -------------------------- | ------------------------ | --------------------------------------------------------------- |
+| `layerTest`, `StreamsTest` | `@streamsy/core/testing` | Protocol tests with visible subscriptions                       |
+| `StorageContract.run`      | `@streamsy/core/testing` | [Storage adapter](/docs/hosting/storage-adapter) contract tests |
+
+Bind streams to a test graph with `Protocol.bind(layerTest(), group)`.
+
+## Protocol tier
+
+| Name                          | Module                    | Gives                                              |
+| ----------------------------- | ------------------------- | -------------------------------------------------- |
+| `Protocol.layer`              | `@streamsy/core/protocol` | `StreamsReader` and `StreamsWriter` over `Storage` |
+| `Protocol.bind(graph, group)` | `@streamsy/core/protocol` | Stream services over a protocol graph              |
+| `layerProtocol(options)`      | SQLite and fetch modules  | The generic pair, with no streams                  |
+| `Streams.layerMemory()`       | `@streamsy/core/protocol` | The generic pair over memory                       |
+
+Storage adapters, protocol tests, and HTTP internals use these.

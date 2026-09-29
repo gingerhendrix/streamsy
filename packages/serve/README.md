@@ -107,7 +107,7 @@ The value contract header is `x-streamsy-value-contract` (`VALUE_CONTRACT_HEADER
 in `/contract`), and `Serve.value` options are `ValueOptions`. A projection's
 served state is `Serve.value(declaration.state, path)`.
 
-Guides: [Serve](https://streamsy.dev/docs/projections/serve),
-[HTTP](https://streamsy.dev/docs/runtime/http),
-[Cloudflare](https://streamsy.dev/docs/runtime/cloudflare),
-[Alchemy](https://streamsy.dev/docs/runtime/alchemy).
+Guides: [Serve routes](https://streamsy.dev/docs/http/serve),
+[Protocol routes](https://streamsy.dev/docs/http/routes),
+[Cloudflare](https://streamsy.dev/docs/hosting/cloudflare),
+[Alchemy](https://streamsy.dev/docs/hosting/cloudflare#alchemy).
