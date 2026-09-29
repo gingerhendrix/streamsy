@@ -3,7 +3,7 @@ import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
-import { Streams } from "@streamsy/core/protocol";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Projection,
@@ -12,13 +12,22 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
-import { positives, initialize, type Services } from "./support/scenarios.ts";
+import { positives as transactionalPositives, initialize } from "./support/scenarios.ts";
+
+const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
 
-const run = <A, E>(body: Effect.Effect<A, E, Services>, readLimit = 1000) =>
+const run = <A, E>(
+  body: Effect.Effect<
+    A,
+    E,
+    CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter
+  >,
+  readLimit = 1000,
+) =>
   Effect.runPromise(
     body.pipe(Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit })))),
   );
@@ -32,7 +41,7 @@ const setup = Effect.gen(function* () {
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
   const projection = Projection.process({
-    commit: Commit.transaction,
+    commit: Commit.atLeastOnce,
     params: {},
     id,
     inputs,
@@ -90,7 +99,7 @@ test("one closed input stays in the batch while the other continues", () =>
       const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
         [];
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "closing",
         params: {},
         inputs: { a, b },
@@ -159,7 +168,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       let active = 0;
       let overlapped = false;
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "sequenced",
         params: {},
         inputs: { b, a },

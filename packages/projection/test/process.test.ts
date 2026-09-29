@@ -1,13 +1,13 @@
-/* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the memory runtime and transaction instrumentation. */
+/* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the SQLite runtime and transaction instrumentation. */
 import { expect, test } from "bun:test";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
+import { layerSqlite } from "./support/sqlite.ts";
 import * as Family from "./support/families.ts";
 
 const input = Family.json("prepare-input", { schema: Schema.Number });
-const host = Family.withFamilies(Memory.layerMemory());
+const host = Family.withFamilies(layerSqlite());
 
 test("prepare runs outside the transaction and passes its result into process", () =>
   Effect.runPromise(

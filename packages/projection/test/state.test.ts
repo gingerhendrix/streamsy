@@ -11,12 +11,7 @@ import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import {
-  CheckpointStore,
-  Projection,
-  Transaction,
-  type ProjectionFault,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -52,11 +47,7 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | CheckpointStore
-      | Transaction
-      | import("@streamsy/core").Streamsy.Wildcard
-      | StreamsReader
-      | StreamsWriter,
+      CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -70,7 +61,6 @@ for (const [name, host] of hosts) {
     try {
       await runtime.runPromise(
         Effect.gen(function* () {
-          expect(Option.isNone((yield* Transaction).sql)).toBe(name === "memory");
           yield* seed;
           expect((yield* Projection.run(total)).items).toBe(2);
           expect((yield* Projection.read(total)).state).toBe(5);
@@ -99,46 +89,6 @@ for (const [name, host] of hosts) {
           expect((yield* Projection.read(total)).state).toBe(5);
           expect((yield* Projection.run(total)).items).toBe(2);
           expect((yield* Projection.read(total)).state).toBe(23);
-        }),
-      );
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
-  test(`${name}: handler failure after a record write rolls back state and offsets`, async () => {
-    const runtime = ManagedRuntime.make(host);
-    try {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* Projection.run(total);
-          const checkpoints = yield* CheckpointStore;
-          const before = yield* checkpoints.load(total);
-          yield* Streams.append(input, [7]);
-          const saveThenFail = Projection.process({
-            commit: Commit.transaction,
-            id: total.id,
-            params: {},
-            version: total.version,
-            inputs: { input },
-            process: () =>
-              Effect.gen(function* () {
-                const store = yield* CheckpointStore;
-                const loaded = yield* restore(total, store);
-                yield* store.compareAndSet(total, loaded.token, {
-                  identity: loaded.record.identity,
-                  inputs: loaded.record.inputs,
-                  adapters: loaded.record.adapters,
-                  state: "999",
-                });
-                return yield* Effect.fail("after save");
-              }),
-          }).at({});
-          const failed = yield* Projection.run(saveThenFail).pipe(Effect.result);
-          expect(failed._tag).toBe("Failure");
-          expect(yield* checkpoints.load(total)).toEqual(before);
-          expect((yield* Projection.read(total)).state).toBe(5);
         }),
       );
     } finally {
@@ -236,6 +186,46 @@ for (const [name, host] of hosts) {
     }
   });
 }
+
+test(`SQLite: handler failure after a record write rolls back state and offsets`, async () => {
+  const runtime = ManagedRuntime.make(sqlite());
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* Projection.run(total);
+        const checkpoints = yield* CheckpointStore;
+        const before = yield* checkpoints.load(total);
+        yield* Streams.append(input, [7]);
+        const saveThenFail = Projection.process({
+          commit: Commit.transaction,
+          id: total.id,
+          params: {},
+          version: total.version,
+          inputs: { input },
+          process: () =>
+            Effect.gen(function* () {
+              const store = yield* CheckpointStore;
+              const loaded = yield* restore(total, store);
+              yield* store.compareAndSet(total, loaded.token, {
+                identity: loaded.record.identity,
+                inputs: loaded.record.inputs,
+                adapters: loaded.record.adapters,
+                state: "999",
+              });
+              return yield* Effect.fail("after save");
+            }),
+        }).at({});
+        const failed = yield* Projection.run(saveThenFail).pipe(Effect.result);
+        expect(failed._tag).toBe("Failure");
+        expect(yield* checkpoints.load(total)).toEqual(before);
+        expect((yield* Projection.read(total)).state).toBe(5);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
 
 test("SQLite file restart retains folded state and reads zero new items", async () => {
   const directory = mkdtempSync(join(tmpdir(), "projection-state-"));

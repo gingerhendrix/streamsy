@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
 import { Memory, Streamsy, type Storage, type StorageFault } from "@streamsy/core";
-import type { CheckpointStore, Transaction, ProjectionFault } from "@streamsy/projection";
+import type { CheckpointStore, ProjectionFault } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -31,11 +31,7 @@ export const memoryHost = (
   options: Parameters<typeof Memory.layer>[0] & { readonly readLimit?: number } = {},
 ) => ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer(options, streams)));
 const hostLayer: Layer.Layer<
-  | CheckpointStore
-  | Transaction
-  | Storage
-  | HackerNewsStories
-  | Streamsy.ChangeFeed<HackerNewsStories>,
+  CheckpointStore | Storage | HackerNewsStories | Streamsy.ChangeFeed<HackerNewsStories>,
   ProjectionFault | StorageFault
 > = databasePath === "memory" ? memoryHost() : sqliteHostLayer;
 

@@ -1,20 +1,14 @@
-import { Context, Effect, Option } from "effect";
+import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { make, type HandlerFailed } from "./model.ts";
+import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
 import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
 
 import { withPrepare } from "./range.ts";
-
-// rc.115 Context.serviceNotFoundError creates a plain Error with no service field.
-// Keep the exact message check here; the missing-SQL regression test guards upgrades.
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Narrows a runtime defect at the Effect boundary.
-const isMissingSqlClient = (defect: unknown): defect is Error =>
-  defect instanceof Error && defect.message === `Service not found: ${SqlClient.SqlClient.key}`;
 
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
@@ -46,17 +40,11 @@ export const transaction = withPrepare(
                 reason: "token-conflict",
                 message: `Record of ${pending.key.id} changed while the unit was read`,
               });
-            // SAFETY: with no SQL client, remove ambient SQL and translate only the resulting missing-service defect.
-            const run = Option.isSome(tx.sql)
-              ? Effect.provideService(pending.run, SqlClient.SqlClient, tx.sql.value)
-              : Effect.updateContext(
-                  pending.run as Effect.Effect<Result, HandlerFailed>,
-                  (context: Context.Context<never>) => Context.omit(SqlClient.SqlClient)(context),
-                );
-            const result = yield* run.pipe(
+            const result = yield* pending.run.pipe(
+              Effect.provideService(SqlClient.SqlClient, tx.sql),
               Effect.provideService(CurrentOwner, tx.owner),
               Effect.catchDefect((defect) =>
-                isForeignOwner(defect) || (Option.isNone(tx.sql) && isMissingSqlClient(defect))
+                isForeignOwner(defect)
                   ? Effect.fail(
                       new ProjectionFault({
                         phase: "process",

@@ -52,7 +52,7 @@ test("plain SQL checkpoints join an outer transaction and roll back as one row",
       const store = yield* CheckpointStore;
       const transaction = yield* Transaction;
       const client = yield* SqlClient.SqlClient;
-      expect(Option.getOrThrow(transaction.sql)).toBe(client);
+      expect(transaction.sql).toBe(client);
       const failed = yield* transaction
         .withTransaction(
           Effect.gen(function* () {

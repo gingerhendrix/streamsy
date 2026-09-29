@@ -6,12 +6,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
-import {
-  CheckpointStore,
-  Projection,
-  Transaction,
-  type ProjectionFault,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -22,8 +17,7 @@ const hosts: ReadonlyArray<
     Layer.Layer<
       | CheckpointStore
       | import("@streamsy/core/protocol").StreamsReader
-      | import("@streamsy/core/protocol").StreamsWriter
-      | Transaction,
+      | import("@streamsy/core/protocol").StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -126,7 +120,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
     Effect.gen(function* () {
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "queued-forget",
         params: {},
         inputs: { input },

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
 import { Rows, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import * as Memory from "@streamsy/projection/memory";
 import * as Families from "./support/families.ts";
 
@@ -65,7 +66,7 @@ for (const commit of [Commit.transaction, Commit.producer]) {
           { type: "card", key: "old", headers: { operation: "delete" } },
           { type: "count", key: "8", headers: { operation: "delete" } },
         ]);
-      }).pipe(Effect.provide(Families.withFamilies(Memory.layerMemory(), Input, Board))),
+      }).pipe(Effect.provide(Families.withFamilies(layerSqlite(), Input, Board))),
     ));
 }
 

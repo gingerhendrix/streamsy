@@ -1,8 +1,7 @@
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary, ownerOf, attachOwner } from "@streamsy/core/internal/memory";
 import { CheckpointStore, fromStore, type EncodedStore } from "./checkpoint-store.ts";
-import { Transaction } from "./transaction.ts";
 
 /** Requires the exact memory owner retained by Streams.layerMemory(). */
 export const layer = Layer.effectContext(
@@ -16,13 +15,7 @@ export const layer = Layer.effectContext(
     };
     const checkpoints = fromStore(store);
     attachOwner(checkpoints.load, ownerOf(boundary));
-    return Context.make(CheckpointStore, checkpoints).pipe(
-      Context.add(Transaction, {
-        owner: ownerOf(boundary),
-        sql: Option.none(),
-        withTransaction: boundary.withTransaction,
-      }),
-    );
+    return Context.make(CheckpointStore, checkpoints);
   }),
 );
 

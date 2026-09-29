@@ -19,7 +19,6 @@ import {
   Projection,
   ProjectionFault,
   type Identity,
-  type Transaction,
   type Unit,
 } from "@streamsy/projection";
 import { type CheckpointRecord } from "@streamsy/projection/checkpoint";
@@ -53,7 +52,6 @@ type Services =
   | Out
   | PagedReader
   | CheckpointStore
-  | Transaction
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;

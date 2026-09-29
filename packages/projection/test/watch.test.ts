@@ -5,7 +5,8 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Projection, type Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import { layerMemory } from "@streamsy/projection/memory";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
@@ -32,7 +33,6 @@ type Services =
   | WatchRoute2
   | WatchRoute1
   | CheckpointStore
-  | Transaction
   | Storage
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
@@ -49,7 +49,7 @@ const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
 test("an append runs an transactional projection and commits its write with the checkpoint", () =>
-  run(
+  Effect.runPromise(
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-transactional-input", {
         schema: Schema.Finite,
@@ -82,7 +82,7 @@ test("an append runs an transactional projection and commits its write with the 
         Option.isSome((yield* (yield* CheckpointStore).load(Projection.key(projection))).record),
       ).toBe(true);
       yield* Fiber.interrupt(fiber);
-    }),
+    }).pipe(Effect.scoped, Effect.provide(FamilyFixture.withFamilies(layerSqlite()))),
   ));
 
 test("changes during an in-flight run coalesce to one follow-up run", () =>
@@ -145,7 +145,7 @@ test("a limited wake drains the backlog before waiting for another change", () =
       const seen: Array<number> = [];
       const drained = yield* Deferred.make<void>();
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-limit",
         params: {},
         inputs: { input },
@@ -176,7 +176,7 @@ test("an invalid limit fails before a watcher fiber is created", () =>
         schema: Schema.Finite,
       });
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-invalid-limit",
         params: {},
         inputs: { input },
@@ -196,7 +196,7 @@ test("an ownership probe reports a gone input as unavailable history", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-probe-failure", { schema: Schema.Finite });
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-probe-failure",
         params: {},
         inputs: { input },
@@ -265,7 +265,7 @@ test("a stream watches its fixed address set independently", () =>
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
       const declared = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-stream",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute1 },
@@ -297,7 +297,7 @@ test("closing the caller scope interrupts every stream address fiber", () =>
   run(
     Effect.gen(function* () {
       const declared = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-stream-scope",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute2 },
@@ -316,7 +316,7 @@ test("a closed and drained input ends its watcher", () =>
       const input = FamilyFixture.json("change-closed", { schema: Schema.Finite });
       yield* Streams.create(input);
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-closed",
         params: {},
         inputs: { input },
@@ -335,7 +335,7 @@ test("closing the caller scope ends the watcher fiber", () =>
       const input = FamilyFixture.json("change-scope", { schema: Schema.Finite });
       yield* Streams.create(input);
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "change-scope",
         params: {},
         inputs: { input },

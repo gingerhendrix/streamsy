@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import * as Memory from "@streamsy/projection/memory";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
@@ -20,6 +21,7 @@ class Foreign extends Streamsy.json<Foreign>()("owner/Foreign", "owner/foreign/:
 }) {}
 const params = { id: "a" };
 const local = Memory.layerMemory();
+const sqlite = layerSqlite();
 const foreign = Memory.layerMemory();
 const host = Layer.merge(
   Protocol.bind(local, Streamsy.group(Input, Local)),
@@ -65,6 +67,11 @@ for (const sameOwner of [true, false]) {
     );
   });
 }
+
+const transactionHost = Layer.merge(
+  Protocol.bind(sqlite, Streamsy.group(Input, Local)),
+  Protocol.bind(foreign, Streamsy.group(Foreign)),
+).pipe(Layer.provideMerge(sqlite));
 
 for (const method of [
   "append",
@@ -128,7 +135,7 @@ for (const method of [
         expect((yield* other.head({ id: "b" }).pipe(Effect.result))._tag).toBe("Failure");
         // Scope restoration: a normal foreign write remains usable after the failed pass.
         yield* other.append(params, [4]);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(transactionHost)),
     );
   });
 }

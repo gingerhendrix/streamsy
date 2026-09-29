@@ -112,7 +112,7 @@ const unowned = Layer.effectContext(
 
 test("a custom stream wire cannot establish the owner of an transactional write", async () => {
   const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
-    Layer.provideMerge(memoryGraph),
+    Layer.provideMerge(sqlite),
   );
   await Effect.runPromise(
     Effect.gen(function* () {

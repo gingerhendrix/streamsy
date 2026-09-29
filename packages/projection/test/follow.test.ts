@@ -7,22 +7,24 @@ import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope 
 import { TestClock } from "effect/testing";
 import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
-import {
-  CheckpointStore,
-  Projection,
-  ProjectionFault,
-  type Transaction,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import { layerMemory } from "@streamsy/projection/memory";
-import { input, output, positives, readAll } from "./support/scenarios.ts";
+import {
+  input,
+  output,
+  positives as transactionalPositives,
+  readAll,
+} from "./support/scenarios.ts";
 
 type Services =
   | CheckpointStore
-  | Transaction
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;
+const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };
+
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
     body.pipe(
@@ -92,7 +94,7 @@ test("follow cancellation releases parked waits", () =>
   ));
 
 test("a write to the second input wakes a two-input follower", () =>
-  run(
+  Effect.runPromise(
     Effect.gen(function* () {
       const a = FamilyFixture.json("wake-a", { schema: Schema.Finite });
       const b = FamilyFixture.json("wake-b", { schema: Schema.Finite });
@@ -143,7 +145,10 @@ test("a write to the second input wakes a two-input follower", () =>
       expect((yield* owner.load(Projection.key(projection))).token).toBe("2");
       expect(yield* readAll(target)).toEqual(["a:1", "b:2"]);
       yield* Fiber.interrupt(fiber);
-    }),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FamilyFixture.withFamilies(Layer.merge(layerSqlite(), TestClock.layer()))),
+    ),
   ));
 
 test("a closed and drained input beside an open one does not wake every cycle", () =>
@@ -158,7 +163,7 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.append(a, [1], { close: true });
       yield* Streams.append(b, [2]);
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "closed-open",
         params: {},
         inputs: { a, b },
@@ -353,7 +358,7 @@ test("follow does not retry non-storage faults or handler failures", () =>
       ] as const) {
         let calls = 0;
         const projection = Projection.process({
-          commit: Commit.transaction,
+          commit: Commit.atLeastOnce,
           id: "terminal",
           params: {},
           inputs: { input },

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
 import { Streamsy } from "@streamsy/core";
@@ -11,7 +11,7 @@ import {
   ProjectionFault,
   Transaction,
 } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
+import { layerSqlite } from "./support/sqlite.ts";
 import * as ProjectionSql from "@streamsy/projection/sql";
 
 class Input extends Streamsy.json<Input>()("transaction/Input", "transaction/input", {
@@ -22,8 +22,8 @@ class Sink extends Streamsy.json<Sink>()("transaction/Sink", "transaction/sink",
   params: {},
   schema: Schema.Number,
 }) {}
-const graph = Memory.layerMemory();
-const memory = Protocol.bind(graph, Streamsy.group(Input, Sink)).pipe(Layer.provideMerge(graph));
+const graph = layerSqlite();
+const sqlite = Protocol.bind(graph, Streamsy.group(Input, Sink)).pipe(Layer.provideMerge(graph));
 const seed = Effect.gen(function* () {
   const input = yield* Input;
   yield* input.create({});
@@ -41,22 +41,16 @@ const sqlProcess = Projection.process({
     }),
 }).at({});
 
-test("memory SQL requests fail as unsupported composition; other defects remain defects", () =>
+test("non-foreign-owner defects remain defects on SQLite", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
-      const result = yield* Projection.run(sqlProcess).pipe(Effect.result);
-      expect(result).toMatchObject({
-        _tag: "Failure",
-        failure: { phase: "process", reason: "unsupported-composition" },
-      });
-      expect((yield* (yield* CheckpointStore).load(sqlProcess)).token).toBe("0");
       const defect = new Error("different defect");
       const broken = { ...sqlProcess, process: () => Effect.die(defect) };
       const exit = yield* Projection.run(broken).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
-    }).pipe(Effect.provide(memory)),
+    }).pipe(Effect.provide(sqlite)),
   ));
 
 test("SQL from Transaction is sufficient and rolls back with the checkpoint", () => {
@@ -142,7 +136,7 @@ test("transaction checks all declared outputs before running the handler", () =>
       }).at({});
       const tx = yield* Transaction;
       const result = yield* Projection.run({ ...base, commit: Commit.transaction }).pipe(
-        Effect.provideService(Transaction, { ...tx, owner: {}, sql: Option.none() }),
+        Effect.provideService(Transaction, { ...tx, owner: {} }),
         Effect.result,
       );
       expect(result).toMatchObject({
@@ -151,7 +145,7 @@ test("transaction checks all declared outputs before running the handler", () =>
       });
       expect(calls).toBe(0);
       expect((yield* (yield* CheckpointStore).load(base)).token).toBe("0");
-    }).pipe(Effect.provide(memory)),
+    }).pipe(Effect.provide(sqlite)),
   ));
 
 test("transaction commits declared outputs and state together and rolls both back on conflict", () =>
@@ -197,17 +191,5 @@ test("transaction commits declared outputs and state together and rolls both bac
       expect((yield* Stream.runCollect(sink.read({}))).flatMap((batch) => batch.items)).toEqual([
         1,
       ]);
-    }).pipe(Effect.provide(memory)),
+    }).pipe(Effect.provide(sqlite)),
   ));
-
-test("Effect missing-service diagnostic still identifies SqlClient on memory hosts", () => {
-  // SAFETY: deliberately omit SQL to inspect the pinned Effect runtime's defect contract.
-  const missing = Effect.asVoid(SqlClient.SqlClient) as Effect.Effect<void>;
-  const exit = Effect.runSyncExit(missing);
-  expect(Exit.isFailure(exit)).toBe(true);
-  if (Exit.isFailure(exit)) {
-    const defect = Cause.squash(exit.cause);
-    expect(defect).toBeInstanceOf(Error);
-    expect(defect).toMatchObject({ message: `Service not found: ${SqlClient.SqlClient.key}` });
-  }
-});

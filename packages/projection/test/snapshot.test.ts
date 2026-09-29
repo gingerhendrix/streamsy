@@ -10,12 +10,7 @@ import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import {
-  CheckpointStore,
-  Projection,
-  Transaction,
-  type ProjectionFault,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -52,11 +47,7 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | CheckpointStore
-      | Transaction
-      | import("@streamsy/core").Streamsy.Wildcard
-      | StreamsReader
-      | StreamsWriter,
+      CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -179,7 +170,7 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         yield* seed;
         const stateless = Projection.process({
-          commit: Commit.transaction,
+          commit: Commit.atLeastOnce,
           id: "snapshot-stateless",
           params: {},
           inputs: { input },

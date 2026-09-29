@@ -3,12 +3,11 @@ import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Projection, type Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
   | CheckpointStore
-  | Transaction
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
@@ -28,7 +27,7 @@ test("two calls on one key run in sequence without a token conflict", () =>
       const release = yield* Deferred.make<void>();
       let calls = 0;
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "serialized-one",
         params: {},
         inputs: { input },
@@ -101,7 +100,7 @@ test("a failing handler releases the permit", () =>
       yield* Streams.append(input, [1]);
       let fail = true;
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "serialized-failure",
         params: {},
         inputs: { input },
@@ -128,7 +127,7 @@ test("follow and run share the permit and release it after interruption", () =>
       const entered = yield* Deferred.make<void>();
       let calls = 0;
       const projection = Projection.process({
-        commit: Commit.transaction,
+        commit: Commit.atLeastOnce,
         id: "follow-permit",
         params: {},
         inputs: { input },

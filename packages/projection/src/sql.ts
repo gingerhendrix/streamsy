@@ -66,7 +66,7 @@ export const layer = Layer.effectContext(
     const sql = yield* SqlClient.SqlClient;
     return yield* make(sql, {
       owner: ownerOf(sql),
-      sql: Option.some(sql),
+      sql,
       withTransaction: (body) =>
         sql
           .withTransaction(body)
@@ -84,7 +84,7 @@ export const layerStorage = Layer.effectContext(
     const boundary = yield* CommitBoundary;
     return yield* make(sql, {
       owner: ownerOf(boundary),
-      sql: Option.some(sql),
+      sql,
       withTransaction: (body) =>
         boundary
           .withTransaction(body)

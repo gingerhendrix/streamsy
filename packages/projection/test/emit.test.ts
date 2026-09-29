@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -18,8 +18,7 @@ const hosts: ReadonlyArray<
     Layer.Layer<
       | import("@streamsy/projection").CheckpointStore
       | import("@streamsy/core/protocol").StreamsReader
-      | import("@streamsy/core/protocol").StreamsWriter
-      | Transaction,
+      | import("@streamsy/core/protocol").StreamsWriter,
       import("@streamsy/core").StorageFault | ProjectionFault
     >,
   ]

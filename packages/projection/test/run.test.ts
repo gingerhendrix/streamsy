@@ -4,13 +4,12 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
-import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
+import { SqlClient } from "effect/unstable/sql";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerSqlite } from "./support/sqlite.ts";
 import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
 import {
-  composition,
   failAtSave,
   initialize,
   input,
@@ -21,16 +20,14 @@ import {
 } from "./support/scenarios.ts";
 
 const run = <A, E>(
-  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+  body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
   readLimit = 1000,
 ) =>
   Effect.runPromise(
-    body.pipe(
-      Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit }), Numbers, Doubled)),
-    ),
+    body.pipe(Effect.provide(FamilyFixture.withFamilies(layerSqlite(readLimit), Numbers, Doubled))),
   );
 const failure = <A, E>(
-  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+  body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
 ) =>
   Effect.gen(function* () {
     const result = yield* body.pipe(Effect.result);
@@ -53,24 +50,6 @@ const withRead = <A, E, R>(
       FamilyFixture.provideReader(StreamsReader.of({ ...reader, read: read(reader) })),
     );
   });
-
-test("fresh ordered run, transactional rollback and restart without repeated output", () =>
-  run(
-    Effect.gen(function* () {
-      const result = yield* composition;
-      expect(result.first.status).toBe("limit-reached");
-      expect(result.first.items).toBe(1);
-      expect(result.failed).toBe("Failure");
-      expect(result.after).toEqual(result.before);
-      expect(result.final.status).toBe("caught-up");
-      expect(result.final.items).toBe(2);
-      expect(result.restart.items).toBe(0);
-      expect(result.restart.status).toBe("caught-up");
-      expect(result.stored.output).toEqual([1, 3]);
-      expect(result.stored.loaded.token).toBe("3");
-    }),
-    1,
-  ));
 
 test("a non-empty pass is progress even when its read is up to date", () =>
   run(
@@ -212,13 +191,16 @@ test("invalid stored record stops", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.run(positives);
-      const boundary = yield* MemoryCommitBoundary;
+      const sql = yield* SqlClient.SqlClient;
       const key = recordKey(Projection.key(positives));
-      const stored = Option.getOrThrow(yield* boundary.read(key));
+      const rows = yield* sql<{
+        readonly value: string;
+      }>`SELECT value FROM streamsy_projection_v2_records WHERE key = ${key}`;
+      const stored = Option.getOrThrow(Option.fromUndefinedOr(rows[0])).value;
       const bad = stored.replace(/"input":"\d{16}_\d{16}"/, '"input":"not-an-offset"');
       expect(bad).not.toBe(stored);
       for (const value of ["{not json", '{"version":1,"record":{}}', bad]) {
-        yield* boundary.write(key, value);
+        yield* sql`UPDATE streamsy_projection_v2_records SET value = ${value} WHERE key = ${key}`;
         const failed = fault(yield* failure(Projection.run(positives)));
         expect(failed.phase).toBe("load");
         expect(failed.reason).toBe("invalid-record");
@@ -310,7 +292,7 @@ test("record change between load and transaction is a token conflict", () =>
     }),
   ));
 
-test("two competing passes on one memory host: the second conflicts and output is not doubled", () =>
+test("two competing passes on one SQLite host: the second conflicts and output is not doubled", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
@@ -318,17 +300,16 @@ test("two competing passes on one memory host: the second conflicts and output i
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
+      const firstDone = yield* Deferred.make<void>();
       const gated = Projection.process({
         commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
-        process: (batch, unit) =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(inside, undefined);
-            yield* Deferred.await(release);
-            yield* positives.process(batch, unit);
-          }),
+        // Both runners load the old token before either SQL transaction starts.
+        prepare: () =>
+          Deferred.succeed(inside, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        process: (batch, unit) => positives.process(batch, unit),
       }).at({});
       const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
@@ -337,11 +318,21 @@ test("two competing passes on one memory host: the second conflicts and output i
         load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
       });
       const second = yield* Effect.forkChild(
-        Projection.pass(positives).pipe(Effect.provideService(CheckpointStore, observing)),
+        Projection.pass(
+          Projection.process({
+            commit: Commit.transaction,
+            id: positives.id,
+            params: {},
+            inputs: { input },
+            prepare: () => Deferred.await(firstDone),
+            process: (batch, unit) => positives.process(batch, unit),
+          }).at({}),
+        ).pipe(Effect.provideService(CheckpointStore, observing)),
       );
       yield* Deferred.await(loaded);
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(first)).items).toBe(3);
+      yield* Deferred.succeed(firstDone, undefined);
       const failed = fault(yield* failure(Fiber.join(second)));
       expect(failed.phase).toBe("checkpoint");
       expect(failed.reason).toBe("token-conflict");
