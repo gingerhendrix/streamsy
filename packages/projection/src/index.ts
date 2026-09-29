@@ -21,8 +21,6 @@ export { ProjectionFault } from "./fault.ts";
 
 export { Transaction } from "./transaction.ts";
 
-export * as Output from "./output.ts";
-
 export * as Commit from "./commit.ts";
 export {
   HandlerFailed,

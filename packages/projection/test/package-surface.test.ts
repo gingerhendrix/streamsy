@@ -38,7 +38,7 @@ test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
   expect(Root.Transaction.key).toBe("@streamsy/projection/Transaction");
   expect(Projection.emit).toBeFunction();
-  expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
+  expect(Object.keys(Root)).not.toContain("Output");
   expect(Projection.read).toBeFunction();
   expect(Projection.forget).toBeFunction();
   expect(Checkpoint.fromStore).toBeFunction();
@@ -98,7 +98,6 @@ test("root exports stay explicit", () => {
     "CheckpointStore",
     "Commit",
     "HandlerFailed",
-    "Output",
     "Projection",
     "ProjectionFault",
     "Transaction",
