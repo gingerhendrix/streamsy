@@ -52,12 +52,12 @@ The stream codecs decode the path parameters. Two routes with the same shape fai
 
 ## Projection outputs
 
-Pass the `outputs` and `state` of a projection declaration to Serve.
+Pass output routes to `Serve.state` or `Serve.stream`. Pass the declaration's `.state` to `Serve.value`.
 
 ```ts
 import { Effect, Layer, Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Output, Projection } from "@streamsy/projection";
+import { Rows, Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
@@ -65,40 +65,47 @@ class Numbers extends Streamsy.json<Numbers>()("Seats/Numbers", "numbers/:seat",
   params,
   schema: Schema.Finite,
 }) {}
-class Board extends Streamsy.bytes<Board>()("Seats/Board", "board/:seat", { params }) {}
-class Transitions extends Streamsy.bytes<Transitions>()("Seats/Transitions", "transitions/:seat", {
-  params,
-}) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
-const tracker = Projection.outputs({
+class Board extends Streamsy.state<Board>()("Seats/Board", "board/:seat", {
+  params,
+  collections: { card: { schema: Card, key: "id" } },
+}) {}
+class Transitions extends Streamsy.json<Transitions>()("Seats/Transitions", "transitions/:seat", {
+  params,
+  schema: Schema.FiniteFromString,
+}) {}
+const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
   id: "tracker",
   params,
   inputs: { numbers: Numbers },
   outputs: {
-    board: Output.rows(Card, { key: "id", stream: Board }),
-    transitions: Output.stream(Schema.FiniteFromString, { stream: Transitions }),
+    board: Board,
+    transitions: Transitions,
   },
   state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
-  process: (state, batch) =>
+  mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
       const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-      return {
-        state: { total },
-        board: [Output.upsert({ id: "total", total }), Output.remove("old")],
-        transitions: [total],
-      };
+      return [
+        { total },
+        {
+          board: [Rows.upsert({ id: "total", total }), Rows.remove("old")],
+          transitions: [total],
+        },
+      ] as const;
     }),
 });
 const OutputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/board/:seat"),
-  Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
+  Serve.state(Board, "/board/:seat"),
+  Serve.stream(Transitions, "/transitions/:seat"),
   Serve.value(tracker.state, "/summary/:seat"),
 );
 ```
 
 Serve does not run the projection. Run it on the host before a read. `Serve.value(tracker.state, path)` answers 503 until the first unit is saved.
 
-The route app needs the output streams and `State` of the projection host. A value schema must encode to JSON.
+The route app needs the output streams and the Commit's required services for the value. A value schema must encode to JSON.
 
 ## Auth and request parameters
 

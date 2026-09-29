@@ -1,10 +1,11 @@
+import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { Output, Projection } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { emptySlice } from "../src/batch.ts";
-import { producerId } from "../src/outputs-pass.ts";
+import { producerId } from "../src/commit/producer.ts";
 import { unitOf } from "../src/unit.ts";
 
 class facts extends Streamsy.json<facts>()("declaration.test/facts", "facts/:workspaceId", {
@@ -21,16 +22,17 @@ class output extends Streamsy.json<output>()("declaration.test/output", "boards/
 }) {}
 
 test("a declaration binds declared inputs and keeps fixed addresses", () => {
-  const board = Projection.outputs({
+  const board = Projection.emit({
+    commit: Commit.producer,
     id: "board",
     params: { workspaceId: Schema.String },
     inputs: { facts, config: config.at({}) },
-    outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-    process: (batch) => Effect.succeed({ output: batch.facts.items }),
+    outputs: { output: output },
+    emit: (entry) => Effect.succeed({ output: entry.input === "facts" ? [entry.item] : [] }),
   });
   const bound = board.at({ workspaceId: "ws-42" });
 
-  expect(bound._tag).toBe("Outputs");
+  expect(bound.commit).toBe(Commit.producer);
   expect(bound.params).toEqual({ workspaceId: "ws-42" });
   expect(bound.inputs.facts.id).toBe(facts.at({ workspaceId: "ws-42" }).id);
   expect(bound.inputs.facts.stream.key).toBe(facts.key);
@@ -47,19 +49,22 @@ test("a declaration binds declared inputs and keeps fixed addresses", () => {
 
 // Golden strings recorded at febad922, before declarations replaced families.
 test("record keys and producer ids match the values before declarations", () => {
-  const fixed = Projection.atomic({
+  const fixed = Projection.process({
+    commit: Commit.transaction,
     id: "hex-board",
     params: {},
     inputs: { config },
     process: () => Effect.void,
   }).at({});
-  const coded = Projection.atomic({
+  const coded = Projection.process({
+    commit: Commit.transaction,
     id: "hex-board",
     params: { gameId: Schema.String },
     inputs: { config },
     process: () => Effect.void,
   }).at({ gameId: "game" });
-  const versioned = Projection.atomic({
+  const versioned = Projection.process({
+    commit: Commit.transaction,
     id: "issue-tracker",
     version: 2,
     generation: 3,
@@ -90,7 +95,8 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
     schema: Schema.String,
   }) {}
   const seen: Array<{ readonly id: number; readonly key: string }> = [];
-  const declared = Projection.atomic({
+  const declared = Projection.process({
+    commit: Commit.transaction,
     id: "units",
     params: { id: Schema.FiniteFromString },
     inputs: { numbered },
@@ -108,7 +114,8 @@ test("number parameters encode to strings and parse back", () => {
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
-  const declared = Projection.atomic({
+  const declared = Projection.process({
+    commit: Commit.transaction,
     id: "numbered",
     params: { id: Schema.FiniteFromString },
     inputs: { numbered },
@@ -125,7 +132,8 @@ class stringId extends Streamsy.json<stringId>()("declaration.test/stringId", "s
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "incompatible-codec",
   params: { id: Schema.FiniteFromString },
   // @ts-expect-error the stream's decoded parameter must be assignable to the projection parameter
@@ -137,7 +145,8 @@ class literalId extends Streamsy.json<literalId>()("declaration.test/literalId",
   params: { id: Schema.Literal("a") },
   schema: Schema.String,
 }) {}
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "narrow-route-codec",
   params: { id: Schema.String },
   // @ts-expect-error the projection parameter must also be assignable to the stream's decoded parameter
@@ -149,7 +158,8 @@ class wrong extends Streamsy.json<wrong>()("declaration.test/wrong", "wrong/:pro
   params: { projectId: Schema.String },
   schema: Schema.String,
 }) {}
-Projection.atomic({
+Projection.process({
+  commit: Commit.transaction,
   id: "invalid",
   params: { workspaceId: Schema.String },
   // @ts-expect-error a stream cannot require a parameter absent from the projection

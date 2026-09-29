@@ -1,7 +1,7 @@
 # Hacker News newest stream demo
 
 A Bun server polls Hacker News and writes one Durable State stream,
-`hackernews/newest`. An atomic projection, `newestRows`, folds the stream into
+`hackernews/newest`. A checkpointed fold, `newestRows`, folds the stream into
 the current story rows. Before each append, the poller runs the projection,
 reads the rows and the offset they are at, diffs them against the fetch, and
 appends the changes with `expectedOffset: offsets.input`. `Serve.state`
@@ -22,7 +22,7 @@ The collection is `hn-story`, keyed by `id`. The projection declares its state
 on the declaration and gives a fold step:
 
 ```ts
-export const newestRows = Projection.atomic({
+export const newestRows = Projection.fold({
   id: "hn-newest-rows",
   params: {},
   inputs: { input: storiesAddress },
@@ -108,7 +108,7 @@ failure; check `lastPollError` for the result.
 
 - `src/server/stories.ts`: the fixed `Streamsy.state` declaration and change types.
 - `src/server/poller/poller.ts`: fetch, retry on `OffsetMismatch`, status counters and coalescing gate.
-- `src/server/newest-rows.ts`: `Projection.atomic` with `state:` and `fold:`, and pure `applyChange`.
+- `src/server/newest-rows.ts`: `Projection.fold` with `state:` and `fold:`, and pure `applyChange`.
 - `src/server/poller/reconcile.ts`: `reconcileNewest` (run, read, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.

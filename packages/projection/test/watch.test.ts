@@ -1,10 +1,12 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, type State } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import { layerMemory } from "@streamsy/projection/memory";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
@@ -30,8 +32,7 @@ type Services =
     >
   | WatchRoute2
   | WatchRoute1
-  | Checkpoints
-  | State
+  | CheckpointStore
   | Storage
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
@@ -47,21 +48,22 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
-test("an append runs an atomic projection and commits its write with the checkpoint", () =>
-  run(
+test("an append runs an transactional projection and commits its write with the checkpoint", () =>
+  Effect.runPromise(
     Effect.gen(function* () {
-      const input = FamilyFixture.json("change-atomic-input", {
+      const input = FamilyFixture.json("change-transactional-input", {
         schema: Schema.Finite,
       });
-      const output = FamilyFixture.json("change-atomic-output", {
+      const output = FamilyFixture.json("change-transactional-output", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
       yield* Streams.create(output);
       const handled = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.atomic({
-        id: "change-atomic",
+      const projection = Projection.process({
+        commit: Commit.transaction,
+        id: "change-transactional",
         params: {},
         inputs: { input },
         process: (batch) =>
@@ -77,10 +79,10 @@ test("an append runs an atomic projection and commits its write with the checkpo
       expect(calls).toBe(1);
       expect(yield* readAll(output)).toEqual([1]);
       expect(
-        Option.isSome((yield* (yield* Checkpoints).load(Projection.key(projection))).record),
+        Option.isSome((yield* (yield* CheckpointStore).load(Projection.key(projection))).record),
       ).toBe(true);
       yield* Fiber.interrupt(fiber);
-    }),
+    }).pipe(Effect.scoped, Effect.provide(FamilyFixture.withFamilies(layerSqlite()))),
   ));
 
 test("changes during an in-flight run coalesce to one follow-up run", () =>
@@ -97,19 +99,21 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
       const release = yield* Deferred.make<void>();
       const second = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.outputs({
+      const projection = Projection.mapAccumBatch({
+        commit: Commit.producer,
         id: "change-coalesce",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch) =>
+        outputs: { output: output },
+        state: { schema: Schema.Null, initial: null },
+        mapAccumBatch: (_state, batch) =>
           Effect.gen(function* () {
             calls += 1;
             if (calls === 1) {
               yield* Deferred.succeed(entered, undefined);
               yield* Deferred.await(release);
             } else yield* Deferred.succeed(second, undefined);
-            return { output: batch.input.items };
+            return [null, { output: batch.input.items }] as const;
           }),
       }).at({});
       const fiber = yield* Projection.watch(projection);
@@ -124,7 +128,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
       expect(calls).toBe(2);
       expect(yield* readAll(output)).toEqual([1, 2, 3, 4]);
       const tail = yield* Streams.head(input);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
       yield* Fiber.interrupt(fiber);
     }),
@@ -140,7 +144,8 @@ test("a limited wake drains the backlog before waiting for another change", () =
       yield* Streams.append(input, [1, 2, 3]);
       const seen: Array<number> = [];
       const drained = yield* Deferred.make<void>();
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-limit",
         params: {},
         inputs: { input },
@@ -155,7 +160,7 @@ test("a limited wake drains the backlog before waiting for another change", () =
       yield* Projection.run(projection);
       expect(seen).toEqual([1, 2, 3]);
       const tail = yield* Streams.head(input);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
       yield* Fiber.interrupt(fiber);
     }).pipe(
@@ -170,7 +175,8 @@ test("an invalid limit fails before a watcher fiber is created", () =>
       const input = FamilyFixture.json("change-invalid-limit", {
         schema: Schema.Finite,
       });
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-invalid-limit",
         params: {},
         inputs: { input },
@@ -189,7 +195,8 @@ test("an ownership probe reports a gone input as unavailable history", () =>
   run(
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-probe-failure", { schema: Schema.Finite });
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-probe-failure",
         params: {},
         inputs: { input },
@@ -225,16 +232,17 @@ test("watch and a serialized request share the same key lock", () =>
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "change-request",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch) =>
+        outputs: { output: output },
+        emit: (entry) =>
           Effect.sync(() => (calls += 1)).pipe(
             Effect.andThen(Deferred.succeed(entered, undefined)),
             Effect.andThen(Deferred.await(release)),
-            Effect.as({ output: batch.input.items }),
+            Effect.as({ output: [entry.item] }),
           ),
       }).at({});
       const watcher = yield* Projection.watch(projection);
@@ -256,7 +264,8 @@ test("a stream watches its fixed address set independently", () =>
       const seen: Array<string> = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
-      const declared = Projection.atomic({
+      const declared = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-stream",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute1 },
@@ -287,7 +296,8 @@ test("a stream watches its fixed address set independently", () =>
 test("closing the caller scope interrupts every stream address fiber", () =>
   run(
     Effect.gen(function* () {
-      const declared = Projection.atomic({
+      const declared = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-stream-scope",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute2 },
@@ -305,7 +315,8 @@ test("a closed and drained input ends its watcher", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-closed", { schema: Schema.Finite });
       yield* Streams.create(input);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-closed",
         params: {},
         inputs: { input },
@@ -323,7 +334,8 @@ test("closing the caller scope ends the watcher fiber", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-scope", { schema: Schema.Finite });
       yield* Streams.create(input);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "change-scope",
         params: {},
         inputs: { input },

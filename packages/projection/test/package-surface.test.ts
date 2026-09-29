@@ -4,41 +4,31 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Layer } from "effect";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
-  AtomicDeclaration,
-  AtomicDefinition,
-  AtomicStateDefinition,
   Declaration,
   Offsets,
-  OutputsDeclaration,
-  OutputsDefinition,
   Snapshot,
   StateDefinition,
   StateSource,
   Step,
   WatchOptions,
   RunOptions,
-  StateApi,
+  CheckpointStoreApi,
 } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import manifest from "../package.json";
 
 type PublicHelperTypes =
-  | StateApi
+  | CheckpointStoreApi
   | Checkpoint.EncodedStore
   | Declaration<any, any>
-  | AtomicDefinition<any, any, any, any>
-  | AtomicStateDefinition<any, any, any, any, any, any>
-  | AtomicDeclaration<any, any, any, any, any, any>
-  | OutputsDefinition<any, any, any, any, any, any, any, any>
-  | OutputsDeclaration<any, any, any, any, any, any, any>
   | Snapshot<any, any>
   | Offsets<any>
   | StateDefinition<any, any, any>
   | StateSource<any, any, any>
-  | Step<any, any, any, any, any>
+  | Step<number, never, never>
   | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
@@ -46,10 +36,9 @@ void acceptsPublicHelperTypes;
 
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
-  expect(Checkpoint.stateFromStore).toBeFunction();
-  expect(Root.State.key).toBe("@streamsy/projection/State");
-  expect(Projection.outputs).toBeFunction();
-  expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
+  expect(Root.Transaction.key).toBe("@streamsy/projection/Transaction");
+  expect(Projection.emit).toBeFunction();
+  expect(Object.keys(Root)).not.toContain("Output");
   expect(Projection.read).toBeFunction();
   expect(Projection.forget).toBeFunction();
   expect(Checkpoint.fromStore).toBeFunction();
@@ -64,10 +53,9 @@ test("built public entries and declared files exist", () => {
     "PendingUnit",
     "PinnedRange",
     "producerId",
-    "CheckpointRecord",
   ])
     expect(Object.keys(Root)).not.toContain(name);
-  expect(Projection.atomic).toBeFunction();
+  expect(Projection.fold).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
   expect(Projection.follow).toBeFunction();
@@ -75,7 +63,7 @@ test("built public entries and declared files exist", () => {
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();
-  expect(Checkpoints.key).toBe("@streamsy/projection/Checkpoints");
+  expect(CheckpointStore.key).toBe("@streamsy/projection/CheckpointStore");
   expect(
     new ProjectionFault({
       phase: "load",
@@ -85,8 +73,10 @@ test("built public entries and declared files exist", () => {
   ).toBe("ProjectionFault");
   expect(Layer.isLayer(Memory.layer)).toBe(true);
   expect(Memory.layerMemory).toBeFunction();
-  expect(Layer.isLayer(Sqlite.layer)).toBe(true);
-  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sqlite", "./checkpoint"]);
+  expect(Layer.isLayer(ProjectionSql.layerStorage)).toBe(true);
+  expect(Layer.isLayer(ProjectionSql.layer)).toBe(true);
+  expect(Layer.isLayer(CheckpointStore.layerMemory)).toBe(true);
+  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sql", "./checkpoint"]);
   for (const entry of Object.values(manifest.exports)) {
     expect(existsSync(join(import.meta.dir, "..", entry.types))).toBe(true);
     expect(existsSync(join(import.meta.dir, "..", entry.import))).toBe(true);
@@ -104,23 +94,53 @@ test("the root entry does not import a SQL driver", async () => {
 
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
-    "Checkpoints",
-    "Output",
+    "CheckpointRecord",
+    "CheckpointStore",
+    "Commit",
+    "HandlerFailed",
     "Projection",
     "ProjectionFault",
-    "State",
+    "ProjectionRetry",
+    "Transaction",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
-    "atomic",
     "each",
+    "emit",
+    "fold",
     "follow",
     "forget",
     "items",
     "key",
-    "outputs",
+    "mapAccum",
+    "mapAccumBatch",
     "pass",
+    "process",
     "read",
     "run",
     "watch",
   ]);
+});
+
+test("Commit and storage subpaths expose only their author contracts", () => {
+  expect(Object.keys(Root.Commit).sort()).toEqual([
+    "Accumulated",
+    "Emitted",
+    "Folded",
+    "HandlerFailed",
+    "TypeId",
+    "atLeastOnce",
+    "checkpoint",
+    "make",
+    "producer",
+    "transaction",
+    "withCompensation",
+  ]);
+  expect(Object.keys(Checkpoint).sort()).toEqual([
+    "CheckpointRecord",
+    "CheckpointStore",
+    "fromStore",
+    "recordKey",
+  ]);
+  expect(Object.keys(Memory).sort()).toEqual(["layer", "layerMemory"]);
+  expect(Object.keys(ProjectionSql).sort()).toEqual(["layer", "layerStorage"]);
 });

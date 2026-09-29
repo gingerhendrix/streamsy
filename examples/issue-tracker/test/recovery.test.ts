@@ -7,7 +7,7 @@ import { DurableState, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
-import { tracker } from "../server/outputs.ts";
+import { tracker, Board, LabelCounts, Transitions } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels } from "../server/streams.ts";
 const at = "2026-09-23T10:00:00Z";
 const seed = Effect.gen(function* () {
@@ -65,9 +65,9 @@ const more = Effect.flatMap(Events, (events) =>
 );
 const collect = Effect.gen(function* () {
   return {
-    board: yield* Addresses.readOutput(tracker.outputs.board, "live"),
-    counts: yield* Addresses.readOutput(tracker.outputs.labelCounts, "live"),
-    transitions: yield* Addresses.readOutput(tracker.outputs.transitions, "live"),
+    board: yield* Addresses.readOutput(Board, "live"),
+    counts: yield* Addresses.readOutput(LabelCounts, "live"),
+    transitions: yield* Addresses.readOutput(Transitions, "live"),
     summary: yield* tracker.state.resolve({ workspaceId: "live" }),
   };
 });

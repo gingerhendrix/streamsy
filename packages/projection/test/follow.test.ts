@@ -1,22 +1,30 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { defaultRetry } from "../src/follow.ts";
+import { ProjectionRetry } from "@streamsy/projection";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
 import { expect, test } from "bun:test";
 import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, ProjectionFault, type State } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
+import { layerSqlite } from "./support/sqlite.ts";
 import { layerMemory } from "@streamsy/projection/memory";
-import { input, output, positives, readAll } from "./support/scenarios.ts";
+import {
+  input,
+  output,
+  positives as transactionalPositives,
+  readAll,
+} from "./support/scenarios.ts";
 
 type Services =
-  | Checkpoints
-  | State
+  | CheckpointStore
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;
+const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };
+
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
     body.pipe(
@@ -81,12 +89,12 @@ test("follow cancellation releases parked waits", () =>
         }),
       );
       yield* Deferred.await(hint.released);
-      expect((yield* (yield* Checkpoints).load(Projection.key(positives))).token).toBe("0");
+      expect((yield* (yield* CheckpointStore).load(Projection.key(positives))).token).toBe("0");
     }),
   ));
 
 test("a write to the second input wakes a two-input follower", () =>
-  run(
+  Effect.runPromise(
     Effect.gen(function* () {
       const a = FamilyFixture.json("wake-a", { schema: Schema.Finite });
       const b = FamilyFixture.json("wake-b", { schema: Schema.Finite });
@@ -96,7 +104,8 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.create(target);
       yield* Streams.append(a, [1]);
       const woke = yield* Deferred.make<void>();
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "wake",
         params: {},
         inputs: { a, b },
@@ -128,7 +137,7 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.append(b, [2]);
       yield* Deferred.await(woke);
       // The handler signalled inside its transaction; the commit is visible once the token moves.
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       for (let spins = 0; spins < 1000; spins += 1) {
         if ((yield* owner.load(Projection.key(projection))).token === "2") break;
         yield* Effect.yieldNow;
@@ -136,7 +145,10 @@ test("a write to the second input wakes a two-input follower", () =>
       expect((yield* owner.load(Projection.key(projection))).token).toBe("2");
       expect(yield* readAll(target)).toEqual(["a:1", "b:2"]);
       yield* Fiber.interrupt(fiber);
-    }),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FamilyFixture.withFamilies(Layer.merge(layerSqlite(), TestClock.layer()))),
+    ),
   ));
 
 test("a closed and drained input beside an open one does not wake every cycle", () =>
@@ -150,7 +162,8 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.create(target);
       yield* Streams.append(a, [1], { close: true });
       yield* Streams.append(b, [2]);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "closed-open",
         params: {},
         inputs: { a, b },
@@ -274,12 +287,13 @@ for (const point of ["read", "append"] as const) {
           operation: point,
           message: "lost reply",
         });
-        const projection = Projection.outputs({
+        const projection = Projection.emit({
+          commit: Commit.producer,
           id: `retry-${point}`,
           params: {},
           inputs: { input },
-          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-          process: (batch) => Effect.succeed({ output: batch.input.items }),
+          outputs: { output: output },
+          emit: (entry) => Effect.succeed({ output: [entry.item] }),
         }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
           FamilyFixture.provideReader({
@@ -343,7 +357,8 @@ test("follow does not retry non-storage faults or handler failures", () =>
         "handler-error",
       ] as const) {
         let calls = 0;
-        const projection = Projection.atomic({
+        const projection = Projection.process({
+          commit: Commit.atLeastOnce,
           id: "terminal",
           params: {},
           inputs: { input },
@@ -399,7 +414,7 @@ test("default follow backoff retries a read after the clock advances", () =>
 test("default retry remains jittered, capped and unbounded after many failures", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const step = yield* Schedule.toStep(defaultRetry);
+      const step = yield* Schedule.toStep(yield* ProjectionRetry);
       for (let attempt = 0; attempt < 1100; attempt += 1) {
         const [, delay] = yield* step(attempt, undefined);
         const millis = Duration.toMillis(delay);
@@ -418,12 +433,13 @@ test("follow resets a finite retry budget after a successful cycle between outag
       yield* Streams.append(input, [1]);
       const parked = yield* Deferred.make<void>();
       let reads = 0;
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "separate-outages",
         params: {},
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch) => Effect.succeed({ output: batch.input.items }),
+        outputs: { output: output },
+        emit: (entry) => Effect.succeed({ output: [entry.item] }),
       }).at({});
       const fiber = yield* withReader(
         Projection.follow(projection, { retry: Schedule.recurs(1) }),
@@ -453,3 +469,37 @@ test("follow resets a finite retry budget after a successful cycle between outag
       expect(yield* readAll(output)).toEqual([1, 2]);
     }),
   ));
+
+for (const explicit of [false, true]) {
+  test(`follow ${explicit ? "prefers options.retry over" : "uses"} ProjectionRetry`, () =>
+    run(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        const reader = yield* StreamsReader;
+        let attempts = 0;
+        const broken = {
+          ...reader,
+          read: () =>
+            Effect.suspend(() => {
+              attempts += 1;
+              return Effect.fail(
+                new TransportFault({
+                  reason: "request",
+                  operation: "read",
+                  message: "offline",
+                }),
+              );
+            }),
+        };
+        const fiber = yield* Projection.follow(
+          positives,
+          explicit ? { retry: Schedule.recurs(2) } : {},
+        ).pipe(
+          Effect.provideService(ProjectionRetry, Schedule.recurs(0)),
+          FamilyFixture.provideReader(broken),
+        );
+        expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
+        expect(attempts).toBe(explicit ? 3 : 1);
+      }),
+    ));
+}

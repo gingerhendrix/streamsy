@@ -54,12 +54,16 @@ For a projection on that same connection:
 ```ts
 import { Layer } from "effect";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 
-const host = ProjectionSqlite.layer.pipe(
+const host = ProjectionSql.layerStorage.pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } })),
 );
 ```
+
+`ProjectionSql.layerStorage` provides `CheckpointStore` and the SQL-only
+`Transaction` service. `Commit.transaction` uses them to commit SQL, same-owner
+stream appends, and the checkpoint together.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.

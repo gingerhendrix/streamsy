@@ -1,32 +1,41 @@
-import { Effect } from "effect";
-import type { Entry, InputMap, Slices } from "./batch.ts";
-import type { ProjectionKey } from "./checkpoint.ts";
-import type { ProjectionFault } from "./fault.ts";
-import { items } from "./read.ts";
-import { State, encodeState, currentState, type BoundState } from "./state.ts";
+/* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Entry } from "./batch.ts";
+import type { Folded } from "./commit.ts";
+import type { CheckpointStore } from "./checkpoint-store.ts";
+import {
+  build,
+  type Common,
+  type Inputs,
+  type Addresses,
+  type StatefulDeclaration,
+  type Committing,
+} from "./declaration.ts";
+import type { StateDefinition } from "./state.ts";
+import type { Step } from "./step.ts";
 import type { Unit } from "./unit.ts";
 
-/** One fold step: the state and one tagged item give the next state. */
-export type Step<Inputs extends InputMap, A, E, R, P = Record<string, string>> = (
-  state: A,
-  entry: Entry<Inputs>,
-  unit: Unit<P>,
-) => A | Effect.Effect<A, E, R>;
-
-/** Internal: the unit loads the state once, folds in unit order, and saves once in the checkpoint transaction. */
-export const foldHandler =
-  <Inputs extends InputMap, A, E, R, P>(
-    key: ProjectionKey,
-    state: BoundState<A>,
-    step: Step<Inputs, A, E, R, P>,
-  ) =>
-  (batch: Slices<Inputs>, unit: Unit<P>): Effect.Effect<void, E | ProjectionFault, R | State> =>
-    Effect.gen(function* () {
-      let value = yield* currentState(key, state);
-      for (const entry of items(batch)) {
-        const next = step(value, entry, unit);
-        value = Effect.isEffect(next) ? yield* next : next;
-      }
-      const encoded = yield* encodeState(key, state.schema, value);
-      yield* (yield* State).save(key, encoded);
-    });
+/** Fold one entry at a time. The default Commit saves state and offsets in one write. */
+export function fold<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  A,
+  SI,
+  E = never,
+  R = never,
+  P = never,
+  Q = CheckpointStore,
+>(
+  definition: Common<C, I> & {
+    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+    readonly commit?: Committing<Folded<NoInfer<A>>, P, Q>["commit"];
+    readonly fold: (
+      state: NoInfer<A>,
+      entry: Entry<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<A, E, R>;
+  },
+): StatefulDeclaration<C, I, A, SI, E, R, Folded<A>, P, Q>;
+export function fold(definition: Parameters<typeof build>[1]): unknown {
+  return build("fold", definition);
+}

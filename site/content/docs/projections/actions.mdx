@@ -5,6 +5,8 @@ description: Deliver external effects at least once through a durable outbox.
 
 An action is an external effect, for example an email or a webhook. `@streamsy/serve/action` writes each action to a durable outbox, then delivers it in a separate pass.
 
+`Commit.atLeastOnce` retries a `Projection.process` handler with the pinned `unit.key`. It does not persist a delivery queue. Use this outbox when an external effect needs durable delivery and its own retry policy. The receiver must still deduplicate by the action key.
+
 ## Declare a sink
 
 ```ts

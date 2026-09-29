@@ -1,12 +1,13 @@
+import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
 import { Storage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 
 class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
@@ -17,7 +18,7 @@ class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/
   schema: Schema.Finite,
 }) {}
 const memory = Memory.layerMemory();
-const sqlite = Sqlite.layer.pipe(
+const sqlite = ProjectionSql.layerStorage.pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
 const host = Layer.merge(
@@ -25,7 +26,7 @@ const host = Layer.merge(
   Protocol.bind(sqlite, Streamsy.group(Output)),
 ).pipe(Layer.provideMerge(sqlite));
 
-test("an atomic projection reads remote input and writes on its SQLite checkpoint owner", async () => {
+test("an transactional projection reads remote input and writes on its SQLite checkpoint owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -34,7 +35,8 @@ test("an atomic projection reads remote input and writes on its SQLite checkpoin
       yield* source.create(params);
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "mixed-double",
         params: {},
         inputs: { input: Source.at(params) },
@@ -61,7 +63,8 @@ test("watch watches the input's feed even when checkpoints have a different owne
       const params = { name: "watch" };
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "mixed-watch",
         params: {},
         inputs: { input: Source.at(params) },
@@ -79,7 +82,8 @@ test("watch rejects a stream rebound without its matching feed", async () => {
   );
   await Effect.runPromise(
     Effect.gen(function* () {
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "rebound-feed",
         params: {},
         inputs: { input: Source.at({ name: "watch" }) },
@@ -106,9 +110,9 @@ const unowned = Layer.effectContext(
   }),
 ).pipe(Layer.provide(memoryGraph));
 
-test("a custom stream wire cannot establish the owner of an atomic write", async () => {
+test("a custom stream wire cannot establish the owner of an transactional write", async () => {
   const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
-    Layer.provideMerge(memoryGraph),
+    Layer.provideMerge(sqlite),
   );
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -118,7 +122,8 @@ test("a custom stream wire cannot establish the owner of an atomic write", async
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "unowned-write",
         params: {},
         inputs: { input: Source.at(params) },
@@ -133,7 +138,7 @@ test("a custom stream wire cannot establish the owner of an atomic write", async
       expect(
         (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
       ).toEqual([]);
-      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
+      expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
     }).pipe(Effect.provide(unownedHost)),
   );
 });

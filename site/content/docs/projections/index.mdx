@@ -12,14 +12,26 @@ One pass:
 3. Run the handler over the unit.
 4. Commit the checkpoint.
 
-## Atomic projections
+## Constructors
 
-`Projection.atomic` runs the handler inside the checkpoint transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
+| Constructor                                             | One step  | Keeps a value | Emits to routes |
+| ------------------------------------------------------- | --------- | ------------- | --------------- |
+| [fold](/docs/projections/define#fold)                   | One entry | Yes           |                 |
+| [process](/docs/projections/define#process)             | One batch |               | Runs effects    |
+| [emit](/docs/projections/define#emit)                   | One entry |               | Yes             |
+| [mapAccum](/docs/projections/define#mapaccum)           | One entry | Yes           | Yes             |
+| [mapAccumBatch](/docs/projections/define#mapaccumbatch) | One batch | Yes           | Yes             |
+
+Choose the guarantee with [a Commit](/docs/projections/define#commits). `fold` defaults to `Commit.checkpoint`; other constructors require `commit:`.
+
+## Transactional outputs
+
+`Projection.emit` maps each entry to output items. With `Commit.transaction`, the handler runs inside a SQL transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
 
 ```ts
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 
 export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
   params: {},
@@ -37,17 +49,13 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.atomic({
+    Projection.emit({
       id: "doubled",
       params: {},
       inputs: { input: Numbers },
-      process: (batch) =>
-        Effect.flatMap(Doubled, (output) =>
-          output.append(
-            {},
-            batch.input.items.map((n) => n * 2),
-          ),
-        ),
+      outputs: { output: Doubled },
+      commit: Commit.transaction,
+      emit: ({ item }) => ({ output: [item * 2] }),
     }).at({}),
     { limit: 10 },
   );
@@ -58,38 +66,39 @@ One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/
 
 ## Output projections
 
-`Projection.outputs` gives named outputs. The handler returns items for each output, and the runner appends them.
+`Commit.producer` pins input ranges and output positions. The handler returns items for each route, and the runner appends them.
 
 ```ts
-import { Effect, Schema } from "effect";
+import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Output, Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import { Numbers } from "./minimal.ts";
 
-class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
+export class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
   params: {},
   schema: Schema.Finite,
 }) {}
 
-export const tripled = Projection.outputs({
+export const tripled = Projection.emit({
   id: "tripled",
   params: {},
   inputs: { input: Numbers },
-  outputs: { output: Output.stream(Schema.Finite, { stream: Tripled }) },
-  process: (batch) => Effect.succeed({ output: batch.input.items.map((n) => n * 3) }),
+  outputs: { output: Tripled },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ output: [item * 3] }),
 });
 ```
 
-| Output          | Items                     |
-| --------------- | ------------------------- |
-| `Output.stream` | Typed items               |
-| `Output.rows`   | Durable State row changes |
+| Output           | Items                     |
+| ---------------- | ------------------------- |
+| `Streamsy.json`  | Typed items               |
+| `Streamsy.state` | Durable State row changes |
 
 Each output append has its own producer position, so a retry does not write a unit twice.
 
 ## State
 
-Either projection can declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
+`fold`, `mapAccum`, and `mapAccumBatch` declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
 
 ## Fact streams and state streams
 
@@ -110,23 +119,26 @@ A projection can rebuild a state stream from the facts.
 
 ## Hosts
 
-A projection needs the `Checkpoints` service. Provide it over the storage Layer:
+Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transaction`, supplied only by SQL hosts. Provide the services over the storage Layer:
 
-| Storage        | Checkpoints Layer                     |
-| -------------- | ------------------------------------- |
-| `Memory.layer` | `@streamsy/projection/memory` `layer` |
-| SQLite storage | `@streamsy/projection/sqlite` `layer` |
+| Storage        | Checkpoints Layer                         |
+| -------------- | ----------------------------------------- |
+| `Memory.layer` | `@streamsy/projection/memory` `layer`     |
+| SQLite storage | `@streamsy/projection/sql` `layerStorage` |
 
 ```ts
 import { Layer } from "effect";
 import { Memory, Streamsy } from "@streamsy/core";
 import * as ProjectionMemory from "@streamsy/projection/memory";
-import { Doubled, Numbers } from "./minimal.ts";
+import { Numbers } from "./minimal.ts";
+import { Tripled } from "./tripled.ts";
 
 export const host = ProjectionMemory.layer.pipe(
-  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
+  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Tripled))),
 );
 ```
+
+The memory host runs `tripled` with `Commit.producer`. The `minimal` transaction example needs a SQL host. See [Layers](/docs/projections/state#checkpoints-and-generations).
 
 ## Pages
 

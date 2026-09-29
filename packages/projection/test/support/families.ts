@@ -8,6 +8,10 @@ export const json = <A, I>(
   id: string,
   options: Parameters<typeof StreamAddress.json<A, I, never, never>>[1],
 ) => Object.assign(StreamAddress.json(id, options), { stream: Streamsy.Wildcard });
+export const state = <const C extends StreamAddress.Collections>(
+  id: string,
+  options: { readonly collections: C & StreamAddress.ValidCollections<C> },
+) => Object.assign(StreamAddress.state(id, options), { stream: Streamsy.Wildcard });
 export const bytes = (id: string) => Streamsy.Wildcard.at({ id });
 export const withFamilies = <A, E, R, const Keys extends ReadonlyArray<Streamsy.Any>>(
   layer: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,

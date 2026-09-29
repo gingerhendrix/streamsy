@@ -1,10 +1,9 @@
-import { Checkpoints } from "./checkpoint.ts";
-import type { Outputs } from "./outputs.ts";
-import { Duration, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
+import { ProjectionRetry } from "./retry.ts";
+import type { Executable } from "./executable.ts";
+import { Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Atomic } from "./atomic.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 
@@ -14,18 +13,6 @@ export interface FollowOptions extends RunOptions {
   /** Override the forever, capped exponential storage-failure retry. */
   readonly retry?: Schedule.Schedule<unknown, unknown>;
 }
-
-/** Internal default; the package root exports only follow and its options. */
-export const defaultRetry = Schedule.exponential("200 millis").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
-  ),
-  Schedule.jittered,
-  // Jitter ranges up to 1.2; clamp again so actual waits never exceed 30 s.
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
-  ),
-);
 
 /**
  * One wake hint per input; the messages are discarded because the next run is
@@ -101,14 +88,17 @@ export const follow = Effect.fn("Projection.follow")(function* <
   Inputs extends InputMap,
   E,
   R,
+  Q,
+  Result,
+  P,
   OR = never,
 >(
-  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
+  Exclude<R, P> | Q | OR | InputServices<Inputs> | Scope.Scope
 > {
   yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;
@@ -131,7 +121,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
   return yield* cycle.pipe(
     Effect.retry({
       while: (fault) => fault instanceof ProjectionFault && fault.reason === "storage-failure",
-      schedule: (options.retry ?? defaultRetry).pipe(
+      schedule: (options.retry ?? (yield* ProjectionRetry)).pipe(
         Schedule.tap(({ input }) =>
           input instanceof ProjectionFault && input.reason === "storage-failure"
             ? Effect.logWarning("Projection.follow retry", input)

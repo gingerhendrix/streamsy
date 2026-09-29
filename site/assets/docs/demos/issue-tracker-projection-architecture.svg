@@ -46,7 +46,7 @@
   <!-- Row B -->
   <rect class="node" x="260" y="250" width="180" height="90" rx="14"/>
   <text class="node-title" x="350" y="290" text-anchor="middle">issueRows</text>
-  <text class="node-subtitle" x="350" y="310" text-anchor="middle">Projection.atomic</text>
+  <text class="node-subtitle" x="350" y="310" text-anchor="middle">Projection.process</text>
 
   <rect class="node" x="480" y="250" width="180" height="90" rx="14"/>
   <text class="node-title" x="570" y="290" text-anchor="middle">Triggers</text>
@@ -54,7 +54,7 @@
 
   <rect class="node" x="700" y="250" width="180" height="90" rx="14"/>
   <text class="node-title" x="790" y="290" text-anchor="middle">tracker</text>
-  <text class="node-subtitle" x="790" y="310" text-anchor="middle">Projection.outputs</text>
+  <text class="node-subtitle" x="790" y="310" text-anchor="middle">Projection.mapAccumBatch</text>
 
   <!-- Row C -->
   <rect class="host" x="260" y="390" width="180" height="90" rx="14"/>

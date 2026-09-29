@@ -1,6 +1,8 @@
+import { Commit } from "@streamsy/projection";
+import { tmpdir } from "node:os";
+import { restore } from "../src/checkpoint-store.ts";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
-import { attachOwner } from "@streamsy/core/internal/memory";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -8,15 +10,15 @@ import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, State, type ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
 const words = FamilyFixture.json("snapshot-words", { schema: Schema.String });
 const Totals = Schema.Struct({ sum: Schema.Finite, count: Schema.Finite });
-const totals = Projection.atomic({
+const totals = Projection.fold({
   id: "snapshot-totals",
   params: {},
   inputs: { input, words },
@@ -37,17 +39,15 @@ const tailOf = (address: StreamAddress.StreamAddress<unknown, unknown, unknown>)
 
 const sqlite = (filename = ":memory:") =>
   FamilyFixture.withFamilies(
-    Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } }))),
+    ProjectionSql.layerStorage.pipe(
+      Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
+    ),
   );
 const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | Checkpoints
-      | State
-      | import("@streamsy/core").Streamsy.Wildcard
-      | StreamsReader
-      | StreamsWriter,
+      CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -64,7 +64,11 @@ for (const [name, host] of hosts) {
           state: { sum: 0, count: 0 },
           offsets: { input: ZERO_OFFSET, words: ZERO_OFFSET },
         });
-        expect(yield* (yield* State).load(totals)).toEqual(Option.none());
+        expect(
+          Option.flatMap((yield* (yield* CheckpointStore).load(totals)).record, (record) =>
+            Option.fromUndefinedOr(record.state),
+          ),
+        ).toEqual(Option.none());
       }).pipe(Effect.provide(host)),
     ));
 
@@ -102,58 +106,28 @@ for (const [name, host] of hosts) {
       }).pipe(Effect.provide(host)),
     ));
 
-  test(`${name}: read loads the checkpoint row and the state row in one transaction`, () =>
+  test(`${name}: read loads state and offsets in one record`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
         yield* Projection.run(totals);
-        const checkpoints = yield* Checkpoints;
-        const state = yield* State;
-        let open = 0;
-        let transactions = 0;
-        const loads: Array<readonly [string, boolean]> = [];
+        const store = yield* CheckpointStore;
+        let loads = 0;
         const snapshot = yield* Projection.read(totals).pipe(
-          Effect.provideService(Checkpoints, {
-            ...checkpoints,
+          Effect.provideService(CheckpointStore, {
+            ...store,
             load: (key) =>
               Effect.suspend(() => {
-                loads.push(["checkpoint", open > 0]);
-                return checkpoints.load(key);
+                loads += 1;
+                return store.load(key);
               }),
-            withTransaction: (body) =>
-              Effect.suspend(() => {
-                transactions += 1;
-                open += 1;
-                return checkpoints.withTransaction(body);
-              }).pipe(
-                Effect.ensuring(
-                  Effect.sync(() => {
-                    open -= 1;
-                  }),
-                ),
-              ),
           }),
-          Effect.provideService(
-            State,
-            attachOwner(
-              {
-                ...state,
-                load: (key) =>
-                  Effect.suspend(() => {
-                    loads.push(["state", open > 0]);
-                    return state.load(key);
-                  }),
-              },
-              checkpoints.owner,
-            ),
-          ),
         );
-        expect(transactions).toBe(1);
-        expect(loads).toEqual([
-          ["checkpoint", true],
-          ["state", true],
-        ]);
+        expect(loads).toBe(1);
         expect(snapshot.state).toEqual({ sum: 5, count: 3 });
+        expect(Option.getOrThrow((yield* store.load(totals)).record).state).toBe(
+          '{"sum":5,"count":3}',
+        );
       }).pipe(Effect.provide(host)),
     ));
 
@@ -162,19 +136,20 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         const doubled = FamilyFixture.json("snapshot-doubled", { schema: Schema.Finite });
         const seen: number[] = [];
-        const counter = Projection.outputs({
+        const counter = Projection.mapAccumBatch({
+          commit: Commit.producer,
           id: "snapshot-counter",
           params: { start: Schema.FiniteFromString },
           inputs: { input },
-          outputs: { doubled: Output.stream(Schema.Finite, { stream: doubled }) },
+          outputs: { doubled: doubled },
           state: { schema: Schema.Finite, initial: ({ start }) => start },
-          process: (count, batch) =>
+          mapAccumBatch: (count, batch) =>
             Effect.sync(() => {
               seen.push(count);
-              return {
-                state: count + batch.input.items.length,
-                doubled: batch.input.items.map((n) => n * 2),
-              };
+              return [
+                count + batch.input.items.length,
+                { doubled: batch.input.items.map((n) => n * 2) },
+              ] as const;
             }),
         }).at({ start: 10 });
         yield* seed;
@@ -194,7 +169,8 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
-        const stateless = Projection.atomic({
+        const stateless = Projection.process({
+          commit: Commit.atLeastOnce,
           id: "snapshot-stateless",
           params: {},
           inputs: { input },
@@ -209,25 +185,17 @@ for (const [name, host] of hosts) {
     ));
 }
 
-test("read refuses state on a foreign owner", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const state = yield* State;
-      const failed = yield* Projection.read(totals).pipe(
-        Effect.provideService(State, attachOwner({ ...state }, {})),
-        Effect.result,
-      );
-      expect(failed._tag).toBe("Failure");
-      if (failed._tag === "Failure")
-        expect(failed.failure).toMatchObject({ phase: "load", reason: "unsupported-composition" });
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory()))),
-  ));
-
 test("read of an invalid stored state fails as an invalid record", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const checkpoints = yield* Checkpoints;
-      yield* checkpoints.withTransaction((yield* State).save(totals, '"not totals"'));
+      const checkpoints = yield* CheckpointStore;
+      const before = yield* restore(totals, checkpoints);
+      yield* checkpoints.compareAndSet(totals, before.token, {
+        identity: before.record.identity,
+        inputs: before.record.inputs,
+        adapters: before.record.adapters,
+        state: '"not totals"',
+      });
       const failed = yield* Projection.read(totals).pipe(Effect.result);
       expect(failed._tag).toBe("Failure");
       if (failed._tag === "Failure")
@@ -236,7 +204,7 @@ test("read of an invalid stored state fails as an invalid record", () =>
   ));
 
 test("SQLite: a second process writes between two reads of the same file", async () => {
-  const directory = mkdtempSync("/tmp/projection-snapshot-");
+  const directory = mkdtempSync(join(tmpdir(), "projection-snapshot-"));
   const filename = join(directory, "snapshot.sqlite");
   const reader = ManagedRuntime.make(sqlite(filename));
   const writer = ManagedRuntime.make(sqlite(filename));

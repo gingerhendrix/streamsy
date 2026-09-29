@@ -1,9 +1,17 @@
+/* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- This internal binding implementation erases the handler and prepared-value types already checked by the constructor overloads. */
 /* oxlint-disable typescript/no-explicit-any, anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Declarations are the checked bridge between stream declarations and their mapped projection inputs; each assertion is documented at its use. */
-import { Option, Schema } from "effect";
-import { StreamAddress, type Streamsy } from "@streamsy/core";
+import { Option, Schema, type Effect } from "effect";
+import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
-import type { RoutedMap, Target } from "./output-internal.ts";
-import type * as Output from "./output.ts";
+import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
+import { supportsPrepare } from "./commit/range.ts";
+import * as Commit from "./commit.ts";
+import type { Executable } from "./executable.ts";
+import type { ProjectionFault } from "./fault.ts";
+import type { InputMap, Slices } from "./batch.ts";
+import { bindState, stateSource, type StateDefinition, type StateSource } from "./state.ts";
+import { adapt } from "./step.ts";
+import { withParams, type Unit } from "./unit.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
 export type StreamDeclaration = StreamRoute.StreamRoute<any, any, never, never> &
@@ -39,13 +47,7 @@ export type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
 };
 export type OneWithin<C extends StreamRoute.ParamCodecs, X> =
   InvalidInput<C, X> extends never ? X : never;
-export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
-  readonly [K in keyof D]: D[K] extends { readonly stream: Target<infer P> }
-    ? Invalid<C, P> extends never
-      ? D[K]
-      : never
-    : D[K];
-};
+export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
 
 /** Inert: `at` binds the params and returns the value runners take. */
 export interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
@@ -99,25 +101,6 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
   return built as Addresses<I>;
 };
 
-/** Resolves each declared output target once. Fixed addresses are kept. */
-export const resolveOutputs = (declarations: RoutedMap, params: DecodedParams): Output.Map =>
-  Object.fromEntries(
-    Object.entries(declarations).map(([name, output]) => {
-      const target = output.stream;
-      if (!("address" in target)) return [name, output];
-      const address = target.address(params);
-      return [
-        name,
-        {
-          ...output,
-          stream: Object.assign(StreamAddress.json(address.id, { schema: output.schema }), {
-            stream: target,
-          }),
-        },
-      ];
-    }),
-  ) as Output.Map;
-
 export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
   definition: {
     readonly id: string;
@@ -157,5 +140,129 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
       }
       return Option.none();
     },
+  };
+};
+
+export interface Committing<Result, P, Q> {
+  readonly commit: Commit.Commit<Result, P, Q>;
+}
+export type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare"
+  > & {
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+export type StatefulDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  A,
+  SI,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+> = RunningDeclaration<C, I, E, R, Result, P, Q, A> & {
+  readonly state: StateSource<A, SI, StreamRoute.Params<C>, Q>;
+};
+export type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+export type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  SI,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A> & {
+  readonly state: StateSource<A, SI, StreamRoute.Params<C>, Q>;
+};
+
+type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
+/** Public constructors check all mapped types before this shared binding boundary. */
+export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs> {
+  readonly commit?: Commit.Commit<any, any, any>;
+  readonly state?: StateDefinition<any, any, any>;
+  readonly outputs?: RoutedMap;
+  readonly fold?: (...args: any[]) => any;
+  readonly process?: (...args: any[]) => any;
+  readonly emit?: (...args: any[]) => any;
+  readonly mapAccum?: (...args: any[]) => any;
+  readonly mapAccumBatch?: (...args: any[]) => any;
+  readonly prepare?: (...args: any[]) => Effect.Effect<any, any, any>;
+}
+
+export const build = (kind: Kind, definition: BuildDefinition) => {
+  const commit = definition.commit ?? Commit.checkpoint;
+  if (definition.prepare !== undefined && !supportsPrepare(commit))
+    throw new RangeError("prepare requires Commit.transaction");
+  const declaration = declare(definition, ({ decoded, ...key }) => {
+    const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
+    const inputs = addressesOf(definition.inputs, decoded);
+    const streams = resolveOutputs(definition.outputs ?? {}, decoded, inputs);
+    return {
+      ...key,
+      inputs,
+      state,
+      streams,
+      commit,
+      prepare:
+        definition.prepare === undefined
+          ? undefined
+          : (batch: Slices<InputMap>, unit: Unit) =>
+              definition.prepare!(batch, withParams(unit, decoded)),
+      process: (batch: Slices<InputMap>, unit: Unit, encoded?: string, prepared?: unknown) =>
+        adapt(
+          kind,
+          key,
+          state,
+          streams,
+          definition[kind]!,
+          batch,
+          withParams(unit, decoded),
+          encoded,
+          prepared,
+        ),
+    };
+  });
+  if (definition.state === undefined) return declaration;
+  return {
+    ...declaration,
+    state: stateSource(definition, definition.state, declaration.at),
   };
 };

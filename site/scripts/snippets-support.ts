@@ -69,7 +69,21 @@ export const snippetSupport = new Map<string, PageSupport>([
   [
     "projections/index",
     {
-      renames: { 1: "minimal.ts" },
+      renames: { 1: "minimal.ts", 2: "tripled.ts" },
+      modules: {
+        "zz-provided.ts": `import { Effect, Layer } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import * as BunStorage from "@streamsy/storage/bun";
+import * as ProjectionSql from "@streamsy/projection/sql";
+import { minimal, Numbers, Doubled } from "./minimal.ts";
+import { tripled } from "./tripled.ts";
+import { host } from "./block03.ts";
+export const memory: Effect.Effect<unknown, unknown, never> = Projection.run(tripled.at({})).pipe(Effect.provide(host));
+const sqlHost = ProjectionSql.layerStorage.pipe(Layer.provideMerge(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group(Numbers, Doubled))));
+export const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.provide(sqlHost));
+`,
+      },
     },
   ],
   [
@@ -85,14 +99,14 @@ export const snippetSupport = new Map<string, PageSupport>([
       preludes: {
         6: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         7: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
@@ -100,25 +114,25 @@ declare const readOrderTotals: () => Effect.Effect<number>;
 `,
         8: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Output, Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 import { Streamsy } from "@streamsy/core";
 class Facts extends Streamsy.json<Facts>()("Shop/Facts", "facts/:workspaceId", { params: { workspaceId: Schema.String }, schema: Schema.Finite }) {}
 class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId", { params: { workspaceId: Schema.String }, schema: Schema.Finite }) {}
-const ordersByWorkspace = Projection.outputs({ id: "order-totals", params: { workspaceId: Schema.String }, inputs: { facts: Facts }, outputs: { output: Output.stream(Schema.Finite, { stream: Totals }) }, process: (batch) => Effect.succeed({ output: batch.facts.items }) });
+const ordersByWorkspace = Projection.emit({ id: "order-totals", params: { workspaceId: Schema.String }, inputs: { facts: Facts }, outputs: { output: Totals }, commit: Commit.producer, emit: ({ item }) => ({ output: [item] }) });
 `,
         9: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         10: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
@@ -140,24 +154,24 @@ declare const toTotals: (items: ReadonlyArray<typeof orderSchema.Type>) => Reado
     {
       preludes: {
         2: `import { Effect, Schema } from "effect";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import { Orders } from "./streams.ts";
 `,
       },
       modules: {
         "order-totals.ts": `import { Effect } from "effect";
-import { Projection } from "@streamsy/projection";
+import { Commit, Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
-export const orderTotalsProjection = Projection.atomic({
+export const orderTotalsProjection = Projection.emit({
   id: "order-totals",
   params: {},
   inputs: { input: Orders },
-  process: Projection.each(({ item }) =>
-    Effect.flatMap(OrderTotals, (totals) => totals.append({}, [{ orderId: item.orderId, total: item.amount }])),
-  ),
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
 }).at({});
 `,
-        "run.ts": `import { Projection } from "@streamsy/projection";
+        "run.ts": `import { Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 export const program = Projection.run(orderTotalsProjection, { limit: 10 });
 `,

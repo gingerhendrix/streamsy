@@ -1,3 +1,4 @@
+import { Commit } from "@streamsy/projection";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -5,19 +6,18 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, State, type ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
-import * as Sqlite from "@streamsy/projection/sqlite";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 
 const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      | Checkpoints
+      | CheckpointStore
       | import("@streamsy/core/protocol").StreamsReader
-      | import("@streamsy/core/protocol").StreamsWriter
-      | State,
+      | import("@streamsy/core/protocol").StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -25,7 +25,7 @@ const hosts: ReadonlyArray<
   ["memory", Memory.layerMemory()],
   [
     "SQLite",
-    Sqlite.layer.pipe(
+    ProjectionSql.layerStorage.pipe(
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
     ),
   ],
@@ -36,7 +36,7 @@ for (const [name, host] of hosts) {
       Effect.runPromise(
         Effect.gen(function* () {
           const input = FamilyFixture.json("aba-input", { schema: Schema.Finite });
-          const projection = Projection.atomic({
+          const projection = Projection.fold({
             id: `aba-${name}-${serialized}`,
             params: {},
             inputs: { input },
@@ -86,22 +86,29 @@ for (const [name, host] of hosts) {
           if (serialized) {
             for (let n = 0; n < 10; n += 1) yield* Effect.yieldNow;
             expect(forgotten).toBe(false);
-            expect((yield* (yield* Checkpoints).load(projection)).token).toBe("1");
+            expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("1");
             yield* Deferred.succeed(release, undefined);
             expect((yield* Fiber.join(a)).items).toBe(1);
             yield* Fiber.join(forget);
-            expect(yield* (yield* State).load(projection)).toEqual(Option.none());
+            expect(
+              Option.flatMap((yield* (yield* CheckpointStore).load(projection)).record, (record) =>
+                Option.fromUndefinedOr(record.state),
+              ),
+            ).toEqual(Option.none());
             yield* Projection.run(projection);
             expect((yield* Projection.read(projection)).state).toBe(12);
           } else {
             yield* Fiber.join(forget);
             yield* Projection.run(projection);
-            expect((yield* (yield* Checkpoints).load(projection)).token).toBe("1");
+            expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("1");
             expect((yield* Projection.read(projection)).state).toBe(12);
             yield* Deferred.succeed(release, undefined);
             yield* Fiber.join(a);
-            // The old token 1 matches the fresh token 1: another process must be drained separately.
-            expect((yield* Projection.read(projection)).state).toBe(19);
+            // The stale pass still commits against a reused token. It now folds the state
+            // loaded with its offsets, so this example overwrites with the same value.
+            // Another process must still be drained separately before forget.
+            expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("2");
+            expect((yield* Projection.read(projection)).state).toBe(12);
           }
         }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
       ));
@@ -112,7 +119,8 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
   Effect.runPromise(
     Effect.gen(function* () {
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "queued-forget",
         params: {},
         inputs: { input },

@@ -1,6 +1,6 @@
 import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
-import { Projection, type State } from "@streamsy/projection";
+import { Projection, type CheckpointStore } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer, Predicate, Result, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -8,14 +8,14 @@ import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
 import { issueRows } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
-import { tracker, outputStreams } from "./outputs.ts";
+import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { routes } from "./streams.ts";
 import { transact } from "./state.ts";
 
 export const workspaceSummary: Serve.ValueSource<
   { readonly workspaceId: string },
   WorkspaceSummary,
-  State
+  CheckpointStore
 > = {
   id: "issue-tracker/summary",
   paramSchema: tracker.state.paramSchema,
@@ -33,9 +33,9 @@ export const workspaceSummary: Serve.ValueSource<
 };
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.state(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.state(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.stream(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
   Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),

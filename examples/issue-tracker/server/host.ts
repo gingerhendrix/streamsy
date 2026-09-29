@@ -1,6 +1,6 @@
 import { Streamsy } from "@streamsy/core";
-import { Checkpoints, State } from "@streamsy/projection";
-import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
+import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -12,21 +12,21 @@ import { routes } from "./streams.ts";
 
 export const streams = Streamsy.group(...Object.values(routes), ...outputStreams);
 export const hostLayer = (filename: string) => {
-  const host = ProjectionSqlite.layer.pipe(
+  const host = ProjectionSql.layerStorage.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
   );
   return Layer.effectContext(
     Effect.context<
-      | Checkpoints
-      | State
+      | CheckpointStore
+      | Transaction
       | SqlClient.SqlClient
       | Streamsy.Services<typeof streams>
       | Streamsy.ChangeFeed<Streamsy.Services<typeof streams>>
     >().pipe(
       Effect.map(
         Context.pick(
-          Checkpoints,
-          State,
+          CheckpointStore,
+          Transaction,
           SqlClient.SqlClient,
           ...streams.streams,
           ...streams.streams.map((stream) =>
@@ -94,8 +94,8 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
   ).pipe(Layer.provide(base));
   return Layer.effectContext(
     Effect.context<
-      | State
-      | Checkpoints
+      | Transaction
+      | CheckpointStore
       | SqlClient.SqlClient
       | ApplicationReady
       | import("./streams.ts").Events

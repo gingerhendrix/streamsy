@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Projection } from "../index.ts";
+import { Commit, Projection } from "../index.ts";
 
 export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
   params: {},
@@ -11,7 +11,7 @@ export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "double
   schema: Schema.Finite,
 }) {}
 
-/** A stateless atomic map inside the checkpoint transaction. */
+/** A per-entry map with outputs and offsets in one transaction. */
 export const minimal = Effect.gen(function* () {
   const numbers = yield* Numbers;
   const doubled = yield* Doubled;
@@ -19,17 +19,13 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.atomic({
+    Projection.emit({
       id: "doubled",
       params: {},
       inputs: { input: Numbers },
-      process: (batch) =>
-        Effect.flatMap(Doubled, (output) =>
-          output.append(
-            {},
-            batch.input.items.map((n) => n * 2),
-          ),
-        ),
+      outputs: { output: Doubled },
+      commit: Commit.transaction,
+      emit: ({ item }) => ({ output: [item * 2] }),
     }).at({}),
     { limit: 10 },
   );

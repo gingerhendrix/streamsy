@@ -30,10 +30,10 @@ Open http://localhost:1339. The server keeps its data in
 
 ## Architecture
 
-![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller runs and reads the projection before each append, and retries on OffsetMismatch. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream, the checkpoint and the state row share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
+![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller runs and reads the projection before each append, and retries on OffsetMismatch. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
 
 The server polls Hacker News and writes one Durable State stream,
-`hackernews/newest`. An atomic projection folds that stream into the current
+`hackernews/newest`. A checkpointed fold folds that stream into the current
 story rows. Before each append, the poller runs the projection, reads the rows
 and the offset they are at, compares them with the fetched stories, and appends
 the changes with `expectedOffset`. `Serve.state` publishes the stream at
@@ -48,7 +48,7 @@ Each number in the diagram is a section below.
 | Step | What happens                                                     | Streamsy feature                                                    | File                              |
 | ---- | ---------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------- |
 | 1    | The app declares one State stream and hosts it in SQLite         | `Streamsy.state`, `Streamsy.group`, `BunStorage.layer`              | `stories.ts`, `streams.ts`        |
-| 2    | A projection folds the stream into story rows                    | `Projection.atomic` with `state` and `fold`                         | `newest-rows.ts`                  |
+| 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                           | `newest-rows.ts`                  |
 | 3    | The poller reads the rows and their offset, decides, and appends | `Projection.run`, `Projection.read`, `append` with `expectedOffset` | `poller/reconcile.ts`             |
 | 4    | A conflict retries the whole pass                                | `OffsetMismatch`                                                    | `poller/poller.ts`                |
 | 5    | The server publishes the stream as Durable State                 | `Serve.state`                                                       | `http.ts`                         |
@@ -71,9 +71,9 @@ export class HackerNewsStories extends Streamsy.state<HackerNewsStories>()(
 export const storiesAddress = HackerNewsStories.at({});
 ```
 
-One SQLite file holds the stream, the projection checkpoint and the state row.
-`BunStorage.layer` stores the stream. `ProjectionSqlite.layer` adds the
-checkpoint and the state to the same database. The app creates the stream at
+One SQLite file holds the stream, the projection record with its state.
+`BunStorage.layer` stores the stream. `ProjectionSql.layerStorage` adds the
+checkpoint record to the same database. The app creates the stream at
 boot, so the first `GET /state/newest?offset=-1` returns 200 with an empty
 array before the first poll.
 
@@ -88,7 +88,7 @@ export const createStoriesLayer = Layer.effectDiscard(
 const sqliteHostLayer = Layer.unwrap(
   Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
     Effect.as(
-      ProjectionSqlite.layer.pipe(
+      ProjectionSql.layerStorage.pipe(
         Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
       ),
     ),
@@ -108,7 +108,7 @@ The projection folds the stream into one state value, a record of rows by key:
 ```ts title="src/server/newest-rows.ts"
 export const StoryRows = Schema.Record(Schema.String, HackerNewsStory);
 // ...
-export const newestRows = Projection.atomic({
+export const newestRows = Projection.fold({
   id: "hn-newest-rows",
   params: {},
   inputs: { input: storiesAddress },
@@ -118,7 +118,7 @@ export const newestRows = Projection.atomic({
 ```
 
 `applyChange` is a pure function. An upsert sets the row at its key, and a
-delete removes it. The state row and the checkpoint commit in one transaction.
+delete removes it. The value and offsets are saved in one checkpoint record.
 The newest set holds about 50 rows, so one state value is small enough. See
 [State and checkpoints](/docs/projections/state) for when to use application tables
 in its place.

@@ -1,57 +1,7 @@
-import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
-import { Context, Data, Effect, Option, Schema } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
-import {
-  recordKey,
-  type CheckpointsApi,
-  type EncodedStore,
-  type ProjectionKey,
-} from "./checkpoint.ts";
+import { CheckpointStore, restore, type Identity, type ProjectionKey } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
-
-export interface StateApi {
-  /** Reads the encoded row. Apps read state with `Projection.read`. */
-  readonly load: (key: ProjectionKey) => Effect.Effect<Option.Option<string>, ProjectionFault>;
-  /** Overwrites the row. Runs inside the owner transaction. */
-  readonly save: (key: ProjectionKey, encoded: string) => Effect.Effect<void, ProjectionFault>;
-  /** Deletes the row inside the owner transaction. Absent is not an error. */
-  readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
-}
-/**
- * One encoded state row per projection key, sharing the checkpoint's owner transaction.
- * The host provides it with `Checkpoints`. Layer authors implement it.
- */
-export class State extends Context.Service<State, StateApi>()("@streamsy/projection/State") {}
-
-export const stateFromStore = (store: EncodedStore): StateApi =>
-  attachOwner(
-    {
-      load: (key) => store.readState(recordKey(key)),
-      save: (key, encoded) => store.writeState(recordKey(key), encoded),
-      remove: (key) => store.removeState(recordKey(key)),
-    },
-    ownerOf(store),
-  );
-
-/**
- * The state row must commit in the checkpoint owner's transaction. A projection with
- * `state:` and a `State` service from another owner fails with
- * `load / unsupported-composition` before it reads or processes.
- */
-export const checkStateOwner = Effect.fnUntraced(function* (
-  projection: { readonly id: string; readonly state?: unknown },
-  checkpoints: CheckpointsApi,
-) {
-  if (projection.state === undefined) return;
-  // The declaration type requires State whenever `state:` is set.
-  const store = yield* Effect.serviceOption(State);
-  if (Option.isNone(store) || ownerOf(store.value) === checkpoints.owner) return;
-  return yield* new ProjectionFault({
-    phase: "load",
-    reason: "unsupported-composition",
-    message: `State of ${projection.id} does not share the checkpoint owner`,
-  });
-});
 
 export type StateSchema<A, I = unknown> = Schema.Codec<A, I, never, never>;
 /** A value, or a function of the decoded params the projection was bound with. */
@@ -61,7 +11,7 @@ export interface StateDefinition<A, I = unknown, P = Record<string, string>> {
   readonly schema: StateSchema<A, I>;
   readonly initial: Initial<A, P>;
 }
-/** The state of a bound projection. `initial` runs only when the row is absent. */
+/** The state of a bound projection. `initial` runs only when stored state is absent. */
 export interface BoundState<A> {
   readonly schema: StateSchema<A>;
   readonly initial: () => A;
@@ -84,7 +34,7 @@ export const bindState = <A, P>(
   };
 };
 
-/** Decodes a stored row. `None` means the row is absent. */
+/** Decodes the state field. `None` means no state is stored. */
 export const decodeState = <A>(
   key: ProjectionKey,
   schema: StateSchema<A>,
@@ -105,13 +55,14 @@ export const decodeState = <A>(
         ),
       );
 
-/** The stored state, or the initial value when the row is absent. */
+/** The stored state, or the initial value when stored state is absent. */
 export const currentState = <A>(
   key: ProjectionKey,
   state: BoundState<A>,
-): Effect.Effect<A, ProjectionFault, State> =>
+  encoded: string | undefined,
+): Effect.Effect<A, ProjectionFault> =>
   Effect.gen(function* () {
-    const stored = yield* decodeState(key, state.schema, yield* (yield* State).load(key));
+    const stored = yield* decodeState(key, state.schema, Option.fromUndefinedOr(encoded));
     return Option.getOrElse(stored, state.initial);
   });
 
@@ -132,24 +83,26 @@ export const encodeState = <A>(
     ),
   );
 
-/** The declared state as a source for `Serve.value`. It fails while the row is absent. */
-export interface StateSource<A, I, P> {
+/** The declared state as a source for `Serve.value`. It fails while state is absent. */
+export interface StateSource<A, I, P, R = CheckpointStore> {
   readonly id: string;
   readonly paramSchema: StreamRoute.PathSchema<P>;
   readonly schema: StateSchema<A, I>;
   readonly resolve: (
     params: P,
-  ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, State>;
+  ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, R>;
 }
 
 type ValueUnavailable = Data.TaggedEnum<{ ValueUnavailable: { readonly detail: string } }>;
 const { ValueUnavailable } = Data.taggedEnum<ValueUnavailable>();
 
-export const stateSource = <A, I, P>(
+export const stateSource = <A, I, P, R>(
   definition: { readonly id: string; readonly params: StreamRoute.ParamCodecs },
   state: StateDefinition<A, I, P>,
-  at: (params: P) => ProjectionKey,
-): StateSource<A, I, P> => {
+  at: (
+    params: P,
+  ) => Identity & { readonly commit: Pick<import("./commit.ts").Commit<never, never, R>, "load"> },
+): StateSource<A, I, P, R> => {
   const unavailable = (detail: string) => ValueUnavailable({ detail });
   return {
     id: `${definition.id}/state`,
@@ -163,16 +116,14 @@ export const stateSource = <A, I, P>(
           try: () => at(params),
           catch: () => unavailable("Cannot resolve projection params"),
         });
-        const key: ProjectionKey = {
-          id: bound.id,
-          version: bound.version,
-          generation: bound.generation,
-          params: bound.params,
-        };
-        const value = yield* Effect.flatMap(State, (store) => store.load(key)).pipe(
-          Effect.flatMap((encoded) => decodeState(key, state.schema, encoded)),
-          Effect.mapError(() => unavailable("Cannot read projection state")),
-        );
+        const value = yield* Effect.gen(function* () {
+          const loaded = yield* restore(bound, bound.commit);
+          return yield* decodeState(
+            bound,
+            state.schema,
+            Option.fromUndefinedOr(loaded.record.state),
+          );
+        }).pipe(Effect.mapError(() => unavailable("Cannot read projection state")));
         return Option.isSome(value)
           ? value.value
           : yield* Effect.fail(unavailable("Projection state is absent"));

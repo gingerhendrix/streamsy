@@ -1,14 +1,14 @@
 import * as Addresses from "./support/addresses.ts";
 import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { contractFingerprint } from "@streamsy/serve/contract";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { outputRoutes } from "../server/app.ts";
-import { tracker } from "../server/outputs.ts";
+import { tracker, Board, Transitions } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
 
@@ -47,7 +47,7 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
           yield* Projection.run(issueRows.at({ workspaceId }));
           yield* Projection.run(tracker.at({ workspaceId }));
         }
-        const owner = yield* Checkpoints;
+        const owner = yield* CheckpointStore;
         const rows = issueRows.at({ workspaceId: "live" });
         const outputs = tracker.at({ workspaceId: "live" });
         const sqlBefore = yield* owner.load(rows);
@@ -92,16 +92,19 @@ test("catalog values cannot write another workspace in either projection", async
             headers: { operation: "upsert" },
           },
         ]);
-        for (const address of [
-          issueRows.at({ workspaceId: "live" }),
-          tracker.at({ workspaceId: "live" }),
-        ]) {
-          const owner = yield* Checkpoints;
+        for (const [address, run] of [
+          [
+            issueRows.at({ workspaceId: "live" }),
+            Projection.run(issueRows.at({ workspaceId: "live" })).pipe(Effect.result),
+          ],
+          [
+            tracker.at({ workspaceId: "live" }),
+            Projection.run(tracker.at({ workspaceId: "live" })).pipe(Effect.result),
+          ],
+        ] as const) {
+          const owner = yield* CheckpointStore;
           const before = yield* owner.load(address);
-          const result =
-            address._tag === "Atomic"
-              ? yield* Projection.run(address).pipe(Effect.result)
-              : yield* Projection.run(address).pipe(Effect.result);
+          const result = yield* run;
           expect(result).toMatchObject({
             _tag: "Failure",
             failure: {
@@ -153,9 +156,9 @@ test("named output replay survives a lost append reply beside the SQL projection
         ]);
         yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         yield* Projection.run(bound);
-        const transitions = yield* Addresses.readOutput(tracker.outputs.transitions, "live");
+        const transitions = yield* Addresses.readOutput(Transitions, "live");
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Addresses.readOutput(tracker.outputs.board, "live");
+        const board = yield* Addresses.readOutput(Board, "live");
         expect(board).toHaveLength(2);
         expect(yield* tracker.state.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
@@ -193,7 +196,7 @@ test("served route fingerprints pin address identity and reject incompatible con
         contractFingerprint({
           kind,
           route,
-          source: `issue-tracker/${name}`,
+          source: `issue-tracker/:workspaceId/outputs/${name === "labelCounts" ? "label-counts" : name}`,
           id: `issue-tracker/live/outputs/${name === "labelCounts" ? "label-counts" : name}`,
           collections: kind === "state" ? { [collection]: key } : null,
           params: ["workspaceId"],
@@ -229,8 +232,8 @@ test("served route fingerprints pin address identity and reject incompatible con
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v1_state")).toEqual([]);
-        const owner = yield* Checkpoints;
+        expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v2_records")).toEqual([]);
+        const owner = yield* CheckpointStore;
         expect((yield* owner.load(tracker.at({ workspaceId: "live" }))).record._tag).toBe("None");
       }),
     );

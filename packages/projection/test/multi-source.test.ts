@@ -1,23 +1,33 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
-import { Streams } from "@streamsy/core/protocol";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
-  Checkpoints,
+  CheckpointStore,
   Projection,
   ProjectionFault,
   type Entry,
   type Unit,
 } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
-import { positives, initialize, type Services } from "./support/scenarios.ts";
+import { positives as transactionalPositives, initialize } from "./support/scenarios.ts";
+
+const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
 
-const run = <A, E>(body: Effect.Effect<A, E, Services>, readLimit = 1000) =>
+const run = <A, E>(
+  body: Effect.Effect<
+    A,
+    E,
+    CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter
+  >,
+  readLimit = 1000,
+) =>
   Effect.runPromise(
     body.pipe(Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit })))),
   );
@@ -30,7 +40,8 @@ const setup = Effect.gen(function* () {
 /** Records every tagged item the handler saw, in order, with the unit it arrived in. */
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
-  const projection = Projection.atomic({
+  const projection = Projection.process({
+    commit: Commit.atLeastOnce,
     params: {},
     id,
     inputs,
@@ -87,7 +98,8 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(a, [], { close: true });
       const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
         [];
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "closing",
         params: {},
         inputs: { a, b },
@@ -118,7 +130,7 @@ test("a single-input projection stores a one-key inputs map", () =>
     Effect.gen(function* () {
       yield* initialize;
       const result = yield* Projection.run(positives);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(positives));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(positives));
       const record = Option.getOrThrow(loaded.record);
       expect(Object.keys(record.inputs)).toEqual(["input"]);
       expect(record.inputs).toEqual(result.offsets);
@@ -143,7 +155,7 @@ test("a missing second input fails the read naming that input", () =>
         expect(result.failure.input).toBe("b");
       }
       expect(seen).toHaveLength(0);
-      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.isNone(loaded.record)).toBe(true);
     }),
   ));
@@ -155,7 +167,8 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       const order: Array<string> = [];
       let active = 0;
       let overlapped = false;
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "sequenced",
         params: {},
         inputs: { b, a },

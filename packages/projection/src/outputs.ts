@@ -1,238 +1,116 @@
-/* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
-import { Data, Effect, Predicate, Schema } from "effect";
-import { StreamAddress, type Streamsy } from "@streamsy/core";
-import type { StreamRoute } from "@streamsy/core/protocol";
-import type { InputMap, Slices } from "./batch.ts";
-import {
-  addressesOf,
-  declare,
-  resolveOutputs,
-  type Addresses,
-  type Common,
-  type Declaration,
-  type DecodedParams,
-  type Inputs,
-  type OutputsWithin,
-} from "./declaration.ts";
-import type * as Output from "./output.ts";
-import type { RoutedMap } from "./output-internal.ts";
+/* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
+import { Effect, Predicate, type Schema } from "effect";
+import { Rows, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
+import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import type { ResolvedOutput } from "./commit/internal.ts";
+import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import { bind, rowsAddress, type Bound } from "./output-source.ts";
-import {
-  State,
-  bindState,
-  encodeState,
-  currentState,
-  stateSource,
-  type BoundState,
-  type StateDefinition,
-  type StateSource,
-} from "./state.ts";
-import { withParams, type Unit } from "./unit.ts";
 
-/** A bound outputs projection. Runners take this value. */
-export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown> {
-  readonly _tag: "Outputs";
-  readonly id: string;
-  readonly version: number;
-  readonly generation: number;
-  readonly params: Record<string, string>;
-  readonly inputs: Inputs;
-  /** Set when the declaration has `state:`. */
-  readonly state?: BoundState<S>;
-  readonly streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
-  readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
-}
+export type RoutedMap = Inputs;
+export type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? Rows.Change<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+export type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
 
-/** The outputs projection constructor. It owns the `Outputs` tag. */
-const OutputsProjection = Data.TaggedClass("Outputs");
-
-type OnlyDeclared<Result, Allowed> =
-  Exclude<keyof Result, Allowed> extends never ? unknown : { readonly invalidOutputKeys: never };
-
-/**
- * Without `state:`, the handler takes the batch and the unit. With `state:`, it gets
- * the prior state first and returns the next state as `state`, next to the output arrays.
- */
-export interface OutputsDefinition<
-  C extends StreamRoute.ParamCodecs,
-  I extends Inputs,
-  D extends RoutedMap,
-  Result extends Output.Result<D, A>,
-  E,
-  R,
-  A = never,
-  SI = never,
-> extends Common<C, I> {
-  readonly outputs: D & OutputsWithin<C, D>;
-  readonly state?: StateDefinition<A, SI, StreamRoute.Params<C>>;
-  readonly process: ([A] extends [never]
-    ? (
-        batch: Slices<Addresses<I>>,
-        unit: Unit<StreamRoute.Params<C>>,
-      ) => Effect.Effect<Result, E, R>
-    : (
-        state: NoInfer<A>,
-        batch: Slices<Addresses<I>>,
-        unit: Unit<StreamRoute.Params<C>>,
-      ) => Effect.Effect<Result, E, R>) &
-    OnlyDeclared<Result, keyof Output.Result<D, A>>;
-}
-
-/** Checks that do not depend on params run when the projection is declared. */
-const checkDeclarations = (outputs: RoutedMap) => {
-  if ("state" in outputs) throw new RangeError("The output name state is reserved for the state");
-};
-
-/** A bound outputs declaration. With `state:`, it also gives `state`, a source for `Serve.value`. */
-export type OutputsDeclaration<
-  C extends StreamRoute.ParamCodecs,
-  I extends Inputs,
-  D extends RoutedMap,
-  A,
-  SI,
-  E,
-  R,
-> = Declaration<C, Outputs<Addresses<I>, E | ProjectionFault, R | State, Output.Services<D>, A>> & {
-  readonly outputs: Bound<D, StreamRoute.Params<C>>;
-} & ([A] extends [never] ? {} : { readonly state: StateSource<A, SI, StreamRoute.Params<C>> });
-
-export function outputs<
-  C extends StreamRoute.ParamCodecs,
-  I extends Inputs,
-  const D extends RoutedMap,
-  Result extends Output.Result<D, A>,
-  E,
-  R,
-  A = never,
-  SI = never,
->(
-  definition: OutputsDefinition<C, I, D, Result, E, R, A, SI>,
-): OutputsDeclaration<C, I, D, A, SI, E, R>;
-export function outputs(
-  definition: Common<StreamRoute.ParamCodecs, Inputs> & {
-    readonly outputs: RoutedMap;
-    readonly state?: StateDefinition<unknown, unknown, any>;
-    readonly process: (...args: any[]) => Effect.Effect<any, any, any>;
-  },
-): Declaration<StreamRoute.ParamCodecs, Outputs<InputMap, unknown, unknown, unknown>> & {
-  readonly outputs: unknown;
-  readonly state?: unknown;
-} {
-  checkDeclarations(definition.outputs);
-  const state = definition.state;
-  const declaration = declare(definition, ({ decoded, ...key }) =>
-    bindOutputs(
-      {
-        ...key,
-        inputs: addressesOf(definition.inputs, decoded),
-        outputs: resolveOutputs(definition.outputs, decoded),
-        state: state === undefined ? undefined : bindState(state, decoded),
-        process: definition.process,
-      },
-      decoded,
-    ),
-  );
-  const keyAt = (params: StreamRoute.Params<StreamRoute.ParamCodecs>) => {
-    const bound = declaration.at(params);
-    return {
-      id: bound.id,
-      version: bound.version,
-      generation: bound.generation,
-      params: bound.params,
-      outputs: resolveOutputs(definition.outputs, params),
-    };
-  };
-  // Struct owns exactly the codec keys and their decoded parameter types.
-  const schema = Schema.Struct(definition.params) as StreamRoute.PathSchema<
-    StreamRoute.Params<StreamRoute.ParamCodecs>
-  >;
-  const outputs = bind(definition.outputs, definition.id, schema, keyAt);
-  return state === undefined
-    ? { ...declaration, outputs }
-    : { ...declaration, outputs, state: stateSource(definition, state, declaration.at) };
-}
-
-interface BoundDefinition<Inputs extends InputMap, Result, E, R> {
-  readonly id: string;
-  readonly version: number;
-  readonly generation: number;
-  readonly params: Record<string, string>;
-  readonly inputs: Inputs;
-  readonly outputs: Output.Map;
-  readonly state?: BoundState<unknown>;
-  /** Takes the prior state first when `state` is present. */
-  readonly process: (...args: any[]) => Effect.Effect<Result, E, R>;
-}
-
-/** Internal: the value `.at(params)` returns. Params are already encoded and decoded. */
-const bindOutputs = <Inputs extends InputMap, Result, E, R>(
-  definition: BoundDefinition<Inputs, Result, E, R>,
-  decoded: DecodedParams,
-): Outputs<Inputs, E | ProjectionFault, R | State, any> => {
-  const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
-  const state = definition.state;
-  for (const [name, output] of Object.entries(definition.outputs)) {
-    streams[name] = Predicate.isTagged(output, "Stream")
-      ? Object.assign(StreamAddress.json(output.stream.id, { schema: output.schema }), {
-          stream: output.stream.stream,
-        })
-      : rowsAddress(name, output);
-  }
+/** Resolve routes just like inputs, retaining the route codec and collection names. */
+export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs: InputMap) => {
+  const streams = addressesOf(outputs, params);
   const ids = Object.values(streams).map((address) => address.id);
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
-  const inputIds = new Set(Object.values(definition.inputs).map((address) => address.id));
+  const inputIds = new Set(Object.values(inputs).map((address) => address.id));
   if (ids.some((id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
-  const handler = definition.process;
-  const key = {
-    id: definition.id,
-    version: definition.version,
-    generation: definition.generation,
-    params: definition.params,
-  };
-  const result: Outputs<Inputs, E | ProjectionFault, R | State, any> = new OutputsProjection<
-    Omit<Outputs<Inputs, E | ProjectionFault, R | State, any>, "_tag">
-  >({
-    ...key,
-    inputs: definition.inputs,
-    state,
-    streams,
-    process: (batch, unit) =>
-      Effect.gen(function* () {
-        const view = withParams(unit, decoded);
-        const result =
-          state === undefined
-            ? yield* handler(batch, view)
-            : yield* handler(yield* currentState(key, state), batch, view);
-        const items: Record<string, ReadonlyArray<unknown>> = {};
-        for (const [name, output] of Object.entries(definition.outputs)) {
-          const entries = (result as Record<string, ReadonlyArray<any>>)[name];
-          if (!Array.isArray(entries))
-            return yield* new ProjectionFault({
-              phase: "process",
-              reason: "invalid-output",
-              message: `Missing output array ${name}`,
-            });
-          items[name] = Predicate.isTagged(output, "Stream")
-            ? entries
-            : entries.map((change: Output.Change<any>) =>
-                Predicate.isTagged(change, "Upsert")
-                  ? {
-                      type: name,
-                      key: String(change.row[output.key]),
-                      value: change.row,
-                      headers: { operation: "upsert" },
-                    }
-                  : { type: name, key: String(change.key), headers: { operation: "delete" } },
-              );
-        }
-        if (state === undefined) return { items };
-        const encoded = yield* encodeState(key, state.schema, (result as { state: unknown }).state);
-        const store = yield* State;
-        return { items, saveState: store.save(key, encoded) };
-      }),
-  });
-  return result;
+  if (Object.values(streams).some((address) => !Predicate.isTagged(address, "Json")))
+    throw new RangeError("Projection outputs require JSON or state routes");
+  return streams;
 };
+
+export const collect = (
+  outputs: Readonly<Record<string, Streamsy.Address<unknown, any>>>,
+  buffers: Record<string, unknown[]>,
+  emitted: Readonly<Record<string, ReadonlyArray<any>>>,
+) =>
+  Effect.gen(function* () {
+    for (const [name, entries] of Object.entries(emitted)) {
+      const output = outputs[name];
+      if (!Object.hasOwn(outputs, name) || output === undefined || !Array.isArray(entries))
+        return yield* new ProjectionFault({
+          phase: "process",
+          reason: "invalid-output",
+          message: `Invalid output array ${name}`,
+        });
+      const values = yield* Effect.try({
+        try: () =>
+          "collections" in output
+            ? // SAFETY: state addresses carry their collections; constructor signatures check each change against them.
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The address's state marker establishes this collection shape.
+              entries.map((change) =>
+                Rows.encode(output.collections as StreamAddress.Collections, change),
+              )
+            : entries,
+        catch: (cause) =>
+          new ProjectionFault({
+            phase: "process",
+            reason: "invalid-output",
+            message: `Invalid row change for ${name}`,
+            cause,
+          }),
+      });
+      (buffers[name] ??= []).push(...values);
+    }
+  });
+
+/** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
+export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
+  output: StreamAddress.StreamAddress<O>,
+  wire: ResolvedOutput["service"]["wire"],
+  items: ReadonlyArray<O>,
+  position: Producer.Position,
+) {
+  const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
+    new ProjectionFault({ phase: "pin", reason, message, cause });
+  return yield* Streams.append(output, items, { producer: position }).pipe(
+    Effect.provideService(StreamsWriter, wire),
+    Effect.catchTags({
+      EncodeFault: () =>
+        new ProjectionFault({
+          phase: "process",
+          reason: "invalid-output",
+          message: `Cannot encode output for ${output.id}`,
+        }),
+      StaleEpoch: (error) =>
+        pin(
+          "stale-epoch",
+          `Epoch ${position.producerEpoch} of ${output.id} is behind ${error.currentEpoch}`,
+        ),
+      ProducerGap: (error) =>
+        pin(
+          "invalid-record",
+          `Sequence ${error.receivedSeq} of ${output.id} does not follow ${error.expectedSeq}`,
+        ),
+      InvalidEpochSeq: () =>
+        pin(
+          "invalid-record",
+          `Epoch ${position.producerEpoch} of ${output.id} must start at seq 0`,
+        ),
+      NotSupported: (error) =>
+        pin("unsupported-composition", `${output.id} does not support ${error.feature}`),
+      StorageFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
+      TransportFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
+      StreamNotFound: () => pin("invalid-output", `Output ${output.id} does not exist`),
+      StreamGone: () => pin("invalid-output", `Output ${output.id} is gone`),
+      StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
+      OffsetMismatch: () => pin("invalid-output", `Output ${output.id} refused the append`),
+      AppendConflict: () => pin("invalid-output", `Output ${output.id} refused the append`),
+      StreamBusy: () => pin("invalid-output", `Output ${output.id} is busy`),
+      InvalidAppendRequest: (error) => pin("invalid-output", error.message),
+    }),
+  );
+});

@@ -1,14 +1,21 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Projection,
+  ProjectionFault,
+  type Transaction,
+} from "@streamsy/projection";
 
 export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
-/** Stateless atomic filter: positive items are copied to `output` inside the transaction. */
-export const positives = Projection.atomic({
+/** Stateless transactional filter: positive items are copied to `output` inside the transaction. */
+export const positives = Projection.process({
+  commit: Commit.transaction,
   id: "positives",
   params: {},
   inputs: { input },
@@ -19,8 +26,8 @@ export const positives = Projection.atomic({
     }),
 }).at({});
 export type Services =
-  | Checkpoints
-  | State
+  | CheckpointStore
+  | Transaction
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;
@@ -33,7 +40,7 @@ export const initialize = Effect.gen(function* () {
 export const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 export const inspect = Effect.gen(function* () {
-  const owner = yield* Checkpoints;
+  const owner = yield* CheckpointStore;
   return {
     output: yield* readAll(output),
     loaded: yield* owner.load(Projection.key(positives)),
@@ -42,10 +49,10 @@ export const inspect = Effect.gen(function* () {
 
 /** Fault injected after the handler's real append, at the checkpoint save. */
 export const failAtSave = Effect.gen(function* () {
-  const owner = yield* Checkpoints;
-  const failing = Checkpoints.of({
+  const owner = yield* CheckpointStore;
+  const failing = CheckpointStore.of({
     ...owner,
-    save: () =>
+    compareAndSet: () =>
       Effect.fail(
         new ProjectionFault({
           phase: "checkpoint",
@@ -55,12 +62,12 @@ export const failAtSave = Effect.gen(function* () {
       ),
   });
   return yield* Projection.run(positives).pipe(
-    Effect.provideService(Checkpoints, failing),
+    Effect.provideService(CheckpointStore, failing),
     Effect.result,
   );
 });
 
-/** Same composition scenario on memory, Bun SQLite and local Durable Object SQLite. */
+/** Same composition scenario on Bun SQLite and local Durable Object SQLite. */
 export const composition = Effect.gen(function* () {
   yield* initialize;
   const first = yield* Projection.run(positives, { limit: 1 });

@@ -42,17 +42,17 @@ and missing summary values return 503, including workspaces outside the runner l
 The raw protocol routes are open in this local demo; there is no authentication.
 
 The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
-`issue_changes`, and `notification_drafts`. The atomic `issueRows` projection writes
+`issue_changes`, and `notification_drafts`. `issueRows` uses `Projection.process` with `Commit.transaction` to write
 those tables and its checkpoint through the same SQL transaction. The separate
-`tracker` named stream constructs `Projection.outputs` addresses: `board` and
-`labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and the workspace
-value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
-`@streamsy/projection` owns only its `streamsy_projection_v1_*` tables, including the
+`tracker` uses `Projection.mapAccumBatch` with `Commit.producer`: `Board` and
+`LabelCounts` are `Streamsy.state` routes, `Transitions` is a `Streamsy.json` route,
+and the workspace value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
+`@streamsy/projection` owns only `streamsy_projection_v2_records`, containing offsets and the
 persisted value. The command path still reads facts rather than the projection state.
 
 `ProjectBoardCard` extends the issue row with label ids and nullable project/assignee
 names. Label counts count attached memberships of existing issues for each catalog
-label, including zero counts; deleting a catalog label emits `Output.remove(labelId)`
+label, including zero counts; deleting a catalog label emits `Rows.remove(labelId)`
 without `old_value`. Membership ids remain on cards until a detach fact arrives.
 `IssueTransition` uses the existing `IssueEvent` schema, excluding stale facts rejected
 by the sequence fold. The `workspace` value uses `WorkspaceState` to retain source rows
@@ -60,7 +60,7 @@ and membership tombstones for deterministic replay. The full fold state stays pr
 to the server. A `Serve.ValueSource` wrapper serves only `WorkspaceSummary`:
 `workspaceId`, `issueCount`, `doneCount`, `labelCount`, and `projectCount`. Counts of
 labels and projects are catalog row counts. Count-neutral changes preserve its ETag.
-The state row still grows with workspace size and is rewritten per unit and decoded
+The encoded state still grows with workspace size and is rewritten per unit and decoded
 per summary read.
 
 Both projections apply catalog deletes, including key-only deletes, in the address's

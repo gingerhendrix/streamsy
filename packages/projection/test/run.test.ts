@@ -1,15 +1,15 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
-import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
-import { Checkpoints, Output, Projection, ProjectionFault } from "@streamsy/projection";
+import { SqlClient } from "effect/unstable/sql";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerSqlite } from "./support/sqlite.ts";
 import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
 import {
-  composition,
   failAtSave,
   initialize,
   input,
@@ -20,16 +20,14 @@ import {
 } from "./support/scenarios.ts";
 
 const run = <A, E>(
-  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+  body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
   readLimit = 1000,
 ) =>
   Effect.runPromise(
-    body.pipe(
-      Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit }), Numbers, Doubled)),
-    ),
+    body.pipe(Effect.provide(FamilyFixture.withFamilies(layerSqlite(readLimit), Numbers, Doubled))),
   );
 const failure = <A, E>(
-  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+  body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
 ) =>
   Effect.gen(function* () {
     const result = yield* body.pipe(Effect.result);
@@ -52,24 +50,6 @@ const withRead = <A, E, R>(
       FamilyFixture.provideReader(StreamsReader.of({ ...reader, read: read(reader) })),
     );
   });
-
-test("fresh ordered run, atomic rollback and restart without repeated output", () =>
-  run(
-    Effect.gen(function* () {
-      const result = yield* composition;
-      expect(result.first.status).toBe("limit-reached");
-      expect(result.first.items).toBe(1);
-      expect(result.failed).toBe("Failure");
-      expect(result.after).toEqual(result.before);
-      expect(result.final.status).toBe("caught-up");
-      expect(result.final.items).toBe(2);
-      expect(result.restart.items).toBe(0);
-      expect(result.restart.status).toBe("caught-up");
-      expect(result.stored.output).toEqual([1, 3]);
-      expect(result.stored.loaded.token).toBe("3");
-    }),
-    1,
-  ));
 
 test("a non-empty pass is progress even when its read is up to date", () =>
   run(
@@ -160,7 +140,8 @@ test("identity mismatch on inputs stops without reset", () =>
       const before = yield* inspect;
       const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
-      const changed = Projection.atomic({
+      const changed = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input: other },
@@ -210,13 +191,16 @@ test("invalid stored record stops", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.run(positives);
-      const boundary = yield* MemoryCommitBoundary;
+      const sql = yield* SqlClient.SqlClient;
       const key = recordKey(Projection.key(positives));
-      const stored = Option.getOrThrow(yield* boundary.read(key));
+      const rows = yield* sql<{
+        readonly value: string;
+      }>`SELECT value FROM streamsy_projection_v2_records WHERE key = ${key}`;
+      const stored = Option.getOrThrow(Option.fromUndefinedOr(rows[0])).value;
       const bad = stored.replace(/"input":"\d{16}_\d{16}"/, '"input":"not-an-offset"');
       expect(bad).not.toBe(stored);
       for (const value of ["{not json", '{"version":1,"record":{}}', bad]) {
-        yield* boundary.write(key, value);
+        yield* sql`UPDATE streamsy_projection_v2_records SET value = ${value} WHERE key = ${key}`;
         const failed = fault(yield* failure(Projection.run(positives)));
         expect(failed.phase).toBe("load");
         expect(failed.reason).toBe("invalid-record");
@@ -308,37 +292,47 @@ test("record change between load and transaction is a token conflict", () =>
     }),
   ));
 
-test("two competing passes on one memory host: the second conflicts and output is not doubled", () =>
+test("two competing passes on one SQLite host: the second conflicts and output is not doubled", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
-      const gated = Projection.atomic({
+      const firstDone = yield* Deferred.make<void>();
+      const gated = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
-        process: (batch, unit) =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(inside, undefined);
-            yield* Deferred.await(release);
-            yield* positives.process(batch, unit);
-          }),
+        // Both runners load the old token before either SQL transaction starts.
+        prepare: () =>
+          Deferred.succeed(inside, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        process: (batch, unit) => positives.process(batch, unit),
       }).at({});
       const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
-      const observing = Checkpoints.of({
+      const observing = CheckpointStore.of({
         ...owner,
         load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
       });
       const second = yield* Effect.forkChild(
-        Projection.pass(positives).pipe(Effect.provideService(Checkpoints, observing)),
+        Projection.pass(
+          Projection.process({
+            commit: Commit.transaction,
+            id: positives.id,
+            params: {},
+            inputs: { input },
+            prepare: () => Deferred.await(firstDone),
+            process: (batch, unit) => positives.process(batch, unit),
+          }).at({}),
+        ).pipe(Effect.provideService(CheckpointStore, observing)),
       );
       yield* Deferred.await(loaded);
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(first)).items).toBe(3);
+      yield* Deferred.succeed(firstDone, undefined);
       const failed = fault(yield* failure(Fiber.join(second)));
       expect(failed.phase).toBe("checkpoint");
       expect(failed.reason).toBe("token-conflict");
@@ -354,7 +348,8 @@ test("interruption inside the transaction rolls back the output append and the c
       yield* initialize;
       const appended = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const blocking = Projection.atomic({
+      const blocking = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
@@ -386,7 +381,8 @@ test("handler failure rolls back the output append and the checkpoint", () =>
     Effect.gen(function* () {
       yield* initialize;
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
-      const failing = Projection.atomic({
+      const failing = Projection.process({
+        commit: Commit.transaction,
         id: positives.id,
         params: {},
         inputs: { input },
@@ -407,9 +403,17 @@ test("the version is part of the record key, so version two starts a fresh key",
     inputs: { input },
     process: () => Effect.void,
   };
-  const original = Projection.atomic(definition).at({});
-  const one = Projection.atomic({ ...definition, version: 1 }).at({});
-  const two = Projection.atomic({ ...definition, version: 2 }).at({});
+  const original = Projection.process({ ...definition, commit: Commit.transaction }).at({});
+  const one = Projection.process({
+    commit: Commit.transaction,
+    ...definition,
+    version: 1,
+  }).at({});
+  const two = Projection.process({
+    commit: Commit.transaction,
+    ...definition,
+    version: 2,
+  }).at({});
   expect(recordKey(Projection.key(original))).toBe(
     '["streamsy.projection.v1","versioned","1","1","{}"]',
   );
@@ -425,7 +429,8 @@ test("run without a limit drains more than one hundred server pages", () =>
         input,
         Array.from({ length: 101 }, (_, n) => n),
       );
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.transaction,
         id: "uncapped",
         params: {},
         inputs: { input },
@@ -445,24 +450,25 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       yield* initialize;
       const versions: number[] = [];
       const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
-      const projection = Projection.outputs({
+      const projection = Projection.emit({
+        commit: Commit.producer,
         id: "versioned-stream",
         params: {},
         version: 7,
         inputs: { input },
-        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-        process: (batch, unit) =>
+        outputs: { output: output },
+        emit: (entry, unit) =>
           Effect.sync(() => {
             versions.push(unit.version);
-            return { output: batch.input.items };
+            return { output: [entry.item] };
           }),
       }).at({});
-      const owner = yield* Checkpoints;
+      const owner = yield* CheckpointStore;
       let saves = 0;
       const failed = yield* Projection.run(projection).pipe(
-        Effect.provideService(Checkpoints, {
+        Effect.provideService(CheckpointStore, {
           ...owner,
-          save: (key, record, token) => {
+          compareAndSet: (key, token, record) => {
             saves += 1;
             return saves === 2
               ? Effect.fail(
@@ -472,16 +478,16 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
                     message: "after append",
                   }),
                 )
-              : owner.save(key, record, token);
+              : owner.compareAndSet(key, token, record);
           },
         }),
         Effect.result,
       );
       expect(failed._tag).toBe("Failure");
       expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeDefined();
-      expect(versions).toEqual([7]);
+      expect(versions).toEqual([7, 7, 7]);
       yield* Projection.run(projection);
-      expect(versions).toEqual([7, 7]);
+      expect(versions).toEqual([7, 7, 7, 7, 7, 7]);
       expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeUndefined();
       expect(yield* readAll(output)).toEqual([1, -1, 3]);
     }),

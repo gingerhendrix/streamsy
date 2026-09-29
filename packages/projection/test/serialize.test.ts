@@ -1,13 +1,13 @@
+import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Output, Projection, type State } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
-  | Checkpoints
-  | State
+  | CheckpointStore
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
@@ -26,7 +26,8 @@ test("two calls on one key run in sequence without a token conflict", () =>
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "serialized-one",
         params: {},
         inputs: { input },
@@ -64,12 +65,13 @@ test("different keys can run together", () =>
         const output = FamilyFixture.json(`serialized-two-output-${name}`, {
           schema: Schema.Finite,
         });
-        return Projection.outputs({
+        return Projection.emit({
+          commit: Commit.producer,
           id: "serialized-two",
           params: { name: Schema.String },
           inputs: { input },
-          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
-          process: () =>
+          outputs: { output: output },
+          emit: () =>
             Effect.acquireUseRelease(
               Effect.gen(function* () {
                 yield* Effect.sync(() => {
@@ -97,7 +99,8 @@ test("a failing handler releases the permit", () =>
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       let fail = true;
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "serialized-failure",
         params: {},
         inputs: { input },
@@ -123,7 +126,8 @@ test("follow and run share the permit and release it after interruption", () =>
       yield* Streams.append(input, [1], { close: true });
       const entered = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.atomic({
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
         id: "follow-permit",
         params: {},
         inputs: { input },

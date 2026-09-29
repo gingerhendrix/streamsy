@@ -1,251 +1,138 @@
 # @streamsy/projection
 
-Checkpointed Effect projections over one or more Durable Streams. Version
-0.4.0 requires `effect@4.0.0-rc.115`.
+Checkpointed projections over typed Streamsy routes. A constructor defines the
+step. Its `commit:` value defines how results and offsets become durable.
 
-```sh
-bun add @streamsy/projection @streamsy/core effect
-```
+## Constructors
 
-A projection reads batches from its input streams, hands one unit at a time to
-your handler, and commits a checkpoint after each unit. On restart it resumes
-from the checkpoint. Two forms are shipped:
+| Constructor                | Handler                   | Result           | Commit                          |
+| -------------------------- | ------------------------- | ---------------- | ------------------------------- |
+| `Projection.fold`          | `(state, entry, unit)`    | Next value       | Defaults to `Commit.checkpoint` |
+| `Projection.process`       | `(batch, unit, prepared)` | Effect of void   | Required                        |
+| `Projection.emit`          | `(entry, unit)`           | Output items     | Required                        |
+| `Projection.mapAccum`      | `(state, entry, unit)`    | `[state, emits]` | Required                        |
+| `Projection.mapAccumBatch` | `(state, batch, unit)`    | `[state, emits]` | Required                        |
 
-- **atomic**: the handler's local writes and the checkpoint commit in one
-  transaction, so each unit is applied exactly once;
-- **outputs**: the handler returns items, and the kernel appends them to
-  output streams under a producer tuple, so a retry lands the same unit once.
-
-The same kernel runs in memory, in Bun SQLite, and inside a SQLite Durable
-Object.
-
-## Define and run
+Except for `process`, steps return a value or an Effect. A missing output key
+emits nothing. `Projection.each` adapts an entry handler for `process`.
+Batch handlers must give the same final rows for any unit size. In per-entry
+steps, use `unit` for parameters and offsets only.
 
 ```ts
-import { Effect, Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Effect, Layer, Schema } from "effect";
+import { Memory, Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+import * as ProjectionMemory from "@streamsy/projection/memory";
 
-class Numbers extends Streamsy.json<Numbers>()("Readme/Numbers", "numbers", {
+class Numbers extends Streamsy.json<Numbers>()("Example/Numbers", "numbers", {
   params: {},
   schema: Schema.Finite,
 }) {}
-class Doubled extends Streamsy.json<Doubled>()("Readme/Doubled", "doubled", {
+class Doubled extends Streamsy.json<Doubled>()("Example/Doubled", "doubled", {
   params: {},
   schema: Schema.Finite,
 }) {}
-
-const projection = Projection.atomic({
+const doubled = Projection.emit({
   id: "doubled",
   params: {},
   inputs: { input: Numbers },
-  process: (batch) =>
-    Effect.flatMap(Doubled, (output) =>
-      output.append(
-        {},
-        batch.input.items.map((n) => n * 2),
-      ),
-    ),
+  outputs: { output: Doubled },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ output: [item * 2] }),
 });
-
-const run = Projection.run(projection.at({}), { limit: 10 });
-```
-
-`inputs: { input: Numbers }` declares one named input; the handler reads `batch.input.items`.
-Declare several with `inputs: { orders: Orders, refunds: Refunds }` and read one slice per name.
-
-Every constructor takes `params` codecs and returns a declaration. `projection.at(params)`
-binds it, and runners take the bound value. An input or output that names a stream
-declaration is resolved with the same params. A fixed address is used as it is.
-A projection with no parameters uses `params: {}` and `.at({})`. The handler reads
-the decoded values from `unit.params`. See
-[Parameters](https://streamsy.dev/docs/projections/define#parameters).
-
-`Projection.each(handle)` builds a handler that runs once per item.
-`Projection.follow(projection, options)` keeps running as new items arrive.
-`Projection.run(projection, options)` runs one caller at a time per canonical key;
-see [Triggers](https://streamsy.dev/docs/projections/define#triggers).
-`Projection.watch` runs a bound projection from same-owner storage change feeds; see
-[Triggers](https://streamsy.dev/docs/projections/define#triggers).
-
-[src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
-this example; the package tests execute it.
-
-## State
-
-Both kinds take `state: { schema, initial }`. `initial` is a value, or a function of
-the decoded params, used only when no state is saved yet. The state is saved in the
-same transaction as the checkpoint.
-
-An atomic projection with `state:` gives a `fold` step in place of `process`.
-The unit loads the state once, folds each item in order, and saves it once:
-
-```ts
-const total = Projection.atomic({
-  id: "running-total",
-  params: {},
-  inputs: { input: Numbers },
-  state: { schema: Schema.Finite, initial: 0 },
-  fold: (sum, { item }) => sum + item,
-}).at({});
-
-const program = Effect.gen(function* () {
-  yield* Projection.run(total);
-  const { state, offsets } = yield* Projection.read(total);
-});
-```
-
-`Projection.read(projection)` returns `{ state, offsets }`: the typed state and the
-offset of each input that it is at, read in one transaction. `Progress.offsets` from
-`run` and `pass` gives the same offsets.
-`Projection.forget(projection)` takes the serialized permit, deletes state and checkpoint rows,
-and retires the process lock after its existing callers drain.
-
-The state is one value, and each unit rewrites all of it. Keep it small: a counter,
-a summary, or up to a few hundred rows. Put large row sets in application tables
-through the shared `SqlClient` in an atomic projection.
-See [State and checkpoints](https://streamsy.dev/docs/projections/state) for transaction,
-size, generation, and retirement rules.
-
-## Read, decide, append
-
-To validate a command against current state, run the projection, read it, decide,
-and append to its input with `expectedOffset: offsets.input`. If another writer
-moved the tail, the append writes nothing and fails with `OffsetMismatch`. Retry
-the whole step a bounded number of times:
-
-```ts
-const command = Effect.gen(function* () {
-  yield* Projection.run(total);
-  const { state, offsets } = yield* Projection.read(total);
-  if (state >= 100) return "full";
-  const numbers = yield* Numbers;
-  yield* numbers.append({}, [1], { expectedOffset: offsets.input });
-  return "added";
-}).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
-```
-
-See [Read, decide, append](https://streamsy.dev/docs/projections/state#read-decide-append).
-
-## Outputs
-
-`Projection.outputs({ id, params, inputs, outputs, state?, process })` declares pinned
-outputs. Import `Output` from the package root:
-
-- `Output.stream(schema, { stream })` appends typed JSON items. The option is an id
-  or `{ readonly id: string }`; only the id is used, and the declared schema owns encoding.
-- `Output.rows(schema, { key, stream })` appends `Output.upsert(row)` and
-  `Output.remove(key)` changes. The output name is the collection type; the kernel owns no rows table.
-
-```ts
-import { Output } from "@streamsy/projection";
-
-class Totals extends Streamsy.json<Totals>()("Readme/Totals", "totals", {
-  params: {},
-  schema: Schema.Finite,
-}) {}
-
-const totals = Projection.outputs({
-  id: "totals",
-  params: {},
-  inputs: { input: Numbers },
-  outputs: { output: Output.stream(Schema.Finite, { stream: Totals }) },
-  process: (batch) =>
-    Effect.succeed({ output: [batch.input.items.reduce((sum, n) => sum + n, 0)] }),
-});
-```
-
-The handler returns an Effect of `{ <outputName>: [...] }`, with every
-output present (use `[]` to skip one). With `state:`, the handler is
-`(state, batch, unit)`: it gets the prior state first and returns the next state
-in the reserved `state` result key. `state` cannot name an output.
-`Projection.each` concatenates keyed arrays returned by each item's Effect.
-The declaration's `state` field is a source for `Serve.value`.
-
-The output streams are created when absent. Existing outputs are used as they
-are; gone or closed outputs fail with `pin / invalid-output`.
-Each output has its own sequence. Recovery reprocesses the pinned inputs from
-the previous state and resends all pinned outputs; state and checkpoint commit
-together at settle. Processing must be deterministic. There is no atomicity
-across outputs. Two outputs cannot share a stream or name one of the projection's inputs.
-
-Producer ids are `id/v<version>[/canonicalParamsJson]`, including `/v1`.
-A new version or generation should write to a new event stream.
-See [Output projections](https://streamsy.dev/docs/projections/define#output-projections) for a complete declaration.
-
-## Choose a host
-
-In memory, build the projection services over the memory stream Layer:
-
-```ts
-import { Layer } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
-import * as ProjectionMemory from "@streamsy/projection/memory";
-
-const streams = Streamsy.group(Numbers, Doubled);
-const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, streams)));
-const program = run.pipe(Effect.provide(host));
-```
-
-On Bun SQLite, share one storage Layer between the streams and the projection:
-
-```ts
-import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSqlite from "@streamsy/projection/sqlite";
-
-const host = ProjectionSqlite.layer.pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: "streams.sqlite" } }, streams)),
+const host = ProjectionMemory.layer.pipe(
+  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
 );
-const program = run.pipe(Effect.provide(host));
+const program = Effect.gen(function* () {
+  const numbers = yield* Numbers;
+  yield* numbers.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  return yield* Projection.run(doubled.at({}));
+});
+await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Inside a Durable Object, swap `BunStorage.layer(...)` for
-`DurableObjectStorage.layer({ client: { storage: ctx.storage } }, streams)` from
-`@streamsy/storage/durable-object`, and keep one runtime for the object's
-lifetime.
+## Commits
 
-## Guarantees
+| Commit        | Fits                                | Guarantee                        | Services                         |
+| ------------- | ----------------------------------- | -------------------------------- | -------------------------------- |
+| `checkpoint`  | `fold`                              | Exactly once for the saved value | `CheckpointStore`                |
+| `transaction` | All constructors                    | Exactly once within SQL          | `CheckpointStore`, `Transaction` |
+| `producer`    | `emit`, `mapAccum`, `mapAccumBatch` | Effectively once for outputs     | `CheckpointStore`, output routes |
+| `atLeastOnce` | `process`                           | At least once                    | `CheckpointStore`                |
 
-| Effect                                                                                           | Guarantee                                                 |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| SQL on the shared `SqlClient` and stream appends on the checkpoint owner, in `Projection.atomic` | Exactly once, with the checkpoint                         |
-| The `state:` value, in either form                                                               | Exactly once, with the checkpoint                         |
-| Outputs on the checkpoint owner, in `Projection.outputs`                                         | Effectively once, through the producer tuple              |
-| An output or atomic stream write on another storage owner                                        | Refused with `unsupported-composition` before it runs     |
-| A call to another system inside the handler                                                      | At least once. A rollback or a recovery repeats the call. |
+`Commit.transaction` provides `SqlClient`. Its SQL, same-owner stream appends,
+and checkpoint commit together. External calls are at least once. Memory hosts
+provide no `Transaction`.
 
-For calls to another system, use `unit.key` as an idempotency key. The key is
-stable across pinned outputs retries; an atomic retry re-reads and may see a
-longer input range. See
-[Guarantees](https://streamsy.dev/docs/projections/define#guarantees).
+`Commit.producer` pins ranges and producer sequences. Retries append with the
+same positions; handlers must be deterministic. Foreign outputs must already
+exist. Same-owner outputs can be created automatically. There is no atomicity
+across producer outputs. Chain projections for sinks with different guarantees.
 
-## Good to know
+`Commit.atLeastOnce` pins before processing, so retries keep `unit.key`.
+`Projection.process` with `Commit.transaction` can use `prepare(batch, unit)`
+outside the transaction. It runs at least once and passes its result to
+`process`. A retry can read new input and change `unit.key`.
 
-- `run` returns `caught-up`, `source-closed`, or `limit-reached` with counts
-  of units and items accepted. `limit` counts checkpoint transactions per call;
-  the server decides the read page. Without `limit`, a run continues until
-  caught up or every input is closed and drained. Each pass reads one page
-  per input in declaration order.
-- Failures are `ProjectionFault` values with a `phase` and a `reason`. Handler
-  errors pass through untouched. Underlying failures are available as `cause`.
-  `run` is single-shot; `follow` retries `storage-failure` with logged backoff.
-- A record is keyed by `id`, `version` (default 1), `generation`, and `params`.
-  To change inputs or start over, declare a new `generation`; it starts from
-  offset zero.
-- Input history after the checkpoint must stay readable. Deleting or
-  rewriting input streams behind a projection stops it with
-  `history-unavailable`.
-- SQLite adds `streamsy_projection_v1_records` and `streamsy_projection_v1_state`.
+`Commit.withCompensation(f)` calls `f(result, cause, unit)` after successful
+processing if the commit fails. It is also available as a `.pipe` combinator.
+For durable external delivery, use the [action outbox](https://streamsy.dev/docs/projections/actions).
 
-Layer authors use `@streamsy/projection/checkpoint` for the record and store
-contracts. An atomic projection needs a real owner transaction. The memory
-checkpoint Layer must share the stream Layer graph. Input history, including
-pending pinned ranges, must remain readable.
+`Commit.make` defines `load`, `apply`, and optional `remove`. Custom Commits
+extend ranges on retry. Never save after a failed handler; compare-and-set on
+`loaded.token`; report `checkpoint / token-conflict` for a moved token; return
+`"0"` for an absent record; and load stored state. The guarantee must describe
+the actual writes. See the [bucket example](https://streamsy.dev/docs/projections/state#custom-commits).
 
-`follow` returns a caller-scoped fiber and repairs missed wake hints every
-1000 ms by default. It has no default unit cap. Storage failures retry forever with
-jittered exponential backoff from 200 ms, capped at 30 s; `retry` accepts a `Schedule` override.
-Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles.
+## State and output routes
+
+`fold`, `mapAccum`, and `mapAccumBatch` require `state: { schema, initial }`.
+`initial` can depend on decoded parameters. State and offsets share one record.
+`Projection.read(bound)` reads through the Commit's `load` and returns
+`{ state, offsets }`, using `initial` before the first unit.
+
+`Serve.value(declaration.state, path)` reads the persisted value. It returns
+503 before the first saved unit. `Serve.state(Board, path)` and
+`Serve.stream(Transitions, path)` read output routes directly.
+
+Outputs accept routes or fixed addresses, like inputs. `Streamsy.json` accepts
+items. `Streamsy.state` accepts `Rows.upsert(row)` and `Rows.remove(key)` from
+`@streamsy/core`. For several collections, use `Rows.upsert("card", row)` and
+`Rows.remove("card", key)`. Two outputs cannot name the same stream or an input.
+
+## Hosts
+
+| Layer                                     | Provides                            | Requires                              |
+| ----------------------------------------- | ----------------------------------- | ------------------------------------- |
+| `ProjectionSql.layerStorage` from `./sql` | `CheckpointStore`, `Transaction`    | Storage `CommitBoundary`, `SqlClient` |
+| `ProjectionSql.layer` from `./sql`        | `CheckpointStore`, `Transaction`    | Plain `SqlClient`                     |
+| `ProjectionMemory.layer` from `./memory`  | `CheckpointStore`                   | Memory storage boundary               |
+| `ProjectionMemory.layerMemory()`          | `CheckpointStore`, protocol streams | Nothing                               |
+| `CheckpointStore.layerMemory`             | Independent `CheckpointStore`       | Nothing                               |
+
+Compose the projection Layer over storage with `Layer.provideMerge` and retain
+one Layer graph for the host lifetime. SQL uses `streamsy_projection_v2_records`.
+Old v1 projection tables are not migrated or read; projections rebuild from zero.
+Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`.
+
+## Run and recover
+
+`declaration.at(params)` binds a projection. `pass` runs one unit; `run` continues
+until caught up, closed, or its optional unit limit. `follow` returns a scoped
+fiber and waits for changes; `watch` needs storage change feeds. Remote inputs
+work with `follow` and `run`.
+
+`follow` retries only `storage-failure`: `options.retry` overrides the
+`ProjectionRetry` context reference, whose default is jittered exponential
+backoff from 200 ms, capped at 30 s. `run` does not retry. Handler errors retain
+their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.
+
+Records are keyed by `id`, `version`, `generation`, and canonical parameters.
+Use a new generation for changed input identity or state schema. Retain input
+history after the checkpoint, including pinned ranges. Stop runners before
+`Projection.forget(bound)`, which calls the Commit's `remove`. For producer
+outputs, delete output streams first or use a new generation.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
 
