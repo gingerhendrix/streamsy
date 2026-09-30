@@ -272,7 +272,7 @@ export const assertExcerpt = (pair: ExcerptPair, text: string, code: string): vo
 
 export const checkExcerpts = async (): Promise<void> => {
   await runOwnedProcess(["run", "--cwd", "packages/serve", "typecheck"], "serve Worker typecheck");
-  await runOwnedProcess(["run", "--cwd", "hosted", "typecheck"], "hosted typecheck");
+  await runOwnedProcess(["run", "--cwd", "e2e", "typecheck"], "e2e typecheck");
 
   for (const pair of pairs) {
     const text = await readFile(new URL(pair.doc, root), "utf8");
