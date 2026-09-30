@@ -120,7 +120,7 @@ const boardRun = Projection.run(board.at({ gameId: "a" }));
 const rowsRun = Projection.run(issueRows.at({ workspaceId: "a" }));
 const trackerRun = Projection.run(tracker.at({ workspaceId: "a" }));
 const minimalRun = Projection.run(minimal.at({}));
-const read = newestRows.state.resolve({});
+const read = Projection.read(newestRows.at({})).pipe(Effect.map(({ state }) => state));
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 export type Checks = [

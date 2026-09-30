@@ -30,13 +30,13 @@ Open http://localhost:1339. The server keeps its data in
 
 ## Architecture
 
-![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller runs and reads the projection before each append, and retries on OffsetMismatch. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
+![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller runs and reads the projection before each append, and retries on OffsetMismatch. Serve.family publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
 
 The server polls Hacker News and writes one Durable State stream,
 `hackernews/newest`. A checkpointed fold folds that stream into the current
 story rows. Before each append, the poller runs the projection, reads the rows
 and the offset they are at, compares them with the fetched stories, and appends
-the changes with `expectedOffset`. `Serve.state` publishes the stream at
+the changes with `expectedOffset`. `Serve.family` publishes the stream at
 `/state/newest`. The React browser reads from `-1` into TanStack DB through
 `createStreamDB`, then follows live upserts and deletes.
 
@@ -51,7 +51,7 @@ Each number in the diagram is a section below.
 | 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                           | `newest-rows.ts`                  |
 | 3    | The poller reads the rows and their offset, decides, and appends | `Projection.run`, `Projection.read`, `append` with `expectedOffset` | `poller/reconcile.ts`             |
 | 4    | A conflict retries the whole pass                                | `OffsetMismatch`                                                    | `poller/poller.ts`                |
-| 5    | The server publishes the stream as Durable State                 | `Serve.state`                                                       | `http.ts`                         |
+| 5    | The server publishes the stream as Durable State                 | `Serve.family`                                                      | `http.ts`                         |
 | 6    | The browser replays the stream, then follows live changes        | Durable State client                                                | `client/db.ts`, `client/main.tsx` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
@@ -199,7 +199,7 @@ See [Write](/docs/streams/write).
 The State route serves the stream itself:
 
 ```ts title="src/server/http.ts"
-export const stateRoute = Serve.state(HackerNewsStories, streamPath);
+export const stateRoute = Serve.family(HackerNewsStories, streamPath);
 
 /** The page and State route share an origin, so no CORS middleware is needed. */
 export const app = Layer.mergeAll(

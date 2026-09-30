@@ -57,7 +57,7 @@ without `old_value`. Membership ids remain on cards until a detach fact arrives.
 `IssueTransition` uses the existing `IssueEvent` schema, excluding stale facts rejected
 by the sequence fold. The `workspace` value uses `WorkspaceState` to retain source rows
 and membership tombstones for deterministic replay. The full fold state stays private
-to the server. A `Serve.ValueSource` wrapper serves only `WorkspaceSummary`:
+to the server. A handler maps `Projection.read` to `WorkspaceSummary`:
 `workspaceId`, `issueCount`, `doneCount`, `labelCount`, and `projectCount`. Counts of
 labels and projects are catalog row counts. Count-neutral changes preserve its ETag.
 The encoded state still grows with workspace size and is rewritten per unit and decoded

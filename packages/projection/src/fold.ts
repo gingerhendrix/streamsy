@@ -35,7 +35,7 @@ export function fold<
       unit: Unit<StreamRoute.Params<C>>,
     ) => Step<A, E, R>;
   },
-): StatefulDeclaration<C, I, A, SI, E, R, Folded<A>, P, Q>;
+): StatefulDeclaration<C, I, A, E, R, Folded<A>, P, Q>;
 export function fold(definition: Parameters<typeof build>[1]): unknown {
   return build("fold", definition);
 }

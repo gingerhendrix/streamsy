@@ -43,7 +43,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
     const baseUrl = `http://127.0.0.1:${port}`;
     server = startServer(port, scratch.database);
     await waitForServer(baseUrl);
-    expect((await fetch(`${baseUrl}/workspaces/acme/summary`)).status).toBe(503);
+    expect((await fetch(`${baseUrl}/workspaces/acme/summary`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/workspaces/acme/status`)).status).toBe(200);
     await post(baseUrl, "/api/workspaces/live/commands", {
       type: "create",

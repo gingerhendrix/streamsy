@@ -67,11 +67,25 @@ test("declared rows, stream and state share one memory app and their declared co
   );
   const services = await runtime.runPromise(Effect.context());
   const App = Layer.mergeAll(
-    Serve.state(board, "/board/:seat"),
-    Serve.stream(transitions, "/transitions/:seat"),
-    Serve.value(tracker.state, "/summary/:seat"),
-    Serve.stream(transitions, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
-    Serve.state(board, "/my-board", { params: Seat }).pipe(Layer.provide(auth.layer)),
+    Serve.family(board, "/board/:seat"),
+    Serve.family(transitions, "/transitions/:seat"),
+    Serve.route(
+      "/summary/:seat",
+      Effect.flatMap(Serve.params(board), (p) =>
+        Serve.value(
+          Schema.Struct({ total: Schema.FiniteFromString }),
+          Projection.read(tracker.at(p)).pipe(Effect.map(({ state }) => state)),
+        ),
+      ),
+    ),
+    Serve.route(
+      "/me",
+      Effect.flatMap(Seat, (p) => Serve.stream(transitions.at(p))),
+    ).pipe(Layer.provide(auth.layer)),
+    Serve.route(
+      "/my-board",
+      Effect.flatMap(Seat, (p) => Serve.state(board.at(p))),
+    ).pipe(Layer.provide(auth.layer)),
   );
   const web = HttpRouter.toWebHandler(
     App.pipe(HttpRouter.provideRequest(Layer.succeedContext(services))),
@@ -145,7 +159,12 @@ test("declared rows, stream and state share one memory app and their declared co
     expect((await web.handler(new Request("http://host/unknown/42"))).status).toBe(404);
     expect((await web.handler(new Request("http://host/board/not-a-number"))).status).toBe(400);
     expect((await web.handler(new Request("http://host/board/99"))).status).toBe(404);
-    expect((await web.handler(new Request("http://host/summary/99"))).status).toBe(503);
+    const initial = await web.handler(new Request("http://host/summary/99"));
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toEqual({ total: "0" });
+    expect((await runtime.runPromise(Projection.read(tracker.at({ seat: 99 })))).state).toEqual({
+      total: 0,
+    });
   } finally {
     await web.dispose();
     await runtime.dispose();
@@ -155,15 +174,15 @@ test("declared rows, stream and state share one memory app and their declared co
 // Compile-only probes: bad routes must never reach registration.
 const typeChecks = () => {
   // @ts-expect-error route params must equal stream params
-  Serve.state(board, "/board/:wrong");
+  Serve.family(board, "/board/:wrong");
   // @ts-expect-error missing stream parameter
-  Serve.stream(transitions, "/transitions");
+  Serve.family(transitions, "/transitions");
   // @ts-expect-error extra route parameter
-  Serve.value(tracker.state, "/summary/:seat/:extra");
+  Serve.family(board, "/summary/:seat/:extra");
   // @ts-expect-error decoded params retain the number codec
-  Serve.stream(transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
+  void Serve.stream(transitions.at({ seat: "42" }));
   // @ts-expect-error a stream declaration does not supply rows collections
-  Serve.state(transitions, "/board/:seat");
+  void Serve.state(transitions.at({ seat: 42 }));
   const date = Projection.mapAccumBatch({
     commit: Commit.producer,
     id: "date",
@@ -173,9 +192,22 @@ const typeChecks = () => {
     state: { schema: Schema.Struct({ date: Schema.Date }), initial: { date: new Date(0) } },
     mapAccumBatch: (state) => Effect.succeed([state, {}] as const),
   });
-  // @ts-expect-error Date is not a JSON encoded value; rejected before requests
-  Serve.value(date.state, "/date");
-  const missingState = HttpRouter.toWebHandler(Serve.value(tracker.state, "/summary/:seat"));
+  void Serve.value(
+    // @ts-expect-error Date is not a JSON encoded value; rejected before requests
+    Schema.Struct({ date: Schema.Date }),
+    Projection.read(date.at({})).pipe(Effect.map(({ state }) => state)),
+  );
+  const missingState = HttpRouter.toWebHandler(
+    Serve.route(
+      "/summary/:seat",
+      Effect.flatMap(Serve.params(board), (p) =>
+        Serve.value(
+          Schema.Struct({ total: Schema.FiniteFromString }),
+          Projection.read(tracker.at(p)).pipe(Effect.map(({ state }) => state)),
+        ),
+      ),
+    ),
+  );
   // @ts-expect-error value resolution requires CheckpointStore at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
   class wrongTarget extends Streamsy.json<wrongTarget>()("serve.test/wrongTarget", "wrong/:other", {
@@ -212,8 +244,11 @@ const typeChecks = () => {
     state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
     mapAccumBatch: (state) => Effect.succeed([state, { board: [], transitions: [] }] as const),
   });
-  Serve.state(board, "/board", { params: Effect.succeed({ seat: 42 }) });
-  Serve.stream(transitions, "/transitions", { params: Effect.succeed({ seat: 42 }) });
-  Serve.value(fixed.state, "/summary");
+  void Serve.state(board.at({ seat: 42 }));
+  void Serve.stream(transitions.at({ seat: 42 }));
+  void Serve.value(
+    Schema.Struct({ total: Schema.FiniteFromString }),
+    Projection.read(fixed.at({})).pipe(Effect.map(({ state }) => state)),
+  );
 };
 void typeChecks;

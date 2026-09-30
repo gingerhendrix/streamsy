@@ -193,7 +193,11 @@ class CurrentSeat extends Context.Service<CurrentSeat, { readonly id: string }>(
 const SeatAuth = HttpRouter.middleware<{ provides: CurrentSeat }>()((handler) => Effect.provideService(handler, CurrentSeat, { id: "1" }));
 export {};
 `,
-        4: `import { Layer } from "effect";
+        4: `import { Serve } from "@streamsy/serve";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/ApiEvents", "events/:seat", { params: { seat: Schema.String }, schema: Schema.String }) {}
+`,
+        5: `import { Layer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { App } from "./app.ts";
 `,

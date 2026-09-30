@@ -79,7 +79,7 @@ export type Checks = [
   Assert<Same<keyof SuccessOf<typeof statelessRead>["offsets"], "input" | "other">>,
   Assert<Same<keyof SuccessOf<typeof namedRun>["offsets"], "input" | "other">>,
   Assert<Same<Effect.Services<typeof foldedRead>, CheckpointStore>>,
-  Assert<Same<typeof statefulOutputs.state.id, string>>,
+  Assert<Same<Extract<keyof typeof statefulOutputs, "state">, never>>,
   Assert<Same<Effect.Services<typeof processRun>, Input | Transaction | CheckpointStore>>,
   Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | CheckpointStore>>,
   Assert<

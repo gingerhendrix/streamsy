@@ -1,6 +1,6 @@
 import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
-import { Projection, type CheckpointStore } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer, Predicate, Result, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -12,17 +12,12 @@ import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outpu
 import { routes } from "./streams.ts";
 import { transact } from "./state.ts";
 
-export const workspaceSummary: Serve.ValueSource<
-  { readonly workspaceId: string },
-  WorkspaceSummary,
-  CheckpointStore
-> = {
-  id: "issue-tracker/summary",
-  paramSchema: tracker.state.paramSchema,
-  schema: WorkspaceSummary,
-  resolve: (params) =>
-    tracker.state.resolve(params).pipe(
-      Effect.map((state) => ({
+export const workspaceSummary = Effect.gen(function* () {
+  const params = yield* Serve.params(Board);
+  return yield* Serve.value(
+    WorkspaceSummary,
+    Projection.read(tracker.at(params)).pipe(
+      Effect.map(({ state }) => ({
         workspaceId: state.workspaceId,
         issueCount: state.issueCount,
         doneCount: state.doneCount,
@@ -30,15 +25,15 @@ export const workspaceSummary: Serve.ValueSource<
         projectCount: state.projects.length,
       })),
     ),
-};
+    { contract: "compact-summary-v1" },
+  );
+});
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.state(Board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
-    contract: "compact-summary-v1",
-  }),
+  Serve.family(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.family(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.family(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
 );
 
 export const app = (workspaces: ReadonlyArray<string>) => {
