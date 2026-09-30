@@ -94,7 +94,7 @@ the actual writes. See the [bucket example](https://streamsy.dev/docs/projection
 
 `Serve.value(schema, effect)` serves values computed with `Projection.read`.
 Before the first saved unit, reads return the declared initial value.
-`Serve.family(Board, path)` and `Serve.family(Transitions, path)` mount output routes.
+`Serve.mount(Board, path)` and `Serve.mount(Transitions, path)` mount output routes.
 
 Outputs accept routes or fixed addresses, like inputs. `Streamsy.json` accepts
 items. `Streamsy.state` accepts `Rows.upsert(row)` and `Rows.remove(key)` from

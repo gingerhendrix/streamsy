@@ -36,12 +36,12 @@ export interface ReadOptions extends Http.ReadOptions {
   readonly contract?: Contract.CanonicalValue;
 }
 
-/** Decode the matched route's parameters with the family's codecs. */
-export const params = Effect.fn("Serve.params")(function* <P>(family: {
+/** Decode the matched route's parameters with the stream's codecs. */
+export const params = Effect.fn("Serve.params")(function* <P>(stream: {
   readonly paramSchema: StreamRoute.PathSchema<P>;
 }) {
   const { route } = yield* HttpRouter.RouteContext;
-  return yield* HttpRouter.schemaPathParams(family.paramSchema).pipe(
+  return yield* HttpRouter.schemaPathParams(stream.paramSchema).pipe(
     Effect.mapError(
       () =>
         new InvalidParams({
@@ -74,8 +74,8 @@ export function route<E, R>(
   );
 }
 
-/** Mount one declared family; state addresses select the Durable State contract. */
-export function family<P, A, K, RD, RE, const Path extends `/${string}`>(
+/** Mount one declared stream; state addresses select the Durable State contract. */
+export function mount<P, A, K, RD, RE, const Path extends `/${string}`>(
   declaration: {
     readonly paramSchema: StreamRoute.PathSchema<P>;
     readonly at: (params: P) => Streamsy.Address<A, K, RD, RE>;

@@ -19,7 +19,7 @@ class Events extends Streamsy.json<Events>()("Readme/Events", "events/:seat", {
 const streams = Streamsy.group(Events);
 const App = Layer.mergeAll(
   Http.routes(streams, { prefix: "/streams", access: "full" }),
-  Serve.family(Events, "/feed/:seat"),
+  Serve.mount(Events, "/feed/:seat"),
 );
 BunRuntime.runMain(
   Layer.launch(
@@ -38,8 +38,8 @@ serves canonical JSON with a deterministic ETag. Map `Projection.read` to serve
 custom values; an unsaved projection returns its declared initial value.
 An absent stream answers 404. Reads create no stream, checkpoint or state row.
 
-`Serve.params(Family)` decodes path parameters. `Serve.family(Family, path)`
-mounts a stream or state family. `Serve.route(path, handler)` owns all methods:
+`Serve.params(Stream)` decodes path parameters. `Serve.mount(Stream, path)`
+mounts a declared stream or state. `Serve.route(path, handler)` owns all methods:
 GET and HEAD read; others return 405 with `allow: GET, HEAD`, unless CORS
 middleware answers a preflight. Handlers also compose inside app routes and
 `HttpApiBuilder.handleRaw`. Their respondable errors remain catchable.
@@ -83,15 +83,15 @@ shutdown order is then:
 The Durable Object host does not get this signal. Streamsy code does not see a
 shutdown there. Without `drainOnShutdown`, the routes keep today's behaviour.
 
-| Entry                                                                   | Exports                                                                                                                            |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `.`                                                                     | `Serve.stream`, `Serve.state`, `Serve.value`, `Serve.params`, `Serve.route`, `Serve.family`; errors and types; `PublicErrorSchema` |
-| `/contract`                                                             | Effect-free headers, public errors/decoder, canonical JSON, fingerprints                                                           |
-| `/bun`                                                                  | `listener`, `drainOnShutdown`, their options and defaults                                                                          |
-| `/cloudflare`                                                           | `StreamsyObject`, placement router/rules, alarm service                                                                            |
-| `/alchemy`                                                              | `objectHandlers`, placement router/rules, alarm service                                                                            |
-| `/action`                                                               | Unchanged action declarations                                                                                                      |
-| `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sqlite` | Unchanged action delivery and backing APIs, except unused OUTBOX_SCHEMA removed                                                    |
+| Entry                                                                   | Exports                                                                                                                           |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `.`                                                                     | `Serve.stream`, `Serve.state`, `Serve.value`, `Serve.params`, `Serve.route`, `Serve.mount`; errors and types; `PublicErrorSchema` |
+| `/contract`                                                             | Effect-free headers, public errors/decoder, canonical JSON, fingerprints                                                          |
+| `/bun`                                                                  | `listener`, `drainOnShutdown`, their options and defaults                                                                         |
+| `/cloudflare`                                                           | `StreamsyObject`, placement router/rules, alarm service                                                                           |
+| `/alchemy`                                                              | `objectHandlers`, placement router/rules, alarm service                                                                           |
+| `/action`                                                               | Unchanged action declarations                                                                                                     |
+| `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sqlite` | Unchanged action delivery and backing APIs, except unused OUTBOX_SCHEMA removed                                                   |
 
 Ten physical entries form six groups. Action's existing Sink names remain.
 State/stream recovery is `replay-from-start`; state consumers clear their local

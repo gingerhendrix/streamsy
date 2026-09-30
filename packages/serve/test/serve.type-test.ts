@@ -13,16 +13,16 @@ class state extends Streamsy.state<state>()("serve/serve.type-test/state", "rows
   params: { seat: Schema.String },
   collections: { rows: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
-Serve.family(stream, "/feed/:seat");
-Serve.family(state, "/rows/:seat");
+Serve.mount(stream, "/feed/:seat");
+Serve.mount(state, "/rows/:seat");
 // @ts-expect-error wrong parameter
-Serve.family(stream, "/feed/:wrong");
+Serve.mount(stream, "/feed/:wrong");
 // @ts-expect-error missing parameter
-Serve.family(stream, "/feed");
+Serve.mount(stream, "/feed");
 // @ts-expect-error extra parameter
-Serve.family(stream, "/feed/:seat/:extra");
+Serve.mount(stream, "/feed/:seat/:extra");
 // @ts-expect-error optional parameters are not supported
-Serve.family(stream, "/feed/:seat?");
+Serve.mount(stream, "/feed/:seat?");
 // @ts-expect-error state requires collections
 void Serve.state(stream.at({ seat: "one" }));
 // @ts-expect-error NoInfer prevents params from widening the stream

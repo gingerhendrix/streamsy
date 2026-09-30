@@ -3,7 +3,7 @@ title: Serve handlers
 description: Serve streams, Durable State changes, and values from response Effects.
 ---
 
-Serve handlers return response Effects. Mount them alongside app routes with `HttpRouter.add`, `Serve.route`, or `Serve.family`.
+Serve handlers return response Effects. Mount them alongside app routes with `HttpRouter.add`, `Serve.route`, or `Serve.mount`.
 
 ```ts
 import { Layer, Schema } from "effect";
@@ -22,8 +22,8 @@ export const game = Streamsy.group(Events, Cards);
 
 export const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "read" }),
-  Serve.family(Events, "/feed/:seat"),
-  Serve.family(Cards, "/state/:seat"),
+  Serve.mount(Events, "/feed/:seat"),
+  Serve.mount(Cards, "/state/:seat"),
 );
 ```
 
@@ -33,7 +33,7 @@ export const App = Layer.mergeAll(
 | `Serve.state(address)`        | The Durable State change stream |
 | `Serve.value(schema, effect)` | One JSON value, with an ETag    |
 
-`Serve.family(Family, path)` decodes path params and chooses the stream or state handler. `Serve.route(path, handler)` owns GET and HEAD and rejects other methods. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
+`Serve.mount(Stream, path)` decodes path params and chooses the stream or state handler. `Serve.route(path, handler)` owns GET and HEAD and rejects other methods. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
 
 | Request                   | Response                    |
 | ------------------------- | --------------------------- |
@@ -97,8 +97,8 @@ const tracker = Projection.mapAccumBatch({
     }),
 });
 const OutputRoutes = Layer.mergeAll(
-  Serve.family(Board, "/board/:seat"),
-  Serve.family(Transitions, "/transitions/:seat"),
+  Serve.mount(Board, "/board/:seat"),
+  Serve.mount(Transitions, "/transitions/:seat"),
   Serve.route(
     "/summary/:seat",
     Effect.flatMap(Serve.params(Board), (p) =>

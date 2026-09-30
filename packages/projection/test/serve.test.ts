@@ -67,8 +67,8 @@ test("declared rows, stream and state share one memory app and their declared co
   );
   const services = await runtime.runPromise(Effect.context());
   const App = Layer.mergeAll(
-    Serve.family(board, "/board/:seat"),
-    Serve.family(transitions, "/transitions/:seat"),
+    Serve.mount(board, "/board/:seat"),
+    Serve.mount(transitions, "/transitions/:seat"),
     Serve.route(
       "/summary/:seat",
       Effect.flatMap(Serve.params(board), (p) =>
@@ -174,11 +174,11 @@ test("declared rows, stream and state share one memory app and their declared co
 // Compile-only probes: bad routes must never reach registration.
 const typeChecks = () => {
   // @ts-expect-error route params must equal stream params
-  Serve.family(board, "/board/:wrong");
+  Serve.mount(board, "/board/:wrong");
   // @ts-expect-error missing stream parameter
-  Serve.family(transitions, "/transitions");
+  Serve.mount(transitions, "/transitions");
   // @ts-expect-error extra route parameter
-  Serve.family(board, "/summary/:seat/:extra");
+  Serve.mount(board, "/summary/:seat/:extra");
   // @ts-expect-error decoded params retain the number codec
   void Serve.stream(transitions.at({ seat: "42" }));
   // @ts-expect-error a stream declaration does not supply rows collections

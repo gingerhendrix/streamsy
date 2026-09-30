@@ -32,7 +32,7 @@ Each number in the diagram is also a section number below.
 | 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`            |
 | 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `Rows`         | `server/outputs.ts`               |
 | 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts` |
-| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.family`, `Serve.value`                  | `server/app.ts`                   |
+| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`                   | `server/app.ts`                   |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -212,7 +212,7 @@ See [Running](/docs/projections/define#running) and [Triggers](/docs/projections
 
 ## 6. Serve the results
 
-The server merges four sets of routes. `Http.routes` serves the input and output streams read-only under `/streams`. `Serve.family` mounts the output handlers. `Serve.value` serves a small summary from the `tracker` state, with an ETag.
+The server merges four sets of routes. `Http.routes` serves the input and output streams read-only under `/streams`. `Serve.mount` mounts the output handlers. `Serve.value` serves a small summary from the `tracker` state, with an ETag.
 
 ```ts title="server/app.ts"
 export const workspaceSummary = Effect.gen(function* () {
@@ -233,9 +233,9 @@ export const workspaceSummary = Effect.gen(function* () {
 });
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.family(Board, "/state/workspaces/:workspaceId/issues"),
-  Serve.family(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.family(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.mount(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.mount(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.mount(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
   Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
 );
 // ...

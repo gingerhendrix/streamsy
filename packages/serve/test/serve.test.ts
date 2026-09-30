@@ -35,8 +35,8 @@ function app() {
   return HttpRouter.toWebHandler(
     Layer.mergeAll(
       protocolRoutes(),
-      Serve.family(stream, "/feed/:seat"),
-      Serve.family(rows, "/state/:seat"),
+      Serve.mount(stream, "/feed/:seat"),
+      Serve.mount(rows, "/state/:seat"),
       Serve.route(
         "/me",
         Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
@@ -187,7 +187,7 @@ test("path codecs transform strings and reject invalid requests", async () => {
   }) {}
   const path: `/${string}` = "/numbers/:n";
   const web = HttpRouter.toWebHandler(
-    Serve.family(numbered, path).pipe(
+    Serve.mount(numbered, path).pipe(
       HttpRouter.provideRequest(Protocol.bind(protocol, Streamsy.group(numbered))),
     ),
     { disableLogger: true },
@@ -202,7 +202,7 @@ test("path codecs transform strings and reject invalid requests", async () => {
 
 test("duplicate route shapes fail application construction", async () => {
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(Serve.family(stream, "/feed/:seat"), Serve.family(stream, "/feed/:seat")).pipe(
+    Layer.mergeAll(Serve.mount(stream, "/feed/:seat"), Serve.mount(stream, "/feed/:seat")).pipe(
       HttpRouter.provideRequest(storage),
     ),
     { disableLogger: true },
@@ -249,7 +249,7 @@ test("decoded stream parameters differ from raw protocol ids for encoded segment
 test("CORS handles Serve preflight and exposes cursor and contract headers", async () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Serve.family(stream, "/feed/:seat"),
+      Serve.mount(stream, "/feed/:seat"),
       HttpRouter.cors({
         allowedOrigins: ["https://app.example.com"],
         allowedMethods: ["GET", "HEAD", "OPTIONS"],
@@ -327,12 +327,12 @@ test("fingerprints bind addresses, collection keys, and explicit contract revisi
       await web.dispose();
     }
   };
-  const first = await fingerprint(Serve.family(rows, "/state/:seat"), "a");
+  const first = await fingerprint(Serve.mount(rows, "/state/:seat"), "a");
   expect(first).toMatch(/^[0-9a-f]{8}$/);
-  expect(await fingerprint(Serve.family(rows, "/state/:seat"), "a")).toBe(first);
-  expect(await fingerprint(Serve.family(rows, "/state/:seat"), "b")).not.toBe(first);
-  expect(await fingerprint(Serve.family(changed, "/state/:seat"), "a")).not.toBe(first);
-  expect(await fingerprint(Serve.family(rows, "/state/:seat", { contract: 2 }), "a")).not.toBe(
+  expect(await fingerprint(Serve.mount(rows, "/state/:seat"), "a")).toBe(first);
+  expect(await fingerprint(Serve.mount(rows, "/state/:seat"), "b")).not.toBe(first);
+  expect(await fingerprint(Serve.mount(changed, "/state/:seat"), "a")).not.toBe(first);
+  expect(await fingerprint(Serve.mount(rows, "/state/:seat", { contract: 2 }), "a")).not.toBe(
     first,
   );
 });

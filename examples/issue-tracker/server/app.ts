@@ -30,9 +30,9 @@ export const workspaceSummary = Effect.gen(function* () {
 });
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.family(Board, "/state/workspaces/:workspaceId/issues"),
-  Serve.family(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.family(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.mount(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.mount(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.mount(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
   Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
 );
 
