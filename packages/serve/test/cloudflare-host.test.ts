@@ -718,3 +718,22 @@ test("a throwing layer factory returns secured 503 and retries", async () => {
   expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
   expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
 });
+
+test("a Durable Object app serves value handlers and respondable parameter errors", async () => {
+  const harness = await makeHarness();
+  const response = await direct(harness, "serve", "/serve-value/7");
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe('{"seat":7}');
+  expect(response.headers.get("x-streamsy-value-contract")).toMatch(/^[0-9a-f]{8}$/);
+  const invalid = await direct(harness, "serve", "/serve-value/no");
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({
+    _tag: "InvalidParams",
+    route: "/serve-value/:seat",
+    parameter: "params",
+    detail: "Invalid path parameters",
+  });
+  const denied = await direct(harness, "serve", "/serve-value/7", { method: "POST" });
+  expect(denied.status).toBe(405);
+  expect(denied.headers.get("allow")).toBe("GET, HEAD");
+});

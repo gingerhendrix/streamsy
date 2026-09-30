@@ -1,5 +1,10 @@
 import { Context, Effect, Exit, Layer, Scope } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+  type HttpServerRespondable,
+} from "effect/unstable/http";
 import { Http, type Storage, type StorageFault } from "@streamsy/core";
 import { Alarm, reconcileAlarm } from "./alarm.ts";
 import { withMutationReconciliation } from "./host-program.ts";
@@ -8,7 +13,9 @@ export type ObjectServices<R = never> = Storage | Alarm | R;
 export type ObjectApp<R = never> = Layer.Layer<
   never,
   never,
-  HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", ObjectServices<R>>
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Requires", ObjectServices<R>>
+  | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
 >;
 
 /** Both object hosts install this middleware, including around user routes. */
@@ -65,10 +72,18 @@ export function acquireObject<A, R>(
 export function providedApp<R>(
   app: ObjectApp<R>,
   context: Context.Context<ObjectServices<R>>,
-): Layer.Layer<never, never, HttpRouter.HttpRouter> {
+): Layer.Layer<
+  never,
+  never,
+  HttpRouter.HttpRouter | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
+> {
   // SAFETY: ObjectApp only requires the services carried by ObjectServices<R>;
   // provideRequest supplies that complete context. The assertion resolves generic conditional request markers.
   return objectApp(app, context).pipe(
     HttpRouter.provideRequest(Layer.succeedContext(context)),
-  ) as Layer.Layer<never, never, HttpRouter.HttpRouter>;
+  ) as Layer.Layer<
+    never,
+    never,
+    HttpRouter.HttpRouter | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
+  >;
 }

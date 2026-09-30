@@ -112,7 +112,7 @@ export type PublicError =
     }
   | { readonly _tag: "ContractChanged"; readonly route: string; readonly recovery: "refetch" }
   | {
-      readonly _tag: "TransportUnavailable" | "ValueUnavailable" | "WireEncodeFailed";
+      readonly _tag: "TransportUnavailable" | "WireEncodeFailed";
       readonly route: string;
       readonly detail: string;
     };
@@ -122,7 +122,6 @@ export const PUBLIC_ERROR_TAGS = [
   "ResumeRejected",
   "ContractChanged",
   "TransportUnavailable",
-  "ValueUnavailable",
   "WireEncodeFailed",
 ] as const;
 export type PublicErrorTag = PublicError["_tag"];
@@ -167,7 +166,6 @@ export function decodePublicError(value: unknown): PublicError {
       if (field("recovery") !== "refetch") throw new TypeError("Invalid refetch recovery");
       return { _tag, route, recovery: "refetch" };
     case "TransportUnavailable":
-    case "ValueUnavailable":
     case "WireEncodeFailed":
       return { _tag, route, detail: string("detail") };
     default:

@@ -35,9 +35,12 @@ function app() {
   return HttpRouter.toWebHandler(
     Layer.mergeAll(
       protocolRoutes(),
-      Serve.stream(stream, "/feed/:seat"),
-      Serve.state(rows, "/state/:seat"),
-      Serve.stream(stream, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
+      Serve.family(stream, "/feed/:seat"),
+      Serve.family(rows, "/state/:seat"),
+      Serve.route(
+        "/me",
+        Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
+      ).pipe(Layer.provide(auth.layer)),
     ).pipe(HttpRouter.provideRequest(storage)),
     { disableLogger: true },
   );
@@ -71,10 +74,13 @@ test("Serve owns every method beneath the root protocol wildcard", async () => {
   }
 });
 
-test("D5 params reads the middleware seat and unauthenticated requests get 401", async () => {
+test("an address handler reads the middleware seat and unauthenticated requests get 401", async () => {
   const App = Layer.mergeAll(
     protocolRoutes({ prefix: "/_seed" }),
-    Serve.stream(stream, "/me", { params: Seat }),
+    Serve.route(
+      "/me",
+      Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
+    ),
   ).pipe(Layer.provide(auth.layer), HttpRouter.provideRequest(storage));
   const web = HttpRouter.toWebHandler(App, { disableLogger: true });
   try {
@@ -147,13 +153,16 @@ test("state has collection fingerprint, replay headers and no snapshot reset", a
 });
 
 test("value encodes canonical JSON and conditional HEAD", async () => {
-  const source = {
-    id: "summary",
-    paramSchema: Schema.Struct({}),
-    schema: Schema.Struct({ b: Schema.Finite, a: Schema.String }),
-    resolve: () => Effect.succeed({ b: 2, a: "one" }),
-  };
-  const web = HttpRouter.toWebHandler(Serve.value(source, "/value"), { disableLogger: true });
+  const web = HttpRouter.toWebHandler(
+    Serve.route(
+      "/value",
+      Serve.value(
+        Schema.Struct({ b: Schema.Finite, a: Schema.String }),
+        Effect.succeed({ b: 2, a: "one" }),
+      ),
+    ),
+    { disableLogger: true },
+  );
   try {
     const response = await web.handler(new Request("http://host/value"));
     expect(await response.text()).toBe('{"a":"one","b":2}');
@@ -171,14 +180,14 @@ test("value encodes canonical JSON and conditional HEAD", async () => {
   }
 });
 
-test("path codecs transform strings; widened paths check keys at registration", async () => {
+test("path codecs transform strings and reject invalid requests", async () => {
   class numbered extends Streamsy.json<numbered>()("serve/serve.test/numbered", "numbers/:n", {
     params: { n: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
   const path: `/${string}` = "/numbers/:n";
   const web = HttpRouter.toWebHandler(
-    Serve.stream(numbered, path).pipe(
+    Serve.family(numbered, path).pipe(
       HttpRouter.provideRequest(Protocol.bind(protocol, Streamsy.group(numbered))),
     ),
     { disableLogger: true },
@@ -186,8 +195,6 @@ test("path codecs transform strings; widened paths check keys at registration", 
   try {
     expect((await web.handler(new Request("http://host/numbers/no"))).status).toBe(400);
     expect((await web.handler(new Request("http://host/numbers/1"))).status).toBe(404);
-    const wrong: `/${string}` = "/numbers/:wrong";
-    expect(() => Serve.stream(numbered, wrong)).toThrow();
   } finally {
     await web.dispose();
   }
@@ -195,7 +202,7 @@ test("path codecs transform strings; widened paths check keys at registration", 
 
 test("duplicate route shapes fail application construction", async () => {
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(Serve.stream(stream, "/feed/:seat"), Serve.stream(stream, "/feed/:seat")).pipe(
+    Layer.mergeAll(Serve.family(stream, "/feed/:seat"), Serve.family(stream, "/feed/:seat")).pipe(
       HttpRouter.provideRequest(storage),
     ),
     { disableLogger: true },
@@ -242,7 +249,7 @@ test("decoded stream parameters differ from raw protocol ids for encoded segment
 test("CORS handles Serve preflight and exposes cursor and contract headers", async () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Serve.stream(stream, "/feed/:seat"),
+      Serve.family(stream, "/feed/:seat"),
       HttpRouter.cors({
         allowedOrigins: ["https://app.example.com"],
         allowedMethods: ["GET", "HEAD", "OPTIONS"],
@@ -296,7 +303,9 @@ test("fingerprints bind addresses, collection keys, and explicit contract revisi
     route: Layer.Layer<
       never,
       never,
-      HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", rows | changed>
+      | HttpRouter.HttpRouter
+      | HttpRouter.Request.From<"Requires", rows | changed>
+      | HttpRouter.Request.From<"Error", Serve.ServeError>
     >,
     seat: string,
   ) => {
@@ -318,74 +327,99 @@ test("fingerprints bind addresses, collection keys, and explicit contract revisi
       await web.dispose();
     }
   };
-  const first = await fingerprint(Serve.state(rows, "/state/:seat"), "a");
+  const first = await fingerprint(Serve.family(rows, "/state/:seat"), "a");
   expect(first).toMatch(/^[0-9a-f]{8}$/);
-  expect(await fingerprint(Serve.state(rows, "/state/:seat"), "a")).toBe(first);
-  expect(await fingerprint(Serve.state(rows, "/state/:seat"), "b")).not.toBe(first);
-  expect(await fingerprint(Serve.state(changed, "/state/:seat"), "a")).not.toBe(first);
-  expect(await fingerprint(Serve.state(rows, "/state/:seat", { contract: 2 }), "a")).not.toBe(
+  expect(await fingerprint(Serve.family(rows, "/state/:seat"), "a")).toBe(first);
+  expect(await fingerprint(Serve.family(rows, "/state/:seat"), "b")).not.toBe(first);
+  expect(await fingerprint(Serve.family(changed, "/state/:seat"), "a")).not.toBe(first);
+  expect(await fingerprint(Serve.family(rows, "/state/:seat", { contract: 2 }), "a")).not.toBe(
     first,
   );
 });
 
-test("read options and explicit params paths are checked at construction", () => {
-  expect(() => Serve.stream(stream, "/feed/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
-  expect(() => Serve.state(rows, "/state/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
-  expect(() =>
-    Serve.stream(stream, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
-  ).toThrow("must not contain path parameters");
-  expect(() =>
-    Serve.state(rows, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
-  ).toThrow("must not contain path parameters");
+test("handlers compose with app routes and apps can catch Serve errors", async () => {
+  const web = HttpRouter.toWebHandler(
+    Layer.mergeAll(
+      HttpRouter.add("GET", "/health", HttpServerResponse.text("ok")),
+      HttpRouter.add(
+        "GET",
+        "/custom/:seat",
+        Effect.flatMap(Serve.params(stream), (p) => Serve.stream(stream.at(p))).pipe(
+          Effect.catchTag("ProtocolVersionUnsupported", () =>
+            Effect.succeed(HttpServerResponse.text("Upgrade required", { status: 426 })),
+          ),
+        ),
+      ),
+    ).pipe(HttpRouter.provideRequest(storage)),
+    { disableLogger: true },
+  );
+  try {
+    expect(await (await web.handler(new Request("http://host/health"))).text()).toBe("ok");
+    expect(
+      (
+        await web.handler(
+          new Request("http://host/custom/a", {
+            headers: { [Contract.STREAM_VERSION_HEADER]: "2" },
+          }),
+        )
+      ).status,
+    ).toBe(426);
+    const rejected = await web.handler(new Request("http://host/custom/a?offset=invalid"));
+    expect(rejected.status).toBe(409);
+    expect(rejected.headers.get("cache-control")).toBe("no-store");
+    expect(rejected.headers.get(Contract.STREAM_VERSION_HEADER)).toBe("1");
+    expect(await rejected.json()).toEqual({
+      _tag: "ResumeRejected",
+      route: "/custom/:seat",
+      reason: "invalid-offset",
+      recovery: "replay-from-start",
+    });
+  } finally {
+    await web.dispose();
+  }
 });
 
-test("annotated parameter Structs retain their names and non-Struct schemas are rejected", async () => {
-  const annotated = {
-    template: stream.template,
-    address: stream.address,
-    stream: stream,
-    paramSchema: Schema.Struct({ seat: Schema.String }).annotate({ identifier: "SeatParams" }),
-  };
-  const path: `/${string}` = "/feed/:other";
-  expect(() => Serve.stream(annotated, path)).toThrow("Route params must equal stream params");
+test("value handlers retain compute errors and encode failures as typed errors", async () => {
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(protocolRoutes(), Serve.stream(annotated, "/feed/:seat")).pipe(
-      HttpRouter.provideRequest(storage),
+    Layer.mergeAll(
+      Serve.route(
+        "/failed",
+        Serve.value(
+          Schema.String,
+          Effect.fail(
+            new Serve.TransportUnavailable({ route: "/failed", detail: "Custom compute failure" }),
+          ),
+        ).pipe(
+          Effect.catchTag("TransportUnavailable", () =>
+            Effect.succeed(HttpServerResponse.empty({ status: 502 })),
+          ),
+        ),
+      ),
+      Serve.route("/invalid", Serve.value(Schema.Finite, Effect.succeed(NaN))),
+      Serve.route("/value", Serve.value(Schema.String, Effect.succeed("ok"))),
     ),
     { disableLogger: true },
   );
   try {
-    await web.handler(
-      new Request("http://host/events/a", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: '"one"',
-      }),
+    expect((await web.handler(new Request("http://host/failed"))).status).toBe(502);
+    const invalid = await web.handler(new Request("http://host/invalid"));
+    expect(invalid.status).toBe(500);
+    expect(await invalid.json()).toEqual({
+      _tag: "WireEncodeFailed",
+      route: "/invalid",
+      detail: "Value cannot be encoded",
+    });
+    const changed = await web.handler(
+      new Request("http://host/value", { headers: { [Contract.VALUE_CONTRACT_HEADER]: "old" } }),
     );
-    expect(await (await web.handler(new Request("http://host/feed/a"))).json()).toEqual(["one"]);
+    expect(changed.status).toBe(409);
+    expect(changed.headers.get(Contract.VALUE_CONTRACT_HEADER)).toMatch(/^[0-9a-f]{8}$/);
+    expect(await changed.json()).toEqual({
+      _tag: "ContractChanged",
+      route: "/value",
+      recovery: "refetch",
+    });
   } finally {
     await web.dispose();
   }
-  const record = {
-    stream: stream,
-    template: stream.template,
-    paramSchema: Schema.Record(Schema.String, Schema.String),
-    address: (values: Readonly<Record<string, string>>) =>
-      stream.address({ seat: values.seat ?? "a" }),
-  };
-  expect(() => Serve.stream(record, path)).toThrow(
-    "paramSchema must be a Struct of path parameters",
-  );
-});
-
-test("invalid state collection metadata fails at construction", () => {
-  const collections = { cards: { schema: Schema.Struct({ id: Schema.String }), key: NaN } };
-  const invalid = {
-    template: rows.template,
-    paramSchema: rows.paramSchema,
-    stream: rows,
-    collections,
-    address: (values: { readonly seat: string }) => ({ ...rows.address(values), collections }),
-  };
-  expect(() => Serve.state(invalid, "/state/:seat")).toThrow();
 });

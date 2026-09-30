@@ -13,22 +13,25 @@ class state extends Streamsy.state<state>()("serve/serve.type-test/state", "rows
   params: { seat: Schema.String },
   collections: { rows: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
-Serve.stream(stream, "/feed/:seat");
-Serve.state(state, "/rows/:seat");
+Serve.family(stream, "/feed/:seat");
+Serve.family(state, "/rows/:seat");
 // @ts-expect-error wrong parameter
-Serve.stream(stream, "/feed/:wrong");
+Serve.family(stream, "/feed/:wrong");
 // @ts-expect-error missing parameter
-Serve.stream(stream, "/feed");
+Serve.family(stream, "/feed");
 // @ts-expect-error extra parameter
-Serve.stream(stream, "/feed/:seat/:extra");
+Serve.family(stream, "/feed/:seat/:extra");
 // @ts-expect-error optional parameters are not supported
-Serve.stream(stream, "/feed/:seat?");
+Serve.family(stream, "/feed/:seat?");
 // @ts-expect-error state requires collections
-Serve.state(stream, "/rows/:seat");
+void Serve.state(stream.at({ seat: "one" }));
 // @ts-expect-error NoInfer prevents params from widening the stream
-Serve.stream(stream, "/me", { params: Effect.succeed({ seat: 1 }) });
+void Serve.stream(stream.at({ seat: 1 }));
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("Seat") {}
-const mine = Serve.stream(stream, "/me", { params: Seat });
+const mine = Serve.route(
+  "/me",
+  Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
+);
 const protocol = Streams.layerMemory();
 const storage = Protocol.bind(protocol, Streamsy.group(stream, state)).pipe(
   Layer.provideMerge(protocol),
