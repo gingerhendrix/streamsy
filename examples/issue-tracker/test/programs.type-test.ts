@@ -52,16 +52,14 @@ export type Checks = [
       | import("effect").Scope.Scope
     >
   >,
+  // The application layer adds startup work and no services to the host.
   Assert<
     Same<
-      Extract<
-        | Layer.Success<ReturnType<typeof applicationLayer>>
-        | Layer.Success<ReturnType<typeof hostLayer>>,
-        Storage
-      >,
-      never
+      Layer.Success<ReturnType<typeof applicationLayer>>,
+      Layer.Success<ReturnType<typeof hostLayer>>
     >
   >,
+  Assert<Same<Extract<Layer.Success<ReturnType<typeof hostLayer>>, Storage>, never>>,
   Assert<Same<Effect.Services<ReturnType<typeof transact>>, Events>>,
   Assert<Same<Effect.Services<ReturnType<typeof createInputs>>, Inputs>>,
   Assert<Same<Effect.Services<ReturnType<typeof checkCatalogWorkspace>>, never>>,
