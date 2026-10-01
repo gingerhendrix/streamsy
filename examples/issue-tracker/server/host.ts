@@ -1,11 +1,10 @@
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@streamsy/projection";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { Projection } from "@streamsy/projection";
-import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
+import { tracker, outputStreams } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { routes } from "./streams.ts";
@@ -38,77 +37,47 @@ export const hostLayer = (filename: string) => {
   ).pipe(Layer.provide(host));
 };
 
-export class ApplicationReady extends Context.Service<ApplicationReady, true>()(
-  "IssueTracker/ApplicationReady",
-) {}
+/** Log a startup failure with its projection key. Interruption still stops startup. */
+const startupFailed =
+  (key: ProjectionKey) =>
+  <E>(cause: Cause.Cause<E>) =>
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.failCause(cause)
+      : Effect.logError("projection startup failed", key, cause);
 
-export const applicationLayer = (filename: string, workspaces: ReadonlyArray<string> = []) => {
-  const base = hostLayer(filename);
-  const ready = Layer.effect(
-    ApplicationReady,
+/** Log how a watcher ended, in a fiber that the layer scope owns. */
+const watchEnded =
+  (key: ProjectionKey) =>
+  <A, E>(fiber: Fiber.Fiber<A, E>) =>
+    Fiber.await(fiber).pipe(
+      Effect.flatMap((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.logInfo("projection watcher ended successfully", key, exit)
+          : !Cause.hasInterruptsOnly(exit.cause)
+            ? Effect.logError("projection watcher ended", key, exit)
+            : Effect.void,
+      ),
+      Effect.forkScoped,
+    );
+
+export const applicationLayer = (filename: string, workspaces: ReadonlyArray<string> = []) =>
+  Layer.effectDiscard(
     Effect.gen(function* () {
       yield* prepareSchema;
       yield* Effect.forEach(workspaces, createInputs, { discard: true });
-      if (workspaces.length > 0) {
-        const addresses = workspaces.map((workspaceId) => ({ workspaceId }));
-        for (const params of addresses) {
-          const rows = issueRows.at(params);
-          const outputs = tracker.at(params);
-          // Startup and background failures are isolated to their address.
-          yield* Projection.run(rows).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logError("projection startup failed", Projection.key(rows), cause),
-            ),
-          );
-          yield* Projection.run(outputs).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logError("projection startup failed", Projection.key(outputs), cause),
-            ),
-          );
-          const watched = [
-            { key: Projection.key(rows), fiber: yield* Projection.watch(rows) },
-            { key: Projection.key(outputs), fiber: yield* Projection.watch(outputs) },
-          ];
-          yield* Effect.forEach(
-            watched,
-            ({ key, fiber }) =>
-              Fiber.await(fiber).pipe(
-                Effect.flatMap((exit) =>
-                  Exit.isSuccess(exit)
-                    ? Effect.logInfo("projection watcher ended successfully", key, exit)
-                    : !Cause.hasInterruptsOnly(exit.cause)
-                      ? Effect.logError("projection watcher ended", key, exit)
-                      : Effect.void,
-                ),
-              ),
-            { concurrency: "unbounded", discard: true },
-          ).pipe(Effect.forkScoped);
-        }
+      for (const workspaceId of workspaces) {
+        const rows = issueRows.at({ workspaceId });
+        const outputs = tracker.at({ workspaceId });
+        // Startup and background failures are isolated to their address.
+        yield* Projection.run(rows).pipe(Effect.catchCause(startupFailed(Projection.key(rows))));
+        yield* Projection.run(outputs).pipe(
+          Effect.catchCause(startupFailed(Projection.key(outputs))),
+        );
+        yield* Projection.watch(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
+        yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
       }
-      return true as const;
     }),
-  ).pipe(Layer.provide(base));
-  return Layer.effectContext(
-    Effect.context<
-      | Transaction
-      | CheckpointStore
-      | SqlClient.SqlClient
-      | ApplicationReady
-      | import("./streams.ts").Events
-      | import("./streams.ts").LabelEvents
-      | import("./streams.ts").Projects
-      | import("./streams.ts").Users
-      | import("./streams.ts").Labels
-      | Board
-      | LabelCounts
-      | Transitions
-    >(),
-  ).pipe(Layer.provide(ready.pipe(Layer.provideMerge(base))));
-};
+  ).pipe(Layer.provideMerge(hostLayer(filename)));
 
 /** Create declared inputs; a mismatched existing config stops startup. */
 export const createInputs = (workspaceId: string) =>

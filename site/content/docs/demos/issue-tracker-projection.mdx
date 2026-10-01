@@ -25,14 +25,14 @@ Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`
 
 Each number in the diagram is also a section number below.
 
-| Step | What happens                                                         | Streamsy feature                                              | File                              |
-| ---- | -------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------- |
-| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`               |
-| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                        | `server/state.ts`                 |
-| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`            |
-| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `Rows`         | `server/outputs.ts`               |
-| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts` |
-| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`                   | `server/app.ts`                   |
+| Step | What happens                                                         | Streamsy feature                                              | File                               |
+| ---- | -------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
+| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`                |
+| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                        | `server/state.ts`                  |
+| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
+| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `Rows`         | `server/outputs.ts`                |
+| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
+| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`, `Serve.route`    | `server/app.ts`, `server/index.ts` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -96,12 +96,12 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
 The route turns a conflict that is still there after the retries into a 409:
 
 ```ts title="server/app.ts"
-      const result = yield* transact(workspaceId, command).pipe(Effect.result);
-      if (Result.isFailure(result)) {
-        if (Predicate.isTagged(result.failure, "UnknownIssue"))
-          return json({ error: "Unknown issue" }, { status: 400 });
-        if (Predicate.isTagged(result.failure, "OffsetMismatch"))
-          return json({ error: "Concurrent command conflict" }, { status: 409 });
+    Effect.catchTags({
+      InvalidCommand: () => Effect.succeed(json({ error: "Invalid command" }, { status: 400 })),
+      UnknownIssue: () => Effect.succeed(json({ error: "Unknown issue" }, { status: 400 })),
+      OffsetMismatch: () =>
+        Effect.succeed(json({ error: "Concurrent command conflict" }, { status: 409 })),
+    }),
 ```
 
 Send a command with `curl`:
@@ -184,26 +184,27 @@ See [Output projections](/docs/projections/define#output-projections) and [State
 A command runs both projections for its workspace to the end of their inputs before the route reads SQL. This is how the response can include the new row.
 
 ```ts title="server/app.ts"
-      yield* Projection.run(issueRows.at({ workspaceId }));
-      yield* Projection.run(tracker.at({ workspaceId }));
-      const sql = yield* SqlClient.SqlClient;
-      const rows = yield* sql.unsafe<{
-      // ...
+const commands = (workspaces: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    // ...
+    const { event } = yield* transact(workspaceId, command);
+    yield* Projection.run(issueRows.at({ workspaceId }));
+    yield* Projection.run(tracker.at({ workspaceId }));
+    const row = yield* issueRow(workspaceId, command.issueId);
+    return json({ commandId: command.commandId, event, row });
 ```
 
 At startup the server runs each projection once for each workspace, then watches the inputs. An append to an input on this host runs the projection again.
 
 ```ts title="server/host.ts"
-        for (const params of addresses) {
-          const rows = issueRows.at(params);
-          const outputs = tracker.at(params);
-          // Startup and background failures are isolated to their address.
-          yield* Projection.run(rows).pipe(
-          // ...
-          const watched = [
-            { key: Projection.key(rows), fiber: yield* Projection.watch(rows) },
-            { key: Projection.key(outputs), fiber: yield* Projection.watch(outputs) },
-          ];
+      for (const workspaceId of workspaces) {
+        const rows = issueRows.at({ workspaceId });
+        const outputs = tracker.at({ workspaceId });
+        // Startup and background failures are isolated to their address.
+        yield* Projection.run(rows).pipe(Effect.catchCause(startupFailed(Projection.key(rows))));
+        // ...
+        yield* Projection.watch(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
+        yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
 ```
 
 `Projection.run` allows one runner for each projection key in the process. The command path and the watcher share that permit, so they do not run the same projection at the same time. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
@@ -212,7 +213,7 @@ See [Running](/docs/projections/define#running) and [Triggers](/docs/projections
 
 ## 6. Serve the results
 
-The server merges four sets of routes. `Http.routes` serves the input and output streams read-only under `/streams`. `Serve.mount` mounts the output handlers. `Serve.value` serves a small summary from the `tracker` state, with an ETag.
+`Http.routes` serves the input and output streams read-only under `/streams`. `Serve.mount` mounts the output handlers. `Serve.value` serves a small summary from the `tracker` state, with an ETag. `Serve.route` also owns the two JSON reads of the API, so other methods get 405.
 
 ```ts title="server/app.ts"
 export const workspaceSummary = Effect.gen(function* () {
@@ -239,13 +240,16 @@ export const outputRoutes = Layer.mergeAll(
   Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
 );
 // ...
-  return Layer.mergeAll(
+export const app = (workspaces: ReadonlyArray<string>) =>
+  Layer.mergeAll(
     Http.routes(Streamsy.group(...Object.values(routes), ...outputStreams), {
       prefix: "/streams",
       access: "read",
     }),
     outputRoutes,
-    HttpRouter.add("*", "/api/workspaces/:workspaceId/:resource", api),
+    HttpRouter.add("POST", "/api/workspaces/:workspaceId/commands", commands(workspaces)),
+    Serve.route("/api/workspaces/:workspaceId/status", status(workspaces)),
+    Serve.route("/api/workspaces/:workspaceId/drafts", drafts(workspaces)),
 ```
 
 | Route                                                       | Result                                                   |
@@ -261,14 +265,28 @@ Read the board from the start:
 curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
 ```
 
-See [Serve routes](/docs/http/serve) and [Access](/docs/http/routes#access).
+`server/index.ts` reads the settings with `Config` and launches the server under `BunRuntime.runMain`. On SIGINT or SIGTERM, `drainOnShutdown` ends live reads before the listener and storage close.
+
+```ts title="server/index.ts"
+    return HttpRouter.serve(app(workspaces), { disableLogger: true }).pipe(
+      drainOnShutdown(),
+      Layer.provide(applicationLayer(databasePath, workspaces)),
+      Layer.provideMerge(listener({ port })),
+    );
+  }),
+).pipe(Layer.provide(BunServices.layer));
+
+BunRuntime.runMain(Layer.launch(Server));
+```
+
+See [Serve routes](/docs/http/serve), [Access](/docs/http/routes#access) and [Bun](/docs/hosting/bun).
 
 ## Limits
 
 - State readers replay from `-1`. There is no snapshot, so replay cost grows with history.
 - The two projections have separate checkpoints. Nothing makes them commit together, and the outputs of `tracker` do not commit together either.
 - The server can accept a command and then fail to project it. Commands have no idempotency key.
-- A failed workspace can serve stale rows or a 503 summary until an operator repairs it. A watcher that stops does not restart.
-- Reads do not run projections. An unknown workspace gets 404 on the API and on output streams that do not exist yet, and 503 on the summary.
+- A failed workspace can serve stale rows and a stale summary until an operator repairs it. A watcher that stops does not restart.
+- Reads do not run projections. An unknown workspace gets 404 on the API and on output streams that do not exist yet. Its summary has zero counts.
 - The `tracker` state holds the whole workspace. It grows with the workspace, and each batch writes it again.
 - The stream routes have no authentication.

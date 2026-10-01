@@ -5,7 +5,7 @@ Commands append canonical issue facts through `transact`, run both workspace add
 under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
 addresses. Startup attempts to catch up each configured address before accepting requests.
 Startup and watcher failures are logged with the projection key and do not stop other
-addresses or the server. A failed address can serve stale rows or a 503 summary until
+addresses or the server. A failed address can serve stale rows and a stale summary until
 repaired; a terminated watcher does not automatically restart.
 
 ```bash
@@ -16,19 +16,22 @@ bun run smoke:issue-tracker-serve
 ISSUE_TRACKER_DB=tracker.sqlite bun run --cwd examples/issue-tracker run:once acme
 ```
 
-`PORT` defaults to `1340`. `ISSUE_TRACKER_DB` selects the SQLite file (default:
+`server/config.ts` reads the settings with `Config`. `PORT` defaults to `1340`.
+`ISSUE_TRACKER_DB` selects the SQLite file (default:
 `/tmp/streamsy-issue-tracker-<pid>.sqlite`). `ISSUE_TRACKER_WORKSPACES` is the
 comma-separated fixed address list and defaults to `acme,live`.
 
 The server composes protocol, command and declared output routes with `Layer.mergeAll`
-and runs `HttpRouter.serve` with a scoped Bun listener. The routes are:
+and runs `HttpRouter.serve` with a scoped Bun listener under `BunRuntime.runMain`.
+SIGINT or SIGTERM closes the launched scope: live reads drain, then the listener and
+storage close. The routes are:
 
 | Route                                                       | Result                                            |
 | ----------------------------------------------------------- | ------------------------------------------------- |
 | `/streams/*`                                                | Durable Streams protocol                          |
 | `POST /api/workspaces/:workspaceId/commands`                | Create, status and assign commands                |
-| `/api/workspaces/:workspaceId/status`                       | SQL projection checkpoint offsets                 |
-| `/api/workspaces/:workspaceId/drafts`                       | SQL notification drafts                           |
+| `GET /api/workspaces/:workspaceId/status`                   | SQL projection checkpoint offsets                 |
+| `GET /api/workspaces/:workspaceId/drafts`                   | SQL notification drafts                           |
 | `/state/workspaces/:workspaceId/issues?offset=-1`           | `board` Durable State changes, keyed by `issueId` |
 | `/state/workspaces/:workspaceId/label-counts?offset=-1`     | `labelCounts` changes, keyed by `labelId`         |
 | `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts, retaining their event ids   |
@@ -37,8 +40,9 @@ and runs `HttpRouter.serve` with a scoped Bun listener. The routes are:
 The old `/api/.../issues` and `/api/.../changes` reads are replaced by the board and
 transition routes. State readers start at `-1`, apply upserts/deletes, and follow
 `stream-next-offset` until `stream-up-to-date`. There is no snapshot; retained history
-and replay cost grow. Reads do not run projections: missing output streams return 404
-and missing summary values return 503, including workspaces outside the runner list.
+and replay cost grow. Reads do not run projections: missing output streams return 404.
+A workspace with no saved `tracker` checkpoint, including one outside the runner list,
+has a summary with zero counts, because `Projection.read` returns the initial value.
 The raw protocol routes are open in this local demo; there is no authentication.
 
 The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
