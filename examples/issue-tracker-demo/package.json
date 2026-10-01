@@ -25,6 +25,7 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
+    "@streamsy/test-support": "workspace:*",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "bun-types": "^1.3.14"

@@ -1,0 +1,22 @@
+{
+  "name": "@streamsy/test-support",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test test"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "@streamsy/serve": "workspace:*",
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:"
+  }
+}

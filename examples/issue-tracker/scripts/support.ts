@@ -1,58 +1,51 @@
-import { Schema } from "effect";
+import { spawnServer } from "@streamsy/test-support/server";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
 
-export const packageDir = resolve(import.meta.dir, "..");
-export const scratchDirectory = async (name: string) => {
-  const directory = await mkdtemp(join(tmpdir(), `${name}-`));
-  return {
-    directory,
-    database: join(directory, "tracker.sqlite"),
-    remove: () => rm(directory, { recursive: true, force: true }),
-  };
-};
-export const startServer = (port: number, database: string) =>
-  Bun.spawn(["bun", "server/index.ts"], {
-    cwd: packageDir,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      ISSUE_TRACKER_DB: database,
-      ISSUE_TRACKER_WORKSPACES: "acme,live",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
+export class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
+  message: Schema.String,
+}) {}
+
+export const check = (condition: boolean, message: string) =>
+  condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));
+
+/** A SQLite path in a temporary directory that the scope removes. */
+export const scratchDatabase = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: `${prefix}-` });
+    return path.join(directory, "tracker.sqlite");
   });
-export const stopServer = async (process: ReturnType<typeof startServer>) => {
-  process.kill("SIGTERM");
-  await process.exited;
-};
-export const waitForServer = async (baseUrl: string) => {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(baseUrl)).ok) return;
-    } catch {
-      /* server is starting */
-    }
-    await Bun.sleep(50);
-  }
-  throw new Error("server did not become ready");
-};
-export const requestJson = async <A>(
-  baseUrl: string,
-  path: string,
-  init?: RequestInit,
-): Promise<A> => {
-  const response = await fetch(`${baseUrl}${path}`, init);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${init?.method ?? "GET"} ${path}: ${response.status} ${text}`);
-  // SAFETY: each evidence call names a concrete response shape and immediately
-  // asserts the fields that matter to that scenario.
-  return JSON.parse(text) as A;
-};
+
+/** Starts the server on `database`. Pass the old port to restart it at the same URL. */
+export const startServer = (database: string, port?: number) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return yield* spawnServer({
+      cwd: path.resolve(import.meta.dir, ".."),
+      entry: "server/index.ts",
+      env: { ISSUE_TRACKER_DB: database, ISSUE_TRACKER_WORKSPACES: "acme,live" },
+      port,
+      isReady: (status) => status === 200,
+    });
+  });
+
+const ok = (method: string, url: string) => (response: HttpClientResponse.HttpClientResponse) =>
+  response.status >= 200 && response.status < 300
+    ? Effect.succeed(response)
+    : Effect.flatMap(response.text, (text) =>
+        Effect.fail(new SmokeFailure({ message: `${method} ${url}: ${response.status} ${text}` })),
+      );
+
+/** GET a JSON body, fail on a non-2xx status, and decode it with `schema`. */
+export const getJson = <A, I, RD>(url: string, schema: Schema.Codec<A, I, RD>) =>
+  HttpClient.get(url).pipe(
+    Effect.flatMap(ok("GET", url)),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+  );
+
 type JsonValue =
   | string
   | number
@@ -60,38 +53,40 @@ type JsonValue =
   | null
   | ReadonlyArray<JsonValue>
   | { readonly [key: string]: JsonValue };
-export const post = <A>(baseUrl: string, path: string, body: JsonValue) =>
-  requestJson<A>(baseUrl, path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+
+/** POST a JSON body and fail on a non-2xx status. */
+export const post = (url: string, body: JsonValue) =>
+  HttpClient.post(url, { body: HttpBody.jsonUnsafe(body) }).pipe(
+    Effect.flatMap(ok("POST", url)),
+    Effect.asVoid,
+  );
+
+const BoardPage = Schema.Array(
+  Schema.Struct({
+    key: Schema.String,
+    value: Schema.optionalKey(ProjectBoardCard),
+    headers: Schema.Struct({ operation: Schema.Literals(["upsert", "delete"]) }),
+  }),
+);
 
 /** Reconstruct the board by replaying every retained page, starting at -1. */
-export const readBoard = async (baseUrl: string, workspaceId: string) => {
-  const rows = new Map<string, import("../domain/outputs.ts").ProjectBoardCard>();
-  let offset = "-1";
-  for (;;) {
-    const response = await fetch(
-      `${baseUrl}/state/workspaces/${workspaceId}/issues?offset=${offset}`,
-    );
-    if (!response.ok) throw new Error(`board: ${response.status} ${await response.text()}`);
-    const changes = Schema.decodeUnknownSync(
-      Schema.Array(
-        Schema.Struct({
-          key: Schema.String,
-          value: Schema.optionalKey(ProjectBoardCard),
-          headers: Schema.Struct({ operation: Schema.Literals(["upsert", "delete"]) }),
-        }),
-      ),
-    )(await response.json());
-    for (const change of changes) {
-      if (change.headers.operation === "delete") rows.delete(change.key);
-      else if (change.value !== undefined) rows.set(change.key, change.value);
+export const readBoard = (baseUrl: string, workspaceId: string) =>
+  Effect.gen(function* () {
+    const rows = new Map<string, ProjectBoardCard>();
+    let offset = "-1";
+    for (;;) {
+      const url = `${baseUrl}/state/workspaces/${workspaceId}/issues?offset=${offset}`;
+      const response = yield* HttpClient.get(url).pipe(Effect.flatMap(ok("GET", url)));
+      const changes = yield* HttpClientResponse.schemaBodyJson(BoardPage)(response);
+      for (const change of changes) {
+        if (change.headers.operation === "delete") rows.delete(change.key);
+        else if (change.value !== undefined) rows.set(change.key, change.value);
+      }
+      if (response.headers["stream-up-to-date"] !== undefined) return { rows: [...rows.values()] };
+      const next = response.headers["stream-next-offset"];
+      if (next === undefined || next === offset) {
+        return yield* new SmokeFailure({ message: "board replay made no progress" });
+      }
+      offset = next;
     }
-    if (response.headers.has("stream-up-to-date")) return { rows: [...rows.values()] };
-    const next = response.headers.get("stream-next-offset");
-    if (next === null || next === offset) throw new Error("board replay made no progress");
-    offset = next;
-  }
-};
+  });

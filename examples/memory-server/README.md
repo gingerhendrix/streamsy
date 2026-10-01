@@ -107,8 +107,8 @@ bun run --cwd examples/memory-server smoke:http
 
 The offline smoke drives create, append, catch-up read, conditional `ETag`,
 long-poll, and SSE flows against a child process. It then stops the server with
-a parked long poll, checks the `204` drain reply and exit code 130, restarts the
-server, and confirms the earlier stream returns `404 Not Found`.
+a parked long poll, checks the `204` drain reply, exit code 0 and empty stderr,
+restarts the server, and confirms the earlier stream returns `404 Not Found`.
 
 ## Limits
 

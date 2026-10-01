@@ -10,7 +10,7 @@ import {
   waitForServer,
   post,
   readBoard,
-} from "../scripts/support.ts";
+} from "./support.ts";
 
 test("a workspace fault at startup leaves HTTP and other workspaces available", async () => {
   const scratch = await scratchDirectory("tracker-startup-fault");
