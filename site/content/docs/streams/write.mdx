@@ -51,13 +51,13 @@ const createIssue = (offset: string, issue: { id: string; projectId: string; tit
   });
 ```
 
-| Field    | Value                                           |
-| -------- | ----------------------------------------------- |
-| `key`    | The collection key field of the value           |
-| `offset` | The source offset you give                      |
-| `txid`   | `${offset}:${index}`, unless the change sets it |
+| Field    | Value                                                                       |
+| -------- | --------------------------------------------------------------------------- |
+| `key`    | The collection key field of an upserted value, or the key given to `remove` |
+| `offset` | The source offset you give                                                  |
+| `txid`   | `${offset}:${index}`, unless the change sets it                             |
 
-An upsert or delete can also set `timestamp` or `from`. A change to an undeclared collection, or a value that does not match its schema, does not compile.
+`DurableState.remove("issue", id)` deletes by key. Add `{ oldValue }` to also write `old_value`. If you give no `offset`, the events have no `offset` and no default `txid`. An upsert or delete can also set `timestamp` or `from`. A change to an undeclared collection, or a value that does not match its schema, does not compile.
 
 ## Close
 

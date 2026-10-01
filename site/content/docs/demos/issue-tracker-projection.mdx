@@ -30,7 +30,7 @@ Each number in the diagram is also a section number below.
 | 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`                |
 | 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                        | `server/state.ts`                  |
 | 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
-| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `Rows`         | `server/outputs.ts`                |
+| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `DurableState` | `server/outputs.ts`                |
 | 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
 | 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`, `Serve.route`    | `server/app.ts`, `server/index.ts` |
 
@@ -175,7 +175,7 @@ export const tracker = Projection.mapAccumBatch({
 });
 ```
 
-The handler returns `Rows.upsert(row)` for each card or count that changed, and `Rows.remove(labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
+The handler returns `DurableState.upsert("board", row)` or `DurableState.upsert("labelCounts", row)` for each card or count that changed, and `DurableState.remove("labelCounts", labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
 
 See [Output projections](/docs/projections/define#output-projections) and [State and checkpoints](/docs/projections/state).
 

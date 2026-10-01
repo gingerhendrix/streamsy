@@ -106,17 +106,21 @@ without Content-Type resolves it with HEAD.
 
 ## Row changes
 
-`Rows` is exported from `@streamsy/core`. Projection outputs use typed routes:
-`Streamsy.json` for items and `Streamsy.state` for row changes.
+`DurableState` is exported from `@streamsy/core`. Direct writers and projection
+outputs use it to make row changes for `Streamsy.state` routes.
 
-| Route collections | Upsert                     | Remove                     |
-| ----------------- | -------------------------- | -------------------------- |
-| One               | `Rows.upsert(row)`         | `Rows.remove(key)`         |
-| Several           | `Rows.upsert("card", row)` | `Rows.remove("card", key)` |
+| Change | Call                                                                  |
+| ------ | --------------------------------------------------------------------- |
+| Upsert | `DurableState.upsert("card", row)`                                    |
+| Delete | `DurableState.remove("card", key)`                                    |
+| Delete | `DurableState.remove("card", key, { oldValue })` (writes `old_value`) |
 
-`Rows.Change<Collections>` checks the collection and row types. The projection
-encodes changes with `Rows.encode(collections, change)` before appending. The
-route's collection names and key fields define the Durable State wire events.
+`DurableState.Change<Collections>` checks the collection and row types. Each
+change has a `_tag` of `"Upsert"` or `"Delete"`.
+`DurableState.changes(address, { offset }, changes)` makes the wire events. With
+an `offset`, each event gets that offset and a default `txid`. Projection outputs
+have no source offset. The route's collection names and key fields define the
+Durable State wire events.
 
 ## Documentation
 

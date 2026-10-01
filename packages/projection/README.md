@@ -97,9 +97,9 @@ Before the first saved unit, reads return the declared initial value.
 `Serve.mount(Board, path)` and `Serve.mount(Transitions, path)` mount output routes.
 
 Outputs accept routes or fixed addresses, like inputs. `Streamsy.json` accepts
-items. `Streamsy.state` accepts `Rows.upsert(row)` and `Rows.remove(key)` from
-`@streamsy/core`. For several collections, use `Rows.upsert("card", row)` and
-`Rows.remove("card", key)`. Two outputs cannot name the same stream or an input.
+items. `Streamsy.state` accepts `DurableState.upsert("card", row)` and
+`DurableState.remove("card", key)` from `@streamsy/core`. Each change names its
+collection. Two outputs cannot name the same stream or an input.
 
 ## Hosts
 

@@ -80,7 +80,7 @@ A Commit plus its host Layer plays a similar role to Effect `Workflow` plus `Wor
 
 ## Output projections
 
-`Projection.emit` declares routes as outputs and returns items for each entry. A JSON route takes its item type. A state route takes `Rows.Change` for its collections.
+`Projection.emit` declares routes as outputs and returns items for each entry. A JSON route takes its item type. A state route takes `DurableState.Change` for its collections.
 
 ```ts
 import { Schema } from "effect";
@@ -115,7 +115,7 @@ Several outputs, with row changes and state:
 
 ```ts
 import { Schema } from "effect";
-import { Rows, Streamsy } from "@streamsy/core";
+import { DurableState, Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 
 class Numbers extends Streamsy.json<Numbers>()("Tracker/Numbers", "numbers", {
@@ -144,7 +144,10 @@ const tracker = Projection.mapAccumBatch({
     return [
       next,
       {
-        board: [Rows.upsert({ issueId: "total", total: next }), Rows.remove("old")],
+        board: [
+          DurableState.upsert("card", { issueId: "total", total: next }),
+          DurableState.remove("card", "old"),
+        ],
         transitions: [next],
       },
     ] as const;
@@ -155,7 +158,7 @@ const tracker = Projection.mapAccumBatch({
 Output rules:
 
 - Routes and fixed addresses carry the output codecs. Their parameters must be a subset of the projection parameters.
-- `Rows.upsert(row)` and `Rows.remove(key)` work for one collection. For several collections, name it: `Rows.upsert("card", row)` or `Rows.remove("card", key)`.
+- `DurableState.upsert("card", row)` and `DurableState.remove("card", key)` make row changes. Each change names its collection.
 - A missing output key emits nothing. An empty output uses no producer sequence.
 - Two outputs cannot name the same stream or an input stream.
 - `Commit.producer` can write across owners, but foreign output streams must already exist. It can create absent outputs on its checkpoint owner.

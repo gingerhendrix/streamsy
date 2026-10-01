@@ -56,7 +56,7 @@ Pass resolved addresses to `Serve.state` or `Serve.stream`. Compute projection v
 
 ```ts
 import { Effect, Layer, Schema } from "effect";
-import { Rows, Streamsy } from "@streamsy/core";
+import { DurableState, Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 
@@ -90,7 +90,10 @@ const tracker = Projection.mapAccumBatch({
       return [
         { total },
         {
-          board: [Rows.upsert({ id: "total", total }), Rows.remove("old")],
+          board: [
+            DurableState.upsert("card", { id: "total", total }),
+            DurableState.remove("card", "old"),
+          ],
           transitions: [total],
         },
       ] as const;
