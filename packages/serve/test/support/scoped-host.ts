@@ -4,17 +4,13 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { NetAddress } from "effect/unstable/net";
 import { Http } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import {
-  drainOnShutdown,
-  listener,
-  type DrainOptions,
-  type ListenerOptions,
-} from "../../src/bun.ts";
+import { Serve } from "../../src/index.ts";
+import { listener, type ListenerOptions } from "./runtime.ts";
 
 export interface TestHostOptions<E = never> extends ListenerOptions, Http.HttpOptions {
   readonly layer: Layer.Layer<StreamsReader | StreamsWriter, E>;
-  /** Drain live reads before the routes close. Unset keeps the abrupt shutdown. */
-  readonly drain?: DrainOptions;
+  /** Serve through `Serve.layer`, which drains live reads. Unset keeps the abrupt shutdown. */
+  readonly drain?: Pick<Serve.LayerOptions, "drainTimeout">;
 }
 export interface TestHost {
   readonly port: number;
@@ -36,12 +32,13 @@ export function testHost<E>(options: TestHostOptions<E>) {
             prefix:
               options.pathPrefix === undefined ? "/" : `/${options.pathPrefix.replace(/^\//, "")}`,
           });
-          const serve = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true });
+          const serveOptions = { disableLogger: true, disableListenLog: true } as const;
+          const serve =
+            options.drain === undefined
+              ? HttpRouter.serve(routes, serveOptions)
+              : Serve.layer(routes, { ...serveOptions, ...options.drain });
           const context = yield* Layer.build(
-            (options.drain === undefined ? serve : serve.pipe(drainOnShutdown(options.drain))).pipe(
-              Layer.provide(options.layer),
-              Layer.provideMerge(listener(options)),
-            ),
+            serve.pipe(Layer.provide(options.layer), Layer.provideMerge(listener(options))),
           );
           yield* Deferred.succeed(ready, Context.get(context, HttpServer.HttpServer));
           return yield* Effect.never;

@@ -3,34 +3,8 @@ import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
 import { Storage } from "@streamsy/core";
 import { Protocol, Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { memoryLayer, parkableLayer } from "./support/parkable.ts";
 import { testHost, type TestHostOptions } from "./support/scoped-host.ts";
-
-/**
- * A protocol Layer over memory storage that records a parked long-poll read and
- * holds it open until `hold` completes. The drain cases use it so the parked
- * read is signalled, rather than racing a client request that may not have
- * reached the server yet.
- */
-const parkableLayer = (readStarted: Deferred.Deferred<void>, hold: Deferred.Deferred<void>) =>
-  Layer.effectContext(
-    Effect.gen(function* () {
-      const reader = yield* StreamsReader;
-      const writer = yield* StreamsWriter;
-      return Context.make(StreamsWriter, writer).pipe(
-        Context.add(
-          StreamsReader,
-          StreamsReader.of({
-            ...reader,
-            readNext: (id, readOptions) =>
-              Effect.suspend(() => {
-                Deferred.doneUnsafe(readStarted, Exit.void);
-                return Deferred.await(hold).pipe(Effect.andThen(reader.readNext(id, readOptions)));
-              }),
-          }),
-        ),
-      );
-    }),
-  ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })));
 
 /**
  * Start one host, seed one stream, and park a long poll on it. The probe reports
@@ -68,8 +42,6 @@ const parkLongPoll = async (
     },
   };
 };
-
-const memoryLayer = () => Streams.layerMemory({ longPollTimeoutMs: 30_000 });
 
 for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
   it(`${shutdown} releases the live producing read and changes subscription; stop permits same-port rebind`, async () => {
@@ -303,7 +275,7 @@ it("an unset graceful shutdown timeout does not wait for a parked long poll", as
 });
 
 it("a set drain bound does not delay a drain with no parked read", async () => {
-  const probe = await parkLongPoll(memoryLayer(), {
+  const probe = await parkLongPoll(memoryLayer, {
     gracefulShutdownTimeout: Duration.seconds(10),
   });
   const startedAt = performance.now();
@@ -312,7 +284,7 @@ it("a set drain bound does not delay a drain with no parked read", async () => {
 });
 
 it("a parked long poll survives past 10 seconds under the default idle timeout", async () => {
-  const probe = await parkLongPoll(memoryLayer(), {});
+  const probe = await parkLongPoll(memoryLayer, {});
   try {
     await probe.settle(10_500);
     expect(probe.parked()).toBe(true);
@@ -321,89 +293,3 @@ it("a parked long poll survives past 10 seconds under the default idle timeout",
     await probe.settle(1500);
   }
 }, 20_000);
-
-const drainingHost = async (layer: TestHostOptions["layer"]) => {
-  const host = await Effect.runPromise(
-    testHost({ layer, port: 0, drain: { timeout: Duration.seconds(2) } }),
-  );
-  const created = await fetch(new URL("s", host.url), {
-    method: "PUT",
-    headers: { "content-type": "text/plain" },
-    body: "seed",
-  });
-  const tail = created.headers.get("stream-next-offset");
-  if (!tail) throw new Error("Expected current tail");
-  return { host, tail };
-};
-
-it("a draining host answers a parked long poll with 204, offset and cursor", async () => {
-  const readStarted = Deferred.makeUnsafe<void>();
-  const hold = Deferred.makeUnsafe<void>();
-  const { host, tail } = await drainingHost(parkableLayer(readStarted, hold));
-  try {
-    const url = new URL("s", host.url);
-    url.search = `offset=${tail}&live=long-poll`;
-    const pending = fetch(url);
-    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
-    const startedAt = performance.now();
-    await Effect.runPromise(host.stop);
-    expect(performance.now() - startedAt).toBeLessThan(1000);
-    const response = await pending;
-    expect(response.status).toBe(204);
-    expect(response.headers.get("stream-next-offset")).toBe(tail);
-    expect(response.headers.get("stream-up-to-date")).toBe("true");
-    expect(response.headers.get("stream-cursor")).toMatch(/^\d+$/);
-  } finally {
-    Deferred.doneUnsafe(hold, Exit.void);
-    await Effect.runPromise(host.stop);
-  }
-});
-
-it("a draining host ends an open SSE body cleanly after a control event", async () => {
-  const { host } = await drainingHost(memoryLayer());
-  try {
-    const url = new URL("s", host.url);
-    url.search = "offset=-1&live=sse";
-    const response = await fetch(url);
-    if (!response.body) throw new Error("Expected SSE response body");
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let text = decoder.decode((await reader.read()).value);
-    expect(text).toContain("event: control");
-    await Effect.runPromise(host.stop);
-    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())
-      text += decoder.decode(chunk.value);
-    expect(await reader.closed).toBeUndefined();
-    expect(text).toMatch(/event: control\ndata:\{[^\n]*"streamNextOffset"[^\n]*\}\n\n$/);
-  } finally {
-    await Effect.runPromise(host.stop);
-  }
-});
-
-it("without a drain a parked long poll does not get the drain 204", async () => {
-  const readStarted = Deferred.makeUnsafe<void>();
-  const hold = Deferred.makeUnsafe<void>();
-  const host = await Effect.runPromise(
-    testHost({ layer: parkableLayer(readStarted, hold), port: 0 }),
-  );
-  try {
-    const created = await fetch(new URL("s", host.url), {
-      method: "PUT",
-      headers: { "content-type": "text/plain" },
-      body: "seed",
-    });
-    const url = new URL("s", host.url);
-    url.search = `offset=${created.headers.get("stream-next-offset")}&live=long-poll`;
-    const outcome = fetch(url).then(
-      (response) => response.status,
-      () => "error",
-    );
-    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
-    await Effect.runPromise(host.stop);
-    // Today's abrupt shutdown: an empty 503 or a reset connection.
-    expect(await outcome).not.toBe(204);
-  } finally {
-    Deferred.doneUnsafe(hold, Exit.void);
-    await Effect.runPromise(host.stop);
-  }
-});
