@@ -1,16 +1,20 @@
-import { tmpdir } from "node:os";
-import { Streamsy } from "@streamsy/core";
-import { Memory as StorageMemory } from "@streamsy/core";
-import { GameEvents } from "../src/board/fold.ts";
-import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { expect, test } from "bun:test";
+import { Effect, Layer, Option } from "effect";
+import { Memory as StorageMemory, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
-import { type BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
+import {
+  type BoardState,
+  board as hexBoard,
+  GameEvents,
+  initialBoard,
+  stepBoard,
+} from "../src/board/fold.ts";
 import { moveId, MOVE_FEED_LIMIT, ProjectionIntegrityError } from "../src/board/projection.ts";
 import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
@@ -18,10 +22,30 @@ import { fullGame, longGame } from "./fixtures.ts";
 const board = hexBoard.at({ gameId: "game" });
 const params = { gameId: "game" };
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
+const resolution = fullGame[split];
+if (resolution?.type !== "AttackResolved") throw new Error("fixture has no AttackResolved");
 const sqlite = (filename: string) =>
   ProjectionSql.layerStorage.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
   );
+/**
+ * Runs `program` as one process on `layer`: it opens the Layer, runs, and closes it.
+ * Two calls on the same SQLite file are a restart.
+ */
+const asProcess =
+  <ROut, LE>(layer: Layer.Layer<ROut, LE>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
+    Effect.provide(program, layer);
+const memory = Memory.layer.pipe(
+  Layer.provideMerge(StorageMemory.layer({}, Streamsy.group(GameEvents))),
+);
+/** A SQLite file in a temporary folder. The folder is removed when the scope closes. */
+const tempFile = (prefix: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => mkdtempSync(join(tmpdir(), prefix))),
+    (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
+  ).pipe(Effect.map((directory) => join(directory, "board.sqlite")));
 
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
@@ -78,64 +102,41 @@ for (const [name, events, cut] of [
   ["12-event victory game split after 5 events", fullGame, split],
   ["450-event game split after 400 events", longGame, 400],
 ] as const) {
-  test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, async () => {
-    const directory = mkdtempSync(join(tmpdir(), "hex-board-"));
-    const filename = join(directory, "board.sqlite");
-    try {
-      const first = ManagedRuntime.make(sqlite(filename));
-      const before = await first
-        .runPromise(seed(events, cut).pipe(Effect.andThen(read)))
-        .finally(() => first.dispose());
+  test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
+    Effect.gen(function* () {
+      const file = yield* tempFile("hex-board-");
+      const before = yield* seed(events, cut).pipe(Effect.andThen(read), asProcess(sqlite(file)));
       expect(before.state.ordinal).toBe(cut);
       if (events === fullGame) expect(before.state.board.combat?.status).toBe("awaiting-defense");
       else
         expect(before.state.board.moves.map((move) => move.id)).toEqual(
           Array.from({ length: MOVE_FEED_LIMIT }, (_, i) => moveId(cut - MOVE_FEED_LIMIT + i)),
         );
-      const second = ManagedRuntime.make(sqlite(filename));
-      try {
-        expect((await second.runPromise(Projection.run(board))).items).toBe(0);
-        expect(await second.runPromise(read)).toEqual(before);
-        await second.runPromise(advance(before, events, cut));
-      } finally {
-        await second.dispose();
-      }
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+      yield* Effect.gen(function* () {
+        expect((yield* Projection.run(board)).items).toBe(0);
+        expect(yield* read).toEqual(before);
+        yield* advance(before, events, cut);
+      }).pipe(asProcess(sqlite(file)));
+    }).pipe(Effect.scoped, Effect.runPromise));
 }
 
-test("memory folds the same game incrementally", async () => {
-  const runtime = ManagedRuntime.make(
-    Memory.layer.pipe(Layer.provideMerge(StorageMemory.layer({}, Streamsy.group(GameEvents)))),
-  );
-  try {
-    const before = await runtime.runPromise(seed().pipe(Effect.andThen(read)));
-    await runtime.runPromise(advance(before));
-  } finally {
-    await runtime.dispose();
-  }
-});
+test("memory folds the same game incrementally", () =>
+  seed().pipe(
+    Effect.andThen(read),
+    Effect.flatMap((before) => advance(before)),
+    asProcess(memory),
+    Effect.runPromise,
+  ));
 
-test("a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "hex-board-rollback-"));
-  const runtime = ManagedRuntime.make(sqlite(join(directory, "board.sqlite")));
-  try {
-    await runtime.runPromise(seed());
-    const before = await runtime.runPromise(snapshot);
-    const event = fullGame[split];
-    if (event?.type !== "AttackResolved") throw new Error("fixture has no resolution at split");
-    await runtime.runPromise(
-      Effect.flatMap(GameEvents, (events) =>
-        events.append(params, [{ ...event, attackerRolls: [1, 1, 1] }]),
-      ),
-    );
-    const error = await runtime.runPromise(Effect.flip(Projection.run(board)));
-    expect(error).toBeInstanceOf(ProjectionIntegrityError);
-    expect(await runtime.runPromise(snapshot)).toEqual(before);
-  } finally {
-    await runtime.dispose();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+test("a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut", () =>
+  Effect.gen(function* () {
+    const file = yield* tempFile("hex-board-rollback-");
+    yield* Effect.gen(function* () {
+      yield* seed();
+      const before = yield* snapshot;
+      yield* (yield* GameEvents).append(params, [{ ...resolution, attackerRolls: [1, 1, 1] }]);
+      const error = yield* Effect.flip(Projection.run(board));
+      expect(error).toBeInstanceOf(ProjectionIntegrityError);
+      expect(yield* snapshot).toEqual(before);
+    }).pipe(asProcess(sqlite(file)));
+  }).pipe(Effect.scoped, Effect.runPromise));
