@@ -9,7 +9,7 @@ import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
 import type { ProjectionFault } from "./fault.ts";
 import type { InputMap, Slices } from "./batch.ts";
-import { bindState, stateSource, type StateDefinition, type StateSource } from "./state.ts";
+import { bindState, type StateDefinition } from "./state.ts";
 import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
 
@@ -173,15 +173,12 @@ export type StatefulDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
   A,
-  SI,
   E,
   R,
   Result,
   P,
   Q,
-> = RunningDeclaration<C, I, E, R, Result, P, Q, A> & {
-  readonly state: StateSource<A, SI, StreamRoute.Params<C>, Q>;
-};
+> = RunningDeclaration<C, I, E, R, Result, P, Q, A>;
 export type OutputDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -204,14 +201,11 @@ export type AccumulatingDeclaration<
   I extends Inputs,
   O extends RoutedMap,
   A,
-  SI,
   E,
   R,
   P,
   Q,
-> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A> & {
-  readonly state: StateSource<A, SI, StreamRoute.Params<C>, Q>;
-};
+> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A>;
 
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 /** Public constructors check all mapped types before this shared binding boundary. */
@@ -260,9 +254,5 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
         ),
     };
   });
-  if (definition.state === undefined) return declaration;
-  return {
-    ...declaration,
-    state: stateSource(definition, definition.state, declaration.at),
-  };
+  return declaration;
 };

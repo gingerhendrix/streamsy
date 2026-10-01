@@ -63,8 +63,16 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
         expect(yield* sql.unsafe("SELECT workspace_id FROM users")).toEqual([
           { workspace_id: "acme" },
         ]);
-        expect((yield* tracker.state.resolve({ workspaceId: "live" })).users).toEqual([]);
-        expect((yield* tracker.state.resolve({ workspaceId: "acme" })).users).toHaveLength(1);
+        expect(
+          (yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+            Effect.map(({ state }) => state),
+          )).users,
+        ).toEqual([]);
+        expect(
+          (yield* Projection.read(tracker.at({ workspaceId: "acme" })).pipe(
+            Effect.map(({ state }) => state),
+          )).users,
+        ).toHaveLength(1);
       }),
     );
   } finally {
@@ -160,7 +168,11 @@ test("named output replay survives a lost append reply beside the SQL projection
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
         const board = yield* Addresses.readOutput(Board, "live");
         expect(board).toHaveLength(2);
-        expect(yield* tracker.state.resolve({ workspaceId: "live" })).toMatchObject({
+        expect(
+          yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+            Effect.map(({ state }) => state),
+          ),
+        ).toMatchObject({
           issueCount: 1,
           doneCount: 1,
         });
@@ -212,11 +224,17 @@ test("served route fingerprints pin address identity and reject incompatible con
       expect(other.headers.get(header)).not.toBe(response.headers.get(header));
     }
     const value = await web.handler(new Request("http://host/workspaces/live/summary"));
-    expect(value.status).toBe(503);
+    expect(value.status).toBe(200);
+    expect(await value.json()).toEqual({
+      workspaceId: "live",
+      issueCount: 0,
+      doneCount: 0,
+      labelCount: 0,
+      projectCount: 0,
+    });
     expect(value.headers.get("x-streamsy-value-contract")).toBe(
       contractFingerprint({
         kind: "value",
-        source: "issue-tracker/summary",
         route: "/workspaces/:workspaceId/summary",
         cache: "private, max-age=0, must-revalidate",
         contract: "compact-summary-v1",
@@ -277,9 +295,11 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
         yield* Projection.run(tracker.at({ workspaceId: "live" }));
-        expect((yield* tracker.state.resolve({ workspaceId: "live" })).issues[0]?.assigneeId).toBe(
-          "ada",
-        );
+        expect(
+          (yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+            Effect.map(({ state }) => state),
+          )).issues[0]?.assigneeId,
+        ).toBe("ada");
       }),
     );
     expect(

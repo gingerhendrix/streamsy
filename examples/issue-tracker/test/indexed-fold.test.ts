@@ -167,7 +167,9 @@ test("indexed touched-key output matches full scans byte for byte across catalog
         for (const phase of phases) {
           yield* phase;
           yield* Projection.run(tracker.at({ workspaceId: "live" }));
-          const next = yield* tracker.state.resolve({ workspaceId: "live" });
+          const next = yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+            Effect.map(({ state }) => state),
+          );
           const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
           const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));
           for (const row of cards(next)) {

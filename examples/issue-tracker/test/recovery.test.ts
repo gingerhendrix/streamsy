@@ -68,7 +68,9 @@ const collect = Effect.gen(function* () {
     board: yield* Addresses.readOutput(Board, "live"),
     counts: yield* Addresses.readOutput(LabelCounts, "live"),
     transitions: yield* Addresses.readOutput(Transitions, "live"),
-    summary: yield* tracker.state.resolve({ workspaceId: "live" }),
+    summary: yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+      Effect.map(({ state }) => state),
+    ),
   };
 });
 const run = (failOn: number | undefined) =>

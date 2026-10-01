@@ -10,7 +10,6 @@ import type {
   Offsets,
   Snapshot,
   StateDefinition,
-  StateSource,
   Step,
   WatchOptions,
   RunOptions,
@@ -27,7 +26,6 @@ type PublicHelperTypes =
   | Snapshot<any, any>
   | Offsets<any>
   | StateDefinition<any, any, any>
-  | StateSource<any, any, any>
   | Step<number, never, never>
   | WatchOptions
   | RunOptions;

@@ -8,7 +8,6 @@ export type { Progress } from "./run.ts";
 export type { Offsets, Snapshot } from "./snapshot.ts";
 export type { Step, Emits } from "./step.ts";
 export type { StateDefinition, StateSchema, Initial } from "./state.ts";
-export type { StateSource } from "./state.ts";
 export type { Range, Unit } from "./unit.ts";
 export {
   CheckpointStore,

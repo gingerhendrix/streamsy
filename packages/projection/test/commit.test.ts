@@ -107,8 +107,7 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
       yield* input.append({}, [7]);
       yield* Projection.run(bind());
       expect((yield* Projection.read(bind())).state).toBe(12);
-      const source = declaration.state;
-      expect(yield* source.resolve({})).toBe(12);
+      expect((yield* Projection.read(declaration.at({}))).state).toBe(12);
       const before = [...objects.values()];
       yield* input.append({}, [11]);
       const conflict = yield* Projection.run(bind()).pipe(

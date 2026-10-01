@@ -35,6 +35,7 @@ export const retiredNames = [
   "Projection.serialized",
   "Projection.onChange",
   "Serve.document",
+  "Serve.family",
   "OnChangeOptions",
   "StreamFamily",
   "StreamGroup",

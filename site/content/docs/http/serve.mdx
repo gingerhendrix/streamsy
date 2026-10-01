@@ -1,9 +1,9 @@
 ---
-title: Serve routes
-description: Publish streams, Durable State changes, and values as read-only HttpRouter route Layers.
+title: Serve handlers
+description: Serve streams, Durable State changes, and values from response Effects.
 ---
 
-Serve routes publish data at application paths. They are read-only.
+Serve handlers return response Effects. Mount them alongside app routes with `HttpRouter.add`, `Serve.route`, or `Serve.mount`.
 
 ```ts
 import { Layer, Schema } from "effect";
@@ -22,18 +22,18 @@ export const game = Streamsy.group(Events, Cards);
 
 export const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "read" }),
-  Serve.stream(Events, "/feed/:seat"),
-  Serve.state(Cards, "/state/:seat"),
+  Serve.mount(Events, "/feed/:seat"),
+  Serve.mount(Cards, "/state/:seat"),
 );
 ```
 
-| Route                        | Serves                          |
-| ---------------------------- | ------------------------------- |
-| `Serve.stream(source, path)` | The items of a stream           |
-| `Serve.state(source, path)`  | The Durable State change stream |
-| `Serve.value(source, path)`  | One JSON value, with an ETag    |
+| Route                         | Serves                          |
+| ----------------------------- | ------------------------------- |
+| `Serve.stream(address)`       | The items of a stream           |
+| `Serve.state(address)`        | The Durable State change stream |
+| `Serve.value(schema, effect)` | One JSON value, with an ETag    |
 
-A Serve route needs the stream it reads. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
+`Serve.mount(Stream, path)` decodes path params and chooses the stream or state handler. `Serve.route(path, handler)` owns GET and HEAD and rejects other methods. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
 
 | Request                   | Response                    |
 | ------------------------- | --------------------------- |
@@ -42,7 +42,7 @@ A Serve route needs the stream it reads. Join routes with `Layer.mergeAll`, then
 | Parameter does not decode | 400                         |
 | Path does not match       | 404 from the router         |
 | Absent stream             | 404                         |
-| Absent value              | 503 `ValueUnavailable`      |
+| Unsaved projection value  | The declared initial value  |
 
 The stream codecs decode the path parameters. Two routes with the same shape fail the Layer build. A Serve route does not create a stream, checkpoint, or state row.
 
@@ -52,7 +52,7 @@ The stream codecs decode the path parameters. Two routes with the same shape fai
 
 ## Projection outputs
 
-Pass output routes to `Serve.state` or `Serve.stream`. Pass the declaration's `.state` to `Serve.value`.
+Pass resolved addresses to `Serve.state` or `Serve.stream`. Compute projection values with `Projection.read` and `Effect.map`.
 
 ```ts
 import { Effect, Layer, Schema } from "effect";
@@ -97,39 +97,69 @@ const tracker = Projection.mapAccumBatch({
     }),
 });
 const OutputRoutes = Layer.mergeAll(
-  Serve.state(Board, "/board/:seat"),
-  Serve.stream(Transitions, "/transitions/:seat"),
-  Serve.value(tracker.state, "/summary/:seat"),
+  Serve.mount(Board, "/board/:seat"),
+  Serve.mount(Transitions, "/transitions/:seat"),
+  Serve.route(
+    "/summary/:seat",
+    Effect.flatMap(Serve.params(Board), (p) =>
+      Serve.value(
+        Schema.Struct({ total: Schema.FiniteFromString }),
+        Projection.read(tracker.at(p)).pipe(Effect.map(({ state }) => state)),
+      ),
+    ),
+  ),
 );
 ```
 
-Serve does not run the projection. Run it on the host before a read. `Serve.value(tracker.state, path)` answers 503 until the first unit is saved.
+Serve does not run the projection. `Projection.read` returns the declared initial value until state is saved.
 
 The route app needs the output streams and the Commit's required services for the value. A value schema must encode to JSON.
 
 ## Auth and request parameters
 
 ```ts
-const Mine = Serve.stream(Events, "/me", {
-  params: Effect.map(CurrentSeat, (seat) => ({ seat: seat.id })),
-}).pipe(Layer.provide(SeatAuth.layer));
+const Mine = Serve.route(
+  "/me",
+  Effect.flatMap(CurrentSeat, (seat) => Serve.stream(Events.at({ seat: seat.id }))),
+).pipe(Layer.provide(SeatAuth.layer));
 ```
 
-`SeatAuth` is `HttpRouter.middleware` that checks the token. It answers 401, or provides `CurrentSeat`. The `params` Effect replaces all route parameters.
+`SeatAuth` is `HttpRouter.middleware` that checks the token. It answers 401, or provides `CurrentSeat`. The handler builds the address from that service.
 
 Protect the protocol routes too, if they expose private data.
 
 ## Values
 
-A value source has `id`, `paramSchema`, a JSON `schema`, and `resolve(params)`.
+`Serve.value(schema, effect)` accepts any computation. Its schema must encode to JSON. Errors remain catchable in the Effect error channel.
 
 | Behaviour     | Value                                           |
 | ------------- | ----------------------------------------------- |
 | Body          | Canonical JSON                                  |
 | ETag          | From the body bytes. Strong and weak validators |
 | Cache-Control | `private, max-age=0, must-revalidate`           |
-| Missing value | 503 `ValueUnavailable`                          |
-| Contract      | The `x-streamsy-value-contract` header          |
+
+| Contract | The `x-streamsy-value-contract` header |
+
+## HttpApiBuilder
+
+`handleRaw` accepts the same handler. Convert respondable errors to responses to retain Serve's headers; declared HttpApi errors use HttpApi's encoder.
+
+```ts
+import { Effect, Schema } from "effect";
+import { HttpServerRespondable } from "effect/unstable/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+
+const Api = HttpApi.make("Game").add(
+  HttpApiGroup.make("feeds").add(
+    HttpApiEndpoint.get("feed", "/api/feed/:seat", { params: { seat: Schema.String } }),
+  ),
+);
+const Feeds = HttpApiBuilder.group(Api, "feeds", (handlers) =>
+  handlers.handleRaw("feed", ({ params }) =>
+    Serve.stream(Events.at(params)).pipe(Effect.catch(HttpServerRespondable.toResponse)),
+  ),
+);
+```
 
 ## Browser clients and CORS
 
@@ -167,6 +197,6 @@ const BrowserApp = Layer.mergeAll(App, Cors);
 | Stream, state | Replay from the start |
 | Value         | Fetch again           |
 
-A contract fingerprint covers the stream address and the state collection names and keys. Set `options.contract` when the Schema or resolver changes and the metadata does not.
+A contract fingerprint covers the stream address and the state collection names and keys. Set `options.contract` when the Schema or computation changes and the metadata does not.
 
 Use URL-safe stream segments. Serve decodes parameters, and the protocol routes use raw encoded ids.

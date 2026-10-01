@@ -53,7 +53,7 @@ export function mapAccum<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, SI, E, R, P, Q>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
 export function mapAccum(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccum", definition);
 }
@@ -81,7 +81,7 @@ export function mapAccumBatch<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, SI, E, R, P, Q>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
 export function mapAccumBatch(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccumBatch", definition);
 }

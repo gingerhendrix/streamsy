@@ -72,10 +72,7 @@ export function objectHandlers<R = never>(options: {
       Effect.gen(function* () {
         const fetch = yield* HttpRouter.toHttpEffect(providedApp(options.app, context));
         return {
-          fetch: fetch.pipe(
-            Effect.scoped,
-            Effect.catchTag("HttpServerError", HttpServerRespondable.toResponse),
-          ),
+          fetch: fetch.pipe(Effect.scoped, Effect.catch(HttpServerRespondable.toResponse)),
           alarm: alarm.pipe(Effect.provide(context)),
         };
       }),

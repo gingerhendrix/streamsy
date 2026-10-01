@@ -222,7 +222,7 @@ Author rules:
 2. Condition the write on `loaded.token`. A moved token must fail with `checkpoint / token-conflict`.
 3. Declare the guarantee the Commit delivers. Effects outside the atomic write are at least once.
 4. Return token `"0"` when no record exists.
-5. Return stored `state` from `load`, so `Projection.read` and `.state.resolve` can read it.
+5. Return stored `state` from `load`, so `Projection.read` can read it.
 
 This bucket Commit stores a pure fold's value and offsets in one conditional object write. The bucket adapter must make `put` atomic, treat token `"0"` as create-if-absent, and map a failed precondition to `checkpoint / token-conflict`.
 

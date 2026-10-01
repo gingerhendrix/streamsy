@@ -92,9 +92,9 @@ the actual writes. See the [bucket example](https://streamsy.dev/docs/projection
 `Projection.read(bound)` reads through the Commit's `load` and returns
 `{ state, offsets }`, using `initial` before the first unit.
 
-`Serve.value(declaration.state, path)` reads the persisted value. It returns
-503 before the first saved unit. `Serve.state(Board, path)` and
-`Serve.stream(Transitions, path)` read output routes directly.
+`Serve.value(schema, effect)` serves values computed with `Projection.read`.
+Before the first saved unit, reads return the declared initial value.
+`Serve.mount(Board, path)` and `Serve.mount(Transitions, path)` mount output routes.
 
 Outputs accept routes or fixed addresses, like inputs. `Streamsy.json` accepts
 items. `Streamsy.state` accepts `Rows.upsert(row)` and `Rows.remove(key)` from

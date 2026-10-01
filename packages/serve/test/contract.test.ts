@@ -68,7 +68,6 @@ const errors: readonly PublicError[] = [
   },
   { _tag: "ContractChanged", route: "/doc", recovery: "refetch" },
   { _tag: "TransportUnavailable", route: "/feed", detail: "unavailable" },
-  { _tag: "ValueUnavailable", route: "/value", detail: "unavailable" },
   { _tag: "WireEncodeFailed", route: "/value", detail: "invalid" },
 ];
 test("S-4 server Schema and browser decoder agree on the wire JSON domain", () => {

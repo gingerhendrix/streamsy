@@ -56,7 +56,7 @@ test.each([false, true])(
           ? HttpRouter.add("GET", "/feed/:seat", Http.read(stream.address({ seat: "a" }).id), {
               uninterruptible: true,
             })
-          : Serve.stream(stream, "/feed/:seat");
+          : Serve.mount(stream, "/feed/:seat");
         const context = yield* Layer.build(
           HttpRouter.serve(Layer.mergeAll(protocolRoutes(), route), {
             disableLogger: true,

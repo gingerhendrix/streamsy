@@ -11,7 +11,7 @@ const currentStats = Effect.gen(function* () {
   return yield* poller.stats;
 });
 
-export const stateRoute = Serve.state(HackerNewsStories, streamPath);
+export const stateRoute = Serve.mount(HackerNewsStories, streamPath);
 
 /** The page and State route share an origin, so no CORS middleware is needed. */
 export const app = Layer.mergeAll(

@@ -20,7 +20,7 @@ const game = Streamsy.group(Events);
 
 const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "append" }),
-  Serve.stream(Events, "/feed/:seat"),
+  Serve.mount(Events, "/feed/:seat"),
 );
 const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
 

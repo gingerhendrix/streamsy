@@ -2,7 +2,7 @@ import { Streamsy } from "@streamsy/core";
 import type { Effect, Layer } from "effect";
 import type { Storage } from "@streamsy/core";
 import { Projection, type Transaction, type CheckpointStore } from "@streamsy/projection";
-import type { HttpRouter } from "effect/unstable/http";
+import type { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
 import type { app, outputRoutes, workspaceSummary } from "../server/app.ts";
 import type { checkCatalogWorkspace } from "../server/catalog.ts";
@@ -17,7 +17,12 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 type Inputs = Events | LabelEvents | Projects | Users | Labels;
 type Outputs = Board | LabelCounts | Transitions;
-type RequestServices<R> = R extends HttpRouter.Request<"Requires", infer S> ? S : R;
+type RequestServices<R> =
+  R extends HttpRouter.Request<"Requires", infer S>
+    ? S
+    : R extends HttpRouter.Request<"Error", infer _E>
+      ? never
+      : R;
 type AppR = RequestServices<Layer.Services<ReturnType<typeof app>>>;
 type OutputR = RequestServices<Layer.Services<typeof outputRoutes>>;
 const sqlRun = (address: ReturnType<typeof issueRows.at>) => Projection.run(address);
@@ -61,7 +66,12 @@ export type Checks = [
   Assert<Same<Effect.Services<ReturnType<typeof createInputs>>, Inputs>>,
   Assert<Same<Effect.Services<ReturnType<typeof checkCatalogWorkspace>>, never>>,
   Assert<Same<Effect.Services<typeof prepareSchema>, SqlClient.SqlClient>>,
-  Assert<Same<Effect.Services<ReturnType<typeof workspaceSummary.resolve>>, CheckpointStore>>,
+  Assert<
+    Same<
+      Effect.Services<typeof workspaceSummary>,
+      CheckpointStore | HttpRouter.RouteContext | HttpServerRequest.HttpServerRequest
+    >
+  >,
   Assert<Same<Layer.Services<ReturnType<typeof applicationLayer>>, never>>,
   Assert<Same<Layer.Services<ReturnType<typeof hostLayer>>, never>>,
   Assert<

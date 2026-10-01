@@ -5,9 +5,10 @@ import type {
   DurableObjectNamespace,
   DurableObjectState,
 } from "@cloudflare/workers-types";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Storage, StorageFault, type StreamId } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { Serve } from "@streamsy/serve";
 import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
 import { layerProtocol } from "@streamsy/storage/durable-object";
 import { byStreamOptions } from "./fixture-options.ts";
@@ -134,7 +135,16 @@ const probeLayer = (
 };
 
 class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter>({
-  app: protocolRoutes({ prefix: "/streams" }),
+  app: Layer.mergeAll(
+    protocolRoutes({ prefix: "/streams" }),
+    Serve.route(
+      "/serve-value/:seat",
+      Effect.flatMap(
+        Serve.params({ paramSchema: Schema.Struct({ seat: Schema.FiniteFromString }) }),
+        ({ seat }) => Serve.value(Schema.Struct({ seat: Schema.Finite }), Effect.succeed({ seat })),
+      ),
+    ),
+  ),
   layer: probeLayer,
 }) {
   readonly #state = probeFor(this.ctx);
