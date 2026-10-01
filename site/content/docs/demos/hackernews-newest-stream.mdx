@@ -51,7 +51,7 @@ Each number in the diagram is a section below.
 | 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                           | `newest-rows.ts`                  |
 | 3    | The poller reads the rows and their offset, decides, and appends | `Projection.run`, `Projection.read`, `append` with `expectedOffset` | `poller/reconcile.ts`             |
 | 4    | A conflict retries the whole pass                                | `OffsetMismatch`                                                    | `poller/poller.ts`                |
-| 5    | The server publishes the stream as Durable State                 | `Serve.mount`                                                       | `http.ts`                         |
+| 5    | The server publishes the stream as Durable State                 | `Serve.mount`, `listener`, `drainOnShutdown`                        | `http.ts`, `index.ts`             |
 | 6    | The browser replays the stream, then follows live changes        | Durable State client                                                | `client/db.ts`, `client/main.tsx` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
@@ -85,19 +85,22 @@ export const createStoriesLayer = Layer.effectDiscard(
   Effect.flatMap(HackerNewsStories, (stories) => stories.create({})),
 );
 
-const sqliteHostLayer = Layer.unwrap(
-  Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
-    Effect.as(
-      ProjectionSql.layerStorage.pipe(
-        Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
+// ...
+const sqliteHost = (databasePath: string): HostLayer =>
+  Layer.unwrap(
+    Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
+      Effect.as(
+        ProjectionSql.layerStorage.pipe(
+          Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
+        ),
       ),
     ),
-  ),
-);
+  );
 ```
 
 With `HN_DB=memory`, the host is `ProjectionMemory.layer` over
-`Memory.layer(options, streams)` in its place.
+`Memory.layer(options, streams)` in its place. The host reads `HN_DB` through
+`Config` when the layer starts.
 
 See [Declare streams](/docs/streams/declare) and [Layers and storage](/docs/hosting).
 
@@ -213,6 +216,19 @@ on one scoped Bun listener. They share an origin and need no CORS middleware.
 There are no raw `/streams` routes; only the server appends. The poller has a
 scoped lifetime. There is no background watcher: the projection runs only when
 the poller asks for it.
+
+`listener` keeps a parked long poll open. On shutdown, `drainOnShutdown`
+answers each live read before the router closes:
+
+```ts title="src/server/index.ts"
+const serverLayer = HttpRouter.serve(app, { disableLogger: true }).pipe(
+  drainOnShutdown(),
+  Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
+  Layer.provide(listenerLayer),
+);
+
+BunRuntime.runMain(Layer.launch(serverLayer));
+```
 
 You can read the route with `curl`:
 

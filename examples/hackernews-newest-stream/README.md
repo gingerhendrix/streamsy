@@ -4,7 +4,7 @@ A Bun server polls Hacker News and writes one Durable State stream,
 `hackernews/newest`. A checkpointed fold, `newestRows`, folds the stream into
 the current story rows. Before each append, the poller runs the projection,
 reads the rows and the offset they are at, diffs them against the fetch, and
-appends the changes with `expectedOffset: offsets.input`. `Serve.state`
+appends the changes with `expectedOffset: offsets.input`. `Serve.mount`
 publishes the stream at `/state/newest`. The React browser replays from `-1`
 into TanStack DB through `createStreamDB`, then follows live changes.
 
@@ -14,7 +14,7 @@ The poller is the working example of the "Read, decide, append" recipe in the
 ```text
 HN API --fetch--> poller --diff--> append(expectedOffset: offsets.input) --> hackernews/newest
                   ^                                                           |     |
-                  | Projection.read: state + offsets                          |     +--> Serve.state /state/newest --> browser
+                  | Projection.read: state + offsets                          |     +--> Serve.mount /state/newest --> browser
                   +---- Projection.run(newestRows) <-- fold -------------------+
 ```
 
@@ -75,7 +75,9 @@ bun run --cwd examples/hackernews-newest-stream dev
 Open <http://localhost:1339>. `dev` builds the browser; `dev:api` runs only the
 server and can serve an existing browser build. The page, status API, poll API,
 and State route share the same origin, so CORS middleware is unnecessary.
-`HttpRouter.serve` hosts one `Layer.mergeAll` app with a scoped Bun listener.
+`HttpRouter.serve` hosts one `Layer.mergeAll` app on the Streamsy Bun
+`listener`. `BunRuntime.runMain` owns the process. On SIGINT or SIGTERM,
+`drainOnShutdown` answers live reads before the router closes.
 
 | Variable              | Default                                 | Meaning                  |
 | --------------------- | --------------------------------------- | ------------------------ |
@@ -108,12 +110,13 @@ failure; check `lastPollError` for the result.
 
 - `src/server/stories.ts`: the fixed `Streamsy.state` declaration and change types.
 - `src/server/poller/poller.ts`: fetch, retry on `OffsetMismatch`, status counters and coalescing gate.
+- `src/server/hnews.ts`: the `HackerNewsApi` layer over the Effect `HttpClient`.
 - `src/server/newest-rows.ts`: `Projection.fold` with `state:` and `fold:`, and pure `applyChange`.
 - `src/server/poller/reconcile.ts`: `reconcileNewest` (run, read, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.
-- `src/server/index.ts`: scoped listener, poll schedule and shared application layers.
-- `src/server/config.ts`: host and HN poll configuration.
+- `src/server/index.ts`: `runMain`, the listener, the drain and the application layers.
+- `src/server/config.ts`: host and HN poll settings as one `Config`.
 - `src/state-schema.ts`: story, browser collection and status schemas.
 - `src/client/db.ts`: browser collection factory also used by the HTTP smoke.
 
