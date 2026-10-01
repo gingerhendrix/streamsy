@@ -1,8 +1,8 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { GameEvent } from "../domain/events.ts";
-import { initialProjection, projectEvent } from "./projection.ts";
+import { initialProjection, projectEvent, ProjectionIntegrityError } from "./projection.ts";
 import { ProjectionStateSchema } from "./schemas.ts";
 
 /** The next move ordinal survives restart independently of page boundaries. */
@@ -33,5 +33,10 @@ export const board = Projection.fold({
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
   state: { schema: BoardState, initial: initialBoard },
-  fold: (state, { item }, unit) => stepBoard(state, item, unit.ranges.input.nextOffset),
+  fold: (state, { item }, unit) =>
+    Effect.sync(() => stepBoard(state, item, unit.ranges.input.nextOffset)).pipe(
+      Effect.catchDefect((defect) =>
+        Schema.is(ProjectionIntegrityError)(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+    ),
 });

@@ -5,13 +5,13 @@ import { GameEvents } from "../src/board/fold.ts";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Layer, ManagedRuntime, Option, Exit, Cause } from "effect";
+import { Effect, Layer, ManagedRuntime, Option } from "effect";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import { type BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
-import { moveId, MOVE_FEED_LIMIT } from "../src/board/projection.ts";
+import { moveId, MOVE_FEED_LIMIT, ProjectionIntegrityError } from "../src/board/projection.ts";
 import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
 
@@ -118,7 +118,7 @@ test("memory folds the same game incrementally", async () => {
   }
 });
 
-test("a contradictory AttackResolved leaves SQLite state and checkpoint at the prior cut", async () => {
+test("a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut", async () => {
   const directory = mkdtempSync(join(tmpdir(), "hex-board-rollback-"));
   const runtime = ManagedRuntime.make(sqlite(join(directory, "board.sqlite")));
   try {
@@ -131,10 +131,8 @@ test("a contradictory AttackResolved leaves SQLite state and checkpoint at the p
         events.append(params, [{ ...event, attackerRolls: [1, 1, 1] }]),
       ),
     );
-    const result = await runtime.runPromiseExit(Projection.run(board));
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result))
-      expect(Cause.pretty(result.cause)).toContain("ProjectionIntegrityError");
+    const error = await runtime.runPromise(Effect.flip(Projection.run(board)));
+    expect(error).toBeInstanceOf(ProjectionIntegrityError);
     expect(await runtime.runPromise(snapshot)).toEqual(before);
   } finally {
     await runtime.dispose();
