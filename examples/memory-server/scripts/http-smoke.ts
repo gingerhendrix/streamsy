@@ -1,224 +1,162 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random, effecttsgo/node-builtin-import -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP through their native Promise APIs. */
-import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { BunRuntime, BunServices } from "@effect/platform-bun";
+import { spawnServer } from "@streamsy/test-support/server";
+import { Clock, Console, Crypto, Effect, Fiber, Layer, Option, Path, Schema, Stream } from "effect";
+import {
+  FetchHttpClient,
+  Headers,
+  HttpBody,
+  HttpClient,
+  type HttpClientResponse,
+} from "effect/unstable/http";
 
-const packageDir = resolve(import.meta.dir, "..");
-const port = 20_000 + Math.floor(Math.random() * 20_000);
-const baseUrl = `http://127.0.0.1:${port}`;
-const streamId = `smoke/${Date.now()}-${randomUUID()}`;
-const streamUrl = `${baseUrl}/${streamId}`;
+class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
+  message: Schema.String,
+}) {}
 
-class SmokeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SmokeError";
-  }
-}
+const check = (condition: boolean, message: string) =>
+  condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));
 
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new SmokeError(message);
-  }
-}
+const requiredHeader = (response: HttpClientResponse.HttpClientResponse, name: string) =>
+  Headers.get(response.headers, name).pipe(
+    Option.filter((value) => value.length > 0),
+    Effect.fromOption,
+    Effect.mapError(() => new SmokeFailure({ message: `Expected response header ${name}` })),
+  );
 
-async function text(response: Response): Promise<string> {
-  return await response.text();
-}
+const readSseUntilControl = (response: HttpClientResponse.HttpClientResponse) =>
+  response.stream.pipe(
+    Stream.decodeText,
+    Stream.scan("", (output, chunk) => output + chunk),
+    Stream.takeUntil(
+      (output) => output.includes("event: data") && output.includes("event: control"),
+    ),
+    Stream.runLast,
+    Effect.map(Option.getOrElse(() => "")),
+    Effect.timeoutOrElse({
+      duration: "5 seconds",
+      orElse: () =>
+        Effect.fail(new SmokeFailure({ message: "Timed out waiting for SSE data/control events" })),
+    }),
+  );
 
-function requiredHeader(response: Response, name: string): string {
-  const value = response.headers.get(name);
-  assert(value !== null && value.length > 0, `Expected response header ${name}`);
-  return value;
-}
+const smoke = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const cwd = path.resolve(import.meta.dir, "..");
+  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4}`;
 
-async function request(input: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, init);
-  return response;
-}
+  // The protocol answers 400 at the root once the routes are mounted.
+  const serverOptions = { cwd, entry: "src/index.ts", isReady: (status: number) => status === 400 };
+  const server = yield* spawnServer(serverOptions);
+  const streamUrl = `${server.url}/${streamId}`;
 
-async function waitForServer(): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  let lastError: unknown;
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(baseUrl);
-      if (response.status === 400 || response.status === 404) {
-        return;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new SmokeError(`Memory server did not become ready: ${String(lastError)}`);
-}
-
-async function readSseUntilControl(response: Response): Promise<string> {
-  assert(response.body !== null, "Expected SSE response body");
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-  const deadline = Date.now() + 5_000;
-
-  try {
-    while (Date.now() < deadline) {
-      const remaining = Math.max(deadline - Date.now(), 1);
-      const result = await Promise.race([
-        reader.read(),
-        Bun.sleep(remaining).then(() => ({ done: true, value: undefined })),
-      ]);
-
-      if (result.value) {
-        output += decoder.decode(result.value, { stream: true });
-      }
-
-      if (output.includes("event: data") && output.includes("event: control")) {
-        return output;
-      }
-
-      if (result.done) {
-        break;
-      }
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-
-  throw new SmokeError(`Timed out waiting for SSE data/control events. Received:\n${output}`);
-}
-
-type DemoProcess = ReturnType<typeof startServer>;
-
-function startServer() {
-  return Bun.spawn(["bun", "src/index.ts"], {
-    cwd: packageDir,
-    env: { ...process.env, PORT: String(port) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
-
-async function stopServer(server: DemoProcess): Promise<void> {
-  server.kill();
-  // Serve.teardown maps the interrupted main fiber to exit code 0.
-  const exitCode = await server.exited;
-
-  const stdout = await new Response(server.stdout).text();
-  const stderr = await new Response(server.stderr).text();
-  if (stdout.trim()) console.log(stdout.trim());
-  if (stderr.trim()) console.error(stderr.trim());
-  assert(exitCode === 0, `server exit code ${exitCode}: ${stderr}`);
-  assert(stderr.trim().length === 0, `demo server wrote to stderr: ${stderr}`);
-}
-
-let server = startServer();
-
-try {
-  await waitForServer();
   for (const host of ["127.0.0.1", "[::1]"]) {
-    const response = await fetch(`http://${host}:${port}/`);
-    assert(response.status === 400, `${host} should reach the protocol listener`);
-    await response.text();
+    const response = yield* HttpClient.get(`http://${host}:${server.port}/`);
+    yield* check(response.status === 400, `${host} should reach the protocol listener`);
   }
 
-  const createResponse = await request(streamUrl, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
+  const createResponse = yield* HttpClient.put(streamUrl, {
+    headers: { "content-type": "application/json" },
   });
-  assert(createResponse.status === 201, `create status ${createResponse.status}`);
-  requiredHeader(createResponse, "stream-next-offset");
+  yield* check(createResponse.status === 201, `create status ${createResponse.status}`);
+  yield* requiredHeader(createResponse, "stream-next-offset");
 
-  const appendResponse = await request(streamUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "hello", n: 1 }),
+  const appendResponse = yield* HttpClient.post(streamUrl, {
+    body: HttpBody.jsonUnsafe({ type: "hello", n: 1 }),
   });
-  assert(appendResponse.status === 204, `append status ${appendResponse.status}`);
-  const firstOffset = requiredHeader(appendResponse, "stream-next-offset");
+  yield* check(appendResponse.status === 204, `append status ${appendResponse.status}`);
+  const firstOffset = yield* requiredHeader(appendResponse, "stream-next-offset");
 
-  const readResponse = await request(`${streamUrl}?offset=-1`);
-  assert(readResponse.status === 200, `read status ${readResponse.status}`);
-  assert(readResponse.headers.get("stream-up-to-date") === "true", "read should be up to date");
-  const readOffset = requiredHeader(readResponse, "stream-next-offset");
-  assert(readOffset === firstOffset, "read next offset should match append offset");
-  const etag = requiredHeader(readResponse, "etag");
-  const readBody = await text(readResponse);
-  assert(readBody === '[{"type":"hello","n":1}]', `unexpected read body ${readBody}`);
+  const readResponse = yield* HttpClient.get(`${streamUrl}?offset=-1`);
+  yield* check(readResponse.status === 200, `read status ${readResponse.status}`);
+  yield* check(readResponse.headers["stream-up-to-date"] === "true", "read should be up to date");
+  const readOffset = yield* requiredHeader(readResponse, "stream-next-offset");
+  yield* check(readOffset === firstOffset, "read next offset should match append offset");
+  const etag = yield* requiredHeader(readResponse, "etag");
+  const readBody = yield* readResponse.text;
+  yield* check(readBody === '[{"type":"hello","n":1}]', `unexpected read body ${readBody}`);
 
-  const notModifiedResponse = await request(`${streamUrl}?offset=-1`, {
-    headers: { "If-None-Match": etag },
+  const notModifiedResponse = yield* HttpClient.get(`${streamUrl}?offset=-1`, {
+    headers: { "if-none-match": etag },
   });
-  assert(notModifiedResponse.status === 304, `If-None-Match status ${notModifiedResponse.status}`);
+  yield* check(
+    notModifiedResponse.status === 304,
+    `If-None-Match status ${notModifiedResponse.status}`,
+  );
 
-  const longPollPromise = request(`${streamUrl}?offset=${firstOffset}&live=long-poll`);
-  await Bun.sleep(100);
-  const secondAppendResponse = await request(streamUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "hello", n: 2 }),
+  const longPoll = yield* Effect.forkScoped(
+    HttpClient.get(`${streamUrl}?offset=${firstOffset}&live=long-poll`),
+  );
+  yield* Effect.sleep("100 millis");
+  const secondAppendResponse = yield* HttpClient.post(streamUrl, {
+    body: HttpBody.jsonUnsafe({ type: "hello", n: 2 }),
   });
-  assert(
+  yield* check(
     secondAppendResponse.status === 204,
     `second append status ${secondAppendResponse.status}`,
   );
 
-  const longPollResponse = await longPollPromise;
-  assert(longPollResponse.status === 200, `long-poll success status ${longPollResponse.status}`);
-  requiredHeader(longPollResponse, "stream-cursor");
-  const secondOffset = requiredHeader(longPollResponse, "stream-next-offset");
-  const longPollBody = await text(longPollResponse);
-  assert(longPollBody === '[{"type":"hello","n":2}]', `unexpected long-poll body ${longPollBody}`);
-
-  const sseResponse = await request(`${streamUrl}?offset=-1&live=sse`);
-  assert(sseResponse.status === 200, `SSE status ${sseResponse.status}`);
-  assert(
-    sseResponse.headers.get("content-type")?.startsWith("text/event-stream") === true,
-    `unexpected SSE content-type ${sseResponse.headers.get("content-type")}`,
+  const longPollResponse = yield* Fiber.join(longPoll);
+  yield* check(
+    longPollResponse.status === 200,
+    `long-poll success status ${longPollResponse.status}`,
   );
-  const sseText = await readSseUntilControl(sseResponse);
-  assert(sseText.includes("event: data"), "SSE should include a data event");
-  assert(sseText.includes("event: control"), "SSE should include a control event");
-  assert(
+  yield* requiredHeader(longPollResponse, "stream-cursor");
+  const secondOffset = yield* requiredHeader(longPollResponse, "stream-next-offset");
+  const longPollBody = yield* longPollResponse.text;
+  yield* check(
+    longPollBody === '[{"type":"hello","n":2}]',
+    `unexpected long-poll body ${longPollBody}`,
+  );
+
+  const sseResponse = yield* HttpClient.get(`${streamUrl}?offset=-1&live=sse`);
+  yield* check(sseResponse.status === 200, `SSE status ${sseResponse.status}`);
+  const contentType = sseResponse.headers["content-type"];
+  yield* check(
+    contentType?.startsWith("text/event-stream") === true,
+    `unexpected SSE content-type ${contentType}`,
+  );
+  const sseText = yield* readSseUntilControl(sseResponse);
+  yield* check(sseText.includes("event: data"), "SSE should include a data event");
+  yield* check(sseText.includes("event: control"), "SSE should include a control event");
+  yield* check(
     sseText.includes(`"streamNextOffset":"${secondOffset}"`),
     "SSE control should include the current next offset",
   );
-  assert(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
+  yield* check(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
 
-  let settled = false;
-  const parked = fetch(`${streamUrl}?offset=now&live=long-poll`).then((response) => {
-    settled = true;
-    return response;
-  });
-  await Bun.sleep(250);
-  assert(!settled, "shutdown probe should have a parked long poll");
-  await stopServer(server);
+  const parked = yield* Effect.forkScoped(HttpClient.get(`${streamUrl}?offset=now&live=long-poll`));
+  yield* Effect.sleep("250 millis");
+  yield* check(parked.pollUnsafe() === undefined, "shutdown probe should have a parked long poll");
+  yield* server.stop;
   // Serve.layer answers the parked poll like a long-poll timeout, so the
   // client reconnects from the same offset instead of seeing an error.
-  const drained = await parked;
-  assert(drained.status === 204, `shutdown long-poll status ${drained.status}`);
-  assert(
-    requiredHeader(drained, "stream-next-offset") === secondOffset,
+  const drained = yield* Fiber.join(parked);
+  yield* check(drained.status === 204, `shutdown long-poll status ${drained.status}`);
+  yield* check(
+    (yield* requiredHeader(drained, "stream-next-offset")) === secondOffset,
     "shutdown long-poll should return the current tail",
   );
-  assert(
-    drained.headers.get("stream-up-to-date") === "true",
+  yield* check(
+    drained.headers["stream-up-to-date"] === "true",
     "shutdown long-poll should be up to date",
   );
-  requiredHeader(drained, "stream-cursor");
-  await drained.text();
-  server = startServer();
-  await waitForServer();
+  yield* requiredHeader(drained, "stream-cursor");
 
-  const afterRestartResponse = await request(`${streamUrl}?offset=-1`);
-  assert(
+  const restarted = yield* spawnServer({ ...serverOptions, port: server.port });
+  const afterRestartResponse = yield* HttpClient.get(`${restarted.url}/${streamId}?offset=-1`);
+  yield* check(
     afterRestartResponse.status === 404,
     `read after restart status ${afterRestartResponse.status}`,
   );
 
-  console.log(`memory-server HTTP smoke passed for ${streamId}, including fresh-store restart`);
-} finally {
-  if (server.exitCode === null) await stopServer(server);
-}
+  yield* Console.log(
+    `memory-server HTTP smoke passed for ${streamId}, including fresh-store restart`,
+  );
+});
+
+smoke.pipe(
+  Effect.scoped,
+  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.
+  Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)),
+  BunRuntime.runMain,
+);

@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+// Promise helpers for the bun:test files. The scripts use the Effect helpers in
+// scripts/support.ts.
 export const packageDir = resolve(import.meta.dir, "..");
 export const scratchDirectory = async (name: string) => {
   const directory = await mkdtemp(join(tmpdir(), `${name}-`));

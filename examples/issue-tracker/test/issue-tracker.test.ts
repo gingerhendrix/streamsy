@@ -8,7 +8,7 @@ import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
 import { transact } from "../server/state.ts";
-import { scratchDirectory, startServer, stopServer, waitForServer } from "../scripts/support.ts";
+import { scratchDirectory, startServer, stopServer, waitForServer } from "./support.ts";
 
 const created: IssueEvent = {
   type: "IssueCreated",
