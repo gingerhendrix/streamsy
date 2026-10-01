@@ -40,16 +40,16 @@ Create the parent directory before starting the server.
 ## How it works
 
 `server/index.ts` is one layer graph, launched with
-`BunRuntime.runMain(Layer.launch(...))`. `Config` reads `PORT`,
+`BunRuntime.runMain(Layer.launch(...), { teardown: Serve.teardown })`. `Config` reads `PORT`,
 `ISSUE_TRACKER_DB` and `NODE_ENV`. The graph opens storage, builds the
 `IssueTracker` service, seeds the `main` workspace, and then starts the
 listener. `BunHttpServer.layer` keeps Bun's HTML bundle and hot reload for
 `/*`; `/api` and `/streams` fall through to one Effect `HttpRouter`. That
 router holds two things: `HttpApiBuilder.layer(IssueTrackerApi)` for the JSON
 API, and `Serve.mount(Workspaces, "/streams/workspace/:workspaceId")` from
-`@streamsy/serve` for the read-only Durable State route. On SIGINT or SIGTERM
-the layer scopes close in reverse order: `drainOnShutdown` answers parked long
-polls with 204, the listener stops, and storage closes last.
+`@streamsy/serve` for the read-only Durable State route. `Serve.layer` serves
+that router. On SIGINT or SIGTERM it answers parked long polls with 204, the
+listener stops, storage closes last, and the process exits 0.
 
 `shared/api.ts` declares `IssueTrackerApi`: one group each for workspaces,
 projects, issues and comments. Effect schemas in `shared/api-schema.ts` check

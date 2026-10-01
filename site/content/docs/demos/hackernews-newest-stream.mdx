@@ -51,7 +51,7 @@ Each number in the diagram is a section below.
 | 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                           | `newest-rows.ts`                  |
 | 3    | The poller reads the rows and their offset, decides, and appends | `Projection.run`, `Projection.read`, `append` with `expectedOffset` | `poller/reconcile.ts`             |
 | 4    | A conflict retries the whole pass                                | `OffsetMismatch`                                                    | `poller/poller.ts`                |
-| 5    | The server publishes the stream as Durable State                 | `Serve.mount`, `listener`, `drainOnShutdown`                        | `http.ts`, `index.ts`             |
+| 5    | The server publishes the stream as Durable State                 | `Serve.mount`, `Serve.layer`, `listener`, `Serve.teardown`          | `http.ts`, `index.ts`             |
 | 6    | The browser replays the stream, then follows live changes        | Durable State client                                                | `client/db.ts`, `client/main.tsx` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
@@ -211,23 +211,22 @@ export const app = Layer.mergeAll(
 );
 ```
 
-`HttpRouter.serve` hosts the page, the State route and the status and poll API
+`Serve.layer` hosts the page, the State route and the status and poll API
 on one scoped Bun listener. They share an origin and need no CORS middleware.
 There are no raw `/streams` routes; only the server appends. The poller has a
 scoped lifetime. There is no background watcher: the projection runs only when
 the poller asks for it.
 
-`listener` keeps a parked long poll open. On shutdown, `drainOnShutdown`
-answers each live read before the router closes:
+`listener` keeps a parked long poll open. On shutdown, `Serve.layer` answers
+each live read before the router closes. `Serve.teardown` then exits 0:
 
 ```ts title="src/server/index.ts"
-const serverLayer = HttpRouter.serve(app, { disableLogger: true }).pipe(
-  drainOnShutdown(),
+const serverLayer = Serve.layer(app, { disableLogger: true }).pipe(
   Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
   Layer.provide(listenerLayer),
 );
 
-BunRuntime.runMain(Layer.launch(serverLayer));
+BunRuntime.runMain(Layer.launch(serverLayer), { teardown: Serve.teardown });
 ```
 
 You can read the route with `curl`:

@@ -22,9 +22,9 @@ ISSUE_TRACKER_DB=tracker.sqlite bun run --cwd examples/issue-tracker run:once ac
 comma-separated fixed address list and defaults to `acme,live`.
 
 The server composes protocol, command and declared output routes with `Layer.mergeAll`
-and runs `HttpRouter.serve` with a scoped Bun listener under `BunRuntime.runMain`.
+and runs `Serve.layer` with a scoped Bun listener under `BunRuntime.runMain`.
 SIGINT or SIGTERM closes the launched scope: live reads drain, then the listener and
-storage close. The routes are:
+storage close, and `Serve.teardown` exits 0. The routes are:
 
 | Route                                                       | Result                                            |
 | ----------------------------------------------------------- | ------------------------------------------------- |

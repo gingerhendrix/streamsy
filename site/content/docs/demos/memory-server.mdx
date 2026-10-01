@@ -51,7 +51,7 @@ shows the expected status, headers, and body for every step. The
 ## How it works
 
 The server declares one group, `Streamsy.group(Streamsy.Wildcard)`, so it owns every
-stream id. `HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs over
+stream id. `Serve.layer(Http.routes(streams, { access: "full" }))` runs over
 `Memory.layer({}, streams)` and a Bun listener. `BunRuntime.runMain(Layer.launch(Server))`
 owns the process.
 
@@ -64,20 +64,21 @@ const Listener = Layer.unwrap(
   ),
 );
 
-const Server = HttpRouter.serve(Http.routes(streams, { access: "full" }), {
+const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
   disableLogger: true,
-}).pipe(drainOnShutdown(), Layer.provide(Memory.layer({}, streams)), Layer.provide(Listener));
+}).pipe(Layer.provide(Memory.layer({}, streams)), Layer.provide(Listener));
 
-BunRuntime.runMain(Layer.launch(Server));
+BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
 ```
 
 Full access allows the create and append steps of the walkthrough. `PORT` is read with
 `Config`. The 60-second idle timeout allows a 30-second protocol long poll to complete.
-On Ctrl+C or `SIGTERM`, `runMain` interrupts the launched Layer. `drainOnShutdown()`
+On Ctrl+C or `SIGTERM`, `runMain` interrupts the launched Layer. `Serve.layer`
 first answers each parked long poll with 204, as a long-poll timeout does, and ends each
 SSE body after its last batch. Clients then reconnect from their last offset. After that,
-the store closes and the listener stops. The process exits with code 130. The example
-README also has an offline smoke test that runs all six flows against a child process.
+the store closes and the listener stops. `Serve.teardown` makes the process exit with
+code 0. The example README also has an offline smoke test that runs all six flows
+against a child process.
 
 See [Protocol routes](/docs/http/routes) and [Memory](/docs/hosting#memory).
 
