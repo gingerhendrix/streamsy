@@ -34,7 +34,7 @@ The server has no read API. Writes go through the JSON API, and reads come from 
 | 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                   | `src/db.ts`                                                       |
 | 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                               | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
 | 5    | The service reads and folds the workspace, then appends if the stream did not move | `read`, `DurableState.changes`, `append` with `expectedOffset` | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
-| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `drainOnShutdown`                               | `server/index.ts`                                                 |
+| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `Serve.layer`, `Serve.teardown`                 | `server/index.ts`                                                 |
 | 7    | The browser follows the stream and confirms its own change                         | Durable State client                                           | `src/db.ts`, `src/App.tsx`                                        |
 
 The code in each section is from the demo. Lines marked `// ...` are left out.
@@ -82,15 +82,14 @@ function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, S
 The whole server is one layer graph. `Layer.provide` builds its argument first and releases it last. So the storage opens first, then the `IssueTracker` service, then the seed step, and the listener starts last. On shutdown the order is the reverse, and the storage closes last.
 
 ```ts title="server/index.ts"
-const ServerLive = HttpRouter.serve(RoutesLive, { disableLogger: true }).pipe(
-  drainOnShutdown(),
+const ServerLive = Serve.layer(RoutesLive, { disableLogger: true }).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
   Layer.provide([StorageLive, BunCrypto.layer]),
 );
 
-BunRuntime.runMain(Layer.launch(ServerLive));
+BunRuntime.runMain(Layer.launch(ServerLive), { teardown: Serve.teardown });
 ```
 
 A shared workspace exists only as its stream. `POST /api/workspaces` makes a random id, creates the stream and appends a starter project. The seed step does the same for `main` when that stream has no projects.
@@ -370,7 +369,7 @@ const RoutesLive = Layer.mergeAll(
 );
 ```
 
-`drainOnShutdown()` in section 2 wraps the serve layer. When the server stops, a parked long poll answers 204 at its offset. The browser then reconnects as it does after a normal long-poll timeout.
+`Serve.layer` in section 2 serves this router. When the server stops, a parked long poll answers 204 at its offset. The browser then reconnects as it does after a normal long-poll timeout.
 
 You can read a workspace with `curl`. It returns the change events as JSON:
 
@@ -378,7 +377,7 @@ You can read a workspace with `curl`. It returns the change events as JSON:
 curl -i 'http://localhost:1338/streams/workspace/main?offset=-1'
 ```
 
-See [Serve handlers](/docs/http/serve) and [Drain on shutdown](/docs/hosting/bun#drain-on-shutdown).
+See [Serve handlers](/docs/http/serve) and [Clean shutdown](/docs/hosting/bun#clean-shutdown).
 
 ## 7. Follow the stream in the browser
 

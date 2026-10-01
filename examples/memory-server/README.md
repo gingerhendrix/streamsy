@@ -87,15 +87,15 @@ values are opaque: copy the value returned by the server.
 
 ## How it works
 
-`HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs with one
+`Serve.layer(Http.routes(streams, { access: "full" }))` runs with one
 `Memory.layer({}, streams)` and a Bun listener, launched with
-`BunRuntime.runMain(Layer.launch(Server))`. `PORT` is read with `Config`. The
+`BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown })`. `PORT` is read with `Config`. The
 60-second idle timeout allows a 30-second protocol long poll to complete.
 
-On Ctrl+C or `SIGTERM`, `drainOnShutdown()` answers each parked long poll with
-`204` and ends each SSE body after its last batch, so clients reconnect from
-their last offset. Then the store closes and the listener stops. The process
-exits with code 130, the code `runMain` gives an interrupted program.
+On Ctrl+C or `SIGTERM`, `Serve.layer` answers each parked long poll with `204`
+and ends each SSE body after its last batch, so clients reconnect from their
+last offset. Then the store closes and the listener stops. `Serve.teardown`
+makes this clean stop exit with code 0.
 
 ## Verify
 

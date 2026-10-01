@@ -75,9 +75,9 @@ bun run --cwd examples/hackernews-newest-stream dev
 Open <http://localhost:1339>. `dev` builds the browser; `dev:api` runs only the
 server and can serve an existing browser build. The page, status API, poll API,
 and State route share the same origin, so CORS middleware is unnecessary.
-`HttpRouter.serve` hosts one `Layer.mergeAll` app on the Streamsy Bun
-`listener`. `BunRuntime.runMain` owns the process. On SIGINT or SIGTERM,
-`drainOnShutdown` answers live reads before the router closes.
+`Serve.layer` hosts one `Layer.mergeAll` app on the Streamsy Bun `listener`.
+`BunRuntime.runMain` owns the process. On SIGINT or SIGTERM, `Serve.layer`
+answers live reads before the router closes, and `Serve.teardown` exits 0.
 
 | Variable              | Default                                 | Meaning                  |
 | --------------------- | --------------------------------------- | ------------------------ |

@@ -46,7 +46,7 @@ The launched scope owns the listener, the storage, and every fiber. A projection
 
 A client abort interrupts a parked long poll and releases its subscription. A bind failure is a typed `ServeError`.
 
-## Drain on shutdown
+## Clean shutdown
 
 On `SIGINT` or `SIGTERM`, `Serve.layer` answers live reads before the routes close. `Serve.teardown` makes this clean stop exit 0. See [Long-running hosts](/docs/http/serve#long-running-hosts).
 
