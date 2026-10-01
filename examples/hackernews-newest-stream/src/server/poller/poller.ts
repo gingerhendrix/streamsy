@@ -67,8 +67,8 @@ export function makeNewestStoriesPoller(
         yield* patchCounters({
           lastOffset: offset,
           lastStoryCount: Object.keys(rows).length,
-          lastUpserts: changes.filter((change) => change.kind === "upsert").length,
-          lastDeletes: changes.filter((change) => change.kind === "delete").length,
+          lastUpserts: changes.filter(Predicate.isTagged("Upsert")).length,
+          lastDeletes: changes.filter(Predicate.isTagged("Delete")).length,
         });
       });
 

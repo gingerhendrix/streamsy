@@ -27,7 +27,7 @@ test("diff suppresses unchanged stories", () => {
 });
 test("diff deletes departed stories", () => {
   expect(diffNewest({ "102": b }, { newestIds: new Set(), stories: [] })).toEqual([
-    DurableState.remove("hn-story", b),
+    DurableState.remove("hn-story", b.id, { oldValue: b }),
   ]);
 });
 test("diff preserves a failed fetch while its id remains newest, and sorts changes", () => {

@@ -18,7 +18,7 @@ test("applyChange replaces upserts and removes rows without mutating its input",
   const updated = { ...row, title: "updated" };
   const events = DurableState.changes(storiesAddress, { offset: ZERO_OFFSET }, [
     DurableState.upsert("hn-story", updated),
-    DurableState.remove("hn-story", updated),
+    DurableState.remove("hn-story", updated.id, { oldValue: updated }),
   ]);
   const before = { "101": row };
   const next = applyChange(before, events[0]);
@@ -44,7 +44,7 @@ test("fold resumes across pages, accepts the tail, and writes no extra stream ev
       units: 2,
     });
     const ack = await h.append([
-      DurableState.remove("hn-story", first),
+      DurableState.remove("hn-story", first.id, { oldValue: first }),
       DurableState.upsert("hn-story", { ...second, title: "updated" }),
     ]);
     const progress = await h.runtime.runPromise(Projection.run({ ...newestRows }));

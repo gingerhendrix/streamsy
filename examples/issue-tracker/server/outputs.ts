@@ -1,4 +1,4 @@
-import { Rows } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
@@ -149,24 +149,27 @@ export const tracker = Projection.mapAccumBatch({
           touchedLabels.add(row.labelId);
       }
       // Preserve insertion order and builder field order, including for JSON comparisons.
-      const board: Rows.Change<typeof Board.collections>[] = [];
+      const board: DurableState.Change<typeof Board.collections>[] = [];
       for (const issue of state.issues) {
         if (!touchedIssues.has(issue.issueId)) continue;
         const row = boardCard(afterIndex, issue);
         const oldIssue = beforeIndex.issues.get(issue.issueId);
         const oldRow = oldIssue === undefined ? undefined : boardCard(beforeIndex, oldIssue);
-        if (JSON.stringify(row) !== JSON.stringify(oldRow)) board.push(Rows.upsert(row));
+        if (JSON.stringify(row) !== JSON.stringify(oldRow))
+          board.push(DurableState.upsert("board", row));
       }
-      const labelCounts: Rows.Change<typeof LabelCounts.collections>[] = [];
+      const labelCounts: DurableState.Change<typeof LabelCounts.collections>[] = [];
       for (const label of state.labels) {
         if (!touchedLabels.has(label.labelId)) continue;
         const row = labelCount(afterIndex, label);
         const oldLabel = beforeIndex.labels.get(label.labelId);
         const oldRow = oldLabel === undefined ? undefined : labelCount(beforeIndex, oldLabel);
-        if (JSON.stringify(row) !== JSON.stringify(oldRow)) labelCounts.push(Rows.upsert(row));
+        if (JSON.stringify(row) !== JSON.stringify(oldRow))
+          labelCounts.push(DurableState.upsert("labelCounts", row));
       }
       for (const label of previous.labels) {
-        if (!labels.has(label.labelId)) labelCounts.push(Rows.remove(label.labelId));
+        if (!labels.has(label.labelId))
+          labelCounts.push(DurableState.remove("labelCounts", label.labelId));
       }
       return [state, { board, labelCounts, transitions }] as const;
     }),

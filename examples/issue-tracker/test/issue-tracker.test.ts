@@ -114,7 +114,9 @@ test("catalog state upserts and deletes a row", async () => {
         expect(afterUpsert[0]?.n).toBe(1);
         yield* (yield* Users).append(
           { workspaceId: "live" },
-          DurableState.changes(ref, { offset: "1" }, [DurableState.remove("user", ada)]),
+          DurableState.changes(ref, { offset: "1" }, [
+            DurableState.remove("user", ada.userId, { oldValue: ada }),
+          ]),
         );
         yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         const afterDelete = yield* sql.unsafe<{ readonly n: number }>(

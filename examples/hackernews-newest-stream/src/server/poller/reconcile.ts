@@ -44,7 +44,7 @@ export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly 
     )
     .toSorted(newestStorySort);
   return [
-    ...removed.map((story) => DurableState.remove("hn-story", story)),
+    ...removed.map((story) => DurableState.remove("hn-story", story.id, { oldValue: story })),
     ...changed.map((story) => DurableState.upsert("hn-story", story)),
   ];
 }

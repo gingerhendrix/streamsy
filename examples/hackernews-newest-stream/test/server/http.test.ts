@@ -28,7 +28,7 @@ test("State is empty at boot, replays pages, resumes, and rejects writes", async
       { type: "hn-story", key: "101", value: row, headers: { operation: "upsert" } },
     ]);
     const cursor = initial.headers.get("stream-next-offset")!;
-    await h.append([DurableState.remove("hn-story", row)]);
+    await h.append([DurableState.remove("hn-story", row.id, { oldValue: row })]);
     expect(await (await read(`offset=${cursor}`)).json()).toMatchObject([
       { type: "hn-story", key: "101", old_value: row, headers: { operation: "delete" } },
     ]);

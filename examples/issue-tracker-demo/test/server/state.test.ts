@@ -102,7 +102,7 @@ describe("mutation attempts", () => {
     const { change, value } = Effect.runSync(createIssue({ projectId: project.id }, stamp)(state));
     expect(value.projectId).toBe(project.id);
     expect(change).toMatchObject({
-      kind: "upsert",
+      _tag: "Upsert",
       type: "issue",
       value: { id: stamp.id },
       headers: { timestamp: stamp.now, txid: stamp.txid },

@@ -56,8 +56,8 @@ persisted value. The command path still reads facts rather than the projection s
 
 `ProjectBoardCard` extends the issue row with label ids and nullable project/assignee
 names. Label counts count attached memberships of existing issues for each catalog
-label, including zero counts; deleting a catalog label emits `Rows.remove(labelId)`
-without `old_value`. Membership ids remain on cards until a detach fact arrives.
+label, including zero counts; deleting a catalog label emits
+`DurableState.remove("labelCounts", labelId)` without `old_value`. Membership ids remain on cards until a detach fact arrives.
 `IssueTransition` uses the existing `IssueEvent` schema, excluding stale facts rejected
 by the sequence fold. The `workspace` value uses `WorkspaceState` to retain source rows
 and membership tombstones for deterministic replay. The full fold state stays private
