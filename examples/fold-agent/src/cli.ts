@@ -23,7 +23,7 @@ import { Cause, Config, Console, Effect, Exit, Option, Schema } from "effect";
 import { configuredModel, exampleAgent, MissingCredentialsError } from "./agent.ts";
 import { formatEntry } from "./render.ts";
 import { Sessions, sessionStreamId } from "./session-log.ts";
-import { configuredStoreLayer, StorageNotAvailable } from "./storage.ts";
+import { configuredStoreLayer } from "./storage.ts";
 import { readFoldLog, streamsyEventLog } from "./streamsy-event-log.ts";
 
 const USAGE = `Usage:
@@ -130,7 +130,6 @@ export const parseResumeArgs = (args: ReadonlyArray<string>) =>
   });
 
 type CliError =
-  | StorageNotAvailable
   | StorageFault
   | UsageError
   | MissingCredentialsError

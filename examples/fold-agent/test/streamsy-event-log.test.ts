@@ -28,12 +28,12 @@ import {
   Stream,
 } from "effect";
 import { Sessions } from "../src/session-log.ts";
-import { memoryLayer, sqliteLayer, StorageNotAvailable } from "../src/storage.ts";
+import { memoryLayer, sqliteLayer } from "../src/storage.ts";
 import { readFoldLog, makeEventLog, type StreamsyEventLogMode } from "../src/streamsy-event-log.ts";
 type JsonValue = Schema.Json;
 
 /** One store for one test: a runtime over the store Layer, disposed at the end. */
-type Store = ManagedRuntime.ManagedRuntime<Sessions, StorageFault | StorageNotAvailable>;
+type Store = ManagedRuntime.ManagedRuntime<Sessions, StorageFault>;
 
 /** Each test names its session. The name maps to one real Fold session id. */
 const sessionIds = new Map<string, SessionId>();
@@ -124,7 +124,7 @@ const failureOf = <A, E>(exit: Exit.Exit<A, E>): { _tag?: string; message?: stri
 const registerEventLogContract = (
   backend: string,
   open: () => {
-    readonly layer: Layer.Layer<Sessions, StorageFault | StorageNotAvailable>;
+    readonly layer: Layer.Layer<Sessions, StorageFault>;
     readonly cleanup: () => void;
   },
 ) =>
