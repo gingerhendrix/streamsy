@@ -103,11 +103,7 @@ When a writer opens, it reads the whole log. It checks Fold's sequence numbers a
 
 ```ts title="src/session-log.ts"
 export const readHistory = Effect.fn("Fold.readHistory")(function* (params: SessionParams) {
-  const batches = yield* Stream.runCollect((yield* Sessions).read(params));
-  return {
-    items: batches.flatMap((batch) => batch.items),
-    offset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
-  };
+  return yield* (yield* Sessions).collect(params);
 });
 ```
 

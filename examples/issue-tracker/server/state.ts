@@ -1,5 +1,4 @@
-import { ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Predicate, Schema, Stream } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import type { CommandRequest } from "../shared/api.ts";
 import { foldIssue, type IssueEvent, type IssueRow } from "../domain/issue.ts";
 import { Events } from "./streams.ts";
@@ -19,10 +18,8 @@ export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueR
 export const transact = (workspaceId: string, command: CommandRequest) =>
   Effect.gen(function* () {
     const stream = yield* Events;
-    const batches = yield* stream.read({ workspaceId }).pipe(Stream.runCollect);
-    const items = batches.flatMap((batch) => batch.items);
+    const { items, offset: head } = yield* stream.collect({ workspaceId });
     const rows = foldEvents(items);
-    const head = batches.at(-1)?.nextOffset ?? ZERO_OFFSET;
     const previous = command.type === "create" ? undefined : rows.get(command.issueId);
     if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
     const sequence = items.reduce((highest, item) => Math.max(highest, item.sequence), -1) + 1;
