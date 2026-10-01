@@ -43,7 +43,7 @@ const issueKeys = Effect.gen(function* () {
 const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
   Effect.runPromise(effect.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Workspaces)))));
 
-test("two concurrent Transact writers land without a lost update", async () => {
+test("two concurrent writers land without a lost update", async () => {
   let attempts = 0;
   const { keys, written } = await runWithStore(
     Effect.gen(function* () {
@@ -72,7 +72,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
         Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
         Effect.provideService(Workspaces, barrierReader),
       );
-      const transact = (issue: Issue) =>
+      const write = (issue: Issue) =>
         tracker.mutate(workspaceId, (state) => {
           attempts += 1;
           expect(state.getProject(project.id)).toBeDefined();
@@ -84,7 +84,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
           return Effect.succeed({ change: issueUpsert(issue, stamp(issue.id)), value: issue });
         });
       const results = yield* Effect.all(
-        [transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))],
+        [write(makeIssue("issue_a")), write(makeIssue("issue_b"))],
         { concurrency: "unbounded" },
       );
       return { keys: yield* issueKeys, written: results };
