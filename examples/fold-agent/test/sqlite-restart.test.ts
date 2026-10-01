@@ -127,6 +127,26 @@ describe("fold-agent CLI", () => {
       expect(inspected.stdout).toContain("The tool counted hello.");
     });
   }, 60_000);
+
+  test("prints a usage error or a command failure once, with exit code 1", async () => {
+    const usage = await runCli(["inspect", "not-a-session"], {});
+    expect(usage.exitCode).toBe(1);
+    expect(usage.stdout).toContain("fold-agent inspect [flags] <stream-id>");
+    expect(usage.stderr).toContain(
+      'Invalid value for argument <stream-id>: "not-a-session". Expected: fold/sessions/<session>/events',
+    );
+
+    const missing = await runCli(["start", "hello"], {
+      OPENAI_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      FOLD_AGENT_SCRIPT: "",
+    });
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stdout).toBe("");
+    expect(missing.stderr.trim()).toBe(
+      "ERROR\n  No provider credentials found. Set OPENAI_API_KEY (optionally FOLD_AGENT_MODEL) or ANTHROPIC_API_KEY.",
+    );
+  }, 60_000);
 });
 
 describe("Fold retained-file process recovery", () => {
