@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 610" width="920" height="610" role="img" aria-labelledby="title desc">
   <title id="title">Issue tracker demo architecture</title>
-  <desc id="desc">In the browser, an action inserts the change into TanStack DB and posts it with a txid to the JSON API. An HttpApi handler calls IssueTracker.mutate, which reads and folds the workspace stream, then appends the change only if the stream tail has not moved. The stream lives in a memory or Bun SQLite store. Http.routes serves the stream read-only from the same Effect router. createStreamDB follows the stream, confirms the txid and fills the TanStack DB collections that React reads with useLiveQuery.</desc>
+  <desc id="desc">In the browser, an action inserts the change into TanStack DB and posts it with a txid to the JSON API. An HttpApi handler calls IssueTracker.mutate, which reads and folds the workspace stream, then appends the change only if the stream tail has not moved. The stream lives in a memory or Bun SQLite store. Serve.mount serves the stream read-only as Durable State from the same Effect router. createStreamDB follows the stream, confirms the txid and fills the TanStack DB collections that React reads with useLiveQuery.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -69,8 +69,8 @@
   <text class="node-subtitle" x="570" y="358" text-anchor="middle">workspace/:workspaceId</text>
 
   <rect class="node" x="700" y="300" width="180" height="88" rx="14"/>
-  <text class="node-title" x="790" y="338" text-anchor="middle">Http.routes</text>
-  <text class="node-subtitle" x="790" y="358" text-anchor="middle">access: "read"</text>
+  <text class="node-title" x="790" y="338" text-anchor="middle">Serve.mount</text>
+  <text class="node-subtitle" x="790" y="358" text-anchor="middle">GET, HEAD only</text>
 
   <rect class="host" x="40" y="418" width="620" height="66" rx="14"/>
   <text class="node-title" x="350" y="446" text-anchor="middle">Memory or Bun SQLite store</text>
