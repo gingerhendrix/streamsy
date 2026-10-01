@@ -16,12 +16,14 @@ interface Batch<A> {
 
 Reads do not include the message at the given offset. Omit the offset to read from the start. Keep `nextOffset` to continue later.
 
-| Method                                 | Ends                              |
-| -------------------------------------- | --------------------------------- |
-| `read(params, { offset?, limit? })`    | At the current tail               |
-| `follow(params, { offset? })`          | When the stream closes            |
-| `session(params, { offset, cursor? })` | After one long-poll wait          |
-| `head(params)`                         | Returns the tail with no messages |
+| Method                                  | Ends                              |
+| --------------------------------------- | --------------------------------- |
+| `read(params, { offset?, limit? })`     | At the current tail               |
+| `collect(params, { offset? })`          | At the current tail               |
+| `fold(params, initial, f, { offset? })` | At the current tail               |
+| `follow(params, { offset? })`           | When the stream closes            |
+| `session(params, { offset, cursor? })`  | After one long-poll wait          |
+| `head(params)`                          | Returns the tail with no messages |
 
 `head` does not restart a TTL.
 
@@ -31,22 +33,19 @@ Reads do not include the message at the given offset. Omit the offset to read fr
 import { Effect, Stream } from "effect";
 import { Notes } from "./streams.ts";
 
-const everything = Effect.flatMap(Notes, (notes) =>
+const sizes = Effect.flatMap(Notes, (notes) =>
   notes.read({}).pipe(
-    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.map((batch) => batch.items.length),
     Stream.runCollect,
   ),
 );
 
-const tail = Effect.flatMap(Notes, (notes) =>
-  notes.read({}).pipe(
-    Stream.map((batch) => batch.nextOffset),
-    Stream.runLast,
-  ),
-);
+const everything = Effect.flatMap(Notes, (notes) => notes.collect({}));
 ```
 
-`read` is an Effect `Stream`. It does nothing until a sink runs it. `limit` sets the maximum number of stored messages in one batch.
+`read` is an Effect `Stream` of batches. It does nothing until a sink runs it. `limit` sets the maximum number of stored messages in one batch.
+
+`collect` reads to the current tail and returns `{ items, offset }`. `offset` is the tail it read up to. Pass it as `expectedOffset` for a [conditional write](/docs/streams/write#conditional-writes), or as `offset` to read on from there.
 
 ## Follow
 
@@ -83,10 +82,27 @@ const once = (offset: string) => Effect.flatMap(Notes, (notes) => notes.session(
 ## Fold
 
 ```ts
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
 const count = Effect.flatMap(Notes, (notes) =>
+  notes.fold(
+    {},
+    () => 0,
+    (total) => total + 1,
+  ),
+);
+```
+
+`fold` reads to the current tail and returns `{ state, offset }`, like `collect`. The initial value is a function, so each fold starts from a new value and a mutable accumulator is safe. To fold only new items, pass the earlier `offset` and start from the earlier `state`.
+
+To keep folding while the stream grows, fold over `follow`:
+
+```ts
+import { Effect, Stream } from "effect";
+import { Notes } from "./streams.ts";
+
+const live = Effect.flatMap(Notes, (notes) =>
   notes.follow({}).pipe(
     Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
     Stream.runFold(
@@ -97,7 +113,7 @@ const count = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-A fold over `follow` completes when the stream closes. Fold over `read` to stop at the current tail.
+A fold over `follow` completes when the stream closes.
 
 ## Errors
 
