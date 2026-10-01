@@ -103,14 +103,14 @@ function startServer() {
 
 async function stopServer(server: DemoProcess): Promise<void> {
   server.kill();
-  // BunRuntime.runMain reports an interrupted main fiber with exit code 130.
+  // Serve.teardown maps the interrupted main fiber to exit code 0.
   const exitCode = await server.exited;
 
   const stdout = await new Response(server.stdout).text();
   const stderr = await new Response(server.stderr).text();
   if (stdout.trim()) console.log(stdout.trim());
   if (stderr.trim()) console.error(stderr.trim());
-  assert(exitCode === 130, `server exit code ${exitCode}: ${stderr}`);
+  assert(exitCode === 0, `server exit code ${exitCode}: ${stderr}`);
   assert(stderr.trim().length === 0, `demo server wrote to stderr: ${stderr}`);
 }
 
@@ -195,7 +195,7 @@ try {
   await Bun.sleep(250);
   assert(!settled, "shutdown probe should have a parked long poll");
   await stopServer(server);
-  // drainOnShutdown answers the parked poll like a long-poll timeout, so the
+  // Serve.layer answers the parked poll like a long-poll timeout, so the
   // client reconnects from the same offset instead of seeing an error.
   const drained = await parked;
   assert(drained.status === 204, `shutdown long-poll status ${drained.status}`);

@@ -1,8 +1,6 @@
 import { BunCrypto, BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
-import { drainOnShutdown } from "@streamsy/serve/bun";
 import { Effect, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
 import index from "../public/index.html";
 import { ApiLive, ApiNotFoundLive } from "./api.ts";
 import { ServerConfig, serverIdleTimeoutSeconds } from "./config.ts";
@@ -41,14 +39,13 @@ const RoutesLive = Layer.mergeAll(
 
 // `Layer.provide` builds its argument first and releases it last. Storage opens
 // first and the main workspace is seeded before the listener starts. On
-// shutdown `drainOnShutdown` answers parked long polls with 204, then the
+// shutdown `Serve.layer` answers parked long polls with 204, then the
 // listener stops, and storage closes last.
-const ServerLive = HttpRouter.serve(RoutesLive, { disableLogger: true }).pipe(
-  drainOnShutdown(),
+const ServerLive = Serve.layer(RoutesLive, { disableLogger: true }).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
   Layer.provide([StorageLive, BunCrypto.layer]),
 );
 
-BunRuntime.runMain(Layer.launch(ServerLive));
+BunRuntime.runMain(Layer.launch(ServerLive), { teardown: Serve.teardown });

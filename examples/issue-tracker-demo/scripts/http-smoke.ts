@@ -350,7 +350,7 @@ try {
   const restartIssueId = restartIssue.issue.id;
 
   // A browser normally has a parked read when the server stops.
-  // drainOnShutdown answers it like a long-poll timeout (204 at the same head),
+  // Serve.layer answers it like a long-poll timeout (204 at the same head),
   // then the listener stops and SQLite closes.
   let settled = false;
   const parked = fetch(`${restartStreamUrl}?offset=now&live=long-poll`).then((response) => {
@@ -360,9 +360,9 @@ try {
   await Bun.sleep(250);
   assert(!settled, "shutdown probe should have a parked long poll");
   server.kill();
-  // BunRuntime.runMain reports an interrupted main fiber with exit code 130.
+  // Serve.teardown maps the interrupted main fiber to exit code 0.
   const exitCode = await server.exited;
-  assert(exitCode === 130, `parked-read shutdown should exit 130 (interrupted), got ${exitCode}`);
+  assert(exitCode === 0, `parked-read shutdown should exit 0, got ${exitCode}`);
   const drained = await parked;
   assert(drained.status === 204, `shutdown long-poll status ${drained.status}`);
   assert(

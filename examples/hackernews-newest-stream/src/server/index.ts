@@ -1,7 +1,8 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { drainOnShutdown, listener } from "@streamsy/serve/bun";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
 import { Effect, Layer } from "effect";
-import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/unstable/http";
 import { DemoConfig } from "./config.ts";
 import { hackerNewsApiLayer } from "./hnews.ts";
 import { app } from "./http.ts";
@@ -16,12 +17,9 @@ const pollerLayer = Layer.unwrap(
 
 const listenerLayer = Layer.unwrap(Effect.map(DemoConfig, ({ port }) => listener({ port })));
 
-// On SIGINT or SIGTERM, runMain interrupts the launch. The drain answers live
-// reads before the router closes, then the poller and storage close.
-const serverLayer = HttpRouter.serve(app, { disableLogger: true }).pipe(
-  drainOnShutdown(),
+const serverLayer = Serve.layer(app, { disableLogger: true }).pipe(
   Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
   Layer.provide(listenerLayer),
 );
 
-BunRuntime.runMain(Layer.launch(serverLayer));
+BunRuntime.runMain(Layer.launch(serverLayer), { teardown: Serve.teardown });

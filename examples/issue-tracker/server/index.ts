@@ -1,7 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { drainOnShutdown, listener } from "@streamsy/serve/bun";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { HttpRouter } from "effect/unstable/http";
 import { app } from "./app.ts";
 import { ServerConfig } from "./config.ts";
 import { applicationLayer } from "./host.ts";
@@ -14,12 +14,11 @@ const Server = Layer.unwrap(
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
     }
-    return HttpRouter.serve(app(workspaces), { disableLogger: true }).pipe(
-      drainOnShutdown(),
+    return Serve.layer(app(workspaces), { disableLogger: true }).pipe(
       Layer.provide(applicationLayer(databasePath, workspaces)),
       Layer.provideMerge(listener({ port })),
     );
   }),
 ).pipe(Layer.provide(BunServices.layer));
 
-BunRuntime.runMain(Layer.launch(Server));
+BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
