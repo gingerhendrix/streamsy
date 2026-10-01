@@ -52,31 +52,32 @@ shows the expected status, headers, and body for every step. The
 
 The server declares one group, `Streamsy.group(Streamsy.Wildcard)`, so it owns every
 stream id. `HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs over
-`Memory.layer({}, streams)` and a scoped Bun listener. Lines marked `// ...` are left out.
+`Memory.layer({}, streams)` and a Bun listener. `BunRuntime.runMain(Layer.launch(Server))`
+owns the process.
 
 ```ts title="src/index.ts"
 const streams = Streamsy.group(Streamsy.Wildcard);
-// ...
-const runtime = ManagedRuntime.make(
-  HttpRouter.serve(Http.routes(streams, { access: "full" }), {
-    disableLogger: true,
-    disableListenLog: true,
-  }).pipe(
-    drainOnShutdown(),
-    Layer.provide(Memory.layer({}, streams)),
-    Layer.provideMerge(
-      listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
-    ),
+
+const Listener = Layer.unwrap(
+  Effect.map(Config.Port("PORT").pipe(Config.withDefault(1337)), (port) =>
+    listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
   ),
 );
+
+const Server = HttpRouter.serve(Http.routes(streams, { access: "full" }), {
+  disableLogger: true,
+}).pipe(drainOnShutdown(), Layer.provide(Memory.layer({}, streams)), Layer.provide(Listener));
+
+BunRuntime.runMain(Layer.launch(Server));
 ```
 
-Full access allows the create and append steps of the walkthrough. The 60-second idle
-timeout allows a 30-second protocol long poll to complete. On shutdown, `drainOnShutdown()`
+Full access allows the create and append steps of the walkthrough. `PORT` is read with
+`Config`. The 60-second idle timeout allows a 30-second protocol long poll to complete.
+On Ctrl+C or `SIGTERM`, `runMain` interrupts the launched Layer. `drainOnShutdown()`
 first answers each parked long poll with 204, as a long-poll timeout does, and ends each
 SSE body after its last batch. Clients then reconnect from their last offset. After that,
-the runtime closes the store and the listener. The example README also has an offline
-smoke test that runs all six flows against a child process.
+the store closes and the listener stops. The process exits with code 130. The example
+README also has an offline smoke test that runs all six flows against a child process.
 
 See [Protocol routes](/docs/http/routes) and [Memory](/docs/hosting#memory).
 

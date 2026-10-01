@@ -87,9 +87,15 @@ values are opaque: copy the value returned by the server.
 
 ## How it works
 
-`HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs with one `Memory.layer({}, streams)` and a
-scoped Bun listener. The 60-second idle timeout allows a 30-second protocol long
-poll to complete. Shutdown disposes the runtime, closing the listener and store.
+`HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs with one
+`Memory.layer({}, streams)` and a Bun listener, launched with
+`BunRuntime.runMain(Layer.launch(Server))`. `PORT` is read with `Config`. The
+60-second idle timeout allows a 30-second protocol long poll to complete.
+
+On Ctrl+C or `SIGTERM`, `drainOnShutdown()` answers each parked long poll with
+`204` and ends each SSE body after its last batch, so clients reconnect from
+their last offset. Then the store closes and the listener stops. The process
+exits with code 130, the code `runMain` gives an interrupted program.
 
 ## Verify
 
@@ -100,8 +106,9 @@ bun run --cwd examples/memory-server smoke:http
 ```
 
 The offline smoke drives create, append, catch-up read, conditional `ETag`,
-long-poll, and SSE flows against a child process. It then stops and restarts the
-server and confirms the earlier stream returns `404 Not Found`.
+long-poll, and SSE flows against a child process. It then stops the server with
+a parked long poll, checks the `204` drain reply and exit code 130, restarts the
+server, and confirms the earlier stream returns `404 Not Found`.
 
 ## Limits
 

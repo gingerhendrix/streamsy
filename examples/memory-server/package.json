@@ -10,6 +10,7 @@
     "test:unit": "bun test test"
   },
   "dependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@streamsy/core": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "effect": "4.0.0-rc.115"

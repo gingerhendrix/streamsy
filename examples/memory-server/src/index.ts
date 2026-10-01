@@ -1,44 +1,19 @@
-/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This executable owns the HTTP listener and process configuration. */
-import { Streamsy, Memory } from "@streamsy/core";
-import * as Http from "@streamsy/core/http";
+import { BunRuntime } from "@effect/platform-bun";
+import { Http, Memory, Streamsy } from "@streamsy/core";
 import { drainOnShutdown, listener } from "@streamsy/serve/bun";
-import { Cause, Effect, Layer, ManagedRuntime } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { Config, Effect, Layer } from "effect";
+import { HttpRouter } from "effect/unstable/http";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
-const port = parseInt(process.env.PORT ?? "1337", 10);
-const runtime = ManagedRuntime.make(
-  HttpRouter.serve(Http.routes(streams, { access: "full" }), {
-    disableLogger: true,
-    disableListenLog: true,
-  }).pipe(
-    drainOnShutdown(),
-    Layer.provide(Memory.layer({}, streams)),
-    Layer.provideMerge(
-      listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
-    ),
+
+const Listener = Layer.unwrap(
+  Effect.map(Config.Port("PORT").pipe(Config.withDefault(1337)), (port) =>
+    listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
   ),
 );
-export const server = await runtime.runPromise(HttpServer.HttpServer);
-console.log(`Memory server listening on ${HttpServer.formatAddress(server.address)}`);
-let shuttingDown: Promise<void> | undefined;
-export function shutdown(): Promise<void> {
-  return (shuttingDown ??= Effect.runPromise(
-    runtime.disposeEffect.pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause),
-      ),
-    ),
-  ));
-}
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    void shutdown().then(
-      () => process.exit(0),
-      (error) => {
-        console.error(error);
-        process.exit(1);
-      },
-    );
-  });
-}
+
+const Server = HttpRouter.serve(Http.routes(streams, { access: "full" }), {
+  disableLogger: true,
+}).pipe(drainOnShutdown(), Layer.provide(Memory.layer({}, streams)), Layer.provide(Listener));
+
+BunRuntime.runMain(Layer.launch(Server));
