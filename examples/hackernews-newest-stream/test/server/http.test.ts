@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the Web handler and runtime lifetime. */
 import { expect, test } from "bun:test";
+import { BunHttpServer } from "@effect/platform-bun";
 import { DurableState } from "@streamsy/core";
 import { HttpRouter } from "effect/unstable/http";
 import { Effect, Layer, Schema } from "effect";
@@ -70,9 +71,10 @@ test("merged app serves status, poll, State and page routes", async () => {
       }),
     }),
   );
-  const web = HttpRouter.toWebHandler(app.pipe(HttpRouter.provideRequest(services)), {
-    disableLogger: true,
-  });
+  const web = HttpRouter.toWebHandler(
+    app.pipe(HttpRouter.provideRequest(services), Layer.provide(BunHttpServer.layerHttpServices)),
+    { disableLogger: true },
+  );
   try {
     const status = await web.handler(new Request("http://host/api/status"));
     expect(Schema.decodeUnknownSync(ApiStatus)(await status.json())).toMatchObject({
