@@ -2,9 +2,9 @@
 
 A Bun server polls Hacker News and writes one Durable State stream,
 `hackernews/newest`. A checkpointed fold, `newestRows`, folds the stream into
-the current story rows. Before each append, the poller runs the projection,
-reads the rows and the offset they are at, diffs them against the fetch, and
-appends the changes with `expectedOffset: offsets.input`. `Serve.mount`
+the current story rows. The poller calls `Projection.decide`: it runs the
+projection, reads the rows and the offset they are at, diffs them against the
+fetch, and appends the changes with `expectedOffset: offsets.input`. `Serve.mount`
 publishes the stream at `/state/newest`. The React browser replays from `-1`
 into TanStack DB through `createStreamDB`, then follows live changes.
 
@@ -36,29 +36,36 @@ file. The state row and the checkpoint commit in one transaction. About 50 rows
 live in one state value because this set is small and bounded; the projections
 docs advise application tables for large row sets.
 
-One pass of the recipe is `reconcileNewest` in `src/server/poller/reconcile.ts`:
+One call of the recipe is `reconcileNewest` in `src/server/poller/reconcile.ts`:
 
 ```ts
-export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+export const reconcileNewest = (
   fetched: FetchResult,
-) {
-  // Run to the tail. A run with a limit would leave the offset behind the tail.
-  yield* Projection.run(newestRows);
-  // The rows and the offset they are at, from one transaction.
-  const { state: rows, offsets } = yield* Projection.read(newestRows);
-  const changes = diffNewest(rows, fetched);
-  // An append needs items. No change appends nothing, so it does not check the tail.
-  if (!Array.isReadonlyArrayNonEmpty(changes)) return { rows, changes, offset: offsets.input };
-  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
-  const stories = yield* HackerNewsStories;
-  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
+  retry: Schedule.Schedule<unknown, OffsetMismatch>,
+) =>
+  Projection.decide(newestRows, {
+    input: "input",
+    decide: ({ state: rows, offsets }) => {
+      const changes = diffNewest(rows, fetched);
+      // No change gives no events: `decide` then appends nothing and does not check the tail.
+      const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+      return Effect.succeed({
+        value: { rows: events.reduce(applyChange, rows), changes },
+        items: events,
+      });
+    },
+    retry,
+  }).pipe(
+    Effect.map(({ value, offset }) => ({ ...value, offset })),
+    Effect.withSpan("NewestStoriesPoller.reconcile"),
+  );
 ```
 
 Each pass fetches the newest ids and all their stories once. Unchanged stories
 produce no writes. Departed ids produce deletes, including ids that left during
 server downtime. An `OffsetMismatch` triggers up to three retries of the whole
-pass. Each retry runs the projection, reads again and rebuilds the diff from
-durable rows without refetching HN. After the retry limit, status records the
+pass. `Projection.decide` runs each retry: it runs the projection, reads again
+and rebuilds the diff from durable rows without refetching HN. After the retry limit, status records the
 error and the next poll tries again. There is no background projection watcher
 or in-memory story cache.
 

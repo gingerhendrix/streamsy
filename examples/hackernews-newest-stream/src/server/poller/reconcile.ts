@@ -1,9 +1,9 @@
-import { Array, Effect } from "effect";
-import { DurableState } from "@streamsy/core";
+import { Effect, type Schedule } from "effect";
+import { DurableState, type OffsetMismatch } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { newestStorySort, type HnStory } from "../../state-schema.ts";
 import { applyChange, newestRows, type StoryRows } from "../newest-rows.ts";
-import { HackerNewsStories, storiesAddress, type StoryChange } from "../stories.ts";
+import { storiesAddress, type StoryChange } from "../stories.ts";
 
 export type FetchResult = {
   readonly newestIds: ReadonlySet<number>;
@@ -11,24 +11,31 @@ export type FetchResult = {
 };
 
 /**
- * One pass of read, decide, append. Fails with `OffsetMismatch` when another
- * writer appended after the read; the caller retries the whole pass.
+ * Read, decide, append. `Projection.decide` runs the rows to the tail, reads
+ * them with their offset, and appends the diff with that offset as
+ * `expectedOffset`. After `OffsetMismatch` it runs, reads and decides again
+ * while `retry` allows.
  */
-export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+export const reconcileNewest = (
   fetched: FetchResult,
-) {
-  // Run to the tail. A run with a limit would leave the offset behind the tail.
-  yield* Projection.run(newestRows);
-  // The rows and the offset they are at, from one transaction.
-  const { state: rows, offsets } = yield* Projection.read(newestRows);
-  const changes = diffNewest(rows, fetched);
-  // An append needs items. No change appends nothing, so it does not check the tail.
-  if (!Array.isReadonlyArrayNonEmpty(changes)) return { rows, changes, offset: offsets.input };
-  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
-  const stories = yield* HackerNewsStories;
-  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
-  return { rows: events.reduce(applyChange, rows), changes, offset: appended.offset };
-});
+  retry: Schedule.Schedule<unknown, OffsetMismatch>,
+) =>
+  Projection.decide(newestRows, {
+    input: "input",
+    decide: ({ state: rows, offsets }) => {
+      const changes = diffNewest(rows, fetched);
+      // No change gives no events: `decide` then appends nothing and does not check the tail.
+      const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+      return Effect.succeed({
+        value: { rows: events.reduce(applyChange, rows), changes },
+        items: events,
+      });
+    },
+    retry,
+  }).pipe(
+    Effect.map(({ value, offset }) => ({ ...value, offset })),
+    Effect.withSpan("NewestStoriesPoller.reconcile"),
+  );
 
 /** Keep known rows on item-fetch failures while their ids remain in the newest set. */
 export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly StoryChange[] {
