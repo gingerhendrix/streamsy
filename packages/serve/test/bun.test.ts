@@ -324,7 +324,7 @@ it("a parked long poll survives past 10 seconds under the default idle timeout",
 
 const drainingHost = async (layer: TestHostOptions["layer"]) => {
   const host = await Effect.runPromise(
-    testHost({ layer, port: 0, drain: { timeout: Duration.seconds(2) } }),
+    testHost({ layer, port: 0, drain: { drainTimeout: Duration.seconds(2) } }),
   );
   const created = await fetch(new URL("s", host.url), {
     method: "PUT",

@@ -21,6 +21,7 @@ export {
   WireEncodeFailed,
   type ServeError,
 } from "./errors.ts";
+export { layer, teardown, type LayerOptions } from "./host.ts";
 
 type Names<S extends string> = S extends `${string}:${infer N}/${infer Tail}`
   ? N | Names<Tail>
