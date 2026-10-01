@@ -20,7 +20,7 @@ it("state changes round trip with Durable State wire fields and source headers",
       const second = { id: 8, title: "second" };
       const facts = DurableState.changes(stories, { offset: "source:4" }, [
         DurableState.upsert("story", first),
-        DurableState.remove("story", second),
+        DurableState.remove("story", second.id, { oldValue: second }),
       ]);
 
       yield* Streams.create(stories);
@@ -44,6 +44,23 @@ it("state changes round trip with Durable State wire fields and source headers",
       ]);
     }).pipe(Effect.provide(Streams.layerMemory())),
   ));
+
+it("encodes the row with the collection codec and a string key", () => {
+  const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+  const cards = StreamAddress.state("cards", {
+    collections: { card: { schema: Card, key: "id" } },
+  });
+  const [event] = DurableState.changes(cards, {}, [
+    DurableState.upsert("card", { id: "a", total: 2 }),
+  ]);
+  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
+  expect(JSON.parse(Schema.encodeSync(cards.codec)(event!) as string)).toEqual({
+    type: "card",
+    key: "a",
+    value: { id: "a", total: "2" },
+    headers: { operation: "upsert" },
+  });
+});
 
 it("supports string keys and rejects empty derived keys", () => {
   expect(
@@ -109,6 +126,58 @@ it("lets a change override txid and add source headers without replacing offset"
   expect(JSON.parse(encodedText).headers).toEqual(facts[0]!.headers);
 });
 
+it("stamps no offset and no default txid when the batch has no source offset", () => {
+  const facts = DurableState.changes(stories, {}, [
+    DurableState.upsert("story", { id: 7, title: "first" }),
+    DurableState.upsert("story", { id: 8, title: "second" }, { headers: { txid: "client-uuid" } }),
+    DurableState.remove("story", 9),
+  ]);
+  expect(facts).toEqual([
+    {
+      type: "story",
+      key: "7",
+      value: { id: 7, title: "first" },
+      headers: { operation: "upsert" },
+    },
+    {
+      type: "story",
+      key: "8",
+      value: { id: 8, title: "second" },
+      headers: { operation: "upsert", txid: "client-uuid" },
+    },
+    { type: "story", key: "9", headers: { operation: "delete" } },
+  ]);
+});
+
+it("writes old_value only when a delete has an old value", () => {
+  const [withOld, keyOnly] = DurableState.changes(slugs, { offset: "source:10" }, [
+    DurableState.remove("slug", "a", { oldValue: { slug: "a", title: "A" } }),
+    DurableState.remove("slug", "b"),
+  ]);
+  expect(withOld).toEqual({
+    type: "slug",
+    key: "a",
+    old_value: { slug: "a", title: "A" },
+    headers: { operation: "delete", offset: "source:10", txid: "source:10:0" },
+  });
+  expect(keyOnly).toEqual({
+    type: "slug",
+    key: "b",
+    headers: { operation: "delete", offset: "source:10", txid: "source:10:1" },
+  });
+  expect(keyOnly).not.toHaveProperty("old_value");
+});
+
+it("rejects an empty delete key and an unknown collection", () => {
+  expect(() => DurableState.changes(slugs, {}, [DurableState.remove("slug", "")])).toThrow(
+    'Invalid state key for type "slug": key',
+  );
+  expect(() =>
+    // @ts-expect-error unknown collection names are rejected at both boundaries
+    DurableState.changes(slugs, {}, [DurableState.remove("missing", "a")]),
+  ).toThrow(TypeError);
+});
+
 it("writes and reads several collections through one state address", () =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -122,7 +191,7 @@ it("writes and reads several collections through one state address", () =>
       const facts = DurableState.changes(workspace, { offset: "source:9" }, [
         DurableState.upsert("project", { id: "p1", name: "Streamsy" }),
         DurableState.upsert("story", { id: 7, title: "first" }),
-        DurableState.remove("project", { id: "p1", name: "Streamsy" }),
+        DurableState.remove("project", "p1"),
       ]);
       expect(facts.map((fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
         ["project", "p1", "upsert"],

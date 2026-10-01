@@ -18,8 +18,19 @@ const workspace = StreamAddress.state("entries", {
 
 DurableState.changes(workspace, { offset: "0" }, [
   DurableState.upsert("entry", { id: "a", metadata: { source: "s" } }),
-  DurableState.remove("note", { noteId: 1, text: "t" }),
+  DurableState.remove("note", 1, { oldValue: { noteId: 1, text: "t" } }),
+  DurableState.remove("entry", "a"),
 ]);
+DurableState.changes(workspace, {}, [DurableState.upsert("note", { noteId: 2, text: "u" })]);
+
+const change: DurableState.Change<typeof workspace.collections> = DurableState.remove("note", 1);
+export const tag: "Upsert" | "Delete" = change._tag;
+
+// @ts-expect-error the old value must match the named collection's schema
+DurableState.changes(workspace, {}, [DurableState.remove("note", 1, { oldValue: { id: "a" } })]);
+
+// @ts-expect-error the collection name is required
+DurableState.upsert({ noteId: 1, text: "t" });
 
 // @ts-expect-error state keys must decode to strings or numbers
 StreamAddress.state("entries", { collections: { entry: { schema: Entry, key: "metadata" } } });

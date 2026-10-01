@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
-import { Rows, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
 import * as Memory from "@streamsy/projection/memory";
@@ -38,10 +38,10 @@ for (const commit of [Commit.transaction, Commit.producer]) {
           commit,
           emit: ({ item }) => ({
             renamed: [
-              Rows.upsert("card", { id: "a", title: "A" }),
-              Rows.upsert("count", { number: 7, total: item }),
-              Rows.remove("card", "old"),
-              Rows.remove("count", 8),
+              DurableState.upsert("card", { id: "a", title: "A" }),
+              DurableState.upsert("count", { number: 7, total: item }),
+              DurableState.remove("card", "old"),
+              DurableState.remove("count", 8),
             ],
           }),
         });
@@ -83,8 +83,8 @@ test("an invalid runtime collection fails without advancing the checkpoint", () 
         inputs: { input: Input.at(params) },
         outputs: { board: Board.at(params) },
         commit: Commit.producer,
-        // @ts-expect-error runtime callers can bypass the required collection name
-        emit: () => ({ board: [Rows.remove("a")] }),
+        // @ts-expect-error runtime callers can bypass the declared collection names
+        emit: () => ({ board: [DurableState.remove("missing", "a")] }),
       }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result).toMatchObject({

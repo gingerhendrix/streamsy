@@ -1,6 +1,6 @@
 import { Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { Streamsy, Rows } from "@streamsy/core";
+import { DurableState, Streamsy } from "@streamsy/core";
 import {
   CheckpointStore,
   Commit,
@@ -92,7 +92,7 @@ const tracker = Projection.mapAccumBatch({
       return [
         { ...previous, count: previous.count + batch.events.items.length },
         {
-          board: batch.events.items.map((row) => Rows.upsert(row)),
+          board: batch.events.items.map((row) => DurableState.upsert("board", row)),
           transitions: batch.events.items.map((e) => e.issueId),
         },
       ] as const;

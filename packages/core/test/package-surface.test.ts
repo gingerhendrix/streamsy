@@ -7,7 +7,6 @@ import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
 
 test("public roots expose application tools and isolate internals", () => {
-  expect(Object.keys(Root.Rows)).toEqual(["encode", "remove", "upsert"]);
   expect(Object.keys(Root.DurableState)).toEqual(["changes", "remove", "upsert"]);
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
   expect(Object.keys(Protocol.Protocol)).not.toContain("create");
@@ -68,7 +67,6 @@ test("root exports stay explicit", () => {
     "ProducerPrecondition",
     "ProducerState",
     "RecordPatch",
-    "Rows",
     "StaleEpoch",
     "Storage",
     "StorageCapabilities",

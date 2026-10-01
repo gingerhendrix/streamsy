@@ -1,4 +1,4 @@
-import { Rows } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
@@ -43,7 +43,10 @@ const tracker = Projection.mapAccumBatch({
       return [
         { total },
         {
-          board: [Rows.upsert({ id: "total", total }), Rows.remove("old")],
+          board: [
+            DurableState.upsert("board", { id: "total", total }),
+            DurableState.remove("board", "old"),
+          ],
           transitions: [total],
         },
       ] as const;

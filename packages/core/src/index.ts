@@ -42,4 +42,3 @@ export * as Producer from "./toolkit/producer.ts";
 export * as Http from "./http/index.ts";
 export type { Batch } from "./toolkit/streams.ts";
 export * as Streamsy from "./streamsy.ts";
-export * as Rows from "./toolkit/rows.ts";

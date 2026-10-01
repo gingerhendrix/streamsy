@@ -1,4 +1,4 @@
-import { Rows } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -60,7 +60,10 @@ const tracker = Projection.mapAccumBatch({
       return [
         next,
         {
-          board: [Rows.upsert({ issueId: "total", total: next }), Rows.remove("old")],
+          board: [
+            DurableState.upsert("board", { issueId: "total", total: next }),
+            DurableState.remove("board", "old"),
+          ],
           transitions: [next],
         },
       ] as const;
@@ -354,7 +357,10 @@ for (const [name, host] of hosts) {
           outputs: { board },
           emit: () =>
             Effect.succeed({
-              board: [Rows.upsert({ issueId: "one", title: "First" }), Rows.remove("old")],
+              board: [
+                DurableState.upsert("board", { issueId: "one", title: "First" }),
+                DurableState.remove("board", "old"),
+              ],
             }),
         }).at({});
         yield* Projection.run(projection);

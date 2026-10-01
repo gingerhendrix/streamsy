@@ -1,6 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
 import { Effect, Predicate, type Schema } from "effect";
-import { Rows, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
+import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import type { ResolvedOutput } from "./commit/internal.ts";
@@ -10,7 +10,7 @@ import { ProjectionFault } from "./fault.ts";
 export type RoutedMap = Inputs;
 export type Item<T> =
   AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
-    ? Rows.Change<C>
+    ? DurableState.Change<C>
     : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
       ? A
       : never;
@@ -50,9 +50,11 @@ export const collect = (
         try: () =>
           "collections" in output
             ? // SAFETY: state addresses carry their collections; constructor signatures check each change against them.
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The address's state marker establishes this collection shape.
-              entries.map((change) =>
-                Rows.encode(output.collections as StreamAddress.Collections, change),
+              DurableState.changes(
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The address's state marker establishes this collection shape.
+                output as StreamAddress.StateAddress<StreamAddress.Collections, any, any>,
+                {},
+                entries,
               )
             : entries,
         catch: (cause) =>
