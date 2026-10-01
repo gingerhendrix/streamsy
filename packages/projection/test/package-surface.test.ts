@@ -102,6 +102,7 @@ test("root exports stay explicit", () => {
     "Transaction",
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
+    "decide",
     "each",
     "emit",
     "fold",

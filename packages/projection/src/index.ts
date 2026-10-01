@@ -1,5 +1,6 @@
 export * as Projection from "./projection.ts";
 export type { Declaration } from "./declaration.ts";
+export type { DecideSpec } from "./decide.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";
 export type { WatchOptions } from "./watch.ts";
