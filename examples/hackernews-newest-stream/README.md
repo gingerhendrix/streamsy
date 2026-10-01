@@ -73,7 +73,9 @@ bun run --cwd examples/hackernews-newest-stream dev
 ```
 
 Open <http://localhost:1339>. `dev` builds the browser; `dev:api` runs only the
-server and can serve an existing browser build. The page, status API, poll API,
+server and serves an existing browser build from `dist/`. The server looks for
+the build once at startup. Without it, `GET /` returns a hint to run
+`bun run build`. The page, status API, poll API,
 and State route share the same origin, so CORS middleware is unnecessary.
 `Serve.layer` hosts one `Layer.mergeAll` app on the Streamsy Bun `listener`.
 `BunRuntime.runMain` owns the process. On SIGINT or SIGTERM, `Serve.layer`
@@ -114,6 +116,7 @@ failure; check `lastPollError` for the result.
 - `src/server/newest-rows.ts`: `Projection.fold` with `state:` and `fold:`, and pure `applyChange`.
 - `src/server/poller/reconcile.ts`: `reconcileNewest` (run, read, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
+- `src/server/static.ts`: the browser build through `HttpStaticServer`, with the SPA fallback.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.
 - `src/server/index.ts`: `runMain`, the listener, the drain and the application layers.
 - `src/server/config.ts`: host and HN poll settings as one `Config`.
