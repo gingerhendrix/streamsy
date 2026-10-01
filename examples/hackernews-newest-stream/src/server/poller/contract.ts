@@ -22,17 +22,25 @@ export type PollCounters = {
   readonly lastStoryCount: number;
 };
 
-export type PollStats = PollCounters & { readonly polling: boolean };
+export type PollStats = PollCounters & {
+  readonly polling: boolean;
+  readonly newestLimit: number;
+  readonly pollIntervalMs: number;
+};
 
-export type HackerNewsApi = {
+export interface HackerNewsApiService {
   readonly fetchNewestStoryIds: (limit: number) => Effect.Effect<number[], PollFailure>;
   readonly fetchStoriesById: (ids: readonly number[]) => Effect.Effect<HnStory[], PollFailure>;
-};
+}
+
+export class HackerNewsApi extends Context.Service<HackerNewsApi, HackerNewsApiService>()(
+  "HackerNews/HackerNewsApi",
+) {}
 
 export type PollerConfig = {
   readonly limit: number;
   readonly intervalMs: number;
-  readonly api?: HackerNewsApi;
+  readonly api: HackerNewsApiService;
 };
 
 export interface NewestStoriesPollerService {

@@ -1,7 +1,7 @@
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { newestLimit, pollIntervalMs, streamPath } from "./config.ts";
+import { streamPath } from "./config.ts";
 import { NewestStoriesPoller } from "./poller/contract.ts";
 import { serveStatic } from "./static.ts";
 import { HackerNewsStories } from "./stories.ts";
@@ -20,12 +20,7 @@ export const app = Layer.mergeAll(
     "GET",
     "/api/status",
     Effect.gen(function* () {
-      return HttpServerResponse.jsonUnsafe({
-        streamPath,
-        newestLimit,
-        pollIntervalMs,
-        ...(yield* currentStats),
-      });
+      return HttpServerResponse.jsonUnsafe({ streamPath, ...(yield* currentStats) });
     }),
   ),
   HttpRouter.add(

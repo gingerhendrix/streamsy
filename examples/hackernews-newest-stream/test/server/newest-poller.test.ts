@@ -5,7 +5,7 @@ import { Projection } from "@streamsy/projection";
 import { Context, Deferred, Effect, Fiber } from "effect";
 import { diffNewest } from "../../src/server/poller/reconcile.ts";
 import { makeNewestStoriesPoller } from "../../src/server/poller/poller.ts";
-import type { HackerNewsApi } from "../../src/server/poller/contract.ts";
+import type { HackerNewsApiService } from "../../src/server/poller/contract.ts";
 import { newestRows } from "../../src/server/newest-rows.ts";
 import { HackerNewsStories, storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
@@ -38,7 +38,7 @@ test("diff preserves a failed fetch while its id remains newest, and sorts chang
   ]);
 });
 
-const api: HackerNewsApi = {
+const api: HackerNewsApiService = {
   fetchNewestStoryIds: () => Effect.succeed([101]),
   fetchStoriesById: () => Effect.succeed([a]),
 };
