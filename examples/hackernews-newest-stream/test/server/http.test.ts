@@ -62,7 +62,12 @@ test("merged app serves status, poll, State and page routes", async () => {
       pollNow: Effect.sync(() => {
         polls++;
       }),
-      stats: Effect.succeed({ ...initialCounters, polling: false }),
+      stats: Effect.succeed({
+        ...initialCounters,
+        polling: false,
+        newestLimit: 50,
+        pollIntervalMs: 60_000,
+      }),
     }),
   );
   const web = HttpRouter.toWebHandler(app.pipe(HttpRouter.provideRequest(services)), {
@@ -72,6 +77,8 @@ test("merged app serves status, poll, State and page routes", async () => {
     const status = await web.handler(new Request("http://host/api/status"));
     expect(Schema.decodeUnknownSync(ApiStatus)(await status.json())).toMatchObject({
       streamPath: "/state/newest",
+      newestLimit: 50,
+      pollIntervalMs: 60_000,
       totalConflictsRetried: 0,
     });
     expect(

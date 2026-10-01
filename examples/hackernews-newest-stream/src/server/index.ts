@@ -1,45 +1,27 @@
-/* oxlint-disable effecttsgo/async-function -- This executable owns process shutdown and the ManagedRuntime boundary. */
-import { Cause, Effect, Layer, ManagedRuntime } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { BunRuntime } from "@effect/platform-bun";
 import { drainOnShutdown, listener } from "@streamsy/serve/bun";
-import { newestLimit, pollIntervalMs, port, serverIdleTimeoutSeconds } from "./config.ts";
+import { Effect, Layer } from "effect";
+import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
+import { DemoConfig } from "./config.ts";
+import { hackerNewsApiLayer } from "./hnews.ts";
 import { app } from "./http.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
 import { demoHostLayer } from "./streams.ts";
 
-const applicationLayer = newestStoriesPollerLayer({
-  limit: newestLimit,
-  intervalMs: pollIntervalMs,
-}).pipe(Layer.provideMerge(demoHostLayer));
-const runtime = ManagedRuntime.make(
-  HttpRouter.serve(app, { disableLogger: true }).pipe(
-    drainOnShutdown(),
-    Layer.provide(applicationLayer),
-    Layer.provide(
-      listener({ port, idleTimeout: serverIdleTimeoutSeconds, gracefulShutdownTimeout: 1000 }),
-    ),
+const pollerLayer = Layer.unwrap(
+  Effect.map(DemoConfig, ({ newestLimit, pollIntervalMs }) =>
+    newestStoriesPollerLayer({ limit: newestLimit, intervalMs: pollIntervalMs }),
   ),
-);
-await runtime.runPromise(Effect.void);
+).pipe(Layer.provide(hackerNewsApiLayer), Layer.provide(FetchHttpClient.layer));
 
-let shuttingDown: Promise<void> | undefined;
-export function shutdown(): Promise<void> {
-  return (shuttingDown ??= Effect.runPromise(
-    runtime.disposeEffect.pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause),
-      ),
-    ),
-  ));
-}
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    void shutdown().then(
-      () => process.exit(0),
-      (error) => {
-        console.error(error);
-        process.exit(1);
-      },
-    );
-  });
-}
+const listenerLayer = Layer.unwrap(Effect.map(DemoConfig, ({ port }) => listener({ port })));
+
+// On SIGINT or SIGTERM, runMain interrupts the launch. The drain answers live
+// reads before the router closes, then the poller and storage close.
+const serverLayer = HttpRouter.serve(app, { disableLogger: true }).pipe(
+  drainOnShutdown(),
+  Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
+  Layer.provide(listenerLayer),
+);
+
+BunRuntime.runMain(Layer.launch(serverLayer));

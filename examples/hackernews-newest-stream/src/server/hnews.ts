@@ -1,85 +1,54 @@
-import { Effect, Schema } from "effect";
-import { HackerNewsItem, HackerNewsStory, newestStorySort, type HnStory } from "../state-schema.ts";
-import { hnApiBase } from "./config.ts";
-import { pollFailure, type HackerNewsApi } from "./poller/contract.ts";
-
-// Defaults to the public HN Firebase API. Override with HN_API_BASE to point the
-// poller at a local fixture (used by the offline smoke test).
-const defaultHnBase = hnApiBase;
+import { Array, Effect, Layer, Option, Schema } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HackerNewsItem, HackerNewsStory, newestStorySort } from "../state-schema.ts";
+import { DemoConfig } from "./config.ts";
+import { HackerNewsApi, pollFailure } from "./poller/contract.ts";
 
 const NewestStoryIds = Schema.Array(Schema.Finite);
-type HackerNewsStoryResponse = { -readonly [Key in keyof HnStory]: HnStory[Key] };
 
-// oxlint-disable-next-line effecttsgo/async-function -- This exported Promise helper is the documented HN compatibility adapter used at non-Effect edges.
-export async function fetchNewestStoryIds(
-  limit: number,
-  apiBase = defaultHnBase,
-): Promise<number[]> {
-  // oxlint-disable-next-line effecttsgo/global-fetch -- This exported Promise compatibility adapter owns the Web fetch boundary and is wrapped by liveHackerNewsApi for Effect orchestration.
-  const response = await fetch(`${apiBase}/newstories.json`);
-  if (!response.ok)
-    throw new Error(`HN newstories failed: ${response.status} ${response.statusText}`);
-  const ids = Schema.decodeUnknownSync(NewestStoryIds)(await response.json());
-  return ids.slice(0, limit);
-}
-
-// oxlint-disable-next-line effecttsgo/async-function -- This exported Promise helper is the documented HN compatibility adapter used at non-Effect edges.
-export async function fetchStory(id: number, apiBase = defaultHnBase): Promise<HnStory | null> {
-  // oxlint-disable-next-line effecttsgo/global-fetch -- This exported Promise compatibility adapter owns the Web fetch boundary and is wrapped by liveHackerNewsApi for Effect orchestration.
-  const response = await fetch(`${apiBase}/item/${id}.json`);
-  if (!response.ok)
-    throw new Error(`HN item ${id} failed: ${response.status} ${response.statusText}`);
-  const item = Schema.decodeUnknownSync(HackerNewsItem)(await response.json());
-  if (!item || item.deleted || item.dead || item.type !== "story" || !item.title || !item.time)
-    return null;
-
-  const story: HackerNewsStoryResponse = {
-    id: item.id,
-    time: item.time,
-    title: item.title,
-    type: "story",
-  };
-  if (item.by !== undefined) story.by = item.by;
-  if (item.descendants !== undefined) story.descendants = item.descendants;
-  if (item.score !== undefined) story.score = item.score;
-  if (item.url !== undefined) story.url = item.url;
-  if (item.text !== undefined) story.text = item.text;
-  return Schema.decodeSync(HackerNewsStory)(story);
-}
+/** Keep live stories only. Decoding drops the item fields that a story does not have. */
+const toStory = (item: typeof HackerNewsItem.Type) =>
+  item === null || item.deleted || item.dead || item.type !== "story"
+    ? Effect.succeedNone
+    : Effect.asSome(Schema.decodeUnknownEffect(HackerNewsStory)(item));
 
 /**
- * Fetch story ids independently. Rejected or skipped items are logged and do not
- * stall the batch, so later polls can observe them again.
+ * The HN Firebase API at `HN_API_BASE` as named effects. A failed or skipped
+ * item is logged and does not stall the batch, so a later poll can see it again.
  */
-// oxlint-disable-next-line effecttsgo/async-function -- This exported Promise batch helper preserves per-item Promise settlement and compatibility behavior.
-export async function fetchStoriesById(
-  ids: readonly number[],
-  apiBase = defaultHnBase,
-): Promise<HnStory[]> {
-  const settled = await Promise.allSettled(ids.map((id) => fetchStory(id, apiBase)));
-  const stories: HnStory[] = [];
+export const hackerNewsApiLayer = Layer.effect(
+  HackerNewsApi,
+  Effect.gen(function* () {
+    const { hnApiBase: apiBase } = yield* DemoConfig;
+    const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+    const getJson = <S extends Schema.Top>(path: string, schema: S) =>
+      client
+        .get(`${apiBase}${path}`)
+        .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)));
 
-  for (const result of settled) {
-    if (result.status === "fulfilled" && result.value) stories.push(result.value);
-    // oxlint-disable-next-line effecttsgo/global-console -- The Promise compatibility adapter reports skipped item failures at its terminal-facing boundary.
-    if (result.status === "rejected") console.warn("Unable to fetch HN story", result.reason);
-  }
+    const fetchStory = (id: number) =>
+      getJson(`/item/${id}.json`, HackerNewsItem).pipe(
+        Effect.flatMap(toStory),
+        Effect.catch((error) =>
+          Effect.logWarning(`Unable to fetch HN story ${id}`, error).pipe(Effect.as(Option.none())),
+        ),
+      );
 
-  return stories.toSorted(newestStorySort);
-}
-
-/** Named Effect adapters over the Promise-based HN Firebase fetch helpers. */
-export const liveHackerNewsApi: HackerNewsApi = {
-  fetchNewestStoryIds: Effect.fn("HackerNewsApi.fetchNewestStoryIds")(function* (limit: number) {
-    return yield* Effect.tryPromise({
-      try: () => fetchNewestStoryIds(limit),
-      catch: pollFailure("fetchNewestStoryIds"),
+    return HackerNewsApi.of({
+      fetchNewestStoryIds: Effect.fn("HackerNewsApi.fetchNewestStoryIds")(function* (
+        limit: number,
+      ) {
+        const ids = yield* getJson("/newstories.json", NewestStoryIds).pipe(
+          Effect.mapError(pollFailure("fetchNewestStoryIds")),
+        );
+        return ids.slice(0, limit);
+      }),
+      fetchStoriesById: Effect.fn("HackerNewsApi.fetchStoriesById")(function* (
+        ids: readonly number[],
+      ) {
+        const stories = yield* Effect.forEach(ids, fetchStory, { concurrency: "unbounded" });
+        return Array.getSomes(stories).toSorted(newestStorySort);
+      }),
     });
   }),
-  fetchStoriesById: Effect.fn("HackerNewsApi.fetchStoriesById")(function* (ids: readonly number[]) {
-    return yield* Effect.tryPromise({
-      try: () => fetchStoriesById(ids),
-      catch: pollFailure("fetchStoriesById"),
-    });
-  }),
-};
+);

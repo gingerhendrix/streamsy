@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",

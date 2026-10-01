@@ -1,9 +1,9 @@
 import { Deferred, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect";
 import type { CheckpointStore } from "@streamsy/projection";
 import type { HackerNewsStories } from "../stories.ts";
-import { liveHackerNewsApi } from "../hnews.ts";
 import { errorMessage, nowIso } from "../util.ts";
 import {
+  HackerNewsApi,
   initialCounters,
   NewestStoriesPoller,
   type NewestStoriesPollerService,
@@ -22,7 +22,7 @@ export function makeNewestStoriesPoller(
   config: PollerConfig,
 ): Effect.Effect<NewestStoriesPollerService, never, HackerNewsStories | CheckpointStore> {
   return Effect.gen(function* () {
-    const api = config.api ?? liveHackerNewsApi;
+    const { api } = config;
     const context = yield* Effect.context<HackerNewsStories | CheckpointStore>();
     const countersRef = yield* Ref.make(initialCounters);
     const activeRef = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
@@ -116,6 +116,8 @@ export function makeNewestStoriesPoller(
       const [counters, active] = yield* Effect.all([Ref.get(countersRef), Ref.get(activeRef)]);
       const result: PollStats = {
         polling: Option.isSome(active),
+        newestLimit: config.limit,
+        pollIntervalMs: config.intervalMs,
         ...counters,
       };
       return result;
@@ -125,13 +127,13 @@ export function makeNewestStoriesPoller(
   });
 }
 
-export type NewestStoriesPollerLayerConfig = PollerConfig;
+export type NewestStoriesPollerLayerConfig = Omit<PollerConfig, "api">;
 
 export const newestStoriesPollerLayer = (config: NewestStoriesPollerLayerConfig) =>
   Layer.effect(
     NewestStoriesPoller,
     Effect.gen(function* () {
-      const poller = yield* makeNewestStoriesPoller(config);
+      const poller = yield* makeNewestStoriesPoller({ ...config, api: yield* HackerNewsApi });
       yield* poller.pollNow.pipe(
         Effect.repeat(Schedule.spaced(config.intervalMs)),
         Effect.forkScoped,
