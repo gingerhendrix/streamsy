@@ -25,13 +25,13 @@ The tests use a SQLite file in a temporary folder and also run the same fold on 
 
 Each number in the diagram is also a section number below.
 
-| Step | What happens                                              | Streamsy feature                                 | File                   |
-| ---- | --------------------------------------------------------- | ------------------------------------------------ | ---------------------- |
-| 1    | One stream for each game holds its events                 | `Streamsy.json`                                  | `src/board/fold.ts`    |
-| 2    | A checkpointed fold folds each event into the board       | `Projection.fold` with `state` and `fold`        | `src/board/fold.ts`    |
-| 3    | The SQLite host saves state and offsets in one record     | `ProjectionSql.layerStorage`, `BunStorage.layer` | `test/restart.test.ts` |
-| 4    | The test runs the projection and reads the board          | `Projection.run`, `Projection.read`              | `test/restart.test.ts` |
-| 5    | A new runtime on the same file resumes from the saved cut | Checkpoint and state on restart                  | `test/restart.test.ts` |
+| Step | What happens                                                 | Streamsy feature                                 | File                   |
+| ---- | ------------------------------------------------------------ | ------------------------------------------------ | ---------------------- |
+| 1    | One stream for each game holds its events                    | `Streamsy.json`                                  | `src/board/fold.ts`    |
+| 2    | A checkpointed fold folds each event into the board          | `Projection.fold` with `state` and `fold`        | `src/board/fold.ts`    |
+| 3    | The SQLite host saves state and offsets in one record        | `ProjectionSql.layerStorage`, `BunStorage.layer` | `test/restart.test.ts` |
+| 4    | The test runs the projection and reads the board             | `Projection.run`, `Projection.read`              | `test/restart.test.ts` |
+| 5    | A second process on the same file resumes from the saved cut | Checkpoint and state on restart                  | `test/restart.test.ts` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -76,11 +76,18 @@ export const board = Projection.fold({
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
   state: { schema: BoardState, initial: initialBoard },
-  fold: (state, { item }, unit) => stepBoard(state, item, unit.ranges.input.nextOffset),
+  fold: (state, { item }, unit) =>
+    Effect.sync(() => stepBoard(state, item, unit.ranges.input.nextOffset)).pipe(
+      Effect.catchDefect((defect) =>
+        Schema.is(ProjectionIntegrityError)(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+    ),
 });
 ```
 
 `unit.ranges.input` is always present here. The projection has one input, and an empty read never reaches the handler. Every event in a unit gets the same source offset, the end of the unit. Each move gets its own ordinal, and the ordinal is part of the state, so move ids stay unique after a restart.
+
+The pure reducer throws `ProjectionIntegrityError` when the events contradict each other. The fold moves that error to the typed error channel, so `Projection.run` fails with it.
 
 See [State and checkpoints](/docs/projections/state).
 
@@ -126,18 +133,31 @@ See [Running](/docs/projections/define#running).
 
 ## 5. Restart and resume
 
-The test closes the first runtime and opens a second one on the same file. The first run finds no new items, and the board and checkpoint are the same as before. The test then appends the rest of the game and checks the result against a pure fold of all the events.
+`asProcess` provides a Layer for one process: it opens the Layer, runs the program and closes the Layer. The second call on the same file is the restart. Its first run finds no new items, and the board and checkpoint are the same as before. The test then appends the rest of the game and checks the result against a pure fold of all the events.
 
 ```ts title="test/restart.test.ts"
-      const second = ManagedRuntime.make(sqlite(filename));
-      try {
-        expect((await second.runPromise(Projection.run(board))).items).toBe(0);
-        expect(await second.runPromise(read)).toEqual(before);
-        await second.runPromise(advance(before, events, cut));
-      // ...
+const asProcess =
+  <ROut, LE>(layer: Layer.Layer<ROut, LE>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
+    Effect.provide(program, layer);
 ```
 
-The SQLite tests split two games: the 12-event victory game after 5 events, during an attack, and a 450-event four-player game after 400 events. The long case also checks the exact 40 move ids and the ordinal. Another test appends an attack result that does not match the game. The fold fails, and neither the state nor the checkpoint moves.
+```ts title="test/restart.test.ts"
+test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
+  Effect.gen(function* () {
+    const file = yield* tempFile("hex-board-");
+    const before = yield* seed(events, cut).pipe(Effect.andThen(read), asProcess(sqlite(file)));
+    // ...
+    yield* Effect.gen(function* () {
+      expect((yield* Projection.run(board)).items).toBe(0);
+      expect(yield* read).toEqual(before);
+      yield* advance(before, events, cut);
+    }).pipe(asProcess(sqlite(file)));
+  }).pipe(Effect.scoped, Effect.runPromise));
+```
+
+The SQLite tests split two games: the 12-event victory game after 5 events, during an attack, and a 450-event four-player game after 400 events. The long case also checks the exact 40 move ids and the ordinal. Another test appends an attack result that does not match the game. The fold fails with `ProjectionIntegrityError`, and neither the state nor the checkpoint moves.
 
 See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).
 
