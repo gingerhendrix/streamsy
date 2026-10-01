@@ -1,5 +1,7 @@
+import type { LazyArg } from "effect/Function";
 import { Duration, Effect, Option, Predicate, Schedule, Schema, Stream } from "effect";
 import { DecodeFault, EncodeFault } from "../fault.ts";
+import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import type {
   AppendOptions,
@@ -105,6 +107,55 @@ export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: Read
     }),
   );
 }
+/** A folded value and the tail it was read up to. `offset` is this stream's CAS token. */
+export interface Folded<S> {
+  readonly state: S;
+  readonly offset: string;
+}
+/** Every item read and the tail they were read up to. */
+export interface Collected<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly offset: string;
+}
+/**
+ * Read the stream up to its tail and fold every item into one value. Pass
+ * `options.offset` to fold on from a tail that an earlier fold returned.
+ */
+export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
+  address: StreamAddress<A, RD, RE>,
+  initial: LazyArg<S>,
+  f: (state: S, item: A) => S,
+  options: ReadOptions = {},
+) {
+  return yield* read(address, options).pipe(
+    Stream.runFold(
+      // The first page always replaces this offset, so it never reaches the caller.
+      (): Folded<S> => ({ state: initial(), offset: options.offset ?? ZERO_OFFSET }),
+      (folded, batch): Folded<S> => {
+        let state = folded.state;
+        for (const item of batch.items) state = f(state, item);
+        return { state, offset: batch.nextOffset };
+      },
+    ),
+  );
+});
+/** Read the stream up to its tail and return its items. */
+export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+  options: ReadOptions = {},
+) {
+  const { state, offset } = yield* fold(
+    address,
+    (): Array<A> => [],
+    (items: Array<A>, item: A) => {
+      items.push(item);
+      return items;
+    },
+    options,
+  );
+  const collected: Collected<A> = { items: state, offset };
+  return collected;
+});
 export interface FollowOptions extends ReadOptions {
   /**
    * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.

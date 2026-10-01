@@ -6,6 +6,7 @@ import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { StreamsFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
+import type { LazyArg } from "effect/Function";
 import type {
   AppendOptions,
   CreateOptions,
@@ -95,6 +96,10 @@ function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services:
     ) => Streams.append(route.address(params), items, options).pipe(Effect.provide(context)),
     read: (params: P, options?: ReadOptions) =>
       Streams.read(route.address(params), options).pipe(Stream.provideContext(context)),
+    fold: <S>(params: P, initial: LazyArg<S>, f: (state: S, item: A) => S, options?: ReadOptions) =>
+      Streams.fold(route.address(params), initial, f, options).pipe(Effect.provide(context)),
+    collect: (params: P, options?: ReadOptions) =>
+      Streams.collect(route.address(params), options).pipe(Effect.provide(context)),
     follow: (params: P, options?: ReadOptions) =>
       Streams.follow(route.address(params), options).pipe(Stream.provideContext(context)),
     session: (params: P, options: ReadNextOptions) =>
