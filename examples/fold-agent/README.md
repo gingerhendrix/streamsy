@@ -14,7 +14,8 @@ bun run --cwd examples/fold-agent inspect <stream-id>
 ```
 
 `start` opens a new session. `resume` continues one from the stored log.
-`inspect` renders a session and needs no model credentials.
+`inspect` renders a session and needs no model credentials. Add `--help` to
+any command for its usage.
 
 | Variable                              | Meaning                                                       |
 | ------------------------------------- | ------------------------------------------------------------- |
@@ -39,7 +40,9 @@ the example to one stream and one write per entry.
 
 `memoryLayer()` and `sqliteLayer(filename)` give the same `Sessions` service
 on the memory host and on Bun SQLite. The CLI reads its settings with Effect
-`Config` and provides the store Layer for each command.
+`Config` and provides the store Layer for each command. The commands are
+defined with `effect/unstable/cli` and run by `BunRuntime.runMain`, so Ctrl-C
+interrupts the command and closes the store.
 
 ## Verify
 
