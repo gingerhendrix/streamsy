@@ -66,9 +66,10 @@ only, so parallel writers cannot silently overwrite one another; after three
 retries the API answers 409. The validation rules in `server/state.ts` return
 the change to append or a typed error, and the handlers map those errors to
 400, 404 or 409. Project, issue, and comment changes share one
-`StreamAddress.state` whose collections type both reads and writes. Because the
-tracker appends its own events rather than projecting an upstream, each change
-records the workspace head read by the recipe as its source offset.
+`Streamsy.state` declaration, `Workspaces`, whose collections type both reads
+and writes. `DurableState.changes` stamps each change for the append. Because
+the tracker appends its own events rather than projecting an upstream, each
+change records the workspace head read by the recipe as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as

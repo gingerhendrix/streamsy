@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Layer, Ref, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
 import { createIssue, issueUpsert, projectUpsert, type Stamp } from "../../server/state.ts";
-import { appendWorkspaceEvent, Workspaces } from "../../server/streams.ts";
+import { workspaceEvents, Workspaces, type WorkspaceChange } from "../../server/streams.ts";
 import type { Issue, Project } from "../../shared/state-schema.ts";
 
 const workspaceId = "concurrent-test";
@@ -25,10 +25,16 @@ const makeIssue = (id: string): Issue => ({
   updatedAt: createdAt,
 });
 
+/** Append one change with no offset check, as a rival writer would. */
+const appendUnchecked = (change: WorkspaceChange) =>
+  Effect.flatMap(Workspaces, (workspaces) =>
+    workspaces.append({ workspaceId }, workspaceEvents(workspaceId, ZERO_OFFSET, [change])),
+  );
+
 /** A memory store holding one workspace with one project. */
 const seeded = Effect.gen(function* () {
   yield* (yield* Workspaces).create({ workspaceId });
-  yield* appendWorkspaceEvent(workspaceId, projectUpsert(project, stamp(project.id)), ZERO_OFFSET);
+  yield* appendUnchecked(projectUpsert(project, stamp(project.id)));
 });
 
 const issueKeys = Effect.gen(function* () {
@@ -112,11 +118,7 @@ test("a writer that loses every race answers WriteConflict after three retries",
           Effect.gen(function* () {
             attempts += 1;
             const rival = makeIssue(`issue_rival_${attempts}`);
-            yield* appendWorkspaceEvent(
-              workspaceId,
-              issueUpsert(rival, stamp(rival.id)),
-              ZERO_OFFSET,
-            );
+            yield* appendUnchecked(issueUpsert(rival, stamp(rival.id)));
             const loser = makeIssue("issue_loser");
             return { change: issueUpsert(loser, stamp(loser.id)), value: loser };
           }).pipe(Effect.provideService(Workspaces, workspaces), Effect.orDie),

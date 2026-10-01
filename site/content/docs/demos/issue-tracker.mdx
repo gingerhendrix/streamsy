@@ -56,7 +56,6 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
     },
   },
 ) {}
-export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspaceId });
 ```
 
 `Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `shared/state-schema.ts`. The browser uses the same schemas.
@@ -299,35 +298,29 @@ const mutate = <A, E>(
   );
 ```
 
-`append` keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
+`append` calls the `Workspaces` service with `expectedOffset` set to the head that the recipe read. It keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
 
 ```ts title="server/issue-tracker.ts"
 const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
-  appendWorkspaceEvent(workspaceId, change, head, head).pipe(
-    Effect.provideService(Workspaces, workspaces),
-    Effect.catch((error) =>
-      Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
-    ),
-  );
+  workspaces
+    .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
+      expectedOffset: head,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+      ),
+    );
 ```
 
 `DurableState.changes` turns the change into the wire event for the workspace address. The demo has no upstream stream, so it records the head it read as the source offset.
 
 ```ts title="server/streams.ts"
-export function appendWorkspaceEvent(
+export const workspaceEvents = (
   workspaceId: string,
-  change: WorkspaceChange,
   sourceOffset: string,
-  expectedOffset?: string,
-) {
-  const events = DurableState.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [
-    change,
-  ]);
-  const options = expectedOffset === undefined ? {} : { expectedOffset };
-  return Effect.flatMap(Workspaces, (workspaces) =>
-    workspaces.append({ workspaceId }, events, options),
-  );
-}
+  changes: ReadonlyArray<WorkspaceChange>,
+) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 ```
 
 The builders put the txid and the server time in the change headers. An issue edit is also an upsert with the full issue.
