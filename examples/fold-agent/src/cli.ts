@@ -10,48 +10,42 @@
  * `start` and `resume` need provider credentials; `inspect` deliberately does
  * not, because reading durable state should never require an API key.
  */
-import {
-  resumeSession,
-  SessionId,
-  startSession,
-  type EventLogError,
-  type FoldSession,
-  type SubagentNotFoundError,
-} from "@humanlayer/fold-core";
-import { StorageFault } from "@streamsy/core";
-import { Cause, Config, Console, Effect, Exit, Option, Schema } from "effect";
-import { configuredModel, exampleAgent, MissingCredentialsError } from "./agent.ts";
+import { BunRuntime, BunServices } from "@effect/platform-bun";
+import { resumeSession, SessionId, startSession, type FoldSession } from "@humanlayer/fold-core";
+import { Console, Effect, Option } from "effect";
+import { Argument, CliError, Command } from "effect/unstable/cli";
+import packageJson from "../package.json" with { type: "json" };
+import { configuredModel, exampleAgent } from "./agent.ts";
 import { formatEntry } from "./render.ts";
 import { Sessions, sessionStreamId } from "./session-log.ts";
-import { configuredStoreLayer, StorageNotAvailable } from "./storage.ts";
+import { configuredStoreLayer } from "./storage.ts";
 import { readFoldLog, streamsyEventLog } from "./streamsy-event-log.ts";
 
-const USAGE = `Usage:
-  bun run src/cli.ts start   "<prompt>"
-  bun run src/cli.ts resume  <stream-id> "<prompt>"
-  bun run src/cli.ts inspect <stream-id>
-
-Environment:
-  FOLD_AGENT_DB      SQLite path (default: examples/fold-agent/.data/agent.sqlite)
-  OPENAI_API_KEY     use an OpenAI-compatible provider (first choice)
-  ANTHROPIC_API_KEY  use Anthropic when no OpenAI key is set
-  FOLD_AGENT_MODEL   override the provider model id
-  FOLD_AGENT_SCRIPT  deterministic JSON turns for provider-free verification`;
-
-/** A command line that cannot be accepted. Printed as usage, exit code 1. */
-class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
-  message: Schema.String,
-}) {}
-
-const usage = () => new UsageError({ message: USAGE });
-
 /** A stream id names a session only when it matches the `Sessions` template. */
-const sessionOf = (streamId: string) =>
-  Option.match(Sessions.parse(streamId), {
-    onNone: () =>
-      Effect.fail(new UsageError({ message: `Not a Fold session stream: ${streamId}` })),
-    onSome: ({ session }) => Effect.succeed(session),
-  });
+const streamId = Argument.String("stream-id").pipe(
+  Argument.withDescription("A session stream id, fold/sessions/<session>/events"),
+  Argument.filterMap(
+    (id) => Option.map(Sessions.parse(id), ({ session }) => session),
+    () => "fold/sessions/<session>/events",
+  ),
+);
+
+/** The rest of the command line, joined with spaces. */
+const prompt = Argument.String("prompt").pipe(
+  Argument.withDescription("The user message for this turn"),
+  Argument.atLeast(1),
+  Argument.map((parts) => parts.join(" ").trim()),
+  Argument.filter(
+    (text) => text !== "",
+    () => "a non-empty prompt",
+  ),
+);
+
+/** A failure of the command itself prints its message once and exits with code 1. */
+const asUserError = <A, E extends { readonly message: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.mapError(effect, (cause) => new CliError.UserError({ cause, userMessage: cause.message }));
 
 const printTurn = (fold: FoldSession, session: SessionId) =>
   Effect.gen(function* () {
@@ -66,7 +60,7 @@ const printTurn = (fold: FoldSession, session: SessionId) =>
 /** Open the configured store for one command, and close it when the command ends. */
 const withStore = Effect.provide(configuredStoreLayer);
 
-const start = (prompt: string) =>
+const start = Command.make("start", { prompt }, ({ prompt }) =>
   Effect.gen(function* () {
     const model = yield* configuredModel;
     const session = SessionId.create();
@@ -85,9 +79,10 @@ const start = (prompt: string) =>
         }),
       ),
     );
-  });
+  }).pipe(asUserError),
+).pipe(Command.withDescription("Start a fresh session and run one turn"));
 
-const resume = (session: SessionId, prompt: string) =>
+const resume = Command.make("resume", { session: streamId, prompt }, ({ session, prompt }) =>
   Effect.gen(function* () {
     const model = yield* configuredModel;
 
@@ -103,9 +98,10 @@ const resume = (session: SessionId, prompt: string) =>
         }),
       ),
     );
-  });
+  }).pipe(asUserError),
+).pipe(Command.withDescription("Continue a session from its stored log and run one turn"));
 
-const inspect = (session: SessionId) =>
+const inspect = Command.make("inspect", { session: streamId }, ({ session }) =>
   withStore(
     Effect.gen(function* () {
       const entries = yield* readFoldLog(session);
@@ -114,63 +110,27 @@ const inspect = (session: SessionId) =>
       yield* Console.log(`stream id: ${sessionStreamId(session)}`);
       yield* Console.log(`entries:   ${entries.length}`);
     }),
-  );
+  ).pipe(asUserError),
+).pipe(Command.withDescription("Print a session's log; needs no model credentials"));
 
-export const parseResumeArgs = (args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const [streamId, ...rest] = args;
-    const promptParts: string[] = [];
-    for (const arg of rest) {
-      if (arg.startsWith("--")) return yield* usage();
-      promptParts.push(arg);
-    }
-    const prompt = promptParts.join(" ").trim();
-    if (!streamId || !prompt) return yield* usage();
-    return { session: yield* sessionOf(streamId), prompt };
-  });
-
-type CliError =
-  | StorageNotAvailable
-  | StorageFault
-  | UsageError
-  | MissingCredentialsError
-  | Config.ConfigError
-  | EventLogError
-  | SubagentNotFoundError;
-
-const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => {
-  const [command, ...rest] = argv;
-  switch (command) {
-    case "start": {
-      const prompt = rest.join(" ").trim();
-      if (prompt === "") return Effect.fail(usage());
-      return start(prompt);
-    }
-    case "resume": {
-      return parseResumeArgs(rest).pipe(
-        Effect.flatMap(({ session, prompt }) => resume(session, prompt)),
-      );
-    }
-    case "inspect": {
-      const [streamId] = rest;
-      if (streamId === undefined) return Effect.fail(usage());
-      return sessionOf(streamId).pipe(Effect.flatMap(inspect));
-    }
-    default:
-      return Effect.fail(usage());
-  }
-};
-
-/** A typed failure prints its message. Anything else prints the full cause. */
-const describe = (cause: Cause.Cause<CliError>): string => {
-  const failure = Cause.findErrorOption(cause);
-  return Option.isSome(failure) ? failure.value.message : Cause.pretty(cause);
-};
+export const cli = Command.make("fold-agent").pipe(
+  Command.withDescription(
+    [
+      "A Fold Core agent whose session log lives in a Streamsy stream.",
+      "",
+      "Environment:",
+      "  FOLD_AGENT_DB      SQLite path (default: examples/fold-agent/.data/agent.sqlite)",
+      "  OPENAI_API_KEY     use an OpenAI-compatible provider (first choice)",
+      "  ANTHROPIC_API_KEY  use Anthropic when no OpenAI key is set",
+      "  FOLD_AGENT_MODEL   override the provider model id",
+      "  FOLD_AGENT_SCRIPT  deterministic JSON turns for provider-free verification",
+    ].join("\n"),
+  ),
+  Command.withSubcommands([start, resume, inspect]),
+);
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(main(process.argv.slice(2)));
-  if (Exit.isFailure(exit)) {
-    await Effect.runPromise(Console.error(describe(exit.cause)));
-    process.exitCode = 1;
-  }
+  BunRuntime.runMain(
+    Command.run(cli, { version: packageJson.version }).pipe(Effect.provide(BunServices.layer)),
+  );
 }

@@ -77,7 +77,7 @@ See [Layers and storage](/docs/hosting).
 Fold owns the loop, the tool calls and the conversation. It asks for an event log, and the demo gives it one that is backed by the session stream.
 
 ```ts title="src/cli.ts"
-const start = (prompt: string) =>
+const start = Command.make("start", { prompt }, ({ prompt }) =>
   Effect.gen(function* () {
     const model = yield* configuredModel;
     const session = SessionId.create();
@@ -95,7 +95,7 @@ const start = (prompt: string) =>
     // ...
 ```
 
-`resume` works in the same way, with `resumeSession` and `mode: "resume"`.
+`resume` works in the same way, with `resumeSession` and `mode: "resume"`. The commands use `effect/unstable/cli`, so Ctrl-C interrupts the turn and the store closes.
 
 ## 4. Open the writer at the tail
 

@@ -20,6 +20,7 @@
       "dependencies": {
         "@effect/ai-anthropic": "4.0.0-rc.115",
         "@effect/ai-openai": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.0.0-rc.115",
         "@humanlayer/fold-core": "0.1.4",
         "@streamsy/core": "workspace:*",
         "@streamsy/storage": "workspace:*",
