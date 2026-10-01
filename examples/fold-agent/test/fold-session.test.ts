@@ -6,9 +6,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import { resumeSession, SessionId, startSession, type LogEntry } from "@humanlayer/fold-core";
-import { Effect } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { exampleAgent } from "../src/agent.ts";
-import { openMemoryStore, sessionStreamId } from "../src/storage.ts";
+import { memoryLayer } from "../src/storage.ts";
 import { readFoldLog, streamsyEventLog } from "../src/streamsy-event-log.ts";
 import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model.ts";
 
@@ -16,14 +16,14 @@ const tags = (entries: ReadonlyArray<LogEntry>) => entries.map((entry) => entry.
 
 describe("Fold session over a Streamsy durable log", () => {
   test("rebuilds a tool session in a new scope over the same memory Layer", async () => {
-    const firstStore = await Effect.runPromise(openMemoryStore());
+    // One runtime owns the memory Layer, so both session scopes share one store.
+    const store = ManagedRuntime.make(memoryLayer());
     try {
       const sessionId = SessionId.create();
-      const streamId = sessionStreamId(sessionId);
 
       // --- first session: start a fresh session and run one tool turn ---
 
-      const firstRun = await Effect.runPromise(
+      const firstRun = await store.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const scripted = yield* scriptedModel([
@@ -32,7 +32,7 @@ describe("Fold session over a Streamsy durable log", () => {
             ]);
             const session = yield* startSession({
               agent: exampleAgent(scripted.model),
-              log: streamsyEventLog({ store: firstStore, streamId, mode: "create" }),
+              log: yield* streamsyEventLog({ session: sessionId, mode: "create" }),
               sessionId,
               cwd: "/memory-proof",
             });
@@ -52,15 +52,14 @@ describe("Fold session over a Streamsy durable log", () => {
       const firstSeqs = firstRun.entries.map((entry) => entry.seq);
       expect(firstSeqs).toEqual(firstSeqs.map((_, index) => index));
 
-      // --- new session scope; the acquired store context remains alive ---
-      const secondStore = firstStore;
-      const secondRun = await Effect.runPromise(
+      // --- new session scope; the store Layer remains alive ---
+      const secondRun = await store.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const scripted = yield* scriptedModel([textTurn("Earlier the tool reported 19.")]);
             const session = yield* resumeSession({
               agent: exampleAgent(scripted.model),
-              log: streamsyEventLog({ store: secondStore, streamId, mode: "resume" }),
+              log: yield* streamsyEventLog({ session: sessionId, mode: "resume" }),
             });
             const finished = yield* session.send("What did the tool return earlier?");
 
@@ -75,13 +74,12 @@ describe("Fold session over a Streamsy durable log", () => {
       expect(secondRun.entries.length).toBeGreaterThan(firstRun.entries.length);
 
       // --- inspect the stored history without a Fold session ---
-      const readStore = firstStore;
-      const durable = await Effect.runPromise(readFoldLog(readStore, streamId));
+      const durable = await store.runPromise(readFoldLog(sessionId));
 
       expect(durable.map((entry) => entry.seq)).toEqual(durable.map((_, index) => index));
       expect(tags(durable)).toEqual(tags(secondRun.entries));
     } finally {
-      await firstStore.close();
+      await store.dispose();
     }
   }, 30_000);
 });

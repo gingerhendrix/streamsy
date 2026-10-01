@@ -12,7 +12,7 @@ import {
   type AgentDefinition,
   type FoldModel,
 } from "@humanlayer/fold-core";
-import { Effect, Schema } from "effect";
+import { Config, Effect, Option, Schema } from "effect";
 import { scriptedModel, textTurn, toolCallTurn } from "./scripted-model.ts";
 
 export const SYSTEM_PROMPT = [
@@ -74,52 +74,56 @@ const ScriptCommands = Schema.Array(
   ]),
 );
 
-/**
- * Pick a live provider from the environment. OpenAI is the documented first
- * path; Anthropic is accepted when only that key is present. Tests never reach
- * this — they supply a scripted model instead.
- */
-export const modelFromEnv = (
-  env: Record<string, string | undefined>,
-): Effect.Effect<FoldModel, MissingCredentialsError> =>
-  Effect.suspend(() => {
-    const fixture = env["FOLD_AGENT_SCRIPT"];
-    if (fixture !== undefined && fixture !== "") {
-      return Schema.decodeEffect(Schema.fromJsonString(ScriptCommands))(fixture).pipe(
-        Effect.mapError(
-          (cause) =>
-            new MissingCredentialsError({
-              message: `Invalid FOLD_AGENT_SCRIPT fixture: ${String(cause)}`,
-            }),
-        ),
-        Effect.flatMap((commands) =>
-          scriptedModel(
-            commands.map((command) =>
-              command.type === "text"
-                ? textTurn(command.text)
-                : toolCallTurn(command.id, command.name, command.params),
-            ),
-          ),
-        ),
-        Effect.map(({ model }) => model),
-      );
-    }
-    const openaiKey = env["OPENAI_API_KEY"];
-    if (openaiKey !== undefined && openaiKey !== "") {
-      return Effect.succeed(
-        openaiModel({ apiKey: openaiKey, model: env["FOLD_AGENT_MODEL"] ?? "gpt-5.6" }),
-      );
-    }
+const setting = (name: string) =>
+  Config.String(name).pipe(Config.option, Config.map(Option.filter((value) => value !== "")));
 
-    const anthropicKey = env["ANTHROPIC_API_KEY"];
-    if (anthropicKey !== undefined && anthropicKey !== "") {
-      return Effect.succeed(
-        anthropicModel({
-          apiKey: anthropicKey,
-          ...(env["FOLD_AGENT_MODEL"] === undefined ? {} : { model: env["FOLD_AGENT_MODEL"] }),
+/** Provider settings. An empty variable counts as unset. */
+const ModelSettings = Config.all({
+  script: setting("FOLD_AGENT_SCRIPT"),
+  openaiKey: setting("OPENAI_API_KEY"),
+  anthropicKey: setting("ANTHROPIC_API_KEY"),
+  model: setting("FOLD_AGENT_MODEL"),
+});
+
+const scriptedFromJson = (fixture: string) =>
+  Schema.decodeEffect(Schema.fromJsonString(ScriptCommands))(fixture).pipe(
+    Effect.mapError(
+      (cause) =>
+        new MissingCredentialsError({
+          message: `Invalid FOLD_AGENT_SCRIPT fixture: ${String(cause)}`,
         }),
-      );
-    }
+    ),
+    Effect.flatMap((commands) =>
+      scriptedModel(
+        commands.map((command) =>
+          command.type === "text"
+            ? textTurn(command.text)
+            : toolCallTurn(command.id, command.name, command.params),
+        ),
+      ),
+    ),
+    Effect.map(({ model }) => model),
+  );
 
-    return Effect.fail(missingCredentials());
-  });
+/**
+ * Pick a model from config. A scripted fixture wins, then OpenAI, then
+ * Anthropic. Tests that do not run the CLI supply a scripted model instead.
+ */
+export const configuredModel: Effect.Effect<
+  FoldModel,
+  MissingCredentialsError | Config.ConfigError
+> = Effect.gen(function* () {
+  const settings = yield* ModelSettings;
+  if (Option.isSome(settings.script)) return yield* scriptedFromJson(settings.script.value);
+  if (Option.isSome(settings.openaiKey))
+    return openaiModel({
+      apiKey: settings.openaiKey.value,
+      model: Option.getOrElse(settings.model, () => "gpt-5.6"),
+    });
+  if (Option.isSome(settings.anthropicKey))
+    return anthropicModel({
+      apiKey: settings.anthropicKey.value,
+      ...Option.match(settings.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
+    });
+  return yield* missingCredentials();
+});

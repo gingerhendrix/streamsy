@@ -17,7 +17,7 @@ bun run build
 bun run --cwd examples/fold-agent start "How long is 'hello'?"
 ```
 
-`start` needs an OpenAI or Anthropic API key, and prints the session's stream id. The log goes to a SQLite file. Set `FOLD_AGENT_DB` to choose the file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/fold-agent) lists the other settings, including a scripted model that needs no key. Resume or print a session with its stream id:
+`start` needs an OpenAI or Anthropic API key, and prints the session's stream id. The log goes to the SQLite file `examples/fold-agent/.data/agent.sqlite`. Set `FOLD_AGENT_DB` to choose another file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/fold-agent) lists the other settings, including a scripted model that needs no key. Resume or print a session with its stream id:
 
 ```bash
 bun run --cwd examples/fold-agent resume <stream-id> "What happened?"
@@ -32,7 +32,7 @@ Each number in the diagram is also a section number below.
 
 | Step | What happens                                         | Streamsy feature                   | File                                      |
 | ---- | ---------------------------------------------------- | ---------------------------------- | ----------------------------------------- |
-| 1    | One stream for each session holds the Fold log       | `Streamsy.custom`                  | `src/session-log.ts`                      |
+| 1    | One stream for each session holds the Fold log       | `Streamsy.json`                    | `src/session-log.ts`                      |
 | 2    | The same code opens a memory or a SQLite store       | `Memory.layer`, `BunStorage.layer` | `src/storage.ts`                          |
 | 3    | Fold writes its log through the Streamsy adapter     | Fold `eventLogSource`              | `src/cli.ts`, `src/streamsy-event-log.ts` |
 | 4    | A writer reads the log and keeps its tail offset     | `read`                             | `src/streamsy-event-log.ts`               |
@@ -43,29 +43,30 @@ The code below is from the demo. Lines marked `// ...` are left out.
 
 ## 1. Declare the session stream
 
-A session uses one JSON stream, `fold/sessions/<id>/events`. The demo declares a custom stream that accepts any id of that form.
+A session uses one JSON stream, `fold/sessions/<session>/events`. The template parameter uses Fold's `SessionId` schema, so `Sessions.parse` accepts only real session ids. The CLI uses it to check the stream id that you give to `resume` and `inspect`.
 
 ```ts title="src/session-log.ts"
-export class Sessions extends Streamsy.custom<Sessions>()("Fold/Sessions", {
-  parse: (id: string) =>
-    /^fold\/sessions\/.+\/events$/.test(id) ? Option.some({ streamId: id }) : Option.none(),
-  address: ({ streamId }: { streamId: string }) =>
-    StreamAddress.json(streamId, { schema: Schema.Json }),
-}) {}
+export class Sessions extends Streamsy.json<Sessions>()(
+  "Fold/Sessions",
+  "fold/sessions/:session/events",
+  { params: { session: SessionId }, schema: Schema.Json },
+) {}
 ```
 
-See [Declare streams](/docs/streams/declare) for custom streams.
+See [Declare streams](/docs/streams/declare).
 
 ## 2. Open a store
 
-`openStore` gives the same `Sessions` service on the memory host or on Bun SQLite. The CLI uses SQLite, so a session outlives the process.
+`storeLayer` gives the same `Sessions` service on the memory host or on Bun SQLite. The CLI uses SQLite, so a session outlives the process. Each command provides the Layer, so the store closes when the command ends.
 
 ```ts title="src/storage.ts"
-export const openStore = (options: StreamsyStoreOptions = {}) => {
+export const storeLayer = (
+  options: StoreOptions = {},
+): Layer.Layer<Sessions, StorageFault | StorageNotAvailable> => {
   const filename = options.filename;
   return filename === undefined || filename === ":memory:"
-    ? openMemoryStore(options)
-    : openSqliteStore(filename, options);
+    ? memoryLayer(options)
+    : sqliteLayer(filename, options);
 };
 ```
 
@@ -78,17 +79,19 @@ Fold owns the loop, the tool calls and the conversation. It asks for an event lo
 ```ts title="src/cli.ts"
 const start = (prompt: string) =>
   Effect.gen(function* () {
-    const model = yield* modelFromEnv(process.env);
-    const sessionId = SessionId.create();
-    const streamId = sessionStreamId(sessionId);
-    // ...
-          const session = yield* startSession({
+    const model = yield* configuredModel;
+    const session = SessionId.create();
+
+    return yield* withStore(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fold = yield* startSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({ store, streamId, mode: "create" }),
-            sessionId,
+            log: yield* streamsyEventLog({ session, mode: "create" }),
+            sessionId: session,
             cwd: process.cwd(),
           });
-          yield* session.send(prompt);
+          yield* fold.send(prompt);
     // ...
 ```
 
@@ -99,7 +102,7 @@ const start = (prompt: string) =>
 When a writer opens, it reads the whole log. It checks Fold's sequence numbers and keeps two values: the stream offset after the last entry, and the next sequence number.
 
 ```ts title="src/session-log.ts"
-export const readHistory = Effect.fn("Fold.readHistory")(function* (params: { streamId: string }) {
+export const readHistory = Effect.fn("Fold.readHistory")(function* (params: SessionParams) {
   const batches = yield* Stream.runCollect((yield* Sessions).read(params));
   return {
     items: batches.flatMap((batch) => batch.items),
@@ -160,20 +163,20 @@ The test opens a writer in the test process, then runs a second process that res
   test("a second process that resumes the same session fences the first on its next append", async () => {
     await withTempDir(async (dir) => {
       const filename = join(dir, "agent.sqlite");
-      const streamId = sessionStreamId(SessionId.create());
-      expect((await runWorker(["create", filename, streamId])).exitCode).toBe(0);
-      const store = await Effect.runPromise(openStore({ filename }));
+      const session = SessionId.create();
+      expect((await runWorker(["create", filename, session])).exitCode).toBe(0);
+      const store = ManagedRuntime.make(sqliteLayer(filename));
       try {
-        const first = await Effect.runPromise(
-          Effect.scoped(makeEventLog({ store, streamId, mode: "resume" })),
+        const first = await store.runPromise(
+          Effect.scoped(makeEventLog({ session, mode: "resume" })),
         );
-        const second = await runWorker(["append", filename, streamId, "second process"]);
+        const second = await runWorker(["append", filename, session, "second process"]);
         expect(second.exitCode).toBe(0);
         // ...
         expect(failure.message).toContain("Fenced: another writer advanced the log");
-        expect(
-          (await Effect.runPromise(readFoldLog(store, streamId))).map((row) => row.seq),
-        ).toEqual([0, 1]);
+        expect((await store.runPromise(readFoldLog(session))).map((row) => row.seq)).toEqual([
+          0, 1,
+        ]);
 ```
 
 The other tests run the store contract on memory and SQLite, and drive the real CLI in separate processes with the scripted model. Run them with `bun run --cwd examples/fold-agent test:unit`.

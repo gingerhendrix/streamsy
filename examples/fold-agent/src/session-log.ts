@@ -2,17 +2,25 @@ import {
   decodeStoredLogEntry,
   EventLogCorruptEntryError,
   EventLogUnavailableError,
+  SessionId,
   type LogEntry,
 } from "@humanlayer/fold-core";
-import { Streamsy, StreamAddress, ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Option, Predicate, Schema, Stream } from "effect";
+import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { Effect, Predicate, Schema, Stream } from "effect";
 
-export class Sessions extends Streamsy.custom<Sessions>()("Fold/Sessions", {
-  parse: (id: string) =>
-    /^fold\/sessions\/.+\/events$/.test(id) ? Option.some({ streamId: id }) : Option.none(),
-  address: ({ streamId }: { streamId: string }) =>
-    StreamAddress.json(streamId, { schema: Schema.Json }),
-}) {}
+/** One JSON stream for each Fold session, `fold/sessions/<session>/events`. */
+export class Sessions extends Streamsy.json<Sessions>()(
+  "Fold/Sessions",
+  "fold/sessions/:session/events",
+  { params: { session: SessionId }, schema: Schema.Json },
+) {}
+
+export interface SessionParams {
+  readonly session: SessionId;
+}
+
+/** The stream id that the CLI prints and accepts. */
+export const sessionStreamId = (session: SessionId): string => Sessions.address({ session }).id;
 
 export const unavailable = (message: string, retryable = false, cause?: unknown) =>
   new EventLogUnavailableError({
@@ -25,7 +33,7 @@ export const unavailable = (message: string, retryable = false, cause?: unknown)
 export const corrupt = (message: string) =>
   new EventLogCorruptEntryError({ operation: "entries", message });
 
-export const readHistory = Effect.fn("Fold.readHistory")(function* (params: { streamId: string }) {
+export const readHistory = Effect.fn("Fold.readHistory")(function* (params: SessionParams) {
   const batches = yield* Stream.runCollect((yield* Sessions).read(params));
   return {
     items: batches.flatMap((batch) => batch.items),

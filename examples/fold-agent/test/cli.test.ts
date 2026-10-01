@@ -1,20 +1,33 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the test execution edge. */
 import { describe, expect, test } from "bun:test";
-import { Effect, Exit } from "effect";
+import { ConfigProvider, Effect, Exit } from "effect";
 import { parseResumeArgs } from "../src/cli.ts";
 import { formatEntry } from "../src/render.ts";
-import { databasePathFromEnv, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
+import { DatabasePath, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
 import { decodeStoredLogEntry, AgentId, EventId, SessionId } from "@humanlayer/fold-core";
 
+const databasePathFrom = (env: Record<string, string>) =>
+  Effect.runPromise(
+    DatabasePath.pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+    ),
+  );
+
 describe("Fold CLI parsing and rendering", () => {
-  test("resume accepts a stream id and prompt", async () => {
-    expect(await Effect.runPromise(parseResumeArgs(["fold/sessions/a/events", "hello"]))).toEqual({
-      streamId: "fold/sessions/a/events",
-      prompt: "hello",
-    });
+  test("resume accepts a session stream id and prompt", async () => {
+    const session = SessionId.create();
+    expect(
+      await Effect.runPromise(parseResumeArgs([`fold/sessions/${session}/events`, "hello"])),
+    ).toEqual({ session, prompt: "hello" });
   });
-  test("resume rejects missing arguments and flags", async () => {
-    for (const args of [[], ["a"], ["a", "--other", "hi"]]) {
+  test("resume rejects missing arguments, flags, and other stream ids", async () => {
+    for (const args of [
+      [],
+      ["a"],
+      ["a", "--other", "hi"],
+      ["a", "hi"],
+      ["fold/sessions/a/events", "hi"],
+    ]) {
       expect(Exit.isFailure(await Effect.runPromiseExit(parseResumeArgs(args)))).toBe(true);
     }
   });
@@ -39,8 +52,9 @@ describe("Fold CLI parsing and rendering", () => {
     if (entry._tag !== "session_started") throw new Error("expected session_started");
     expect(formatEntry(entry)).toContain(`session=${entry.sessionId}`);
   });
-  test("retains database path configuration", () => {
-    expect(databasePathFromEnv({})).toBe(DEFAULT_DATABASE_PATH);
-    expect(databasePathFromEnv({ FOLD_AGENT_DB: "custom.sqlite" })).toBe("custom.sqlite");
+  test("reads the database path from FOLD_AGENT_DB, with a default beside the example", async () => {
+    expect(await databasePathFrom({})).toBe(DEFAULT_DATABASE_PATH);
+    expect(DEFAULT_DATABASE_PATH).toEndWith("examples/fold-agent/.data/agent.sqlite");
+    expect(await databasePathFrom({ FOLD_AGENT_DB: "custom.sqlite" })).toBe("custom.sqlite");
   });
 });

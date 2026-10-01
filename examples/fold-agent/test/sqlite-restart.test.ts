@@ -8,9 +8,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionId, startSession } from "@humanlayer/fold-core";
-import { Effect } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { exampleAgent } from "../src/agent.ts";
-import { openStore, sessionStreamId } from "../src/storage.ts";
+import { sessionStreamId } from "../src/session-log.ts";
+import { sqliteLayer } from "../src/storage.ts";
 import { makeEventLog, readFoldLog, streamsyEventLog } from "../src/streamsy-event-log.ts";
 import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model.ts";
 
@@ -50,29 +51,23 @@ const withTempDir = <A>(run: (dir: string) => Promise<A>): Promise<A> => {
 };
 
 /** Step 2 SQLite gate: seed a real durable session so `inspect` has something honest to read. */
-const seedSession = async (filename: string, streamId: string, sessionId: SessionId) => {
-  const store = await Effect.runPromise(openStore({ filename }));
-  try {
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const scripted = yield* scriptedModel([
-            toolCallTurn("provider-call-1", "text_stats", { text: "hello" }),
-            textTurn("Five characters."),
-          ]);
-          const session = yield* startSession({
-            agent: exampleAgent(scripted.model),
-            log: streamsyEventLog({ store, streamId, mode: "create" }),
-            sessionId,
-          });
-          yield* session.send("How long is 'hello'?");
-        }),
-      ),
-    );
-  } finally {
-    await store.close();
-  }
-};
+const seedSession = (filename: string, sessionId: SessionId) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scripted = yield* scriptedModel([
+          toolCallTurn("provider-call-1", "text_stats", { text: "hello" }),
+          textTurn("Five characters."),
+        ]);
+        const session = yield* startSession({
+          agent: exampleAgent(scripted.model),
+          log: yield* streamsyEventLog({ session: sessionId, mode: "create" }),
+          sessionId,
+        });
+        yield* session.send("How long is 'hello'?");
+      }),
+    ).pipe(Effect.provide(sqliteLayer(filename))),
+  );
 
 describe("fold-agent CLI", () => {
   test("inspects a seeded SQLite session without provider credentials", async () => {
@@ -80,7 +75,7 @@ describe("fold-agent CLI", () => {
       const filename = join(dir, "agent.sqlite");
       const sessionId = SessionId.create();
       const streamId = sessionStreamId(sessionId);
-      await seedSession(filename, streamId, sessionId);
+      await seedSession(filename, sessionId);
 
       const result = await runCli(["inspect", streamId], {
         FOLD_AGENT_DB: filename,
@@ -138,14 +133,14 @@ describe("Fold retained-file process recovery", () => {
   test("a second process that resumes the same session fences the first on its next append", async () => {
     await withTempDir(async (dir) => {
       const filename = join(dir, "agent.sqlite");
-      const streamId = sessionStreamId(SessionId.create());
-      expect((await runWorker(["create", filename, streamId])).exitCode).toBe(0);
-      const store = await Effect.runPromise(openStore({ filename }));
+      const session = SessionId.create();
+      expect((await runWorker(["create", filename, session])).exitCode).toBe(0);
+      const store = ManagedRuntime.make(sqliteLayer(filename));
       try {
-        const first = await Effect.runPromise(
-          Effect.scoped(makeEventLog({ store, streamId, mode: "resume" })),
+        const first = await store.runPromise(
+          Effect.scoped(makeEventLog({ session, mode: "resume" })),
         );
-        const second = await runWorker(["append", filename, streamId, "second process"]);
+        const second = await runWorker(["append", filename, session, "second process"]);
         expect(second.exitCode).toBe(0);
         const failure = await Effect.runPromise(
           Effect.flip(
@@ -159,11 +154,11 @@ describe("Fold retained-file process recovery", () => {
           ),
         );
         expect(failure.message).toContain("Fenced: another writer advanced the log");
-        expect(
-          (await Effect.runPromise(readFoldLog(store, streamId))).map((row) => row.seq),
-        ).toEqual([0, 1]);
+        expect((await store.runPromise(readFoldLog(session))).map((row) => row.seq)).toEqual([
+          0, 1,
+        ]);
       } finally {
-        await store.close();
+        await store.dispose();
       }
     });
   }, 60_000);

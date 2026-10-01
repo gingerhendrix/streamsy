@@ -1,4 +1,4 @@
-/** Fold owns agent semantics; the shared store owns the durable event log. */
+/** Fold owns agent semantics; the `Sessions` stream owns the durable event log. */
 import {
   decodeStoredLogEntry,
   EventLogCorruptEntryError,
@@ -12,10 +12,10 @@ import {
   makeStoredLogEntry,
   type EventLogService,
   type LogEntryInput,
+  type SessionId,
 } from "@humanlayer/fold-core";
-import { StreamNotFound, StreamGone } from "@streamsy/core";
+import { DecodeFault, StreamGone, StreamNotFound } from "@streamsy/core";
 import { Context, Effect, Layer, Predicate, Schema, Semaphore, Stream } from "effect";
-import type { StreamsyStore } from "./storage.ts";
 import {
   Sessions,
   corrupt,
@@ -23,12 +23,12 @@ import {
   isSessionStart,
   readHistory,
   unavailable,
+  type SessionParams,
 } from "./session-log.ts";
 
 export type StreamsyEventLogMode = "create" | "resume";
 export interface StreamsyEventLogOptions {
-  readonly store: StreamsyStore;
-  readonly streamId: string;
+  readonly session: SessionId;
   readonly mode: StreamsyEventLogMode;
 }
 const toFoldError = (error: { readonly _tag: string; readonly message?: string }) => {
@@ -41,8 +41,7 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
     return error;
   if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
   if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
-  const { message } = error;
-  if (Predicate.isTagged(error, "DecodeFault")) return corrupt(message ?? "Invalid stored JSON");
+  if (Schema.is(DecodeFault)(error)) return corrupt(error.message);
   return unavailable(
     error.message || error._tag,
     "retryable" in error && error.retryable === true,
@@ -54,13 +53,13 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
 export const makeEventLog = (options: StreamsyEventLogOptions) =>
   Effect.gen(function* () {
     const sessions = yield* Sessions;
-    const params = { streamId: options.streamId };
+    const params: SessionParams = { session: options.session };
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
       if (Predicate.isTagged(result, "Exists"))
         return yield* unavailable(
-          `Stream ${params.streamId} already exists or is unavailable: ${result._tag}`,
+          `Stream ${Sessions.address(params).id} already exists or is unavailable: ${result._tag}`,
         );
     }
     const history = yield* readHistory(params);
@@ -103,12 +102,14 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           Effect.flatMap((log) => decodeLog(log.items)),
           Effect.map((log) => Stream.fromIterable(log.filter((entry) => entry.seq >= fromSeq))),
           Effect.mapError(toFoldError),
+          Effect.provideService(Sessions, sessions),
         ),
-      ).pipe(Stream.provideContext(options.store.context));
+      );
     const subscribe: EventLogService["subscribe"] = (fromSeq = 0) =>
       Stream.unwrap(
         Effect.sync(() => {
           let seq = 0;
+          // `follow` catches up, then long-polls, and retries storage faults from the same offset.
           return sessions.follow(params).pipe(
             Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
             Stream.mapEffect((value) =>
@@ -127,19 +128,21 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
             Stream.mapError(toFoldError),
           );
         }),
-      ).pipe(Stream.provideContext(options.store.context));
-    return {
-      append: (input) => append(input).pipe(Effect.provide(options.store.context)),
-      entries,
-      subscribe,
-    } satisfies EventLogService;
-  }).pipe(Effect.provide(options.store.context), Effect.mapError(toFoldError));
+      );
+    return { append, entries, subscribe } satisfies EventLogService;
+  }).pipe(Effect.mapError(toFoldError));
 
-export const streamsyEventLog = (options: StreamsyEventLogOptions) =>
-  eventLogSource(makeEventLog(options));
-export const readFoldLog = (store: StreamsyStore, streamId: string) =>
-  readHistory({ streamId }).pipe(
+/** Fold's log descriptor over the `Sessions` service in context. */
+export const streamsyEventLog = Effect.fn("Fold.streamsyEventLog")(function* (
+  options: StreamsyEventLogOptions,
+) {
+  const sessions = yield* Sessions;
+  return eventLogSource(makeEventLog(options).pipe(Effect.provideService(Sessions, sessions)));
+});
+
+/** Read and validate a stored session without a model. */
+export const readFoldLog = (session: SessionId) =>
+  readHistory({ session }).pipe(
     Effect.flatMap((log) => decodeLog(log.items)),
-    Effect.provide(store.context),
     Effect.mapError(toFoldError),
   );

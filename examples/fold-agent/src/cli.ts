@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/* oxlint-disable effecttsgo/global-console, effecttsgo/global-console-in-effect -- This CLI's contract is plain stdout/stderr text for a human and for the CLI tests; routing it through a Logger would change the observable output format. */
 /**
  * A local CLI over a Fold Core agent whose durable log lives in a Streamsy
  * stream.
@@ -20,16 +19,11 @@ import {
   type SubagentNotFoundError,
 } from "@humanlayer/fold-core";
 import { StorageFault } from "@streamsy/core";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
-import { exampleAgent, MissingCredentialsError, modelFromEnv } from "./agent.ts";
+import { Cause, Config, Console, Effect, Exit, Option, Schema } from "effect";
+import { configuredModel, exampleAgent, MissingCredentialsError } from "./agent.ts";
 import { formatEntry } from "./render.ts";
-import {
-  databasePathFromEnv,
-  openStore,
-  sessionStreamId,
-  StorageNotAvailable,
-  type StreamsyStore,
-} from "./storage.ts";
+import { Sessions, sessionStreamId } from "./session-log.ts";
+import { configuredStoreLayer, StorageNotAvailable } from "./storage.ts";
 import { readFoldLog, streamsyEventLog } from "./streamsy-event-log.ts";
 
 const USAGE = `Usage:
@@ -51,74 +45,75 @@ class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
 
 const usage = () => new UsageError({ message: USAGE });
 
-const printTurn = (session: FoldSession, streamId: string) =>
-  Effect.gen(function* () {
-    const entries = yield* session.entries;
-    for (const entry of entries) console.log(formatEntry(entry));
-    console.log("");
-    console.log(`stream id:  ${streamId}`);
-    console.log(`session id: ${session.sessionId}`);
-    console.log(`entries:    ${entries.length}`);
+/** A stream id names a session only when it matches the `Sessions` template. */
+const sessionOf = (streamId: string) =>
+  Option.match(Sessions.parse(streamId), {
+    onNone: () =>
+      Effect.fail(new UsageError({ message: `Not a Fold session stream: ${streamId}` })),
+    onSome: ({ session }) => Effect.succeed(session),
   });
 
-const withStore = <A, E>(run: (store: StreamsyStore) => Effect.Effect<A, E>) =>
+const printTurn = (fold: FoldSession, session: SessionId) =>
   Effect.gen(function* () {
-    const store = yield* openStore({ filename: databasePathFromEnv(process.env) });
-    return yield* run(store).pipe(Effect.ensuring(Effect.promise(() => store.close())));
+    const entries = yield* fold.entries;
+    for (const entry of entries) yield* Console.log(formatEntry(entry));
+    yield* Console.log("");
+    yield* Console.log(`stream id:  ${sessionStreamId(session)}`);
+    yield* Console.log(`session id: ${fold.sessionId}`);
+    yield* Console.log(`entries:    ${entries.length}`);
   });
+
+/** Open the configured store for one command, and close it when the command ends. */
+const withStore = Effect.provide(configuredStoreLayer);
 
 const start = (prompt: string) =>
   Effect.gen(function* () {
-    const model = yield* modelFromEnv(process.env);
-    const sessionId = SessionId.create();
-    const streamId = sessionStreamId(sessionId);
+    const model = yield* configuredModel;
+    const session = SessionId.create();
 
-    return yield* withStore((store) =>
+    return yield* withStore(
       Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* startSession({
+          const fold = yield* startSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({ store, streamId, mode: "create" }),
-            sessionId,
+            log: yield* streamsyEventLog({ session, mode: "create" }),
+            sessionId: session,
             cwd: process.cwd(),
           });
-          yield* session.send(prompt);
-          yield* printTurn(session, streamId);
+          yield* fold.send(prompt);
+          yield* printTurn(fold, session);
         }),
       ),
     );
   });
 
-const resume = (streamId: string, prompt: string) =>
+const resume = (session: SessionId, prompt: string) =>
   Effect.gen(function* () {
-    const model = yield* modelFromEnv(process.env);
+    const model = yield* configuredModel;
 
-    return yield* withStore((store) =>
+    return yield* withStore(
       Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* resumeSession({
+          const fold = yield* resumeSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({ store, streamId, mode: "resume" }),
+            log: yield* streamsyEventLog({ session, mode: "resume" }),
           });
-          yield* session.send(prompt);
-          yield* printTurn(session, streamId);
+          yield* fold.send(prompt);
+          yield* printTurn(fold, session);
         }),
       ),
     );
   });
 
-const inspect = (streamId: string) =>
-  withStore((store) =>
-    readFoldLog(store, streamId).pipe(
-      Effect.tap((entries) =>
-        Effect.sync(() => {
-          for (const entry of entries) console.log(formatEntry(entry));
-          console.log("");
-          console.log(`stream id: ${streamId}`);
-          console.log(`entries:   ${entries.length}`);
-        }),
-      ),
-    ),
+const inspect = (session: SessionId) =>
+  withStore(
+    Effect.gen(function* () {
+      const entries = yield* readFoldLog(session);
+      for (const entry of entries) yield* Console.log(formatEntry(entry));
+      yield* Console.log("");
+      yield* Console.log(`stream id: ${sessionStreamId(session)}`);
+      yield* Console.log(`entries:   ${entries.length}`);
+    }),
   );
 
 export const parseResumeArgs = (args: ReadonlyArray<string>) =>
@@ -131,7 +126,7 @@ export const parseResumeArgs = (args: ReadonlyArray<string>) =>
     }
     const prompt = promptParts.join(" ").trim();
     if (!streamId || !prompt) return yield* usage();
-    return { streamId, prompt };
+    return { session: yield* sessionOf(streamId), prompt };
   });
 
 type CliError =
@@ -139,6 +134,7 @@ type CliError =
   | StorageFault
   | UsageError
   | MissingCredentialsError
+  | Config.ConfigError
   | EventLogError
   | SubagentNotFoundError;
 
@@ -152,28 +148,29 @@ const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => 
     }
     case "resume": {
       return parseResumeArgs(rest).pipe(
-        Effect.flatMap(({ streamId, prompt }) => resume(streamId, prompt)),
+        Effect.flatMap(({ session, prompt }) => resume(session, prompt)),
       );
     }
     case "inspect": {
       const [streamId] = rest;
       if (streamId === undefined) return Effect.fail(usage());
-      return inspect(streamId);
+      return sessionOf(streamId).pipe(Effect.flatMap(inspect));
     }
     default:
       return Effect.fail(usage());
   }
 };
 
+/** A typed failure prints its message. Anything else prints the full cause. */
+const describe = (cause: Cause.Cause<CliError>): string => {
+  const failure = Cause.findErrorOption(cause);
+  return Option.isSome(failure) ? failure.value.message : Cause.pretty(cause);
+};
+
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(main(process.argv.slice(2)).pipe(Effect.asVoid));
+  const exit = await Effect.runPromiseExit(main(process.argv.slice(2)));
   if (Exit.isFailure(exit)) {
-    const failure = Cause.findErrorOption(exit.cause);
-    console.error(
-      Option.isSome(failure) && failure.value instanceof Error
-        ? failure.value.message
-        : Cause.pretty(exit.cause),
-    );
+    await Effect.runPromise(Console.error(describe(exit.cause)));
     process.exitCode = 1;
   }
 }

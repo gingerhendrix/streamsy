@@ -25,7 +25,9 @@ bun run --cwd examples/fold-agent inspect <stream-id>
 
 ## How it works
 
-A session uses one stream, `fold/sessions/<id>/events`. Opening the writer
+A session uses one stream, `fold/sessions/<session>/events`, declared with
+`Streamsy.json`. The template parameter is Fold's `SessionId`, so the CLI
+rejects a stream id that does not name a session. Opening the writer
 reads that log, validates Fold's sequence, and uses its length as the next
 sequence. Each append names the observed tail with `expectedOffset`. If
 another process advances the log first, the append fails and the stale writer
@@ -35,8 +37,9 @@ If the process crashes after a model call but before its append commits, the
 model call runs again on the next turn. This is the accepted cost of keeping
 the example to one stream and one write per entry.
 
-`openMemoryStore()` and `openStore({ filename })` give the same store on the
-memory Layer and on Bun SQLite.
+`memoryLayer()` and `sqliteLayer(filename)` give the same `Sessions` service
+on the memory host and on Bun SQLite. The CLI reads its settings with Effect
+`Config` and provides the store Layer for each command.
 
 ## Verify
 
