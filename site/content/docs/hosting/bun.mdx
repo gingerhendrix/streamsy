@@ -5,11 +5,10 @@ description: Run a Streamsy server on Bun with SQLite storage, a scoped listener
 
 ```ts
 import { Layer, Schema } from "effect";
-import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
 import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
-import { drainOnShutdown, listener } from "@streamsy/serve/bun";
+import { listener } from "@streamsy/serve/bun";
 import * as BunStorage from "@streamsy/storage/bun";
 
 class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
@@ -24,13 +23,12 @@ const App = Layer.mergeAll(
 );
 const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
 
-const Server = HttpRouter.serve(App).pipe(
-  drainOnShutdown(),
+const Server = Serve.layer(App).pipe(
   Layer.provide(storage),
   Layer.provideMerge(listener({ port: 3000 })),
 );
 
-BunRuntime.runMain(Layer.launch(Server));
+BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
 ```
 
 The launched scope owns the listener, the storage, and every fiber. A projection or an outbox drain can be one more Layer in the same graph. Closing the scope is the shutdown.
@@ -50,9 +48,7 @@ A client abort interrupts a parked long poll and releases its subscription. A bi
 
 ## Drain on shutdown
 
-`drainOnShutdown(options)` wraps the serve Layer. At shutdown, a parked long poll answers 204 with its offset and cursor, and an SSE body ends after its last batch. It then waits for live reads to end, up to `timeout` (default 2 s).
-
-Apply it directly to `HttpRouter.serve(...)`, before storage and the listener.
+On `SIGINT` or `SIGTERM`, `Serve.layer` answers live reads before the routes close. `Serve.teardown` makes this clean stop exit 0. See [Long-running hosts](/docs/http/serve#long-running-hosts).
 
 ## SQLite storage
 

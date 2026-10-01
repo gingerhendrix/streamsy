@@ -133,22 +133,22 @@ See [Layers and storage](/docs/hosting).
 
 ```ts
 import { Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
 import { Http } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { storage } from "./storage.ts";
 import { shop } from "./streams.ts";
 
-const server = HttpRouter.serve(Http.routes(shop, { prefix: "/streams", access: "read" })).pipe(
+const server = Serve.layer(Http.routes(shop, { prefix: "/streams", access: "read" })).pipe(
   Layer.provide(storage),
   Layer.provide(listener({ port: 3000 })),
 );
 
-BunRuntime.runMain(Layer.launch(server));
+BunRuntime.runMain(Layer.launch(server), { teardown: Serve.teardown });
 ```
 
-`access: "read"` allows GET and HEAD. A write answers 405.
+`access: "read"` allows GET and HEAD. A write answers 405. On Ctrl+C, `Serve.layer` answers live reads before the server stops, and `Serve.teardown` exits 0.
 
 See [Protocol routes](/docs/http/routes) and [Bun](/docs/hosting/bun).
 

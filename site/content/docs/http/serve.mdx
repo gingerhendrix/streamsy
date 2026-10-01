@@ -33,7 +33,7 @@ export const App = Layer.mergeAll(
 | `Serve.state(address)`        | The Durable State change stream |
 | `Serve.value(schema, effect)` | One JSON value, with an ETag    |
 
-`Serve.mount(Stream, path)` decodes path params and chooses the stream or state handler. `Serve.route(path, handler)` owns GET and HEAD and rejects other methods. Join routes with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`.
+`Serve.mount(Stream, path)` decodes path params and chooses the stream or state handler. `Serve.route(path, handler)` owns GET and HEAD and rejects other methods. Join routes with `Layer.mergeAll`, then serve them with `Serve.layer` on a [long-running host](#long-running-hosts), or with `HttpRouter.toWebHandler`.
 
 | Request                   | Response                    |
 | ------------------------- | --------------------------- |
@@ -200,3 +200,42 @@ const BrowserApp = Layer.mergeAll(App, Cors);
 A contract fingerprint covers the stream address and the state collection names and keys. Set `options.contract` when the Schema or computation changes and the metadata does not.
 
 Use URL-safe stream segments. Serve decodes parameters, and the protocol routes use raw encoded ids.
+
+## Long-running hosts
+
+`Serve.layer(routes, options)` is `HttpRouter.serve` with a drain for live reads. `Serve.teardown` sets the exit code. Both come from `@streamsy/serve` and work on any runtime. The host adds its listener and its runtime's `runMain`.
+
+```ts
+import { Layer } from "effect";
+import { BunRuntime } from "@effect/platform-bun";
+import { Memory } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
+import { App, game } from "./app.ts";
+
+const Server = Serve.layer(App, { drainTimeout: "2 seconds" }).pipe(
+  Layer.provide(Memory.layer({}, game)),
+  Layer.provide(listener({ port: 3000 })),
+);
+
+BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
+```
+
+`options` takes the options of `HttpRouter.serve`, plus `drainTimeout` (default 2 s).
+
+At shutdown:
+
+1. The drain signals every live read. A parked long poll answers 204 with its offset and cursor, as after a long-poll timeout. An SSE body ends after its last batch.
+2. The drain waits until no live read is running, or until `drainTimeout` passes. A live request in this window gets the same reply at once.
+3. The serve Layer closes and interrupts the handlers that still run.
+4. Storage closes, then the listener stops.
+
+| Exit                                 | Code with `Serve.teardown` |
+| ------------------------------------ | -------------------------- |
+| Interrupted by `SIGINT` or `SIGTERM` | 0                          |
+| Success                              | 0                          |
+| Failure, such as a port in use       | Not 0 (1 by default)       |
+
+Without `Serve.teardown`, `runMain` exits 130 after a signal. `Serve.teardown` maps every interrupt-only exit to 0. Use it for a main that ends only by failure or signal, such as `Layer.launch`.
+
+A Durable Object host gets no stop signal. It uses `HttpRouter.toWebHandler`, and neither `Serve.layer` nor `Serve.teardown`.
