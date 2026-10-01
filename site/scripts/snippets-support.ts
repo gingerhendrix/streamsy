@@ -300,19 +300,6 @@ export { B2, provided };
   [
     "streams/write",
     {
-      preludes: {
-        // Block 6 is `IssueTracker.mutate` from the issue tracker demo. These are the
-        // shapes of the names it uses from `server/state.ts` and `server/issue-tracker.ts`.
-        6: `import { Effect, Predicate, Schedule, Schema } from "effect";
-import type { OffsetMismatch } from "@streamsy/core";
-interface WorkspaceState { hasProjects(): boolean }
-interface Mutation<A> { readonly change: string; readonly value: A }
-class WorkspaceNotFound extends Schema.TaggedError<WorkspaceNotFound>()("WorkspaceNotFound", { workspaceId: Schema.String }) {}
-class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", { workspaceId: Schema.String }) {}
-declare const materialize: (workspaceId: string) => Effect.Effect<{ readonly state: WorkspaceState; readonly headOffset: string }, WorkspaceNotFound>;
-declare const append: (workspaceId: string, change: string, head: string) => Effect.Effect<{ readonly offset: string }, OffsetMismatch>;
-`,
-      },
       modules: {
         "orders.ts": `import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";

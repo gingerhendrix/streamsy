@@ -89,7 +89,7 @@ Before you call it:
 
 ## Read, decide, append
 
-A command can use a projection as its view. Run the projection, read the state and offsets, decide, then append to the input with `expectedOffset`.
+A command can use a projection as its view. `Projection.decide` runs the projection, reads the state and offsets, decides, then appends to one input with `expectedOffset`.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -110,23 +110,30 @@ const taken = Projection.fold({
 }).at({});
 
 const reserve = (seat: string) =>
-  Effect.gen(function* () {
-    yield* Projection.run(taken);
-    const { state, offsets } = yield* Projection.read(taken);
-    if (state.includes(seat)) return { _tag: "Rejected" as const };
-    const seats = yield* Seats;
-    const appended = yield* seats.append({}, [{ seat }], { expectedOffset: offsets.input });
-    return { _tag: "Reserved" as const, offset: appended.offset };
-  }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+  Projection.decide(taken, {
+    input: "input",
+    decide: ({ state }) =>
+      Effect.succeed(
+        state.includes(seat)
+          ? { value: "rejected" as const, items: [] }
+          : { value: "reserved" as const, items: [{ seat }] },
+      ),
+  });
 ```
 
-1. `Projection.run` brings the state to the tail. Do not set `limit`.
-2. `Projection.read` gives the state and its offsets.
-3. The decision reads only `state`. A rejection writes nothing.
-4. The append uses `expectedOffset: offsets.input`. A new write since the read makes it fail with `OffsetMismatch`.
-5. The retry runs all steps again. Retry only `OffsetMismatch`, with a limit.
+What `Projection.decide` does:
 
-Append only to the input that the offset names. The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pattern.
+- It runs the projection to the tail, with no `limit`.
+- It reads the state and the offsets from one checkpoint record, and passes them to `decide`. `decide` must not write.
+- Empty `items` writes nothing and does not check the tail. A rejection is an answer at the offsets that were read.
+- Otherwise it appends to the input that `input` names, with that input's offset as `expectedOffset`. `input` must be a key of `inputs`, and `items` must have that input's item type.
+- After `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures.
+
+It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the offset that was read.
+
+A projection with no `state:` works too. `snapshot.state` is `undefined`, and `decide` reads the projection's own tables. Those tables can only be newer than the offsets. Then the tail has moved, so the append fails and the call runs again.
+
+The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pattern.
 
 ## Checkpoints and generations
 
