@@ -1,9 +1,9 @@
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { streamPath } from "./config.ts";
 import { NewestStoriesPoller } from "./poller/contract.ts";
-import { serveStatic } from "./static.ts";
+import { clientRoute } from "./static.ts";
 import { HackerNewsStories } from "./stories.ts";
 
 const currentStats = Effect.gen(function* () {
@@ -36,14 +36,5 @@ export const app = Layer.mergeAll(
     "/api/*",
     HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 }),
   ),
-  HttpRouter.add(
-    "GET",
-    "/*",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      return HttpServerResponse.fromWeb(
-        yield* Effect.promise(() => serveStatic(new URL(request.url, "http://localhost"))),
-      );
-    }),
-  ),
+  clientRoute,
 );
