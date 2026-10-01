@@ -108,6 +108,7 @@
       "name": "memory-server",
       "version": "0.0.1",
       "dependencies": {
+        "@effect/platform-bun": "4.0.0-rc.115",
         "@streamsy/core": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "effect": "4.0.0-rc.115",
