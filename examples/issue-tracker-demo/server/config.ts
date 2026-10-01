@@ -11,15 +11,8 @@ export const ServerConfig = Config.all({
   ),
 });
 
-export const streamPrefix = "/streams";
-
 /** The always-present, seeded demo workspace (default when no `?w=` is set). */
 export const mainWorkspaceId = "main";
-
-/** Stream id for a workspace, served at `/streams/workspace/<id>`. */
-export function workspaceStreamId(workspaceId: string): string {
-  return `workspace/${workspaceId}`;
-}
 
 // Streamsy's in-memory storage long-polls for up to 30 seconds. Bun's default
 // HTTP idle timeout is 10 seconds, which can terminate live reads before

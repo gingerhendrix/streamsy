@@ -83,6 +83,10 @@ async function readStream(streamUrl: string): Promise<{ events: StateEvent[]; he
   const response = await fetch(`${streamUrl}?offset=-1`);
   assert(response.status === 200, `stream read status ${response.status}`);
   assert(response.headers.get("stream-up-to-date") === "true", "stream read should be up to date");
+  assert(
+    response.headers.get("x-streamsy-state-version") === "1",
+    "the stream route should serve the Durable State contract",
+  );
   const head = response.headers.get("stream-next-offset");
   assert(head, "stream read should return a stream-next-offset header");
   const events = decodeStateEvents(await response.json());
@@ -345,8 +349,9 @@ try {
   );
   const restartIssueId = restartIssue.issue.id;
 
-  // A browser normally has a parked read when the server stops. The layer
-  // graph interrupts it (503), stops the listener, then closes SQLite.
+  // A browser normally has a parked read when the server stops.
+  // drainOnShutdown answers it like a long-poll timeout (204 at the same head),
+  // then the listener stops and SQLite closes.
   let settled = false;
   const parked = fetch(`${restartStreamUrl}?offset=now&live=long-poll`).then((response) => {
     settled = true;
@@ -358,9 +363,13 @@ try {
   // BunRuntime.runMain reports an interrupted main fiber with exit code 130.
   const exitCode = await server.exited;
   assert(exitCode === 130, `parked-read shutdown should exit 130 (interrupted), got ${exitCode}`);
-  const interrupted = await parked;
-  assert(interrupted.status === 503, `shutdown long-poll status ${interrupted.status}`);
-  await interrupted.text();
+  const drained = await parked;
+  assert(drained.status === 204, `shutdown long-poll status ${drained.status}`);
+  assert(
+    drained.headers.get("stream-next-offset") === restartIssue.awaitOffset,
+    "the drained long poll should answer at the workspace head",
+  );
+  await drained.text();
   assert(!(await Bun.file(`${databasePath}-wal`).exists()), "shutdown should close SQLite WAL");
   assert(!(await Bun.file(`${databasePath}-shm`).exists()), "shutdown should close SQLite SHM");
   const stoppedStderr = await new Response(server.stderr).text();

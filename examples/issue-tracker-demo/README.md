@@ -5,7 +5,7 @@ reads the workspace stream from the beginning, folds it into Durable State,
 validates the mutation, and appends one conditional change. The browser replays
 that same stream into TanStack DB with `@durable-streams/state/db`.
 
-![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Http.routes serves the stream read-only, and createStreamDB follows it in the browser.](../../site/assets/docs/demos/issue-tracker-demo-architecture.svg)
+![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Serve.mount serves the stream read-only, and createStreamDB follows it in the browser.](../../site/assets/docs/demos/issue-tracker-demo-architecture.svg)
 
 The [guide](https://streamsy.dev/docs/demos/issue-tracker) explains each
 numbered step with excerpts from this folder.
@@ -46,10 +46,10 @@ Create the parent directory before starting the server.
 listener. `BunHttpServer.layer` keeps Bun's HTML bundle and hot reload for
 `/*`; `/api` and `/streams` fall through to one Effect `HttpRouter`. That
 router holds two things: `HttpApiBuilder.layer(IssueTrackerApi)` for the JSON
-API, and `Http.routes(Streamsy.group(Workspaces), { prefix: "/streams", access: "read" })`
-for the stream endpoints. On SIGINT or SIGTERM the layer scopes close in
-reverse order: open requests are interrupted, the listener stops, and storage
-closes last.
+API, and `Serve.mount(Workspaces, "/streams/workspace/:workspaceId")` from
+`@streamsy/serve` for the read-only Durable State route. On SIGINT or SIGTERM
+the layer scopes close in reverse order: `drainOnShutdown` answers parked long
+polls with 204, the listener stops, and storage closes last.
 
 `shared/api.ts` declares `IssueTrackerApi`: one group each for workspaces,
 projects, issues and comments. Effect schemas in `shared/api-schema.ts` check
@@ -66,9 +66,10 @@ only, so parallel writers cannot silently overwrite one another; after three
 retries the API answers 409. The validation rules in `server/state.ts` return
 the change to append or a typed error, and the handlers map those errors to
 400, 404 or 409. Project, issue, and comment changes share one
-`StreamAddress.state` whose collections type both reads and writes. Because the
-tracker appends its own events rather than projecting an upstream, each change
-records the workspace head read by the recipe as its source offset.
+`Streamsy.state` declaration, `Workspaces`, whose collections type both reads
+and writes. `DurableState.changes` stamps each change for the append. Because
+the tracker appends its own events rather than projecting an upstream, each
+change records the workspace head read by the recipe as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as
@@ -87,7 +88,7 @@ The offline HTTP smoke calls the API through an `HttpApiClient` built from
 `IssueTrackerApi`. It covers projects, issues, comments, workspace isolation,
 ten concurrent writers landing with the exact event count and no duplicates,
 raw probes for bodies the typed client cannot send, raw stream writes (405), a
-shutdown with a parked read, and a SQLite process restart. The in-process
+shutdown that drains a parked read with 204, and a SQLite process restart. The in-process
 recipe tests use a read barrier to force a CAS conflict and prove that the
 losing writer retries against the new state, and a writer that loses every race
 to prove the 409 after three retries.

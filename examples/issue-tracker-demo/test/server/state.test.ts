@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
 import { CommentInput, IssueInput, ProjectInput } from "../../shared/api-schema.ts";
-import { workspaceStreamId } from "../../server/config.ts";
 import {
   createComment,
   createIssue,
@@ -13,7 +12,6 @@ import {
   type Stamp,
   type WorkspaceState,
 } from "../../server/state.ts";
-import { Workspaces } from "../../server/streams.ts";
 
 const stamp: Stamp = {
   id: "fixed_1",
@@ -125,9 +123,4 @@ describe("mutation attempts", () => {
     const failure = Effect.runSync(Effect.flip(updateIssue("nope", {}, stamp)(state)));
     expect(failure).toMatchObject({ _tag: "IssueNotFound", issueId: "nope" });
   });
-});
-
-test("workspace stream ids match the public stream URL contract", () => {
-  for (const workspaceId of ["main", "abc123test", "concurrent-test"])
-    expect(workspaceStreamId(workspaceId)).toBe(Workspaces.at({ workspaceId }).id);
 });

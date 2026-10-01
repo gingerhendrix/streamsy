@@ -1,4 +1,4 @@
-import { DurableState, Memory, StreamAddress, Streamsy, type StorageFault } from "@streamsy/core";
+import { DurableState, Memory, Streamsy, type StorageFault } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Effect, Layer, Option, Schema } from "effect";
 import { Comment, Issue, Project } from "../shared/state-schema.ts";
@@ -17,26 +17,18 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
     },
   },
 ) {}
-export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspaceId });
 
-type WorkspaceCollections = ReturnType<typeof workspaceEvents>["collections"];
-export type WorkspaceEvent = StreamAddress.CollectionsChange<WorkspaceCollections>;
-export type WorkspaceChange = DurableState.Change<WorkspaceCollections>;
+export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>;
 
-export function appendWorkspaceEvent(
+/**
+ * Stamp changes for one workspace. The tracker writes its own events, so the
+ * head that the recipe read is their source offset.
+ */
+export const workspaceEvents = (
   workspaceId: string,
-  change: WorkspaceChange,
   sourceOffset: string,
-  expectedOffset?: string,
-) {
-  const events = DurableState.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [
-    change,
-  ]);
-  const options = expectedOffset === undefined ? {} : { expectedOffset };
-  return Effect.flatMap(Workspaces, (workspaces) =>
-    workspaces.append({ workspaceId }, events, options),
-  );
-}
+  changes: ReadonlyArray<WorkspaceChange>,
+) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 
 /** SQLite when `ISSUE_TRACKER_DB` is set, otherwise a process-local memory store. */
 export const StorageLive = Layer.unwrap(

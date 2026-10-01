@@ -46,9 +46,10 @@ export const issueUpsert = (issue: Issue, stamp: Stamp): WorkspaceChange =>
 export const commentUpsert = (comment: Comment, stamp: Stamp): WorkspaceChange =>
   DurableState.upsert("comment", comment, headers(stamp));
 
-// The attempts below run inside the Transact recipe. Each one validates the
-// request against freshly folded state and either returns one change or fails
-// with a typed error. They are pure, so a retry simply runs them again.
+// The attempts below run inside the read, fold, append recipe of
+// `IssueTracker.mutate`. Each one validates the request against freshly folded
+// state and either returns one change or fails with a typed error. They are
+// pure, so a retry simply runs them again.
 
 export const createProject =
   (input: Partial<Project>, stamp: Stamp) => (): Effect.Effect<Mutation<Project>> => {

@@ -23,7 +23,7 @@ Open http://localhost:1338. The server keeps workspaces in memory, so a restart 
 
 ## Architecture
 
-![Architecture diagram. In the browser, an action inserts the change into TanStack DB and posts it with a txid to the JSON API. An HttpApi handler calls IssueTracker.mutate, which reads and folds the workspace stream, then appends the change only if the stream tail has not moved. The stream lives in a memory or Bun SQLite store. Http.routes serves the stream read-only from the same Effect router. createStreamDB follows the stream, confirms the txid and fills the TanStack DB collections that React reads with useLiveQuery.](/docs/demos/issue-tracker-demo-architecture.svg)
+![Architecture diagram. In the browser, an action inserts the change into TanStack DB and posts it with a txid to the JSON API. An HttpApi handler calls IssueTracker.mutate, which reads and folds the workspace stream, then appends the change only if the stream tail has not moved. The stream lives in a memory or Bun SQLite store. Serve.mount serves the stream read-only as Durable State from the same Effect router. createStreamDB follows the stream, confirms the txid and fills the TanStack DB collections that React reads with useLiveQuery.](/docs/demos/issue-tracker-demo-architecture.svg)
 
 The server has no read API. Writes go through the JSON API, and reads come from the stream. Each number in the diagram is also the number of a section below.
 
@@ -34,7 +34,7 @@ The server has no read API. Writes go through the JSON API, and reads come from 
 | 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                   | `src/db.ts`                                                       |
 | 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                               | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
 | 5    | The service reads and folds the workspace, then appends if the stream did not move | `read`, `DurableState.changes`, `append` with `expectedOffset` | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
-| 6    | The same router serves the stream for reads only                                   | `Http.routes` with `access: "read"`                            | `server/index.ts`                                                 |
+| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `drainOnShutdown`                               | `server/index.ts`                                                 |
 | 7    | The browser follows the stream and confirms its own change                         | Durable State client                                           | `src/db.ts`, `src/App.tsx`                                        |
 
 The code in each section is from the demo. Lines marked `// ...` are left out.
@@ -56,7 +56,6 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
     },
   },
 ) {}
-export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspaceId });
 ```
 
 `Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `shared/state-schema.ts`. The browser uses the same schemas.
@@ -84,6 +83,7 @@ The whole server is one layer graph. `Layer.provide` builds its argument first a
 
 ```ts title="server/index.ts"
 const ServerLive = HttpRouter.serve(RoutesLive, { disableLogger: true }).pipe(
+  drainOnShutdown(),
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
@@ -298,35 +298,29 @@ const mutate = <A, E>(
   );
 ```
 
-`append` keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
+`append` calls the `Workspaces` service with `expectedOffset` set to the head that the recipe read. It keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
 
 ```ts title="server/issue-tracker.ts"
 const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
-  appendWorkspaceEvent(workspaceId, change, head, head).pipe(
-    Effect.provideService(Workspaces, workspaces),
-    Effect.catch((error) =>
-      Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
-    ),
-  );
+  workspaces
+    .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
+      expectedOffset: head,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+      ),
+    );
 ```
 
 `DurableState.changes` turns the change into the wire event for the workspace address. The demo has no upstream stream, so it records the head it read as the source offset.
 
 ```ts title="server/streams.ts"
-export function appendWorkspaceEvent(
+export const workspaceEvents = (
   workspaceId: string,
-  change: WorkspaceChange,
   sourceOffset: string,
-  expectedOffset?: string,
-) {
-  const events = DurableState.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [
-    change,
-  ]);
-  const options = expectedOffset === undefined ? {} : { expectedOffset };
-  return Effect.flatMap(Workspaces, (workspaces) =>
-    workspaces.append({ workspaceId }, events, options),
-  );
-}
+  changes: ReadonlyArray<WorkspaceChange>,
+) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 ```
 
 The builders put the txid and the server time in the change headers. An issue edit is also an upsert with the full issue.
@@ -350,8 +344,7 @@ const ListenerLive = Layer.unwrap(
     BunHttpServer.layer({
       port,
       idleTimeout: serverIdleTimeoutSeconds,
-      // On shutdown the router first interrupts open requests (a parked long
-      // poll answers 503); the listener then stops once those replies are sent.
+      // The listener stops from its own scope once the open replies are sent.
       disablePreemptiveShutdown: true,
       routes: {
         "/api/*": false,
@@ -367,15 +360,17 @@ const ListenerLive = Layer.unwrap(
 );
 ```
 
-One router holds the JSON API and the stream routes. `Http.routes` serves the workspace streams under `/streams`. With `access: "read"`, a `PUT`, `POST` or `DELETE` on a stream answers 405, so only the JSON API appends. A path that no declared stream owns answers 404. Both parts use the same `Workspaces` service from the layer graph.
+One router holds the JSON API and the stream route. `Serve.mount` serves each workspace stream as Durable State at `/streams/workspace/:workspaceId`. The `Workspaces` codecs decode the path parameter. A `PUT`, `POST` or `DELETE` answers 405, so only the JSON API appends. A path that no route owns answers 404. Both parts use the same `Workspaces` service from the layer graph.
 
 ```ts title="server/index.ts"
 const RoutesLive = Layer.mergeAll(
   ApiLive,
   ApiNotFoundLive,
-  Http.routes(Streamsy.group(Workspaces), { prefix: streamPrefix, access: "read" }),
+  Serve.mount(Workspaces, "/streams/workspace/:workspaceId"),
 );
 ```
+
+`drainOnShutdown()` in section 2 wraps the serve layer. When the server stops, a parked long poll answers 204 at its offset. The browser then reconnects as it does after a normal long-poll timeout.
 
 You can read a workspace with `curl`. It returns the change events as JSON:
 
@@ -383,7 +378,7 @@ You can read a workspace with `curl`. It returns the change events as JSON:
 curl -i 'http://localhost:1338/streams/workspace/main?offset=-1'
 ```
 
-See [Access](/docs/http/routes#access).
+See [Serve handlers](/docs/http/serve) and [Drain on shutdown](/docs/hosting/bun#drain-on-shutdown).
 
 ## 7. Follow the stream in the browser
 

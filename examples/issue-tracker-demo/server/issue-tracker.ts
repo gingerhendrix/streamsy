@@ -21,7 +21,7 @@ import {
   type Stamp,
   type WorkspaceState,
 } from "./state.ts";
-import { appendWorkspaceEvent, Workspaces, type WorkspaceChange } from "./streams.ts";
+import { workspaceEvents, Workspaces, type WorkspaceChange } from "./streams.ts";
 
 export class WorkspaceNotFound extends Schema.TaggedError<WorkspaceNotFound>()(
   "WorkspaceNotFound",
@@ -81,12 +81,15 @@ export const IssueTrackerLive = Layer.effect(
     // offset, and the append only lands if that head is still the tail. A lost
     // race stays typed for the retry; any other storage failure is a defect.
     const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
-      appendWorkspaceEvent(workspaceId, change, head, head).pipe(
-        Effect.provideService(Workspaces, workspaces),
-        Effect.catch((error) =>
-          Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
-        ),
-      );
+      workspaces
+        .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
+          expectedOffset: head,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+          ),
+        );
 
     const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
       const batches = yield* workspaces.read({ workspaceId }).pipe(
