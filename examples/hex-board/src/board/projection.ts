@@ -21,6 +21,7 @@
  *    offset *is* the projection's notion of time.
  */
 
+import { Schema } from "effect";
 import type {
   AttackRecord,
   ContinentBonus,
@@ -198,18 +199,15 @@ export interface ProjectionState {
 }
 
 /**
- * Thrown when canonical history contradicts itself, mirroring the aggregate's
- * `AggregateIntegrityError`. The runtime treats a throwing reducer as a poison
- * event and halts the projection at the previous watermark, which is the right
- * outcome: a corrupt stream must not fold into a plausible-looking board.
+ * Thrown by the pure reducer when canonical history contradicts itself, mirroring
+ * the aggregate's `AggregateIntegrityError`. The `board` fold moves it to the typed
+ * error channel, so `Projection.run` fails with it and the checkpoint stays at the
+ * previous cut: a corrupt stream must not fold into a plausible-looking board.
  */
-// oxlint-disable-next-line effecttsgo/extends-native-error -- ProjectionIntegrityError is an intentional synchronous poison-event exception from the pure reducer.
-export class ProjectionIntegrityError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProjectionIntegrityError";
-  }
-}
+export class ProjectionIntegrityError extends Schema.TaggedError<ProjectionIntegrityError>()(
+  "ProjectionIntegrityError",
+  { message: Schema.String },
+) {}
 
 export function initialProjection(gameId = ""): ProjectionState {
   return {
@@ -231,7 +229,7 @@ function findPlayer(state: ProjectionState, id: string): ProjectedPlayer | undef
 
 function findTerritory(state: ProjectionState, id: string): ProjectedTerritory {
   const territory = state.territories.find((t) => t.id === id);
-  if (!territory) throw new ProjectionIntegrityError(`unknown territory ${id}`);
+  if (!territory) throw new ProjectionIntegrityError({ message: `unknown territory ${id}` });
   return territory;
 }
 
@@ -295,9 +293,9 @@ function turnIdOf(round: number, playerId: string): string {
 function requirePendingCombat(state: ProjectionState, attackId: string): ProjectedCombat {
   const combat = state.combat;
   if (!combat || combat.attackId !== attackId || combat.status !== "awaiting-defense") {
-    throw new ProjectionIntegrityError(
-      `AttackResolved ${attackId} does not match a pending declaration`,
-    );
+    throw new ProjectionIntegrityError({
+      message: `AttackResolved ${attackId} does not match a pending declaration`,
+    });
   }
   return combat;
 }
@@ -344,8 +342,7 @@ function applyEvent(state: ProjectionState, event: GameEvent): void {
       break;
     }
     case "PlayerLeft": {
-      // Dropping the row from `players` is what makes the adapter emit a delete
-      // for that seat, the same mechanism the zero-or-one turn/combat rows use.
+      // Drop the seat from `players`. The move feed keeps its name (see `moveDetail`).
       state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
       break;
     }
@@ -357,7 +354,9 @@ function applyEvent(state: ProjectionState, event: GameEvent): void {
       for (const territory of state.territories) {
         const initial = armiesById.get(territory.id);
         if (!initial) {
-          throw new ProjectionIntegrityError(`GameStarted omits territory ${territory.id}`);
+          throw new ProjectionIntegrityError({
+            message: `GameStarted omits territory ${territory.id}`,
+          });
         }
         territory.ownerId = initial.ownerId;
         territory.armies = initial.armies;
@@ -513,9 +512,9 @@ function assertResolutionMatches(
     attackerLosses !== event.attackerLosses ||
     defenderLosses !== event.defenderLosses
   ) {
-    throw new ProjectionIntegrityError(
-      `AttackResolved ${event.attackId} contradicts its declaration`,
-    );
+    throw new ProjectionIntegrityError({
+      message: `AttackResolved ${event.attackId} contradicts its declaration`,
+    });
   }
 }
 
@@ -621,9 +620,8 @@ function moveDetail(event: GameEvent, before: ProjectionState): Partial<Projecte
  * `ordinal` is the event's 0-based position in canonical history and is what
  * gives its move row a primary key. A source offset cannot: a delivery boundary
  * carries one offset for every message in it, so several events of one command
- * share a position, and keying moves by that position would collide — the
- * snapshot would keep every move while the row set kept only the last, and the
- * browser mirror would silently disagree with the board it mirrors. The ordinal
+ * share a position, and keying moves by that position would give several moves
+ * one id. The ordinal
  * is durable (it is recorded in the projection's own checkpoint row) and depends
  * only on canonical order, so replay and incremental catch-up produce identical
  * keys however the reader happened to batch. `sourceOffset` stays on the row as

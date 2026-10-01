@@ -11,10 +11,11 @@ bun run --cwd examples/hex-board test
 
 The SQLite restart tests cover the 12-event victory game, split after 5 events
 (during a pending attack), and the 450-event four-player fixture, split after
-400 events (after the move cap and before a capture). Each reopens the same file,
+400 events (after the move cap and before a capture). Each opens the SQLite Layer again on the same file,
 checks zero new items and unchanged state/checkpoint, resumes, and compares with
 a pure fold. The long case checks the exact 40 move ids and saved ordinal.
-A contradictory attack resolution leaves state and checkpoint at the prior cut.
+A contradictory attack resolution fails the fold with the typed
+`ProjectionIntegrityError` and leaves state and checkpoint at the prior cut.
 Memory exercises the same incremental victory fold. Pure tests compare every
 fixture prefix with the aggregate and round-trip its BoardState schema, and
 check combat, map geometry, reinforcement accounting and multi-event move keys.
