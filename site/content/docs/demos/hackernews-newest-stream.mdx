@@ -87,14 +87,8 @@ export const createStoriesLayer = Layer.effectDiscard(
 
 // ...
 const sqliteHost = (databasePath: string): HostLayer =>
-  Layer.unwrap(
-    Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
-      Effect.as(
-        ProjectionSql.layerStorage.pipe(
-          Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
-        ),
-      ),
-    ),
+  ProjectionSql.layerStorage.pipe(
+    Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
   );
 ```
 

@@ -60,9 +60,7 @@ See [Declare streams](/docs/streams/declare).
 `storeLayer` gives the same `Sessions` service on the memory host or on Bun SQLite. The CLI uses SQLite, so a session outlives the process. Each command provides the Layer, so the store closes when the command ends.
 
 ```ts title="src/storage.ts"
-export const storeLayer = (
-  options: StoreOptions = {},
-): Layer.Layer<Sessions, StorageFault | StorageNotAvailable> => {
+export const storeLayer = (options: StoreOptions = {}): Layer.Layer<Sessions, StorageFault> => {
   const filename = options.filename;
   return filename === undefined || filename === ":memory:"
     ? memoryLayer(options)

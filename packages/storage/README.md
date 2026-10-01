@@ -10,11 +10,11 @@ bun add @streamsy/storage @streamsy/core effect
 
 ## Entries
 
-| Entry                              | Use it for                                                           |
-| ---------------------------------- | -------------------------------------------------------------------- |
-| `@streamsy/storage/bun`            | A retained SQLite file on Bun (`@effect/sql-sqlite-bun`)             |
-| `@streamsy/storage/durable-object` | SQLite inside a Cloudflare Durable Object (`@effect/sql-sqlite-do`)  |
-| `@streamsy/storage`                | Any SQLite-compatible `SqlClient` (SQLite 3.42 or newer) you provide |
+| Entry                              | Use it for                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| `@streamsy/storage/bun`            | A retained SQLite file on Bun (`@effect/sql-sqlite-bun`, `@effect/platform-bun`) |
+| `@streamsy/storage/durable-object` | SQLite inside a Cloudflare Durable Object (`@effect/sql-sqlite-do`)              |
+| `@streamsy/storage`                | Any SQLite-compatible `SqlClient` (SQLite 3.42 or newer) you provide             |
 
 The Bun and Durable Object entries export `layer` and `layerProtocol`.
 `layerProtocol` exposes `StreamsReader`, `StreamsWriter`, `Storage`,
@@ -70,6 +70,8 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 
 ## Good to know
 
+- The Bun entry creates the parent folder of a new file. A read-only open, or
+  `create: false`, creates nothing.
 - Only fresh 0.4-format files are accepted. Older Streamsy files and newer
   unknown schemas are rejected without being changed.
 - Bun defaults the client `busyTimeout` to zero and retries storage-owned
