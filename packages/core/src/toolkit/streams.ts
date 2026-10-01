@@ -1,10 +1,10 @@
-import type { NonEmptyReadonlyArray } from "effect/Array";
+import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import type { LazyArg } from "effect/Function";
-import { Duration, Effect, Option, Predicate, Schedule, Schema, Stream } from "effect";
+import { Duration, Effect, Option, Predicate, Result, Schedule, Schema, Stream } from "effect";
 import { DecodeFault, EncodeFault, type StreamsFault } from "../fault.ts";
 import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
-import type { AppendError, AppendErrorFor } from "../protocol/errors.ts";
+import type { AppendError, AppendErrorFor, OffsetMismatch } from "../protocol/errors.ts";
 import type {
   AppendCallOptions,
   CreateOptions,
@@ -189,6 +189,82 @@ export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
   const collected: Collected<A> = { items: state, offset };
   return collected;
 });
+/** What one `decide` step answers: a value, and the items to append for it. */
+export interface Decision<B, A> {
+  readonly value: B;
+  /** Items to append. Empty means "no write": the call returns without a tail check. */
+  readonly items: ReadonlyArray<A>;
+}
+/** The result of a read, decide, append loop. */
+export interface Decided<B> {
+  readonly value: B;
+  /** The new tail after a write, or the tail that was read when there was no write. */
+  readonly offset: string;
+  readonly appended: boolean;
+}
+export interface DecideSpec<A, S, B, E, R> {
+  /** The start value of the fold. Each call starts from a new value. */
+  readonly initial: LazyArg<S>;
+  readonly fold: (state: S, item: A) => S;
+  /**
+   * Decide what to append from the folded state. `offset` is the tail the state is
+   * at; the append checks it. This step must not write and must not change
+   * `state`: a retry folds on from the same state after a lost race.
+   */
+  readonly decide: (
+    state: S,
+    at: { readonly offset: string },
+  ) => Effect.Effect<Decision<B, A>, E, R>;
+  /** Retries after `OffsetMismatch`. Default: `Schedule.recurs(3)`. Nothing else is retried. */
+  readonly retry?: Schedule.Schedule<unknown, OffsetMismatch>;
+}
+/** Up to three retries after a lost race, so at most four appends per call. */
+const defaultDecideRetry = Schedule.recurs(3);
+/**
+ * Read, decide, append. Fold the stream to its tail, decide from the state, and
+ * append with `expectedOffset` set to the tail that was read. After an
+ * `OffsetMismatch`, fold on from that tail and decide again while `retry` allows;
+ * then fail with the last `OffsetMismatch`. Transport faults are not retried: a
+ * lost reply may hide an append that landed.
+ */
+export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E, R>(
+  address: StreamAddress<A, RD, RE>,
+  spec: DecideSpec<A, S, B, E, R>,
+) {
+  let folded: Folded<S> | undefined;
+  const attempt = Effect.gen(function* () {
+    const last = folded;
+    folded =
+      last === undefined
+        ? yield* fold(address, spec.initial, spec.fold)
+        : yield* fold(address, () => last.state, spec.fold, { offset: last.offset });
+    const { state, offset } = folded;
+    const { value, items } = yield* spec.decide(state, { offset });
+    if (!isReadonlyArrayNonEmpty(items)) {
+      const unchanged: Decided<B> = { value, offset, appended: false };
+      return unchanged;
+    }
+    const appended = yield* append(address, items, { expectedOffset: offset });
+    const decided: Decided<B> = { value, offset: appended.offset, appended: true };
+    return decided;
+  });
+  // `retry` steps its schedule with every error it sees, so only a lost race may
+  // reach it. Any other outcome passes the retry as a `Result` and is raised after.
+  const outcome = yield* attempt.pipe(
+    Effect.result,
+    Effect.flatMap((result) =>
+      Result.isFailure(result) && isOffsetMismatch(result.failure)
+        ? Effect.fail(result.failure)
+        : Effect.succeed(result),
+    ),
+    Effect.retry(spec.retry ?? defaultDecideRetry),
+  );
+  return yield* Effect.fromResult(outcome);
+});
+const isOffsetMismatch = <E>(
+  error: E | OffsetMismatch,
+): error is Extract<E, OffsetMismatch> | OffsetMismatch =>
+  Predicate.isTagged(error, "OffsetMismatch");
 export interface FollowOptions extends ReadOptions {
   /**
    * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.

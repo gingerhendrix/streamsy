@@ -100,6 +100,8 @@ function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services:
       Streams.fold(route.address(params), initial, f, options).pipe(Effect.provide(context)),
     collect: (params: P, options?: ReadOptions) =>
       Streams.collect(route.address(params), options).pipe(Effect.provide(context)),
+    decide: <S, B, E, R>(params: P, spec: Streams.DecideSpec<A, S, B, E, R>) =>
+      Streams.decide(route.address(params), spec).pipe(Effect.provide(context)),
     follow: (params: P, options?: ReadOptions) =>
       Streams.follow(route.address(params), options).pipe(Stream.provideContext(context)),
     session: (params: P, options: ReadNextOptions) =>

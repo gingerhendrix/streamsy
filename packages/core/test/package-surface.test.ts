@@ -115,6 +115,7 @@ test("protocol subpath exposes protocol services and tools", () => {
     "append",
     "collect",
     "create",
+    "decide",
     "fold",
     "follow",
     "head",
