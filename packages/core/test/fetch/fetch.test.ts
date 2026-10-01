@@ -91,6 +91,7 @@ const fixture = Effect.gen(function* () {
     yield* Effect.flip(writer.append(address.id, { data: bytes, contentType: "text/plain" })),
   );
   results.push(yield* Streams.append(address, [], { close: true }));
+  // @ts-expect-error an append needs items unless it closes; the wire still rejects one
   results.push(yield* Effect.flip(Streams.append(address, [])));
   results.push(yield* Effect.flip(Streams.append(address, [{ id: 6 }])));
   results.push(yield* batches(Streams.follow(address)));
@@ -674,7 +675,7 @@ for (const retry of [false, true]) {
         Effect.gen(function* () {
           yield* Streams.create(notes);
           yield* Streams.append(notes, [new TextEncoder().encode("a")], { producer });
-          const close = { producer: { ...producer, producerSeq: 1 }, close: true };
+          const close = { producer: { ...producer, producerSeq: 1 }, close: true as const };
           if (retry) {
             yield* Streams.append(notes, [], close);
             expect((yield* Streams.append(notes, [], close))._tag).toBe("Duplicate");

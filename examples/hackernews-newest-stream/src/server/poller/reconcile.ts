@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 import { DurableState } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { newestStorySort, type HnStory } from "../../state-schema.ts";
@@ -22,8 +22,8 @@ export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(functi
   // The rows and the offset they are at, from one transaction.
   const { state: rows, offsets } = yield* Projection.read(newestRows);
   const changes = diffNewest(rows, fetched);
-  // No change appends nothing, so it does not check the tail.
-  if (changes.length === 0) return { rows, changes, offset: offsets.input };
+  // An append needs items. No change appends nothing, so it does not check the tail.
+  if (!Array.isReadonlyArrayNonEmpty(changes)) return { rows, changes, offset: offsets.input };
   const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
   const stories = yield* HackerNewsStories;
   const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });

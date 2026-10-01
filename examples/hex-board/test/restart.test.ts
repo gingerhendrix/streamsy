@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
+import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Memory as StorageMemory, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
@@ -47,10 +48,15 @@ const tempFile = (prefix: string) =>
     (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
   ).pipe(Effect.map((directory) => join(directory, "board.sqlite")));
 
+/** Each half of a split game has events; an append needs at least one. */
+const nonEmpty = <A>(events: ReadonlyArray<A>): NonEmptyReadonlyArray<A> => {
+  if (!isReadonlyArrayNonEmpty(events)) throw new Error("expected events");
+  return events;
+};
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
     yield* (yield* GameEvents).create(params);
-    yield* (yield* GameEvents).append(params, events.slice(0, cut));
+    yield* (yield* GameEvents).append(params, nonEmpty(events.slice(0, cut)));
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
 const snapshot = Effect.gen(function* () {
@@ -77,7 +83,7 @@ const advance = (
   cut = split,
 ) =>
   Effect.gen(function* () {
-    yield* (yield* GameEvents).append(params, events.slice(cut));
+    yield* (yield* GameEvents).append(params, nonEmpty(events.slice(cut)));
     expect((yield* Projection.run(board)).items).toBe(events.length - cut);
     const after = yield* read;
     const pure = events.reduce(

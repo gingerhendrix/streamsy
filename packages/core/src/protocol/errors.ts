@@ -72,18 +72,42 @@ export class InvalidReadRequest extends Schema.TaggedError<InvalidReadRequest>()
 export type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
 export type ReadNextError = ReadError | NotSupported;
 export type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
-export type AppendError =
+/**
+ * Append rejections that any call can get, whatever its options. The memory and
+ * storage hosts never answer `NotSupported`; the fetch client does when the server
+ * or its own capabilities refuse a feature.
+ */
+export type AppendBaseError =
   | StreamNotFound
   | StreamGone
   | StreamClosed
-  | OffsetMismatch
-  | AppendConflict
   | StreamBusy
-  | StaleEpoch
-  | ProducerGap
-  | InvalidEpochSeq
+  | AppendConflict
   | InvalidAppendRequest
   | NotSupported;
+export type AppendError =
+  | AppendBaseError
+  | OffsetMismatch
+  | StaleEpoch
+  | ProducerGap
+  | InvalidEpochSeq;
+/**
+ * The append rejections that call options `O` make possible. `OffsetMismatch`
+ * needs `expectedOffset`, and the producer rejections need `producer`. An option
+ * that may be set counts as set.
+ */
+export type AppendErrorFor<O> =
+  | AppendBaseError
+  | (true extends MaySet<O, "expectedOffset"> ? OffsetMismatch : never)
+  | (true extends MaySet<O, "producer"> ? StaleEpoch | ProducerGap | InvalidEpochSeq : never);
+/** Whether options `O` may hold a value for `K`. A union holds it if any member may. */
+type MaySet<O, K extends PropertyKey> = O extends unknown
+  ? K extends keyof O
+    ? [Exclude<O[K], undefined>] extends [never]
+      ? false
+      : true
+    : false
+  : never;
 export type RemoveError = StreamNotFound | StreamGone | StreamBusy;
 export type ProtocolError = HeadError | ReadNextError | CreateError | AppendError | RemoveError;
 

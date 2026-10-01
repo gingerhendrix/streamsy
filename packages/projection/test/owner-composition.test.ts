@@ -1,7 +1,7 @@
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
-import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
+import { Array, Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
 import { Storage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -41,10 +41,10 @@ test("an transactional projection reads remote input and writes on its SQLite ch
         params: {},
         inputs: { input: Source.at(params) },
         process: (batch) =>
-          output.append(
-            params,
-            batch.input.items.map((n) => n * 2),
-          ),
+          Effect.gen(function* () {
+            const doubled = batch.input.items.map((n) => n * 2);
+            if (Array.isReadonlyArrayNonEmpty(doubled)) yield* output.append(params, doubled);
+          }),
       }).at({});
       const first = yield* Projection.run(projection);
       expect(first.items).toBe(3);

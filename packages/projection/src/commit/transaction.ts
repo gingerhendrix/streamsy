@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -57,7 +57,7 @@ export const transaction = withPrepare(
             );
             if (result !== undefined && "outputs" in result) {
               for (const [name, output] of Object.entries(result.outputs)) {
-                if (output.items.length === 0) continue;
+                if (!Array.isReadonlyArrayNonEmpty(output.items)) continue;
                 const resolved = outputs[name];
                 if (resolved === undefined)
                   return yield* new ProjectionFault({

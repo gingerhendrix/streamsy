@@ -319,7 +319,7 @@ const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
 export const workspaceEvents = (
   workspaceId: string,
   sourceOffset: string,
-  changes: ReadonlyArray<WorkspaceChange>,
+  changes: Array.NonEmptyReadonlyArray<WorkspaceChange>,
 ) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 ```
 

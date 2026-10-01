@@ -1,6 +1,6 @@
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Effect, ManagedRuntime, Schema } from "effect";
+import { Array, Effect, ManagedRuntime, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import recording from "./recordings/acme.json";
 import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
@@ -20,6 +20,10 @@ import {
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+function nonEmpty<A>(rows: ReadonlyArray<A>): Array.NonEmptyReadonlyArray<A> {
+  assert(Array.isReadonlyArrayNonEmpty(rows), "The recording has an empty catalog");
+  return rows;
+}
 const scratch = await scratchDirectory("streamsy-issue-full");
 const port = 20_000 + Math.floor(Math.random() * 20_000);
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -31,11 +35,11 @@ try {
       yield* createInputs("acme");
       yield* (yield* Events).append(
         { workspaceId: "acme" },
-        Schema.decodeUnknownSync(Schema.Array(IssueEvent))(recording.issueEvents),
+        Schema.decodeUnknownSync(Schema.NonEmptyArray(IssueEvent))(recording.issueEvents),
       );
       yield* (yield* LabelEvents).append(
         { workspaceId: "acme" },
-        Schema.decodeUnknownSync(Schema.Array(IssueLabelEvent))(recording.issueLabelEvents),
+        Schema.decodeUnknownSync(Schema.NonEmptyArray(IssueLabelEvent))(recording.issueLabelEvents),
       );
       const projectRef = Projects.at({ workspaceId: "acme" });
       const userRef = Users.at({ workspaceId: "acme" });
@@ -45,7 +49,9 @@ try {
         DurableState.changes(
           projectRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.projects.map((row) => DurableState.upsert("project", row)),
+          Array.map(nonEmpty(recording.catalog.projects), (row) =>
+            DurableState.upsert("project", row),
+          ),
         ),
       );
       yield* (yield* Users).append(
@@ -53,7 +59,7 @@ try {
         DurableState.changes(
           userRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.users.map((row) => DurableState.upsert("user", row)),
+          Array.map(nonEmpty(recording.catalog.users), (row) => DurableState.upsert("user", row)),
         ),
       );
       yield* (yield* Labels).append(
@@ -61,7 +67,7 @@ try {
         DurableState.changes(
           labelRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.labels.map((row) => DurableState.upsert("label", row)),
+          Array.map(nonEmpty(recording.catalog.labels), (row) => DurableState.upsert("label", row)),
         ),
       );
       yield* Projection.run(issueRows.at({ workspaceId: "acme" }));

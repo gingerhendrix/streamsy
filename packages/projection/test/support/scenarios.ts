@@ -1,6 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
-import { Effect, Schema, Stream } from "effect";
+import { Array, Effect, Schema, Stream } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
@@ -22,7 +22,7 @@ export const positives = Projection.process({
   process: (batch) =>
     Effect.gen(function* () {
       const kept = batch.input.items.filter((item) => item > 0);
-      if (kept.length > 0) yield* Streams.append(output, kept);
+      if (Array.isReadonlyArrayNonEmpty(kept)) yield* Streams.append(output, kept);
     }),
 }).at({});
 export type Services =

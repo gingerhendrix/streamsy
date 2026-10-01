@@ -1,6 +1,6 @@
 import { DurableState, Memory, Streamsy, type StorageFault } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Effect, Layer, Option, Schema } from "effect";
+import { type Array, Effect, Layer, Option, Schema } from "effect";
 import { Comment, Issue, Project } from "../shared/state-schema.ts";
 import { ServerConfig } from "./config.ts";
 
@@ -27,7 +27,7 @@ export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>
 export const workspaceEvents = (
   workspaceId: string,
   sourceOffset: string,
-  changes: ReadonlyArray<WorkspaceChange>,
+  changes: Array.NonEmptyReadonlyArray<WorkspaceChange>,
 ) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 
 /** SQLite when `ISSUE_TRACKER_DB` is set, otherwise a process-local memory store. */

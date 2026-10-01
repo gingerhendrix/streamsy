@@ -22,6 +22,9 @@ export interface AppendOptions {
   readonly expectedOffset?: string;
 }
 
+/** Append options for a typed address. The address supplies the body and its content type. */
+export type AppendCallOptions = Omit<AppendOptions, "data" | "contentType">;
+
 export interface ReadOptions {
   offset?: string;
 }

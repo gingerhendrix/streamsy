@@ -435,6 +435,7 @@ it("an append without items fails the same way as an empty body on the wire", ()
   check(
     Effect.gen(function* () {
       yield* Streams.create(address);
+      // @ts-expect-error an append needs items unless it closes
       expect(yield* Effect.flip(Streams.append(address, []))).toMatchObject({
         _tag: "InvalidAppendRequest",
         id: address.id,

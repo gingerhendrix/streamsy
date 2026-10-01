@@ -8,7 +8,7 @@ import type { StreamsFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import type { LazyArg } from "effect/Function";
 import type {
-  AppendOptions,
+  AppendCallOptions,
   CreateOptions,
   ReadOptions,
   ReadNextOptions,
@@ -89,10 +89,10 @@ function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services:
     wire,
     create: (params: P, options?: Omit<CreateOptions, "contentType">) =>
       Streams.create(route.address(params), options).pipe(Effect.provide(context)),
-    append: (
+    append: <const O extends AppendCallOptions = {}>(
       params: P,
-      items: ReadonlyArray<A>,
-      options?: Omit<AppendOptions, "data" | "contentType">,
+      items: Streams.AppendItems<A, O>,
+      options?: O,
     ) => Streams.append(route.address(params), items, options).pipe(Effect.provide(context)),
     read: (params: P, options?: ReadOptions) =>
       Streams.read(route.address(params), options).pipe(Stream.provideContext(context)),

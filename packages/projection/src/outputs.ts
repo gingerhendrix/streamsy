@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
 import { Effect, Predicate, type Schema } from "effect";
+import type { NonEmptyReadonlyArray } from "effect/Array";
 import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -73,7 +74,7 @@ export const collect = (
 export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
   output: StreamAddress.StreamAddress<O>,
   wire: ResolvedOutput["service"]["wire"],
-  items: ReadonlyArray<O>,
+  items: NonEmptyReadonlyArray<O>,
   position: Producer.Position,
 ) {
   const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
@@ -109,7 +110,6 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
       StreamNotFound: () => pin("invalid-output", `Output ${output.id} does not exist`),
       StreamGone: () => pin("invalid-output", `Output ${output.id} is gone`),
       StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
-      OffsetMismatch: () => pin("invalid-output", `Output ${output.id} refused the append`),
       AppendConflict: () => pin("invalid-output", `Output ${output.id} refused the append`),
       StreamBusy: () => pin("invalid-output", `Output ${output.id} is busy`),
       InvalidAppendRequest: (error) => pin("invalid-output", error.message),

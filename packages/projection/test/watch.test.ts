@@ -2,7 +2,7 @@ import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
+import { Array, Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection } from "@streamsy/projection";
@@ -67,10 +67,12 @@ test("an append runs an transactional projection and commits its write with the 
         params: {},
         inputs: { input },
         process: (batch) =>
-          Streams.append(output, batch.input.items).pipe(
-            Effect.tap(() => Effect.sync(() => (calls += 1))),
-            Effect.tap(() => Deferred.succeed(handled, undefined)),
-          ),
+          Effect.gen(function* () {
+            const items = batch.input.items;
+            if (Array.isReadonlyArrayNonEmpty(items)) yield* Streams.append(output, items);
+            calls += 1;
+            yield* Deferred.succeed(handled, undefined);
+          }),
       }).at({});
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
@@ -142,7 +144,7 @@ test("a limited wake drains the backlog before waiting for another change", () =
       });
       yield* Streams.create(input);
       yield* Streams.append(input, [1, 2, 3]);
-      const seen: Array<number> = [];
+      const seen: number[] = [];
       const drained = yield* Deferred.make<void>();
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
@@ -261,7 +263,7 @@ test("watch and a serialized request share the same key lock", () =>
 test("a stream watches its fixed address set independently", () =>
   run(
     Effect.gen(function* () {
-      const seen: Array<string> = [];
+      const seen: string[] = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
       const declared = Projection.process({

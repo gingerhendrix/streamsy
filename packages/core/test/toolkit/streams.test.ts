@@ -1,10 +1,17 @@
 import { expect, it } from "bun:test";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
-import { StreamNotFound } from "../../src/protocol/errors.ts";
-import { StreamsReader, StreamsWriter } from "../../src/protocol/tags.ts";
+import {
+  OffsetMismatch,
+  StaleEpoch,
+  StreamClosed,
+  StreamNotFound,
+} from "../../src/protocol/errors.ts";
+import { StreamsReader, StreamsWriter, type Writer } from "../../src/protocol/tags.ts";
+import type { StreamsFault } from "../../src/fault.ts";
+import { StreamId } from "../../src/schema/index.ts";
 
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
 /** One message per page, so every fold below reads several pages. */
@@ -100,5 +107,54 @@ it("collect fails with the read error of a missing stream", () =>
   run(
     Effect.gen(function* () {
       expect(yield* Effect.flip(Streams.collect(address))).toBeInstanceOf(StreamNotFound);
+    }),
+  ));
+
+const unused = () => Effect.die(new Error("unused"));
+/** A writer whose append always fails with one rejection. */
+const rejecting = (error: OffsetMismatch | StaleEpoch | StreamClosed) => {
+  const writer: Writer<StreamsFault> = {
+    create: unused,
+    fork: unused,
+    remove: unused,
+    append: () => Effect.fail(error),
+  };
+  return Layer.succeed(StreamsWriter, writer);
+};
+const id = StreamId.make("events");
+const mismatch = new OffsetMismatch({ id, expected: "a", actual: "b" });
+const stale = new StaleEpoch({ id, currentEpoch: 2 });
+const closed = new StreamClosed({ id, offset: "a" });
+const producer = { producerId: "p", producerEpoch: 1, producerSeq: 0 };
+/** Run one append against a writer that answers with `error`. */
+const answer = <A, E>(
+  program: Effect.Effect<A, E, StreamsWriter>,
+  error: OffsetMismatch | StaleEpoch | StreamClosed,
+) => program.pipe(Effect.provide(rejecting(error)));
+
+it("append keeps a rejection that its options make possible", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
+      expect(yield* Effect.flip(answer(conditional, mismatch))).toBe(mismatch);
+      const fenced = Streams.append(address, [{ n: 1 }], { producer });
+      expect(yield* Effect.flip(answer(fenced, stale))).toBe(stale);
+      const plain = Streams.append(address, [{ n: 1 }]);
+      expect(yield* Effect.flip(answer(plain, closed))).toBe(closed);
+    }),
+  ));
+
+it("append dies on a rejection that its options rule out", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const plain = Streams.append(address, [{ n: 1 }]);
+      const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
+      for (const [exit, error] of [
+        [yield* Effect.exit(answer(plain, mismatch)), mismatch],
+        [yield* Effect.exit(answer(conditional, stale)), stale],
+      ] as const) {
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
+      }
     }),
   ));

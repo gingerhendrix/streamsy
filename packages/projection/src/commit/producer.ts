@@ -1,6 +1,6 @@
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
-import { Effect, Predicate, Option } from "effect";
+import { Array, Effect, Predicate, Option } from "effect";
 import { ownerOf } from "@streamsy/core/internal/memory";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
@@ -162,8 +162,10 @@ export const producer = pin(
         }
         for (const [name, output] of Object.entries(streams)) {
           const seq = seqs[name];
-          if (seq === undefined) continue;
-          yield* appendPinned(output.address, output.service.wire, processed.items[name] ?? [], {
+          const items = processed.items[name] ?? [];
+          // Every pinned output has items: the check above fails the unit otherwise.
+          if (seq === undefined || !Array.isReadonlyArrayNonEmpty(items)) continue;
+          yield* appendPinned(output.address, output.service.wire, items, {
             producerId: producerId(projection.id, projection.version, projection.params),
             producerEpoch: projection.generation,
             producerSeq: seq,

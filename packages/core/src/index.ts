@@ -24,6 +24,7 @@ export type {
   CreateOptions,
   ProducerOptions,
   AppendOptions,
+  AppendCallOptions,
   ReadOptions,
   ReadNextOptions,
 } from "./protocol/options.ts";
