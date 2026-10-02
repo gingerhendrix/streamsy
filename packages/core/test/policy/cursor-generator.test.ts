@@ -89,10 +89,8 @@ describe("generateCursor — previous cursor parsing", () => {
     expect(generateCursor(clock, "7abc", () => 0)).toBe("8");
   });
 
-  it("treats NaN-parsed cursors as not below current interval (bumps from NaN)", () => {
-    // parseInt("abc", 10) === NaN; NaN < currentInterval is false, so bump branch.
-    // NaN + bump === NaN -> String(NaN) === "NaN".
+  it("treats a cursor that does not parse as absent", () => {
     const clock = fixedClock(CURSOR_EPOCH_MS + 5 * CURSOR_INTERVAL_MS);
-    expect(generateCursor(clock, "abc", () => 0)).toBe("NaN");
+    expect(generateCursor(clock, "abc", () => 0)).toBe("5");
   });
 });
