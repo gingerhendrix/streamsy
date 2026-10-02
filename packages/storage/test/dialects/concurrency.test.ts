@@ -1,0 +1,219 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- Bun owns the database fixtures and prints the race counts. */
+/**
+ * Writers on two connection pools race on one database. These cases are the
+ * proof for the row lock: without it, Postgres and MySQL commit two branches of
+ * one stream, purge a fork source under a new child, or leave a parent behind.
+ * Add a dialect to `dialects` to run the same races on it.
+ */
+import { describe, expect, test } from "bun:test";
+import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "effect";
+import { Storage, StreamId } from "@streamsy/core";
+import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { storageLayer } from "../../src/storage.ts";
+import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
+
+const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg];
+
+const APPENDS = 200;
+const POOL_SIZE = 20;
+const RACES = 20;
+const TIMEOUT_MS = 120_000;
+const contentType = "application/octet-stream";
+
+/** One host: protocol and storage over its own pool. */
+const host = (dialect: SqlDialect, url: string) =>
+  Layer.build(
+    Protocol.layer().pipe(
+      Layer.provideMerge(storageLayer()),
+      Layer.provideMerge(dialectClient(dialect, url, { maxConnections: POOL_SIZE })),
+    ),
+  ).pipe(
+    Effect.map((context) => ({
+      writer: Context.get(context, StreamsWriter),
+      storage: Context.get(context, Storage),
+      sql: Context.get(context, SqlClient.SqlClient),
+    })),
+  );
+
+type Host = Effect.Success<ReturnType<typeof host>>;
+
+/** Two hosts on one fresh database, as two processes would be. */
+const withHosts = <A, E>(
+  dialect: SqlDialect,
+  baseUrl: string,
+  use: (left: Host, right: Host) => Effect.Effect<A, E, Scope.Scope>,
+) =>
+  freshDatabase(dialect, baseUrl).pipe(
+    Effect.flatMap((url) =>
+      Effect.gen(function* () {
+        // Build one host first, so the second finds the schema migrated.
+        const left = yield* host(dialect, url);
+        const right = yield* host(dialect, url);
+        return yield* use(left, right);
+      }).pipe(Effect.scoped),
+    ),
+    Effect.scoped,
+  );
+
+/** The offset of the n-th message: one octet-stream append writes one message. */
+const nthOffset = (n: number) => `${String(n).padStart(16, "0")}_${"0".repeat(16)}`;
+
+/** "ok", or the tag of the failure. */
+const tagOf = <A, E extends { readonly _tag: string }>(result: Result.Result<A, E>) =>
+  Result.match(result, { onSuccess: () => "ok", onFailure: ({ _tag: tag }) => tag });
+
+const payload = (index: number) => new TextEncoder().encode(`${index}:${"x".repeat(index % 7)}`);
+
+for (const dialect of dialects) {
+  const url = dialect.url;
+  describe.skipIf(url === undefined)(`${dialect.name} writer races`, () => {
+    test(
+      `${APPENDS} parallel appends from two pools give one gap-free stream`,
+      async () => {
+        if (url === undefined) return;
+        const id = StreamId.make("race/appends");
+        const result = await Effect.runPromise(
+          withHosts(dialect, url, (left, right) =>
+            Effect.gen(function* () {
+              yield* left.writer.create(id, { contentType });
+              let busy = 0;
+              // A writer that loses eight replans in a row gets StreamBusy; a client retries.
+              const append = (writer: Host["writer"], index: number) =>
+                writer.append(id, { data: payload(index), contentType }).pipe(
+                  Effect.tapError((error) =>
+                    Effect.sync(() => {
+                      if (Predicate.isTagged(error, "StreamBusy")) busy += 1;
+                    }),
+                  ),
+                  Effect.retry({ while: Predicate.isTagged("StreamBusy") }),
+                );
+              const indexes = Array.from({ length: APPENDS }, (_, index) => index);
+              yield* Effect.all(
+                [
+                  Effect.forEach(
+                    indexes.filter((index) => index % 2 === 0),
+                    (index) => append(left.writer, index),
+                    { concurrency: POOL_SIZE, discard: true },
+                  ),
+                  Effect.forEach(
+                    indexes.filter((index) => index % 2 === 1),
+                    (index) => append(right.writer, index),
+                    { concurrency: POOL_SIZE, discard: true },
+                  ),
+                ],
+                { concurrency: 2, discard: true },
+              );
+              const messages = yield* left.storage.messages(id, {});
+              const record = Option.getOrThrow(yield* left.storage.record(id));
+              const gapFree = messages.every(
+                ({ offset }, index) => offset === nthOffset(index + 1),
+              );
+              const decoder = new TextDecoder();
+              return {
+                count: messages.length,
+                unique: new Set(messages.map(({ offset }) => offset)).size,
+                gapFree,
+                tail: record.currentOffset === messages.at(-1)?.offset,
+                bytes: messages.reduce((total, { data }) => total + data.byteLength, 0),
+                payloads: messages.map(({ data }) => decoder.decode(data)).toSorted(),
+                busy,
+              };
+            }),
+          ),
+        );
+        console.log(`${dialect.name} appends: ${APPENDS}, StreamBusy retries: ${result.busy}`);
+        const sent = Array.from({ length: APPENDS }, (_, index) => payload(index));
+        expect({ ...result, busy: undefined }).toEqual({
+          count: APPENDS,
+          unique: APPENDS,
+          gapFree: true,
+          tail: true,
+          bytes: sent.reduce((total, data) => total + data.byteLength, 0),
+          payloads: sent.map((data) => new TextDecoder().decode(data)).toSorted(),
+          busy: undefined,
+        });
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "a fork racing the delete of its source never leaves an orphan child",
+      async () => {
+        if (url === undefined) return;
+        const result = await Effect.runPromise(
+          withHosts(dialect, url, (left, right) =>
+            Effect.gen(function* () {
+              const outcomes: Array<string> = [];
+              for (let race = 0; race < RACES; race++) {
+                const parent = StreamId.make(`fork-race/${race}/parent`);
+                const child = StreamId.make(`fork-race/${race}/child`);
+                yield* left.writer.create(parent, { contentType });
+                yield* left.writer.append(parent, { data: payload(race), contentType });
+                const [forked, removed] = yield* Effect.all(
+                  [
+                    left.writer.fork(child, parent).pipe(Effect.result),
+                    right.writer.remove(parent).pipe(Effect.result),
+                  ],
+                  { concurrency: 2 },
+                );
+                outcomes.push(`fork:${tagOf(forked)} remove:${tagOf(removed)}`);
+              }
+              // Every child must still reach its source row.
+              const orphans = yield* left.sql<{ readonly stream_id: string }>`
+SELECT c.stream_id FROM streamsy_streams c
+ LEFT JOIN streamsy_streams p ON p.stream_id = c.forked_from
+ WHERE c.forked_from IS NOT NULL AND p.stream_id IS NULL`;
+              return { outcomes, orphans: orphans.map(({ stream_id }) => stream_id) };
+            }),
+          ),
+        );
+        console.log(`${dialect.name} fork-and-delete outcomes: ${result.outcomes.join(", ")}`);
+        expect(result.orphans).toEqual([]);
+        // Either the fork wins and the delete soft-deletes the source, or the delete wins
+        // and the fork finds no source.
+        expect(
+          result.outcomes.every((outcome) =>
+            ["fork:ok remove:ok", "fork:ForkSourceNotFound remove:ok"].includes(outcome),
+          ),
+        ).toBe(true);
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "two children purging at once remove their soft-deleted parent",
+      async () => {
+        if (url === undefined) return;
+        const result = await Effect.runPromise(
+          withHosts(dialect, url, (left, right) =>
+            Effect.gen(function* () {
+              const kept: Array<string> = [];
+              for (let race = 0; race < RACES; race++) {
+                const parent = StreamId.make(`purge-race/${race}/parent`);
+                const first = StreamId.make(`purge-race/${race}/a`);
+                const second = StreamId.make(`purge-race/${race}/b`);
+                yield* left.writer.create(parent, { contentType });
+                yield* left.writer.fork(first, parent);
+                yield* left.writer.fork(second, parent);
+                // The parent has dependents, so this only soft-deletes it.
+                yield* left.writer.remove(parent);
+                yield* Effect.all([left.writer.remove(first), right.writer.remove(second)], {
+                  concurrency: 2,
+                  discard: true,
+                });
+                if (Option.isSome(yield* left.storage.record(parent))) kept.push(parent);
+              }
+              const rows = yield* left.sql<{
+                readonly count: unknown;
+              }>`SELECT COUNT(*) AS count FROM streamsy_streams`;
+              return { kept, rows: Number(rows[0]?.count) };
+            }),
+          ),
+        );
+        expect(result).toEqual({ kept: [], rows: 0 });
+      },
+      TIMEOUT_MS,
+    );
+  });
+}

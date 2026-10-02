@@ -1,73 +1,27 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid -- Bun owns the database fixtures. */
-import { MysqlClient } from "@effect/sql-mysql2";
-import { PgClient } from "@effect/sql-pg";
+/* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 import { describe, expect, test } from "bun:test";
-import { Config, Context, Effect, Layer, Option, Redacted, type Scope } from "effect";
+import { Context, Effect, Layer, Option, type Scope } from "effect";
 import { Offset, Storage, StreamId } from "@streamsy/core";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
-import { sharedSqlClientLayer } from "../../src/boundary.ts";
 import { migrate } from "../../src/migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "../../src/schema.ts";
 import { storageLayer } from "../../src/storage.ts";
-
-const optionalUrl = (name: string) =>
-  Effect.runSync(Config.option(Config.String(name))).pipe(Option.getOrUndefined);
-
-interface Dialect {
-  readonly name: "pg" | "mysql";
-  readonly url: string | undefined;
-  readonly client: (
-    url: string,
-  ) => Effect.Effect<SqlClient.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity>;
-  readonly tables: string;
-}
-
-const dialects: ReadonlyArray<Dialect> = [
-  {
-    name: "pg",
-    url: optionalUrl("STREAMSY_PG_URL"),
-    client: (url) => PgClient.make({ url: Redacted.make(url) }),
-    tables:
-      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY name",
-  },
-  {
-    name: "mysql",
-    url: optionalUrl("STREAMSY_MYSQL_URL"),
-    client: (url) => MysqlClient.make({ url: Redacted.make(url) }),
-    tables:
-      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY name",
-  },
-];
-
-const clientLayer = (dialect: Dialect, url: string) =>
-  Layer.effectContext(sharedSqlClientLayer(dialect.client(url)));
+import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
 
 /** Run `use` against a new database, dropped afterwards. */
 const withFreshDatabase = <A, E>(
-  dialect: Dialect,
+  dialect: SqlDialect,
   baseUrl: string,
   use: (url: string) => Effect.Effect<A, E, Scope.Scope>,
-) => {
-  const name = `streamsy_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-  return Effect.gen(function* () {
-    const admin = Context.get(
-      yield* Layer.build(clientLayer(dialect, baseUrl)),
-      SqlClient.SqlClient,
-    );
-    yield* admin.unsafe(`CREATE DATABASE ${name}`);
-    const url = new URL(baseUrl);
-    url.pathname = `/${name}`;
-    return yield* Effect.scoped(use(url.toString())).pipe(
-      Effect.ensuring(admin.unsafe(`DROP DATABASE ${name}`).pipe(Effect.ignore)),
-    );
-  }).pipe(Effect.scoped);
-};
+) =>
+  freshDatabase(dialect, baseUrl).pipe(
+    Effect.flatMap((url) => Effect.scoped(use(url))),
+    Effect.scoped,
+  );
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 
-for (const dialect of dialects) {
+for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`${dialect.name} storage schema`, () => {
     test("migrates a fresh database twice to one version row and the storage tables", async () => {
@@ -76,7 +30,7 @@ for (const dialect of dialects) {
         withFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
             const sql = Context.get(
-              yield* Layer.build(clientLayer(dialect, fresh)),
+              yield* Layer.build(dialectClient(dialect, fresh)),
               SqlClient.SqlClient,
             );
             yield* migrate(sql);
@@ -107,7 +61,7 @@ for (const dialect of dialects) {
         withFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
             const context = yield* Layer.build(
-              storageLayer().pipe(Layer.provideMerge(clientLayer(dialect, fresh))),
+              storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
             );
             const storage = Context.get(context, Storage);
             yield* storage.mutate({
