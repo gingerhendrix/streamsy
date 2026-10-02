@@ -74,7 +74,7 @@ export const snippetSupport = new Map<string, PageSupport>([
         "zz-provided.ts": `import { Effect, Layer } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { minimal, Numbers, Doubled } from "./minimal.ts";
 import { tripled } from "./tripled.ts";
 import { host } from "./block03.ts";
@@ -97,20 +97,20 @@ export const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.p
       renames: { 1: "order-totals.ts" },
       preludes: {
         6: `import { Effect, Layer, Schema } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         7: `import { Effect, Layer, Schema } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 declare const readOrderTotals: () => Effect.Effect<number>;
 `,
         8: `import { Effect, Layer, Schema } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
@@ -120,17 +120,17 @@ class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId
 const ordersByWorkspace = Projection.emit({ id: "order-totals", params: { workspaceId: Schema.String }, inputs: { facts: Facts }, outputs: { output: Totals }, commit: Commit.producer, emit: ({ item }) => ({ output: [item] }) });
 `,
         9: `import { Effect, Layer, Schema } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         10: `import { Effect, Layer, Schema } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
 `,
         11: `import { Schema as S } from "effect";
 const orderSchema = S.Struct({ orderId: S.String, amount: S.Finite });
@@ -199,14 +199,14 @@ import { App } from "./app.ts";
       modules: {
         "zz-provided.ts": `import { Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { App, game } from "./app.ts";
 const served = HttpRouter.serve(App);
 type Needs = Layer.Services<typeof served>;
 class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", { params: { seat: Schema.String }, schema: Schema.String }) {}
 // The served app requires the Events stream service.
 export const requiresEvents: Events extends Needs ? true : false = true;
-export const provided = served.pipe(Layer.provide(Memory.layer(game)));
+export const provided = served.pipe(Layer.provide(MemoryStorage.layer(game)));
 type Left = Exclude<Layer.Services<typeof provided>, import("effect/unstable/http").HttpServer.HttpServer>;
 export const nothingElse: [Left] extends [never] ? true : false = true;
 `,
@@ -233,7 +233,7 @@ declare const ctx: DurableObjectState;
     },
   ],
   [
-    "http/fetch",
+    "http/remote",
     {
       modules: {
         "streams.ts": shopStreams,
@@ -281,11 +281,11 @@ export const provided: Effect.Effect<unknown, unknown, never> = program.pipe(Eff
       modules: {
         "streams.ts": notesStreams,
         "zz-provided.ts": `import { Effect } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { Notes } from "./streams.ts";
 import * as B2 from "./block02.ts";
 declare const all: Effect.Effect<unknown, unknown, Notes>;
-const provided: Effect.Effect<unknown, unknown, never> = all.pipe(Effect.provide(Memory.layer(Streamsy.group(Notes))));
+const provided: Effect.Effect<unknown, unknown, never> = all.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Notes))));
 export { B2, provided };
 `,
       },

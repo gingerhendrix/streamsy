@@ -1,5 +1,5 @@
 import { BunCrypto } from "@effect/platform-bun";
-import { Memory, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { MemoryStorage, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Layer, Ref, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
@@ -47,7 +47,7 @@ const issueKeys = Effect.gen(function* () {
 });
 
 const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(Memory.layer(Streamsy.group(Workspaces)))));
+  Effect.runPromise(effect.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Workspaces)))));
 
 test("two concurrent writers land without a lost update", async () => {
   let attempts = 0;

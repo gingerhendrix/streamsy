@@ -7,7 +7,7 @@ import { recordKey } from "@streamsy/projection/checkpoint";
 import { producerId } from "../src/commit/producer.ts";
 import { Streams } from "@streamsy/core/protocol";
 import * as FamilyFixture from "./support/families.ts";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 
 class facts extends Streamsy.json<facts>()("declaration.test/facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
@@ -104,7 +104,7 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
     process: (_batch, unit) => Effect.sync(() => seen.push({ id: unit.params.id, key: unit.key })),
   });
   const bound = declared.at({ id: 7 });
-  const host = FamilyFixture.withFamilies(Memory.layerMemory(), numbered);
+  const host = FamilyFixture.withFamilies(memoryHost(), numbered);
   const run = Effect.gen(function* () {
     yield* Streams.create(bound.inputs.numbered);
     yield* Streams.append(bound.inputs.numbered, ["a"]);

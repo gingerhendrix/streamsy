@@ -1,11 +1,11 @@
 import {
   DurableState,
-  Memory,
+  MemoryStorage,
   Streamsy,
   type StorageFault,
   type StreamAddress,
 } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { type Array, Effect, Layer, Option, Schema } from "effect";
 import { Comment, Issue, Project } from "../shared/state-schema.ts";
 import { ServerConfig } from "./config.ts";
@@ -45,7 +45,7 @@ export const StorageLive = Layer.unwrap(
 
 function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, StorageFault> {
   return Option.match(databasePath, {
-    onNone: () => Memory.layer(Streamsy.group(Workspaces)),
+    onNone: () => MemoryStorage.layer(Streamsy.group(Workspaces)),
     onSome: (filename) => BunStorage.layer(Streamsy.group(Workspaces), { client: { filename } }),
   });
 }

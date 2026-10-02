@@ -40,7 +40,7 @@ const drain =
  *
  * ```ts
  * const Server = Serve.layer(routes).pipe(
- *   Layer.provide(Memory.layer(streams)),
+ *   Layer.provide(MemoryStorage.layer(streams)),
  *   Layer.provide(listener()),
  * );
  * BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });

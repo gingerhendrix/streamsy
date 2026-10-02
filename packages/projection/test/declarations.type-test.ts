@@ -1,6 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import * as Fetch from "@streamsy/core/fetch";
+import { RemoteStreams } from "@streamsy/core/remote";
 import { Effect, Schema, type Scope } from "effect";
 import { Streamsy, StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
@@ -161,9 +161,9 @@ const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Sco
 void missingFeed;
 
 const fetchWatch = Projection.watch(transactional).pipe(
-  Effect.provide(Fetch.layer(Streamsy.group(Input), { baseUrl: "https://example.test" })),
+  Effect.provide(RemoteStreams.layer(Streamsy.group(Input), { baseUrl: "https://example.test" })),
 );
-// @ts-expect-error Fetch supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
+// @ts-expect-error RemoteStreams supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
 const missingFetchFeed: Effect.Effect<
   unknown,
   ProjectionFault | import("@streamsy/core").TransportFault,

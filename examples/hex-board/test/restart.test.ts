@@ -6,7 +6,7 @@ import { Effect, Layer, Option } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import {
   type BoardState,
   board as hexBoard,

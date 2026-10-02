@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { Http, Streamsy, Memory } from "../../src/index.ts";
+import { Http, Streamsy, MemoryStorage } from "../../src/index.ts";
 
 class Inputs extends Streamsy.bytes<Inputs>()("Inputs", "inputs/:id", {
   params: { id: Schema.String },
@@ -15,7 +15,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
     Http.routes(Streamsy.group(Inputs, Outputs), {
       prefix: "/streams",
       access: (stream) => (stream === Inputs ? "full" : "read"),
-    }).pipe(HttpRouter.provideRequest(Memory.layer(Streamsy.group(Inputs, Outputs)))),
+    }).pipe(HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Inputs, Outputs)))),
     { disableLogger: true },
   );
   const request = (path: string, method = "GET", body?: string) =>
@@ -58,7 +58,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
   }
   const readOnly = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Outputs), { access: "read" }).pipe(
-      HttpRouter.provideRequest(Memory.layer(Streamsy.group(Outputs))),
+      HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Outputs))),
     ),
     { disableLogger: true },
   );
@@ -77,7 +77,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
 });
 
 it("append access allows POST but refuses creation and deletion", async () => {
-  const streams = Memory.layer(Streamsy.group(Inputs));
+  const streams = MemoryStorage.layer(Streamsy.group(Inputs));
   const seeded = Layer.effectDiscard(
     Effect.flatMap(Inputs, (inputs) => inputs.create({ id: "a" })),
   ).pipe(Layer.provideMerge(streams));
@@ -115,7 +115,9 @@ it("a final catch-all cannot widen a declared read-only stream's HTTP access", a
   const edge = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Outputs, Streamsy.Wildcard), {
       access: (stream) => (stream === Outputs ? "read" : "full"),
-    }).pipe(HttpRouter.provideRequest(Memory.layer(Streamsy.group(Outputs, Streamsy.Wildcard)))),
+    }).pipe(
+      HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Outputs, Streamsy.Wildcard))),
+    ),
     { disableLogger: true },
   );
   try {

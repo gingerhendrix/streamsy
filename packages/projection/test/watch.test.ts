@@ -7,7 +7,7 @@ import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import { layerMemory } from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
   "on-change.test/WatchRoute2",
@@ -42,7 +42,7 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
     body.pipe(
       Effect.scoped,
-      Effect.provide(FamilyFixture.withFamilies(layerMemory(), WatchRoute1, WatchRoute2)),
+      Effect.provide(FamilyFixture.withFamilies(memoryHost(), WatchRoute1, WatchRoute2)),
     ),
   );
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
@@ -167,7 +167,7 @@ test("a limited wake drains the backlog before waiting for another change", () =
       yield* Fiber.interrupt(fiber);
     }).pipe(
       Effect.scoped,
-      Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit: 1 }))),
+      Effect.provide(FamilyFixture.withFamilies(memoryHost({ readLimit: 1 }))),
     ),
   ));
 

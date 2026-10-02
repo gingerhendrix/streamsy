@@ -7,11 +7,11 @@ A Streamsy program is an Effect that needs stream services. A Layer provides the
 
 ```ts
 import { ManagedRuntime } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
-const runtime = ManagedRuntime.make(Memory.layer(shop));
+const runtime = ManagedRuntime.make(MemoryStorage.layer(shop));
 try {
   await runtime.runPromise(write);
 } finally {
@@ -28,16 +28,16 @@ try {
 
 | Layer                                        | Persists              | Package                            | Page                                   |
 | -------------------------------------------- | --------------------- | ---------------------------------- | -------------------------------------- |
-| `Memory.layer(group, options)`               | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
+| `MemoryStorage.layer(group, options)`        | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
 | `BunStorage.layer(group, options)`           | SQLite file           | `@streamsy/storage/bun`            | [Bun](/docs/hosting/bun)               |
 | `DurableObjectStorage.layer(group, options)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
-| `Fetch.layer(group, options)`                | Remote                | `@streamsy/core/fetch`             | [Fetch client](/docs/http/fetch)       |
+| `RemoteStreams.layer(group, options)`        | Remote                | `@streamsy/core/remote`            | [Remote client](/docs/http/remote)     |
 
 A storage Layer also gives a `Streamsy.ChangeFeed` key for each stream. `Projection.watch` needs these keys.
 
 ## Memory
 
-`Memory.layer(group, options)` keeps streams in the process. The data is lost when the Layer is disposed.
+`MemoryStorage.layer(group, options)` keeps streams in the process. The data is lost when the Layer is disposed.
 
 | Option              | Effect                                                         |
 | ------------------- | -------------------------------------------------------------- |
@@ -54,12 +54,12 @@ Merge one Layer for each backend:
 
 ```ts
 import { Layer } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Drafts, Journal } from "./streams.ts";
 
 export const layer = Layer.merge(
-  Memory.layer(Streamsy.group(Drafts)),
+  MemoryStorage.layer(Streamsy.group(Drafts)),
   BunStorage.layer(Streamsy.group(Journal), { client: { filename: "./journal.sqlite" } }),
 );
 ```
@@ -70,7 +70,7 @@ Rules:
 
 - A group checks overlap only among its own streams. Put all served streams in one group.
 - A fork stays inside one storage Layer.
-- A fetch Layer has its own `capabilities`.
+- A remote Layer has its own `capabilities`.
 - `Commit.transaction` keeps SQL, output appends, and the checkpoint on one SQL owner. `Commit.producer` can write to existing outputs on other owners. See [Several backends](/docs/projections/state#several-backends).
 
 ## Commit with your own tables
@@ -103,7 +103,7 @@ A `MutationRejected` that leaves the boundary rolls back both writes. Catch it o
 
 ## Testing
 
-Application tests provide `Memory.layer(group)` and run the same program.
+Application tests provide `MemoryStorage.layer(group)` and run the same program.
 
 | Tool                       | Module                   | Use                                                             |
 | -------------------------- | ------------------------ | --------------------------------------------------------------- |
@@ -118,7 +118,7 @@ Bind streams to a test graph with `Protocol.bind(layerTest(), group)`.
 | ----------------------------- | ------------------------- | -------------------------------------------------- |
 | `Protocol.layer`              | `@streamsy/core/protocol` | `StreamsReader` and `StreamsWriter` over `Storage` |
 | `Protocol.bind(graph, group)` | `@streamsy/core/protocol` | Stream services over a protocol graph              |
-| `layerProtocol(options)`      | SQLite and fetch modules  | The generic pair, with no streams                  |
+| `layerProtocol(options)`      | SQLite and remote modules | The generic pair, with no streams                  |
 | `Streams.layerMemory()`       | `@streamsy/core/protocol` | The generic pair over memory                       |
 
 Storage adapters, protocol tests, and HTTP internals use these.

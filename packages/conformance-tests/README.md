@@ -8,7 +8,7 @@ bun run build                                              # build the packages 
 bun run --cwd packages/conformance-tests test:memory       # memory Layer on Bun
 bun run --cwd packages/conformance-tests test:sqlite       # Bun SQLite
 bun run --cwd packages/conformance-tests test:workerd      # Durable Object SQLite in local Miniflare
-bun run --cwd packages/conformance-tests test:fetch        # the fetch Layer against a Bun host
+bun run --cwd packages/conformance-tests test:remote       # the remote Layer against a Bun host
 bun run test:e2e:deployed                                  # the workerd artifact deployed to Cloudflare
 ```
 

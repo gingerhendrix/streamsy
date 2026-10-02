@@ -3,7 +3,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import type { HttpEffect } from "alchemy/Http";
 import { Effect, Layer } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import * as Host from "@streamsy/serve/alchemy";
 
 /** Only the runtime phase reads raw storage. No stack is executed by this fixture. */
@@ -15,7 +15,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
       Host.objectHandlers({
         app: protocolRoutes({ prefix: "/streams" }),
         layer: Layer.mergeAll(
-          layerProtocol({ client: { storage: state.raw.storage } }),
+          DurableObjectStorage.layerProtocol({ client: { storage: state.raw.storage } }),
           Host.alarmLayer(state.raw.storage),
         ),
       }),

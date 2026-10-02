@@ -3,7 +3,7 @@ import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { expect, test } from "bun:test";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { layerProtocol } from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const Platform = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
 
@@ -30,7 +30,7 @@ const open = (client: {
   readonly filename: string;
   readonly readonly?: boolean;
   readonly create?: boolean;
-}) => Effect.scoped(Layer.build(layerProtocol({ client }))).pipe(Effect.exit);
+}) => Effect.scoped(Layer.build(BunStorage.layerProtocol({ client }))).pipe(Effect.exit);
 
 const failure = (exit: Exit.Exit<unknown, unknown>) => {
   if (Exit.isSuccess(exit)) throw new Error("Expected the SQLite open to fail");

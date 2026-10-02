@@ -17,7 +17,7 @@ import { TransportFault } from "../../src/fault.ts";
 import { StreamAddress, StreamId, ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { HttpRouter } from "effect/unstable/http";
-import * as Fetch from "@streamsy/core/fetch";
+import { RemoteStreams } from "@streamsy/core/remote";
 
 const id = StreamId.make("orders/nested");
 const bytes = new TextEncoder().encode('[{"id":1},{"id":2}]');
@@ -57,7 +57,7 @@ const batches = <A, E, R>(stream: Stream.Stream<Batch<A>, E, R>) =>
 const producer = { producerId: "p", producerEpoch: 0, producerSeq: 0 };
 
 /**
- * The same program through the direct Layer and through the fetch Layer. Every
+ * The same program through the direct Layer and through the remote Layer. Every
  * result here is a value the public Durable Streams wire carries: status codes,
  * documented response headers, and the content-type-framed body. Cursors are
  * nondeterministic on both paths, so the fixture substitutes a fixed value.
@@ -110,7 +110,7 @@ it("every operation stream returns the direct results over local HTTP", async ()
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
-    const remote = Fetch.layerProtocol({
+    const remote = RemoteStreams.layerProtocol({
       baseUrl: `${server.url.href}streams`,
       capabilities: { expectedOffset: true, producer: true },
     }).pipe(Layer.provide(FetchHttpClient.layer));
@@ -132,7 +132,7 @@ it("merges text messages into one payload over the public wire", async () => {
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
-    const remote = Fetch.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
+    const remote = RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
       Layer.provide(FetchHttpClient.layer),
     );
     const program = Effect.gen(function* () {
@@ -161,7 +161,7 @@ function mock(response: () => Response) {
   );
 }
 const against = (response: () => Response, capabilities: { readonly producer?: boolean } = {}) =>
-  Fetch.layerProtocol({ baseUrl: "http://localhost/streams", capabilities }).pipe(
+  RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams", capabilities }).pipe(
     Layer.provide(mock(response)),
   );
 const headOver = (response: () => Response) =>
@@ -416,12 +416,14 @@ it("sends no Streamsy-specific request headers", async () => {
       }).pipe(Effect.flip, Effect.provide(transport)),
     );
   await probe(
-    Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(Layer.provide(capture)),
+    RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+      Layer.provide(capture),
+    ),
   );
   expect(accept).toBeUndefined();
   expect(cacheControl).toBe("no-cache");
   await probe(
-    Fetch.layerProtocol({
+    RemoteStreams.layerProtocol({
       baseUrl: "http://localhost/streams",
       headers: { accept: "application/json" },
     }).pipe(Layer.provide(capture)),
@@ -431,7 +433,7 @@ it("sends no Streamsy-specific request headers", async () => {
 
 it("unknown CAS and producer support fail before any HTTP request", async () => {
   let requests = 0;
-  const transport = Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+  const transport = RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
     Layer.provide(
       mock(() => {
         requests++;
@@ -473,7 +475,9 @@ it("connection failure stays in the typed fault channel", async () => {
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id).pipe(Effect.flip);
     }).pipe(
-      Effect.provide(Fetch.layerProtocol({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer))),
+      Effect.provide(
+        RemoteStreams.layerProtocol({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer)),
+      ),
     ),
   );
   expect(failure).toMatchObject({ _tag: "TransportFault", reason: "request" });
@@ -512,7 +516,7 @@ for (const phase of ["request", "body"] as const) {
       );
     });
     const runtime = ManagedRuntime.make(
-      Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+      RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
       ),
     );
@@ -542,7 +546,7 @@ it("disposing the Layer interrupts active requests", async () => {
     }).pipe(Effect.andThen(Effect.never)),
   );
   const runtime = ManagedRuntime.make(
-    Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+    RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
     ),
   );
@@ -559,7 +563,7 @@ it("disposing the Layer interrupts active requests", async () => {
 
 // Ported behavioral cases from rename-http-client's stream-protocol-client-contract.
 // Promise sessions are replaced by the current reader/writer Effects.
-for (const mode of ["direct", "fetch"] as const) {
+for (const mode of ["direct", "remote"] as const) {
   for (const contentType of [
     "text/plain",
     "application/octet-stream",
@@ -574,7 +578,7 @@ for (const mode of ["direct", "fetch"] as const) {
       const modeTransport =
         mode === "direct"
           ? memory()
-          : Fetch.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
+          : RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
               Layer.provide(FetchHttpClient.layer),
             );
       try {
@@ -618,7 +622,7 @@ it("resolves prefixes and application headers without letting IDs escape", async
       return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
     }),
   );
-  const transport = Fetch.layerProtocol({
+  const transport = RemoteStreams.layerProtocol({
     baseUrl: "https://example.test/api/streams/",
     headers: { authorization: "Bearer fixture" },
   }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
@@ -667,7 +671,7 @@ for (const retry of [false, true]) {
     });
     const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
     try {
-      const remote = Fetch.layerProtocol({
+      const remote = RemoteStreams.layerProtocol({
         baseUrl: server.url.href,
         capabilities: { producer: true },
       }).pipe(Layer.provide(FetchHttpClient.layer));

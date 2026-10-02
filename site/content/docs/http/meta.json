@@ -1,4 +1,4 @@
 {
   "title": "HTTP",
-  "pages": ["routes", "serve", "fetch"]
+  "pages": ["routes", "serve", "remote"]
 }

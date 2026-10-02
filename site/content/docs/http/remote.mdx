@@ -1,17 +1,17 @@
 ---
-title: Fetch client
-description: Provide stream services from a remote Durable Streams host with the fetch Layer.
+title: Remote client
+description: Provide stream services from a remote Durable Streams host with the remote Layer.
 ---
 
-`Fetch.layer(group, options)` gives the stream services of a group from a remote host.
+`RemoteStreams.layer(group, options)` gives the stream services of a group from a remote host.
 
 ```ts
 import { Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import * as Fetch from "@streamsy/core/fetch";
+import { RemoteStreams } from "@streamsy/core/remote";
 import { game } from "./streams.ts";
 
-const remote = Fetch.layer(game, {
+const remote = RemoteStreams.layer(game, {
   baseUrl: "https://streams.example.com/streams",
   capabilities: { expectedOffset: true, producer: true },
 }).pipe(Layer.provide(FetchHttpClient.layer));
@@ -32,15 +32,15 @@ Capabilities are statements about the host. The Layer does not discover them.
 
 ## Limits
 
-| Feature                       | Over fetch                                                                       |
+| Feature                       | Over remote                                                                      |
 | ----------------------------- | -------------------------------------------------------------------------------- |
 | Writes                        | Need `append` or `full` access on the host                                       |
 | `Projection.follow`           | Works. One poll for each input each `repairIntervalMs`                           |
 | `Projection.watch`            | Does not compile. There are no `Streamsy.ChangeFeed` keys                        |
 | Projection inputs and outputs | Inputs work with any Commit; existing remote outputs work with `Commit.producer` |
-| `CheckpointStore`             | Provide a separate local or custom store                                         |
+| `CheckpointStore`             | Provide a standalone store, such as `CheckpointStore.layerMemory`                |
 
-`Fetch.layerProtocol(options)` gives the generic reader and writer, for protocol tools.
+`RemoteStreams.layerProtocol(options)` gives the generic reader and writer, for protocol tools.
 
 ## Browsers
 

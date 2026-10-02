@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 const id = StreamId.make("compiled-shared-transaction");

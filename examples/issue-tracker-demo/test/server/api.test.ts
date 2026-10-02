@@ -1,5 +1,5 @@
 import { BunCrypto, BunHttpServer } from "@effect/platform-bun";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { afterAll, describe, expect, test } from "bun:test";
 import { Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
@@ -13,7 +13,7 @@ const { handler, dispose } = HttpRouter.toWebHandler(
     Layer.provide(SeedLive),
     Layer.provide(IssueTrackerLive),
     Layer.provide([
-      Memory.layer(Streamsy.group(Workspaces)),
+      MemoryStorage.layer(Streamsy.group(Workspaces)),
       BunCrypto.layer,
       BunHttpServer.layerHttpServices,
     ]),

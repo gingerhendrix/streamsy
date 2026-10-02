@@ -52,8 +52,8 @@ jobs:
       - name: SQLite conformance tests
         run: bun run test:conformance:sqlite
 
-      - name: Fetch conformance tests
-        run: bun run test:conformance:fetch
+      - name: Remote conformance tests
+        run: bun run test:conformance:remote
 
       - name: Package dry runs
         run: bun run pack:dry-run

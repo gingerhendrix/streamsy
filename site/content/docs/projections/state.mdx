@@ -139,12 +139,12 @@ The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pa
 
 `CheckpointStore` holds the records. `Transaction` supplies the SQL client and transaction boundary.
 
-`CheckpointStore.layer` keeps the records on the owner of the streams. Every storage host gives that owner: `Memory.layer`, `BunStorage.layer` and `DurableObjectStorage.layer`. The checkpoints and the streams then commit in one transaction. On a SQL host, add `Transaction.layer` for `Commit.transaction`:
+`CheckpointStore.layer` keeps the records on the owner of the streams. Every storage host gives that owner: `MemoryStorage.layer`, `BunStorage.layer` and `DurableObjectStorage.layer`. The checkpoints and the streams then commit in one transaction. On a SQL host, add `Transaction.layer` for `Commit.transaction`:
 
 ```ts
 import { Effect, Layer } from "effect";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { program } from "./run.ts";
 import { shop } from "./streams.ts";
 
@@ -161,7 +161,7 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 | `Transaction.layer`           | `Transaction`     | The `CommitBoundary` and `SqlClient` of a SQL host |
 | `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                            |
 
-A memory host provides no `SqlClient`, so `Transaction.layer` does not fit it. `CheckpointStore.layerMemory` is an independent store for rebuilt values and tests. `CheckpointStore.layer` joins the stream host, so producer outputs on that owner can be created automatically.
+A memory host provides no `SqlClient`, so `Transaction.layer` does not fit it. `CheckpointStore.layerMemory` is a standalone store. It keeps checkpoints in the process and does not join the stream owner, so processing is at least once. Use it for rebuilt values, tests, and a remote host (`RemoteStreams.layer`). `CheckpointStore.layer` joins the stream host, so producer outputs on that owner can be created automatically.
 
 SQL hosts store state and offsets in the storage table `streamsy_owner_records`. There is no separate state table or State service. Older projection tables are not read or migrated; projections rebuild from zero.
 
@@ -203,7 +203,7 @@ Handler errors are not wrapped. `run` does not retry. `follow` retries only `sto
 
 ## Several backends
 
-A projection can read inputs from any backend, including a fetch Layer. `Commit.transaction` requires declared outputs on its SQL owner. `Commit.producer` accepts outputs on other owners when those streams already exist. Use separate projections for sinks with different commit guarantees.
+A projection can read inputs from any backend, including a remote Layer. `Commit.transaction` requires declared outputs on its SQL owner. `Commit.producer` accepts outputs on other owners when those streams already exist. Use separate projections for sinks with different commit guarantees.
 
 ## Custom Commits
 

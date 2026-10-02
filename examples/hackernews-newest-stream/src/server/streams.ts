@@ -1,6 +1,6 @@
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Effect, Layer } from "effect";
 import { DemoConfig } from "./config.ts";
 import { HackerNewsStories } from "./stories.ts";
@@ -14,7 +14,7 @@ export const createStoriesLayer = Layer.effectDiscard(
 
 const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
   databasePath === "memory"
-    ? Memory.layer(streams, options)
+    ? MemoryStorage.layer(streams, options)
     : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
 /** The checkpoints join the owner of the stream: one SQLite file, or memory. */

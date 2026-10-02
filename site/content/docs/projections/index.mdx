@@ -123,18 +123,18 @@ Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transa
 
 | Storage                  | Projection Layers                               |
 | ------------------------ | ----------------------------------------------- |
-| `Memory.layer`           | `CheckpointStore.layer`                         |
+| `MemoryStorage.layer`    | `CheckpointStore.layer`                         |
 | SQLite storage (Bun, DO) | `CheckpointStore.layer` and `Transaction.layer` |
 
 ```ts
 import { Layer } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
 import { Numbers } from "./minimal.ts";
 import { Tripled } from "./tripled.ts";
 
 export const host = CheckpointStore.layer.pipe(
-  Layer.provideMerge(Memory.layer(Streamsy.group(Numbers, Tripled))),
+  Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Numbers, Tripled))),
 );
 ```
 

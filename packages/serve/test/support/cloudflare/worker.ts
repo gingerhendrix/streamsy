@@ -10,7 +10,7 @@ import { Storage, StorageFault, type StreamId } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { byStreamOptions } from "./fixture-options.ts";
 
 interface Env {
@@ -80,7 +80,7 @@ const probeLayer = (
     );
   }
 
-  const protocol = layerProtocol({
+  const protocol = DurableObjectStorage.layerProtocol({
     client: { storage: state.storage },
     longPollTimeoutMs: probe.longPollTimeoutMs,
   });

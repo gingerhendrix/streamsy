@@ -7,8 +7,8 @@
  */
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
-import { Memory, type StorageFault, Streamsy } from "@streamsy/core";
-import * as Storage from "@streamsy/storage";
+import { MemoryStorage, type StorageFault, Streamsy } from "@streamsy/core";
+import { SqlStorage } from "@streamsy/storage";
 import { Config, Effect, Layer, Option, type Scope } from "effect";
 import type { Reactivity } from "effect/unstable/reactivity";
 import type { SqlClient, SqlError } from "effect/unstable/sql";
@@ -85,14 +85,14 @@ const define = <A>(definition: Definition<A>) =>
 
 /** Root storage over one SQL client, through the public `clientLayer`. */
 const sqlLayer = (client: MakeClient, options: { readonly longPollTimeoutMs?: number }) =>
-  Storage.layer(streams, options).pipe(Layer.provide(Storage.clientLayer(client)));
+  SqlStorage.layer(streams, options).pipe(Layer.provide(SqlStorage.clientLayer(client)));
 
 const definitions = (drivers: Drivers) => [
   define({
     name: "memory",
     config: Config.succeed(Option.some(undefined)),
     missing: "",
-    layer: (_, options) => Memory.layer(streams, options),
+    layer: (_, options) => MemoryStorage.layer(streams, options),
   }),
   define({
     name: "sqlite",

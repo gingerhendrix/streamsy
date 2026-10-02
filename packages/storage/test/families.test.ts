@@ -8,9 +8,9 @@ import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
-import * as BunStorage from "@streamsy/storage/bun";
-import * as SqlStorage from "@streamsy/storage";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { BunStorage } from "@streamsy/storage/bun";
+import { SqlStorage } from "@streamsy/storage";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 
 class Notes extends Streamsy.json<Notes>()("StorageFamilies/Notes", "notes", {
   params: {},

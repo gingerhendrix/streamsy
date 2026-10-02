@@ -16,27 +16,29 @@ bun add @streamsy/storage @streamsy/core effect
 | `@streamsy/storage/durable-object` | SQLite inside a Cloudflare Durable Object (`@effect/sql-sqlite-do`)              |
 | `@streamsy/storage`                | A SQLite (3.42 or newer), Postgres or MySQL `SqlClient` you provide              |
 
-The Bun and Durable Object entries export `layer` and `layerProtocol`.
+The Bun and Durable Object entries export `BunStorage` and
+`DurableObjectStorage`, each with `layer` and `layerProtocol`.
 `layerProtocol` exposes `StreamsReader`, `StreamsWriter`, `Storage`,
 `CommitBoundary`, `SqlClient`, and SQL reactivity on both hosts. Your own SQL
 can share the connection and commit with a stream mutation. `layer` exposes
 the same storage services without the protocol reader and writer. The root entry
-exports `layer` over a `SqlClient` you supply and `clientLayer` to provide one.
+exports `SqlStorage`, with `layer` over a `SqlClient` you supply and
+`clientLayer` to provide one.
 `CommitBoundary` comes from `@streamsy/core`.
 
 ## Use your own client
 
-`clientLayer` builds a client from its `make` function and provides it with the
+`SqlStorage.clientLayer` builds a client from its `make` function and provides it with the
 `Reactivity` it captured, so the client and the storage share one change graph.
 The root entry imports no driver. Add the one you use, at `4.0.0-rc.115`.
 
 ```ts
 import { Layer, Redacted } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import * as Storage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 
-const storage = Storage.layer(streams).pipe(
-  Layer.provide(Storage.clientLayer(PgClient.make({ url: Redacted.make(url) }))),
+const storage = SqlStorage.layer(streams).pipe(
+  Layer.provide(SqlStorage.clientLayer(PgClient.make({ url: Redacted.make(url) }))),
 );
 ```
 
@@ -52,11 +54,11 @@ import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
 import { Http, Streamsy } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
-import { layer } from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 const Server = HttpRouter.serve(Http.routes(streams, { prefix: "/streams", access: "full" })).pipe(
-  Layer.provide(layer(streams, { client: { filename: "./streams.sqlite" } })),
+  Layer.provide(BunStorage.layer(streams, { client: { filename: "./streams.sqlite" } })),
   Layer.provide(listener({ port: 3000 })),
 );
 BunRuntime.runMain(Layer.launch(Server));
@@ -94,7 +96,7 @@ For a projection on that same connection:
 ```ts
 import { Layer } from "effect";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } })),

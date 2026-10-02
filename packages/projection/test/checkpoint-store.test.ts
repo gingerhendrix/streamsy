@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { CommitBoundary, Memory, Streamsy } from "@streamsy/core";
+import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
 
 const key = { id: "storage", version: 1, generation: 1, params: {} };
@@ -90,7 +90,7 @@ test("memory owner checkpoints roll back with the boundary transaction", () =>
       expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
     }).pipe(
       Effect.provide(
-        CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(Streamsy.group()))),
+        CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group()))),
       ),
     ),
   ));

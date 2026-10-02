@@ -1,6 +1,6 @@
 /** The store is a Layer. The same `Sessions` service runs on memory or on Bun SQLite. */
-import { Memory, Streamsy, type StorageFault } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
+import { MemoryStorage, Streamsy, type StorageFault } from "@streamsy/core";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Config, Effect, Layer } from "effect";
 import { Sessions } from "./session-log.ts";
 
@@ -20,7 +20,7 @@ export const DatabasePath = Config.String("FOLD_AGENT_DB").pipe(
 const sessions = Streamsy.group(Sessions);
 
 export const memoryLayer = (options: { readonly longPollTimeoutMs?: number } = {}) =>
-  Memory.layer(sessions, options);
+  MemoryStorage.layer(sessions, options);
 
 /** `BunStorage.layer` creates the parent folder of a new file. */
 export const sqliteLayer = (filename: string, options: StoreOptions = {}) =>

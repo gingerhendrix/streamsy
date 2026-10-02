@@ -14,4 +14,4 @@ export {
   OperationResults,
   Mutations,
 } from "./mutation.ts";
-export * as Memory from "./memory/streams.ts";
+export * as MemoryStorage from "./memory/streams.ts";

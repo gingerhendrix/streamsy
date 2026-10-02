@@ -19,7 +19,7 @@ import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import { layerMemory } from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 import {
   input,
   output,
@@ -39,7 +39,7 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
     body.pipe(
       Effect.scoped,
-      Effect.provide(FamilyFixture.withFamilies(Layer.merge(layerMemory(), TestClock.layer()))),
+      Effect.provide(FamilyFixture.withFamilies(Layer.merge(memoryHost(), TestClock.layer()))),
     ),
   );
 const withReader = <A, E, R>(

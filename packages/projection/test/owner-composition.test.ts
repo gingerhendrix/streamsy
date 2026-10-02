@@ -4,9 +4,9 @@ import { expect, test } from "bun:test";
 import { Array, Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 
 class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
@@ -16,7 +16,7 @@ class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-const memory = Memory.layerMemory();
+const memory = memoryHost();
 const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
@@ -76,7 +76,7 @@ test("watch watches the input's feed even when checkpoints have a different owne
 });
 
 test("watch rejects a stream rebound without its matching feed", async () => {
-  const alternate = Protocol.bind(Memory.layerMemory(), Streamsy.group(Source)).pipe(
+  const alternate = Protocol.bind(memoryHost(), Streamsy.group(Source)).pipe(
     Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
   );
   await Effect.runPromise(
@@ -97,7 +97,7 @@ test("watch rejects a stream rebound without its matching feed", async () => {
   );
 });
 
-const memoryGraph = Memory.layerMemory();
+const memoryGraph = memoryHost();
 // A custom adapter that copies protocol methods loses private storage-owner metadata.
 const unowned = Layer.effectContext(
   Effect.gen(function* () {

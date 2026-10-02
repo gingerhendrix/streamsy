@@ -12,8 +12,8 @@ import { SqlClient } from "effect/unstable/sql";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
-import * as BunStorage from "@streamsy/storage/bun";
+import { memoryHost } from "./support/memory-host.ts";
+import { BunStorage } from "@streamsy/storage/bun";
 import { hasLock } from "../src/serialize.ts";
 import { forget } from "../src/forget.ts";
 import { recordKey } from "@streamsy/projection/checkpoint";
@@ -51,7 +51,7 @@ const hosts: ReadonlyArray<
     >,
   ]
 > = [
-  ["memory", FamilyFixture.withFamilies(Memory.layerMemory())],
+  ["memory", FamilyFixture.withFamilies(memoryHost())],
   ["SQLite", sqlite()],
 ];
 for (const [name, host] of hosts) {
@@ -278,7 +278,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
         expect(failed.failure).toMatchObject({ phase: "process", reason: "invalid-output" });
       expect(failed._tag).toBe("Failure");
       expect((yield* state.load(total)).record).toEqual(Option.none());
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost(), numbers))),
   );
 });
 
@@ -309,7 +309,7 @@ test("stream state rows are separate and initial factory receives params only on
         expect((yield* Projection.read(bound)).state).toBe(name === "a" ? 13 : 23);
       }
       expect(calls).toEqual(["a", "b"]);
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost(), numbers))),
   );
 });
 
@@ -330,7 +330,7 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
       yield* Streams.append(words, ["a"]);
       yield* Projection.run(projection);
       expect((yield* Projection.read(projection)).state).toBe("23A");
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost(), numbers))),
   );
 });
 
@@ -407,6 +407,6 @@ test("fold saves one record per nonempty pass and skips the initial factory afte
       yield* Streams.append(input, [7, 11]);
       yield* run;
       expect({ saves, starts }).toEqual({ saves: 2, starts: 1 });
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost(), numbers))),
   );
 });

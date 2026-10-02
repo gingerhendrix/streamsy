@@ -9,7 +9,7 @@ import { BunRuntime } from "@effect/platform-bun";
 import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
   params: { seat: Schema.String },

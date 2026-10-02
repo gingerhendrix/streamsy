@@ -39,7 +39,7 @@ export type Operation = "head" | "read" | "readNext" | "create" | "append" | "re
 export interface DecodeContext {
   readonly id: StreamId;
   readonly source?: StreamId;
-  /** Resolved by the fetch Layer for bodyless reads lacking Content-Type. */
+  /** Resolved by the remote Layer for bodyless reads lacking Content-Type. */
   readonly contentType?: string;
   readonly expectedOffset?: string;
   /** The request carried a producer tuple; 204 with state decodes as Duplicate. */

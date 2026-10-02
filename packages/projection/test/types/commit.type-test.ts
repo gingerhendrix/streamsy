@@ -1,5 +1,5 @@
-import { layerMemory } from "../support/memory.ts";
-import * as BunStorage from "@streamsy/storage/bun";
+import { memoryHost } from "../support/memory-host.ts";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Protocol } from "@streamsy/core/protocol";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -141,14 +141,14 @@ const hostProcess = Projection.process({
   commit: Commit.transaction,
   process: () => Effect.asVoid(SqlClient.SqlClient),
 }).at({});
-const memoryHost = layerMemory();
+const memoryGraph = memoryHost();
 const memoryRun = Projection.run(hostProcess).pipe(
   Effect.provide(
-    Protocol.bind(memoryHost, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryHost)),
+    Protocol.bind(memoryGraph, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryGraph)),
   ),
 );
 const sqlHost = Layer.merge(
-  Protocol.bind(memoryHost, Streamsy.group(Input)),
+  Protocol.bind(memoryGraph, Streamsy.group(Input)),
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provide(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
   ),

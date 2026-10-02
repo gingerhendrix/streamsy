@@ -7,7 +7,7 @@ Node, Deno and Cloudflare host glue and durable action delivery. Requires Effect
 ```ts
 import { Layer, Schema } from "effect";
 import { BunRuntime } from "@effect/platform-bun";
-import { Http, Streamsy, Memory } from "@streamsy/core";
+import { Http, Streamsy, MemoryStorage } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 
@@ -21,7 +21,7 @@ const App = Layer.mergeAll(
   Serve.mount(Events, "/feed/:seat"),
 );
 const Server = Serve.layer(App).pipe(
-  Layer.provide(Memory.layer(streams)),
+  Layer.provide(MemoryStorage.layer(streams)),
   Layer.provide(listener({ port: 3000 })),
 );
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });

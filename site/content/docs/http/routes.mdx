@@ -74,7 +74,7 @@ A long poll that times out answers 204 with a cursor. An SSE response ends at `s
 
 ```ts
 import { HttpRouter } from "effect/unstable/http";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { App, game } from "./app.ts";
 
 const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });

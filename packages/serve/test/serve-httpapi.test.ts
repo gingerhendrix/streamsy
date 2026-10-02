@@ -4,7 +4,7 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRespondable, Etag } from "effect/unstable/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 import { BunServices, BunHttpPlatform } from "@effect/platform-bun";
-import { Streamsy, Memory, Http } from "@streamsy/core";
+import { Streamsy, MemoryStorage, Http } from "@streamsy/core";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 
@@ -42,7 +42,7 @@ test("handleRaw serves stream responses; declared errors use HttpApi encoding", 
     ).pipe(
       Layer.provide(Feed),
       Layer.provide([BunServices.layer, BunHttpPlatform.layer, Etag.layer]),
-      HttpRouter.provideRequest(Memory.layer(Streamsy.group(Events))),
+      HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Events))),
     ),
     { disableLogger: true },
   );

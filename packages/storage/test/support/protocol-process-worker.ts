@@ -2,7 +2,7 @@
 import { Clock, Effect, ManagedRuntime, Option } from "effect";
 import { ProducerId, Storage, StreamId, ZERO_OFFSET, type ProtocolError } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { layerProtocol } from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const argument = (index: number, name: string): string => {
   const value = Bun.argv[index + 2];
@@ -30,7 +30,7 @@ const storageRecord = (id: StreamId) => ({
 
 const mode = argument(0, "mode");
 const filename = argument(1, "filename");
-const applicationLayer = layerProtocol({ client: { filename }, longPollTimeoutMs: 500 });
+const applicationLayer = BunStorage.layerProtocol({ client: { filename }, longPollTimeoutMs: 500 });
 const runtime = ManagedRuntime.make(applicationLayer);
 
 const operation = Effect.gen(function* () {

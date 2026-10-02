@@ -6,4 +6,5 @@
 export const movedPages = new Map([
   ["demos/issue-tracker-demo", "demos/issue-tracker"],
   ["user/durable-state", "streams/declare"],
+  ["http/fetch", "http/remote"],
 ]);

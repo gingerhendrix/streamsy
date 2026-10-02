@@ -26,7 +26,7 @@ import { stripVTControlCharacters } from "node:util";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
-import * as Storage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 import {
   Cause,
   Config,
@@ -247,7 +247,7 @@ const program = Effect.gen(function* () {
   const connect = (dialect: Dialect, url: Redacted.Redacted) =>
     Effect.gen(function* () {
       const shown = redactUrl(Redacted.value(url));
-      const admin = yield* Layer.build(Storage.clientLayer(dialect.client(url))).pipe(
+      const admin = yield* Layer.build(SqlStorage.clientLayer(dialect.client(url))).pipe(
         Effect.map(Context.get(SqlClient.SqlClient)),
         Effect.tap((sql) => sql.unsafe("SELECT 1")),
         Effect.mapError(

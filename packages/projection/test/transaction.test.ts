@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Streamsy } from "@streamsy/core";
 import { Protocol, Streams } from "@streamsy/core/protocol";
 import {

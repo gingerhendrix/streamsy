@@ -8,7 +8,7 @@ import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Streams } from "@streamsy/core/protocol";
 import { Projection } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
@@ -66,7 +66,7 @@ test("declared rows, stream and state share one memory app and their declared co
   expect(tracker.at({ seat: 42 }).streams.board?.stream.key).toBe(board.key);
   expect(tracker.at({ seat: 42 }).streams.transitions?.stream.key).toBe(transitions.key);
   const runtime = ManagedRuntime.make(
-    FamilyFixture.withFamilies(Memory.layerMemory(), numbers, board, transitions),
+    FamilyFixture.withFamilies(memoryHost(), numbers, board, transitions),
   );
   const services = await runtime.runPromise(Effect.context());
   const App = Layer.mergeAll(

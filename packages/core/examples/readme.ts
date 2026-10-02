@@ -1,5 +1,5 @@
 import { Effect, Schema, Stream } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 
 class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
   params: {},
@@ -11,4 +11,4 @@ const program = Effect.gen(function* () {
   yield* events.append({}, ["hello"]);
   return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(Streamsy.group(Events)))));
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));

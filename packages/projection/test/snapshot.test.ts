@@ -9,8 +9,8 @@ import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
-import * as BunStorage from "@streamsy/storage/bun";
+import { memoryHost } from "./support/memory-host.ts";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
 const words = FamilyFixture.json("snapshot-words", { schema: Schema.String });
@@ -49,7 +49,7 @@ const hosts: ReadonlyArray<
     >,
   ]
 > = [
-  ["memory", FamilyFixture.withFamilies(Memory.layerMemory())],
+  ["memory", FamilyFixture.withFamilies(memoryHost())],
   ["SQLite", sqlite()],
 ];
 

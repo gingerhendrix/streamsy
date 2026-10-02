@@ -26,7 +26,7 @@ export const layerProtocol = (options: Options) =>
           new TransportFault({
             operation: "layer",
             reason: "configuration",
-            message: "Invalid fetch configuration",
+            message: "Invalid remote configuration",
             cause,
           }),
       });

@@ -3,7 +3,7 @@ import { Effect, Schema, Stream } from "effect";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 import * as Families from "./support/families.ts";
 
 class Input extends Streamsy.json<Input>()("multi/Input", "multi/input/:id", {
@@ -92,5 +92,5 @@ test("an invalid runtime collection fails without advancing the checkpoint", () 
         failure: { phase: "process", reason: "invalid-output" },
       });
       expect((yield* Projection.read(projection)).offsets.input).toBe(ZERO_OFFSET);
-    }).pipe(Effect.provide(Families.withFamilies(Memory.layerMemory(), Input, Board))),
+    }).pipe(Effect.provide(Families.withFamilies(memoryHost(), Input, Board))),
   ));
