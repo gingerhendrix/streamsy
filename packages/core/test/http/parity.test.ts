@@ -222,14 +222,22 @@ for (const visibility of ["private", "public"] as const) {
   });
 }
 
-for (const prefix of ["/api.v1", "/"] as const) {
-  it(`a fork source under the ${prefix} mount resolves with or without the prefix`, async () => {
+for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
+  it(`the ${prefix} mount registers once and resolves fork sources with or without it`, async () => {
     const edge = HttpRouter.toWebHandler(
       protocolRoutes({ prefix }).pipe(Layer.provideMerge(Streams.layerMemory())),
       { disableLogger: true },
     );
-    const mount = prefix === "/" ? "" : prefix;
+    const mount = prefix.replace(/\/$/, "");
     try {
+      if (mount !== "") {
+        // The prefix registers once, with or without its trailing slash.
+        expect((await edge.handler(new Request(`http://example.test${mount}`))).status).toBe(400);
+        expect((await edge.handler(new Request(`http://example.test${mount}/`))).status).toBe(400);
+        expect(
+          (await edge.handler(new Request(`http://example.test${mount}-other/x`))).status,
+        ).toBe(404);
+      }
       const created = await edge.handler(
         new Request(`http://example.test${mount}/v1/stream/source`, {
           method: "PUT",
