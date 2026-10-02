@@ -7,7 +7,7 @@ import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
-import { transact } from "../server/state.ts";
+import { transact, UnknownIssue } from "../server/state.ts";
 import { scratchDirectory, startServer, stopServer, waitForServer } from "./support.ts";
 
 const created: IssueEvent = {
@@ -48,6 +48,43 @@ test("the transactional handler writes application rows through the SQLite host"
         const rows = yield* sql.unsafe<{ readonly status: string }>("SELECT status FROM issues");
         expect(result.items).toBe(1);
         expect(rows).toEqual([{ status: "todo" }]);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("transact decides from the issueRows tables and appends at the events offset", async () => {
+  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* createInputs("live");
+        const events = yield* Events;
+        // A fact appended outside `transact`: the next command must see it.
+        yield* events.append({ workspaceId: "live" }, [created]);
+        const first = yield* transact("live", {
+          type: "status",
+          commandId: "c1",
+          issueId: "i1",
+          status: "done",
+        });
+        const assigned = yield* transact("live", {
+          type: "assign",
+          commandId: "c2",
+          issueId: "i1",
+          assigneeId: "ada",
+        });
+        expect(first.event).toMatchObject({ type: "IssueStatusChanged", sequence: 4 });
+        expect(assigned.event).toMatchObject({ status: "done", assigneeId: "ada", sequence: 5 });
+        expect(assigned.offset).toBe((yield* events.head({ workspaceId: "live" })).nextOffset);
+        const unknown = yield* Effect.flip(
+          transact("live", { type: "status", commandId: "c3", issueId: "nope", status: "done" }),
+        );
+        expect(unknown).toBeInstanceOf(UnknownIssue);
+        const { items } = yield* events.collect({ workspaceId: "live" });
+        expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2"]);
       }),
     );
   } finally {

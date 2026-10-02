@@ -28,7 +28,7 @@ Each number in the diagram is also a section number below.
 | Step | What happens                                                         | Streamsy feature                                              | File                               |
 | ---- | -------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
 | 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`                |
-| 2    | A command becomes one fact, appended only if the stream did not move | `read`, `append` with `expectedOffset`                        | `server/state.ts`                  |
+| 2    | A command becomes one fact, appended only if the stream did not move | `Projection.decide`                                           | `server/state.ts`                  |
 | 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
 | 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `DurableState` | `server/outputs.ts`                |
 | 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
@@ -75,20 +75,24 @@ See [Declare streams](/docs/streams/declare) for templates and parameters.
 
 ## 2. Append a command
 
-`transact` reads the whole issue stream, folds it into issue rows and checks the command. It then appends one fact with `expectedOffset` set to the tail it read. If another command appended first, the append fails with `OffsetMismatch` and `transact` tries again, up to three times.
+`transact` checks the command against the rows that `issueRows` wrote, and appends one fact. `Projection.decide` runs `issueRows` to the tail, then calls `decide`. `decide` reads the SQL tables. The append to `events` sets `expectedOffset` to the offset that the projection read. If another command appended first, the append fails with `OffsetMismatch`, and `Projection.decide` runs, reads and decides again, up to three times.
 
 ```ts title="server/state.ts"
 export const transact = (workspaceId: string, command: CommandRequest) =>
-  Effect.gen(function* () {
-    const stream = yield* Events;
-    const { items, offset: head } = yield* stream.collect({ workspaceId });
-    const rows = foldEvents(items);
-    const previous = command.type === "create" ? undefined : rows.get(command.issueId);
-    if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
-    // ...
-    const ack = yield* stream.append({ workspaceId }, [event], { expectedOffset: head });
-    return { event, ack };
-  }).pipe(Effect.retry({ times: 3, while: Predicate.isTagged("OffsetMismatch") }));
+  Projection.decide(issueRows.at({ workspaceId }), {
+    input: "events",
+    decide: () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const previous =
+          command.type === "create"
+            ? undefined
+            : yield* storedIssue(sql, workspaceId, command.issueId);
+        if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
+        // ...
+        return { value: event, items: [event] };
+      }),
+  }).pipe(Effect.map(({ value: event, offset }) => ({ event, offset })));
 ```
 
 The route turns a conflict that is still there after the retries into a 409:
@@ -110,7 +114,7 @@ curl -X POST http://localhost:1340/api/workspaces/live/commands \
   --data '{"type":"create","commandId":"c1","issueId":"i1","projectId":"p1","title":"First issue"}'
 ```
 
-See [Read, fold, append](/docs/streams/write#read-fold-append) for the recipe.
+See [Read, decide, append](/docs/projections/state#read-decide-append) for the recipe.
 
 ## 3. Write SQL rows with `issueRows`
 

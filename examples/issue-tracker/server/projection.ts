@@ -27,13 +27,18 @@ const toIssue = (row: StoredIssue): typeof IssueRow.Type => ({
   assigneeId: row.assignee_id ?? undefined,
 });
 
+/** One issue row, as `issueRows` last wrote it. */
+export const storedIssue = (sql: SqlClient.SqlClient, workspaceId: string, issueId: string) =>
+  sql
+    .unsafe<StoredIssue>(`SELECT * FROM issues WHERE workspace_id=? AND issue_id=?`, [
+      workspaceId,
+      issueId,
+    ])
+    .pipe(Effect.map((rows) => (rows[0] === undefined ? undefined : toIssue(rows[0]))));
+
 const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
   Effect.gen(function* () {
-    const rows = yield* sql.unsafe<StoredIssue>(
-      `SELECT * FROM issues WHERE workspace_id=? AND issue_id=?`,
-      [event.workspaceId, event.issueId],
-    );
-    const before = rows[0] === undefined ? undefined : toIssue(rows[0]);
+    const before = yield* storedIssue(sql, event.workspaceId, event.issueId);
     const after = foldIssue(before, event);
     if (after === undefined || after === before) return;
     yield* sql.unsafe(
