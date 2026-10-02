@@ -60,7 +60,13 @@ export type Checks = [
     >
   >,
   Assert<Same<Extract<Layer.Success<ReturnType<typeof hostLayer>>, Storage>, never>>,
-  Assert<Same<Effect.Services<ReturnType<typeof transact>>, Events>>,
+  // `transact` runs `issueRows` and reads its SQL tables before it appends.
+  Assert<
+    Same<
+      Effect.Services<ReturnType<typeof transact>>,
+      Transaction | CheckpointStore | Inputs | SqlClient.SqlClient
+    >
+  >,
   Assert<Same<Effect.Services<ReturnType<typeof createInputs>>, Inputs>>,
   Assert<Same<Effect.Services<ReturnType<typeof checkCatalogWorkspace>>, never>>,
   Assert<Same<Effect.Services<typeof prepareSchema>, SqlClient.SqlClient>>,
