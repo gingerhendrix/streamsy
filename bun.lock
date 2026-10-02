@@ -152,6 +152,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/sql-pg": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "@types/bun": "^1.2.0",
@@ -227,6 +228,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/sql-pg": "4.0.0-rc.115",
         "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
         "miniflare": "4.20260730.0",

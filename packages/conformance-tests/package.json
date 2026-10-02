@@ -13,7 +13,8 @@
     "measure:bundle": "bun run build:worker && cat dist/bundle-report.json",
     "check:browser": "bun scripts/check-browser.ts",
     "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run test/fetch.conformance.test.ts",
-    "test:memory:wildcard": "bun ./node_modules/vitest/vitest.mjs --run test/wildcard.conformance.test.ts"
+    "test:memory:wildcard": "bun ./node_modules/vitest/vitest.mjs --run test/wildcard.conformance.test.ts",
+    "test:pg": "bun ./node_modules/vitest/vitest.mjs --run test/postgres.conformance.test.ts"
   },
   "dependencies": {
     "@durable-streams/client": "0.2.6",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/sql-pg": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@types/bun": "^1.2.0",

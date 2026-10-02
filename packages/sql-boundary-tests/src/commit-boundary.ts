@@ -57,9 +57,9 @@ const noop = () => {};
  * both services. The official convenience Layers provide Reactivity privately;
  * this make-level graph proves the instance captured by SqlClient is shareable.
  */
-export const sharedSqlClientLayer = <A extends SqlClient.SqlClient>(
-  makeClient: Effect.Effect<A, never, Scope.Scope | Reactivity.Reactivity>,
-): Layer.Layer<SqlClient.SqlClient | Reactivity.Reactivity> =>
+export const sharedSqlClientLayer = <A extends SqlClient.SqlClient, E = never>(
+  makeClient: Effect.Effect<A, E, Scope.Scope | Reactivity.Reactivity>,
+): Layer.Layer<SqlClient.SqlClient | Reactivity.Reactivity, E> =>
   Layer.effectContext(
     Effect.gen(function* () {
       const reactivity = yield* Reactivity.make;

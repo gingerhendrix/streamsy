@@ -78,10 +78,10 @@ export interface OwnerCleanupProofResult {
 
 const snapshot = (sql: SqlClient.SqlClient): Effect.Effect<Snapshot, SqlError> =>
   Effect.flatMap(
-    sql.unsafe<{ readonly revision: number; readonly expires_at_ms: number }>(
-      "SELECT revision, expires_at_ms FROM protocol_state WHERE id = ?",
-      ["stream"],
-    ),
+    sql<{
+      readonly revision: number;
+      readonly expires_at_ms: number;
+    }>`SELECT revision, expires_at_ms FROM protocol_state WHERE id = ${"stream"}`,
     (rows) => {
       const row = rows[0];
       return row === undefined
@@ -95,11 +95,11 @@ const applicationRowExists = (
   id = "application",
 ): Effect.Effect<boolean, SqlError> =>
   Effect.map(
-    sql.unsafe<{ readonly count: number }>(
-      "SELECT COUNT(*) count FROM application_state WHERE id = ?",
-      [id],
-    ),
-    (rows) => rows[0]?.count === 1,
+    // Postgres returns COUNT(*) as a bigint.
+    sql<{
+      readonly count: unknown;
+    }>`SELECT COUNT(*) AS count FROM application_state WHERE id = ${id}`,
+    (rows) => Number(rows[0]?.count) === 1,
   );
 
 const mutate = (
@@ -115,10 +115,7 @@ const mutate = (
       if (current.revision !== expectedRevision) {
         return yield* new MutationRejected({ revision: current.revision });
       }
-      yield* boundary.sql.unsafe(
-        "UPDATE protocol_state SET revision = ?, expires_at_ms = ? WHERE id = ?",
-        [next.revision, next.expiresAtMs, "stream"],
-      );
+      yield* boundary.sql`UPDATE protocol_state SET revision = ${next.revision}, expires_at_ms = ${next.expiresAtMs} WHERE id = ${"stream"}`;
       return Applied({ ambient: Option.isSome(ambient) });
     }),
   });
@@ -133,19 +130,12 @@ const drain = <A, E, R>(pull: Effect.Effect<ReadonlyArray<A>, E, R>): Effect.Eff
 export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect.Effect<void>) =>
   Effect.gen(function* () {
     const sql = boundary.sql;
-    yield* sql.unsafe(
-      "CREATE TABLE IF NOT EXISTS protocol_state (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL)",
-    );
-    yield* sql.unsafe(
-      "CREATE TABLE IF NOT EXISTS application_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    );
-    yield* sql.unsafe("DELETE FROM application_state");
-    yield* sql.unsafe("DELETE FROM protocol_state");
-    yield* sql.unsafe("INSERT INTO protocol_state (id, revision, expires_at_ms) VALUES (?, ?, ?)", [
-      "stream",
-      0,
-      10,
-    ]);
+    // VARCHAR keys and tagged templates run on SQLite, Postgres and MySQL.
+    yield* sql`CREATE TABLE IF NOT EXISTS protocol_state (id VARCHAR(64) PRIMARY KEY, revision INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL)`;
+    yield* sql`CREATE TABLE IF NOT EXISTS application_state (id VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL)`;
+    yield* sql`DELETE FROM application_state`;
+    yield* sql`DELETE FROM protocol_state`;
+    yield* sql`INSERT INTO protocol_state ${sql.insert({ id: "stream", revision: 0, expires_at_ms: 10 })}`;
 
     let sharedGraphReads = 0;
     const sharedGraphReady = yield* Deferred.make<void>();
@@ -189,10 +179,7 @@ export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect
     const rawAmbientMutation = yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe("INSERT INTO application_state (id, value) VALUES (?, ?)", [
-            "raw-ambient",
-            "before-defect",
-          ]);
+          yield* sql`INSERT INTO application_state ${sql.insert({ id: "raw-ambient", value: "before-defect" })}`;
           yield* mutate(boundary, 0, { revision: 9, expiresAtMs: 90 });
         }),
       )
@@ -204,10 +191,7 @@ export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect
     const rejected = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe("INSERT INTO application_state (id, value) VALUES (?, ?)", [
-            "application",
-            "before-rejection",
-          ]);
+          yield* sql`INSERT INTO application_state ${sql.insert({ id: "application", value: "before-rejection" })}`;
           return yield* mutate(boundary, 99, { revision: 1, expiresAtMs: 20 });
         }),
       )
@@ -247,10 +231,7 @@ export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect
     const failureAfterMutation = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe("INSERT INTO application_state (id, value) VALUES (?, ?)", [
-            "application",
-            "before-failure",
-          ]);
+          yield* sql`INSERT INTO application_state ${sql.insert({ id: "application", value: "before-failure" })}`;
           yield* mutate(boundary, 0, { revision: 1, expiresAtMs: 20 });
           return yield* Effect.fail("after-applied" as const);
         }),

@@ -42,6 +42,7 @@
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:workerd": "bun run --cwd packages/conformance-tests test:workerd",
     "test:sql-boundary": "bun run --cwd packages/sql-boundary-tests test",
+    "test:sql-dialects": "bun run --cwd packages/storage test:dialects && bun run --cwd packages/sql-boundary-tests test:pg && bun run --cwd packages/conformance-tests test:pg",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "build": "bun run --cwd packages/core build && bun run --cwd packages/storage build && bun run --cwd packages/serve build && bun run --cwd packages/projection build",
