@@ -1,0 +1,37 @@
+---
+title: Host contract
+description: What each host owns, from the storage Layer and the runtime edge to expiry, wakes, streaming limits, and placement.
+---
+
+A host runs the same Streamsy routes and storage contract. It owns the parts that depend on the runtime: the listener, the main, expiry, wakes, and where data lives.
+
+## Hosts
+
+| Host           | Storage Layer                                                                                                | Runtime edge owner                                                                  | Expiry owner                                                          | Wake source                                                     | Streaming limits                                                                                             | Placement                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Bun            | `BunStorage.layer` from `@streamsy/storage/bun` (`bun:sqlite`), or `Memory.layer`                            | `BunRuntime.runMain` over `Serve.layer` and `listener` from `@streamsy/serve/bun`   | The protocol on access. The app can sweep with `Protocol.expireDue()` | Commit push in the process. The repair pass for other processes | `idleTimeout` must stay 0, the listener default. Long poll 30 s, SSE 60 s                                    | One process for each port. Several processes can share one file |
+| Node           | `layer` from `@streamsy/storage` over an `@effect/sql-sqlite-node` client (`node:sqlite`), or `Memory.layer` | `NodeRuntime.runMain` over `Serve.layer` and `listener` from `@streamsy/serve/node` | The protocol on access. The app can sweep with `Protocol.expireDue()` | Commit push in the process. The repair pass for other processes | The `node:http` defaults hold live reads. `requestTimeout` limits only the request. Long poll 30 s, SSE 60 s | One process for each port                                       |
+| Deno           | As Node. Run `nodeSqliteCompat` from `@streamsy/serve/deno` before the client opens                          | `DenoRuntime.runMain` over `Serve.layer` and `listener` from `@streamsy/serve/deno` | The protocol on access. The app can sweep with `Protocol.expireDue()` | Commit push in the process. The repair pass for other processes | `Deno.serve` has no response timeout. Long poll 30 s, SSE 60 s                                               | One process for each port                                       |
+| Durable Object | `DurableObjectStorage.layer` from `@streamsy/storage/durable-object`                                         | The Worker `router` and `StreamsyObject` from `@streamsy/serve/cloudflare`          | The object alarm, reconciled after each write                         | Commit push in the object                                       | Long poll 25 s, SSE 60 s                                                                                     | `Placement` picks one object for each stream path               |
+
+## Shared parts
+
+Every process host uses `Serve.layer` from `@streamsy/serve` and passes `Serve.teardown` to its `runMain`. On `SIGINT` or `SIGTERM` the drain answers live reads, and the process exits 0. See [Long-running hosts](/docs/http/serve#long-running-hosts).
+
+Each listener takes `port` (default 3000), `hostname` (default `127.0.0.1`), and `gracefulShutdownTimeout`. Without a bound, a stop waits for in-flight requests and the drain ends them. The Node listener also takes `server`, the options for `node:http` `createServer`.
+
+## SQLite on Node and Deno
+
+The root `layer` of `@streamsy/storage` takes a `SqlClient`. The client and the storage Layer must share one `Reactivity`. `clientLayer` from `@streamsy/storage` builds that pair from the driver's `SqliteClient.make`. The Bun and Durable Object Layers build it for you.
+
+On Deno, `@effect/sql-sqlite-node` calls `DatabaseSync.enableLoadExtension`, which Deno's `node:sqlite` does not have. `nodeSqliteCompat` adds a no-op method. It changes nothing on a runtime that has the method.
+
+Node and Deno pass the official conformance suite with SQLite through these Layers.
+
+## Several processes
+
+`BunStorage` checks the file format before it opens and retries a busy transaction without blocking the event loop. Several Bun processes can share one file.
+
+On Node and Deno, `@effect/sql-sqlite-node` opens the file in WAL mode with a 5 s busy timeout. A busy lock blocks the event loop for up to that time. Use one process for each SQLite file there.
+
+A commit in one process wakes followers in another within `repairIntervalMs` (default 1 s).

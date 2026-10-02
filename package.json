@@ -40,6 +40,8 @@
     "app:issue-tracker": "bun run --cwd examples/issue-tracker app:full",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
+    "test:conformance:node": "bun run --cwd packages/conformance-tests test:node",
+    "test:conformance:deno": "bun run --cwd packages/conformance-tests test:deno",
     "test:conformance:workerd": "bun run --cwd packages/conformance-tests test:workerd",
     "test:sql-dialects": "bun run --cwd packages/storage test:dialects && bun run --cwd packages/projection test:dialects && bun run --cwd packages/serve test:dialects && bun run --cwd packages/conformance-tests test:pg && bun run --cwd packages/conformance-tests test:mysql",
     "db:up": "docker compose up -d --wait",
