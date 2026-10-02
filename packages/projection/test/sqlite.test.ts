@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { Database } from "bun:sqlite";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import * as FamilyFixture from "./support/families.ts";
@@ -19,12 +19,11 @@ import {
 import { SqlClient } from "effect/unstable/sql";
 import { Streams } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { composition, initialize, input, inspect, positives } from "./support/scenarios.ts";
 
 const protocolHost = (filename: string, readLimit = 1000) =>
-  ProjectionSql.layerStorage.pipe(
+  Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename }, readLimit })),
   );
 
@@ -169,10 +168,9 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       import { Layer, ManagedRuntime, Option } from "effect";
       import { Streams } from "@streamsy/core/protocol";
       import * as BunStorage from "@streamsy/storage/bun";
-      import * as ProjectionSql from "./src/sql.ts";
-      import { Projection } from "./src/index.ts";
+      import { CheckpointStore, Projection, Transaction } from "./src/index.ts";
       import { input, inspect, positives } from "./test/support/scenarios.ts";
-      const host = ProjectionSql.layerStorage.pipe(
+      const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
         Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: Bun.argv.at(-1) } })),
       );
       const runtime = ManagedRuntime.make(FamilyFixture.withFamilies(host));
@@ -210,6 +208,30 @@ test("a new Bun process reopens the file and resumes without repeated output", a
   expect(result.accepted).toBe(result.tail);
 });
 
+test("a checkpoint SQL failure retains its underlying cause", async () => {
+  const runtime = ManagedRuntime.make(host(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.unsafe("DROP TABLE streamsy_owner_records");
+        const result = yield* (yield* CheckpointStore).load(positives).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure.phase).toBe("load");
+          expect(result.failure.reason).toBe("storage-failure");
+          expect(result.failure.cause).toMatchObject({
+            _tag: "StorageFault",
+            cause: { _tag: "SqlError" },
+          });
+        }
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test("a SQLite file containing only v1 projection tables rebuilds from zero", async () => {
   const directory = mkdtempSync(join(scratch, "projection-v1-"));
   const filename = join(directory, "old.sqlite");
@@ -240,7 +262,7 @@ test("a SQLite file containing only v1 projection tables rebuilds from zero", as
         expect(yield* sql.unsafe("SELECT value FROM streamsy_projection_v1_state")).toEqual([
           { value: "999" },
         ]);
-        expect(yield* sql.unsafe("SELECT key FROM streamsy_projection_v2_records")).toHaveLength(1);
+        expect(yield* sql.unsafe("SELECT key FROM streamsy_owner_records")).toHaveLength(1);
       }),
     );
   } finally {

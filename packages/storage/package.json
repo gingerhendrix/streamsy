@@ -36,7 +36,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle @streamsy/core --deps.never-bundle @effect/sql-sqlite-bun --deps.never-bundle @effect/sql-sqlite-do",
+    "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle @streamsy/core --deps.never-bundle @effect/platform-bun --deps.never-bundle @effect/sql-sqlite-bun --deps.never-bundle @effect/sql-sqlite-do",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },
@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@streamsy/serve": "workspace:*",
@@ -54,10 +55,14 @@
     "typescript": "catalog:"
   },
   "peerDependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115"
   },
   "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
     "@effect/sql-sqlite-bun": {
       "optional": true
     },

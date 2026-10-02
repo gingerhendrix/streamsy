@@ -1,4 +1,4 @@
-export const STORAGE_SCHEMA_VERSION = 2;
+export const STORAGE_SCHEMA_VERSION = 3;
 export const STORAGE_VERSION_TABLE = "streamsy_storage_schema_version";
 
 export const STORAGE_MIGRATIONS = [
@@ -26,4 +26,5 @@ export const STORAGE_MIGRATIONS = [
     `CREATE INDEX idx_streamsy_streams_expiry ON streamsy_streams(expires_at_ms, stream_id)
  WHERE expires_at_ms IS NOT NULL AND soft_deleted = 0`,
   ],
+  [`CREATE TABLE streamsy_owner_records (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)`],
 ] as const;

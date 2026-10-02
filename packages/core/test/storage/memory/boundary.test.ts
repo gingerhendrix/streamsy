@@ -5,7 +5,8 @@ import * as Streams from "../../../src/toolkit/streams.ts";
 import * as StreamAddress from "../../../src/toolkit/address.ts";
 import { StreamId } from "../../../src/schema/index.ts";
 import { Storage } from "../../../src/storage/storage.ts";
-import { MemoryCommitBoundary } from "../../../src/storage/memory/boundary.ts";
+import { CommitBoundary } from "../../../src/storage/commit-boundary.ts";
+import { OwnerRecords } from "../../../src/internal/owner-records.ts";
 
 const sink = StreamAddress.json("fused-sink", { schema: Schema.String });
 const turns = Effect.forEach([1, 2, 3, 4, 5], () => Effect.yieldNow, { discard: true });
@@ -14,17 +15,18 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
   test(`memory fused boundary: ${outcome}`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const boundary = yield* MemoryCommitBoundary;
+        const boundary = yield* CommitBoundary;
+        const records = yield* OwnerRecords;
         const storage = yield* Storage;
         expect((yield* Streams.create(sink))._tag).toBe("Created");
-        yield* boundary.write("state", "0");
-        yield* boundary.write("checkpoint", "0");
+        yield* records.write("state", "0");
+        yield* records.write("checkpoint", "0");
         const read = Effect.gen(function* () {
           const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
           return {
             output: batches.flatMap((batch) => batch.items),
-            state: Option.getOrThrow(yield* boundary.read("state")),
-            checkpoint: Option.getOrThrow(yield* boundary.read("checkpoint")),
+            state: Option.getOrThrow(yield* records.read("state")),
+            checkpoint: Option.getOrThrow(yield* records.read("checkpoint")),
           };
         });
         const before = { output: [], state: "0", checkpoint: "0" };
@@ -40,8 +42,8 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
               yield* boundary.withTransaction(
                 Effect.gen(function* () {
                   expect((yield* Streams.append(sink, ["one"]))._tag).toBe("Appended");
-                  yield* boundary.write("state", "1");
-                  yield* boundary.write("checkpoint", "1");
+                  yield* records.write("state", "1");
+                  yield* records.write("checkpoint", "1");
                 }),
               );
               expect(yield* read).toEqual(after);
@@ -91,25 +93,27 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
 test("memory owner rejects inherited child-fiber use and separate owners", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const boundary = yield* MemoryCommitBoundary;
+      const boundary = yield* CommitBoundary;
+      const records = yield* OwnerRecords;
       yield* boundary.withTransaction(
         Effect.gen(function* () {
-          const child = yield* boundary.write("state", "child").pipe(Effect.forkScoped);
+          const child = yield* records.write("state", "child").pipe(Effect.forkScoped);
           expect(Exit.isFailure(yield* Fiber.await(child))).toBe(true);
           const foreign = yield* Effect.gen(function* () {
-            return yield* (yield* MemoryCommitBoundary).write("state", "foreign");
+            return yield* (yield* OwnerRecords).write("state", "foreign");
           }).pipe(Effect.provide(Streams.layerMemory()), Effect.exit);
           expect(Exit.isFailure(foreign)).toBe(true);
         }),
       );
-      expect(Option.isNone(yield* boundary.read("state"))).toBe(true);
+      expect(Option.isNone(yield* records.read("state"))).toBe(true);
     }).pipe(Effect.provide(Streams.layerMemory()), Effect.scoped, Effect.timeout("5 seconds")),
   ));
 
 test("memory outer owners serialize without losing stream output or records", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const boundary = yield* MemoryCommitBoundary;
+      const boundary = yield* CommitBoundary;
+      const records = yield* OwnerRecords;
       yield* Streams.create(sink);
       const held = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -118,7 +122,7 @@ test("memory outer owners serialize without losing stream output or records", ()
         .withTransaction(
           Effect.gen(function* () {
             yield* Streams.append(sink, ["first"]);
-            yield* boundary.write("state", "first");
+            yield* records.write("state", "first");
             yield* Deferred.succeed(held, undefined);
             yield* Deferred.await(release);
           }),
@@ -129,9 +133,9 @@ test("memory outer owners serialize without losing stream output or records", ()
         .withTransaction(
           Effect.gen(function* () {
             yield* Deferred.succeed(entered, undefined);
-            expect(Option.getOrThrow(yield* boundary.read("state"))).toBe("first");
+            expect(Option.getOrThrow(yield* records.read("state"))).toBe("first");
             yield* Streams.append(sink, ["second"]);
-            yield* boundary.write("state", "second");
+            yield* records.write("state", "second");
           }),
         )
         .pipe(Effect.forkScoped);
@@ -140,7 +144,7 @@ test("memory outer owners serialize without losing stream output or records", ()
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(first);
       yield* Fiber.join(second);
-      expect(Option.getOrThrow(yield* boundary.read("state"))).toBe("second");
+      expect(Option.getOrThrow(yield* records.read("state"))).toBe("second");
       const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
       expect(batches.flatMap((batch) => batch.items)).toEqual(["first", "second"]);
     }).pipe(Effect.provide(Streams.layerMemory()), Effect.scoped, Effect.timeout("5 seconds")),

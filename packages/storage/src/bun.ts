@@ -1,19 +1,20 @@
 import { StorageFault, type Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
 import { sharedSqlClientLayer } from "./boundary.ts";
-import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
+import * as SqliteFile from "./sqlite-file.ts";
 import { storageLayer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
-import { retryWithPolicy, transactionRetryPolicy } from "./transaction-retry.ts";
+import { transactionRetryPolicy } from "./transaction-retry.ts";
 
 export interface BunStorageOptions extends SqlStorageOptions {
   readonly client: Parameters<typeof SqliteClient.make>[0];
 }
 
 export interface BunProtocolOptions extends BunStorageOptions, Protocol.ProtocolOptions {}
-type BunClientOptions = BunStorageOptions["client"];
 
 const SqliteOpenError = Schema.Struct({
   code: Schema.optional(Schema.String),
@@ -51,118 +52,29 @@ const normalizeSqliteDefect = <A, R>(
     ),
   );
 
-const preflightFile = (
-  filename: string,
-  retryPolicy: ReturnType<typeof transactionRetryPolicy>,
-): Effect.Effect<void, StorageFault> =>
-  filename === ":memory:"
-    ? Effect.void
-    : Effect.gen(function* () {
-        if (!(yield* Effect.promise(() => Bun.file(filename).exists()))) return undefined;
-        const inspect = Effect.acquireUseRelease(
-          normalizeSqliteDefect(Effect.sync(() => new Database(filename, { readonly: true }))),
-          (database) =>
-            normalizeSqliteDefect(
-              Effect.sync(() => {
-                const names = new Set(
-                  database
-                    .query<{ name: string }, []>(
-                      "SELECT name FROM sqlite_master WHERE type='table'",
-                    )
-                    .all()
-                    .map(({ name }) => name),
-                );
-                const ownsFormat = names.has(STORAGE_VERSION_TABLE);
-                const legacy =
-                  names.has("streamsy_schema_version") ||
-                  (!ownsFormat &&
-                    ["streamsy_streams", "streamsy_messages", "streamsy_producers"].some((name) =>
-                      names.has(name),
-                    ));
-                const version = ownsFormat
-                  ? (database
-                      .query<{ version: number | null }, []>(
-                        `SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`,
-                      )
-                      .get()?.version ?? 0)
-                  : 0;
-                return { legacy, version };
-              }),
-            ),
-          (database) => Effect.sync(() => database.close(false)),
-        );
-        const state = yield* retryWithPolicy(inspect, retryPolicy, (error) => error.retryable);
-        if (state.legacy)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message:
-              "Unsupported pre-0.4 Streamsy SQLite format; use a fresh database path (the file was not modified)",
-            retryable: false,
-          });
-        if (state.version > STORAGE_SCHEMA_VERSION)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message: `Unsupported newer Streamsy SQLite schema version ${state.version}; supported version is ${STORAGE_SCHEMA_VERSION}`,
-            retryable: false,
-          });
-        return undefined;
-      });
-
-const prepareJournal = (
-  options: BunClientOptions,
-  retryPolicy: ReturnType<typeof transactionRetryPolicy>,
-): Effect.Effect<void, StorageFault> =>
-  options.filename === ":memory:"
-    ? Effect.void
-    : retryWithPolicy(
-        Effect.acquireUseRelease(
-          normalizeSqliteDefect(
-            Effect.sync(
-              () =>
-                new Database(options.filename, {
-                  readonly: false,
-                  readwrite: options.readwrite ?? true,
-                  create: options.create ?? true,
-                }),
-            ),
-          ),
-          (database) =>
-            normalizeSqliteDefect(
-              Effect.sync(() => {
-                database.run("PRAGMA busy_timeout=0");
-                database.run("PRAGMA journal_mode=WAL");
-              }),
-            ),
-          (database) => Effect.sync(() => database.close(false)),
+/** Raw `bun:sqlite` opens for the shared SQLite file step. */
+const bunDriver: SqliteFile.SqliteFileDriver = {
+  read: (filename, use) =>
+    Effect.acquireUseRelease(
+      normalizeSqliteDefect(Effect.sync(() => new Database(filename, { readonly: true }))),
+      (database) =>
+        normalizeSqliteDefect(Effect.sync(() => use({ all: (sql) => database.query(sql).all() }))),
+      (database) => Effect.sync(() => database.close(false)),
+    ),
+  run: (filename, mode, statements) =>
+    Effect.acquireUseRelease(
+      normalizeSqliteDefect(Effect.sync(() => new Database(filename, mode))),
+      (database) =>
+        normalizeSqliteDefect(
+          Effect.sync(() => {
+            for (const statement of statements) database.run(statement);
+          }),
         ),
-        retryPolicy,
-        (error) => error.retryable,
-      );
+      (database) => Effect.sync(() => database.close(false)),
+    ),
+};
 
-const validateClientOpen = (
-  options: BunClientOptions,
-  retryPolicy: ReturnType<typeof transactionRetryPolicy>,
-): Effect.Effect<void, StorageFault> =>
-  options.filename === ":memory:"
-    ? Effect.void
-    : retryWithPolicy(
-        Effect.acquireUseRelease(
-          normalizeSqliteDefect(
-            Effect.sync(() => {
-              const readonly = options.readonly === true;
-              return new Database(options.filename, {
-                readonly,
-                readwrite: readonly ? false : (options.readwrite ?? true),
-                create: readonly ? false : (options.create ?? true),
-              });
-            }),
-          ),
-          () => Effect.void,
-          (database) => Effect.sync(() => database.close(false)),
-        ),
-        retryPolicy,
-        (error) => error.retryable,
-      );
+const BunPlatform = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
 
 /** Official Bun SQLite host layer with one shared SqlClient/Reactivity graph. */
 const storageLayer = (options: BunStorageOptions) => {
@@ -183,13 +95,10 @@ const storageLayer = (options: BunStorageOptions) => {
     ),
   );
   return Layer.unwrap(
-    Effect.gen(function* () {
-      yield* preflightFile(options.client.filename, retryPolicy);
-      yield* validateClientOpen(options.client, retryPolicy);
-      if (preparesJournal) yield* prepareJournal(options.client, retryPolicy);
-      return sqlLayer(options).pipe(Layer.provideMerge(clientLayer));
-    }),
-  );
+    SqliteFile.prepare(bunDriver, options.client, retryPolicy).pipe(
+      Effect.as(sqlLayer(options).pipe(Layer.provideMerge(clientLayer))),
+    ),
+  ).pipe(Layer.provide(BunPlatform));
 };
 
 /** Complete persistent protocol Layer for an HttpRouter application. */
@@ -197,16 +106,15 @@ export const layerProtocol = (options: BunProtocolOptions) =>
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
-  options: BunProtocolOptions,
   group: Streamsy.Group<Keys>,
+  options: BunProtocolOptions,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | Streamsy.Services<Streamsy.Group<Keys>>
   | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
-  Layer.Error<ReturnType<typeof storageLayer>>,
-  Layer.Services<ReturnType<typeof storageLayer>>
+  Layer.Error<ReturnType<typeof storageLayer>>
 >;
-export function layer(options: BunProtocolOptions, group: Streamsy.Group) {
+export function layer(group: Streamsy.Group, options: BunProtocolOptions) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));

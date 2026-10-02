@@ -21,7 +21,6 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { type CheckpointRecord } from "@streamsy/projection/checkpoint";
-import * as Memory from "@streamsy/projection/memory";
 
 /**
  * Inputs, outputs and checkpoints share one owner. The pinned runner still commits
@@ -41,7 +40,7 @@ class PagedReader extends Context.Service<PagedReader, Reader<StreamsFault>>()(
 ) {}
 const host = Layer.mergeAll(
   inputGraph,
-  Memory.layer.pipe(Layer.provide(inputGraph)),
+  CheckpointStore.layer.pipe(Layer.provide(inputGraph)),
   Layer.effect(PagedReader, StreamsReader).pipe(
     Layer.provide(Protocol.layer({ readLimit: 1 }).pipe(Layer.provide(inputGraph))),
   ),

@@ -1,8 +1,9 @@
-import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
+import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
   type Streamsy,
   ChangeSnapshot,
+  CommitBoundary,
   type MessageWindow,
   Offset,
   ProducerState,
@@ -26,7 +27,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   BoundaryRuntimeService,
-  CommitBoundary,
   boundaryLayer,
   type BoundaryTestProbe,
   type BoundaryRuntime,
@@ -586,6 +586,39 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
     ),
   });
 
+/** Encoded owner records; statements join the boundary transaction when one is open. */
+const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
+  // MySQL reserves `key`, so the column goes through the dialect's identifier quoting.
+  const column = sql("key");
+  return OwnerRecords.of({
+    read: Effect.fn("SqlStorage.records.read")((key: string) =>
+      attempt(
+        "records.read",
+        sql<{
+          readonly value: string;
+        }>`SELECT value FROM streamsy_owner_records WHERE ${column} = ${key}`,
+      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.value))),
+    ),
+    write: Effect.fn("SqlStorage.records.write")((key: string, encoded: string) =>
+      attempt(
+        "records.write",
+        sql.onDialectOrElse({
+          mysql: () =>
+            sql`INSERT INTO streamsy_owner_records (${column}, value) VALUES (${key}, ${encoded}) ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+          orElse: () =>
+            sql`INSERT INTO streamsy_owner_records (${column}, value) VALUES (${key}, ${encoded}) ON CONFLICT (${column}) DO UPDATE SET value = excluded.value`,
+        }),
+      ).pipe(Effect.asVoid),
+    ),
+    remove: Effect.fn("SqlStorage.records.remove")((key: string) =>
+      attempt(
+        "records.remove",
+        sql`DELETE FROM streamsy_owner_records WHERE ${column} = ${key}`,
+      ).pipe(Effect.asVoid),
+    ),
+  });
+};
+
 const makeLayer = (
   options: SqlStorageOptions,
   probe?: BoundaryTestProbe,
@@ -608,9 +641,11 @@ const makeLayer = (
         transactionRetry,
       );
       const boundary = yield* BoundaryRuntimeService;
+      const owner = ownerOf(boundary);
       return Context.empty().pipe(
-        Context.add(Storage, attachOwner(makeStorage(sql, boundary), ownerOf(boundary))),
+        Context.add(Storage, attachOwner(makeStorage(sql, boundary), owner)),
         Context.add(CommitBoundary, CommitBoundary.of(boundary)),
+        Context.add(OwnerRecords, attachOwner(makeOwnerRecords(sql), owner)),
       );
     }),
   );
@@ -630,7 +665,7 @@ const makeLayer = (
 export const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
-  Storage | CommitBoundary,
+  Storage | CommitBoundary | OwnerRecords,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
 > => makeLayer(options);
@@ -648,8 +683,8 @@ export const layerProtocol = (options: SqlStorageOptions & Protocol.ProtocolOpti
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
-  options: SqlStorageOptions & Protocol.ProtocolOptions,
   group: Streamsy.Group<Keys>,
+  options?: SqlStorageOptions & Protocol.ProtocolOptions,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | Streamsy.Services<Streamsy.Group<Keys>>
@@ -658,8 +693,8 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
 export function layer(
-  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
   group: Streamsy.Group,
+  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
 ) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));

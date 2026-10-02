@@ -2,7 +2,8 @@
 import { expect, it } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import { Storage, type StorageFault, Streamsy } from "@streamsy/core";
+import { type CommitBoundary, Storage, type StorageFault, Streamsy } from "@streamsy/core";
+import type { OwnerRecords } from "@streamsy/core/internal";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -17,15 +18,15 @@ class Notes extends Streamsy.json<Notes>()("StorageFamilies/Notes", "notes", {
 }) {}
 const group = Streamsy.group(Notes);
 const options = { client: { filename: ":memory:" } };
-const bun = BunStorage.layer(options, group);
-const sql = SqlStorage.layer({}, Streamsy.group(Notes)).pipe(
+const bun = BunStorage.layer(group, options);
+const sql = SqlStorage.layer(Streamsy.group(Notes)).pipe(
   Layer.provide(
     Layer.effectContext(sharedSqlClientLayer(SqliteClient.make({ filename: ":memory:" }))),
   ),
 );
 
 it("Bun and SQL stream layers share storage and feeds without exporting the generic pair", async () => {
-  for (const host of [bun, BunStorage.layer(options, Streamsy.group(Notes)), sql]) {
+  for (const host of [bun, BunStorage.layer(Streamsy.group(Notes), options), sql]) {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -62,7 +63,7 @@ const feeds: Equal<
   Streamsy.ChangeFeed<Notes>
 > = true;
 function durableTypes(options: DurableObjectStorage.DurableObjectStorageOptions) {
-  const host = DurableObjectStorage.layer(options, group);
+  const host = DurableObjectStorage.layer(group, options);
   const hidden: Equal<
     Extract<Layer.Success<typeof host>, StreamsReader | StreamsWriter>,
     never
@@ -75,7 +76,7 @@ function durableTypes(options: DurableObjectStorage.DurableObjectStorageOptions)
 }
 void [hidden, feeds, durableTypes];
 
-type SqlOutputs = Storage | SqlStorage.CommitBoundary;
+type SqlOutputs = Storage | CommitBoundary | OwnerRecords;
 type ClientServices = SqlClient.SqlClient | Reactivity.Reactivity;
 type HostOutputs = SqlOutputs | ClientServices;
 const bunExact: Equal<
@@ -84,7 +85,7 @@ const bunExact: Equal<
 > = true;
 const bunRequirements: Equal<Layer.Services<typeof bun>, never> = true;
 const bunErrors: Equal<Layer.Error<typeof bun>, StorageFault> = true;
-const rawSql = SqlStorage.layer({}, group);
+const rawSql = SqlStorage.layer(group);
 const sqlExact: Equal<
   Layer.Success<typeof rawSql>,
   SqlOutputs | Notes | Streamsy.ChangeFeed<Notes>
@@ -95,7 +96,7 @@ const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Streamsy.Change
   Effect.provide(bun),
 );
 function exactDurable(options: DurableObjectStorage.DurableObjectStorageOptions) {
-  const host = DurableObjectStorage.layer(options, group);
+  const host = DurableObjectStorage.layer(group, options);
   const outputs: Equal<
     Layer.Success<typeof host>,
     HostOutputs | Notes | Streamsy.ChangeFeed<Notes>

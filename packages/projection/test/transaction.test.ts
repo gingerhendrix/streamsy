@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import * as BunStorage from "@streamsy/storage/bun";
 import { Streamsy } from "@streamsy/core";
 import { Protocol, Streams } from "@streamsy/core/protocol";
 import {
@@ -12,7 +12,6 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import * as ProjectionSql from "@streamsy/projection/sql";
 
 class Input extends Streamsy.json<Input>()("transaction/Input", "transaction/input", {
   params: {},
@@ -54,9 +53,9 @@ test("non-foreign-owner defects remain defects on SQLite", () =>
   ));
 
 test("SQL from Transaction is sufficient and rolls back with the checkpoint", () => {
-  const sqlLayer = SqliteClient.layer({ filename: ":memory:" });
+  const sqlLayer = BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } });
   const host = Layer.merge(
-    ProjectionSql.layer.pipe(Layer.provideMerge(sqlLayer)),
+    Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(Layer.provideMerge(sqlLayer)),
     Protocol.bind(Streams.layerMemory(), Streamsy.group(Input)),
   );
   return Effect.runPromise(

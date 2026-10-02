@@ -161,7 +161,7 @@ const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Sco
 void missingFeed;
 
 const fetchWatch = Projection.watch(transactional).pipe(
-  Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Streamsy.group(Input))),
+  Effect.provide(Fetch.layer(Streamsy.group(Input), { baseUrl: "https://example.test" })),
 );
 // @ts-expect-error Fetch supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
 const missingFetchFeed: Effect.Effect<

@@ -14,17 +14,22 @@ import {
   Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import { ProducerId, StreamId, type ChangeSnapshot, type StreamRecord } from "../schema/index.ts";
 import { ZERO_OFFSET, next } from "../offset/index.ts";
 import { Storage } from "../storage/storage.ts";
 import type { StorageFault } from "../fault.ts";
 import type { StorageCapabilities } from "../storage/capabilities.ts";
 import { MutationRejected, type MutationApplied, type Operation } from "../storage/mutation.ts";
+import { CommitBoundary, type CommitBoundaryApi } from "../storage/commit-boundary.ts";
+import { OwnerRecords, type OwnerRecordsApi } from "../internal/owner-records.ts";
 
 export interface StorageContractOptions {
   readonly name: string;
   readonly layer: Layer.Layer<Storage>;
   readonly expected: StorageCapabilities;
+  /** The Layer also provides `CommitBoundary` and the internal owner records that projections need. */
+  readonly ownerRecords?: boolean;
 }
 const id = StreamId.make("s");
 const child = StreamId.make("child");
@@ -149,7 +154,70 @@ export const StorageContract = {
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
       };
+      const recordsTest = (
+        name: string,
+        body: (owner: {
+          readonly boundary: CommitBoundaryApi;
+          readonly records: OwnerRecordsApi;
+        }) => Effect.Effect<
+          unknown,
+          MutationRejected | StorageFault | SqlError,
+          Storage | import("effect").Scope.Scope
+        >,
+      ) => {
+        if (options.ownerRecords !== true) {
+          it.skip(`${name} — owner records not provided`, () => {});
+          return;
+        }
+        it(name, () =>
+          expect(
+            Effect.gen(function* () {
+              const context = yield* Layer.build(options.layer);
+              const boundary = Option.getOrThrow(Context.getOption(context, CommitBoundary));
+              const records = Option.getOrThrow(Context.getOption(context, OwnerRecords));
+              yield* body({ boundary, records }).pipe(Effect.provide(context));
+            }).pipe(Effect.scoped, Effect.runPromiseExit),
+          ).resolves.toMatchObject({ _tag: "Success" }),
+        );
+      };
       // Runtime conversion is confined to this exported test runner.
+      recordsTest("R1 owner records write, overwrite, read and remove by key", ({ records }) =>
+        Effect.gen(function* () {
+          expect(yield* records.read("a")).toEqual(Option.none());
+          yield* records.write("a", "1");
+          yield* records.write("b", "2");
+          yield* records.write("a", "3");
+          expect(yield* records.read("a")).toEqual(Option.some("3"));
+          expect(yield* records.read("b")).toEqual(Option.some("2"));
+          yield* records.remove("a");
+          yield* records.remove("absent");
+          expect(yield* records.read("a")).toEqual(Option.none());
+          expect(yield* records.read("b")).toEqual(Option.some("2"));
+        }),
+      );
+      recordsTest(
+        "R2 owner records and stream writes commit or roll back together",
+        ({ boundary, records }) =>
+          Effect.gen(function* () {
+            const storage = yield* Storage;
+            const both = boundary.withTransaction(
+              Effect.gen(function* () {
+                yield* mutate(create());
+                yield* records.write("checkpoint", "1");
+                expect(yield* records.read("checkpoint")).toEqual(Option.some("1"));
+              }),
+            );
+            const failed = yield* Effect.exit(
+              boundary.withTransaction(Effect.andThen(both, Effect.fail("rollback"))),
+            );
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect(yield* records.read("checkpoint")).toEqual(Option.none());
+            expect(yield* storage.record(id)).toEqual(Option.none());
+            yield* both;
+            expect(yield* records.read("checkpoint")).toEqual(Option.some("1"));
+            expect(Option.isSome(yield* storage.record(id))).toBe(true);
+          }),
+      );
       test(
         "01 Append advances tail and folds close atomically",
         Effect.gen(function* () {

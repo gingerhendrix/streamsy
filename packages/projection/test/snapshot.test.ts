@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { tmpdir } from "node:os";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
@@ -10,8 +10,7 @@ import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
@@ -38,7 +37,7 @@ const tailOf = (address: StreamAddress.StreamAddress<unknown, unknown, unknown>)
 
 const sqlite = (filename = ":memory:") =>
   FamilyFixture.withFamilies(
-    ProjectionSql.layerStorage.pipe(
+    Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
     ),
   );

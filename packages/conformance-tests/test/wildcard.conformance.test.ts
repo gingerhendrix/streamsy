@@ -13,7 +13,7 @@ describe("Streamsy.Wildcard memory Bun host", () => {
       disableLogger: true,
       disableListenLog: true,
     }).pipe(
-      Layer.provide(Memory.layer({ longPollTimeoutMs: 1500 }, Streamsy.group(Streamsy.Wildcard))),
+      Layer.provide(Memory.layer(Streamsy.group(Streamsy.Wildcard), { longPollTimeoutMs: 1500 })),
       Layer.provideMerge(listener({ port: 0 })),
     ),
   );

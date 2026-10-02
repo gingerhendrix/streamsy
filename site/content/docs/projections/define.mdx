@@ -171,12 +171,11 @@ One Commit controls one projection. To combine SQL writes and an independently c
 ```ts
 import { Effect, Layer } from "effect";
 import { Memory } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
-const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
 const program = Projection.run(orderTotalsProjection, { limit: 10 });
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));

@@ -22,18 +22,18 @@ const program = Effect.gen(function* () {
 });
 
 it("one application program runs unchanged on memory and Fetch streams", async () => {
-  const local = await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, group))));
+  const local = await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(group))));
   const edge = HttpRouter.toWebHandler(
     Http.routes(group, { prefix: "/streams", access: "full" }).pipe(
-      Layer.provideMerge(Memory.layer({}, group)),
+      Layer.provideMerge(Memory.layer(group)),
     ),
     { disableLogger: true },
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
     for (const host of [
-      Fetch.layer({ baseUrl: `${server.url.href}streams` }, group),
-      Fetch.layer({ baseUrl: `${server.url.href}streams` }, Streamsy.group(Notes)),
+      Fetch.layer(group, { baseUrl: `${server.url.href}streams` }),
+      Fetch.layer(Streamsy.group(Notes), { baseUrl: `${server.url.href}streams` }),
     ]) {
       const remote = host.pipe(Layer.provide(FetchHttpClient.layer));
       const inspected = Effect.gen(function* () {
@@ -61,7 +61,7 @@ it("group and stream-list HTTP routes apply explicit host access", async () => {
     Http.routes(Streamsy.group(Notes), { access: () => "read" }),
   ]) {
     const edge = HttpRouter.toWebHandler(
-      routes.pipe(Layer.provideMerge(Memory.layer({}, Streamsy.group(Notes)))),
+      routes.pipe(Layer.provideMerge(Memory.layer(Streamsy.group(Notes)))),
       {
         disableLogger: true,
       },

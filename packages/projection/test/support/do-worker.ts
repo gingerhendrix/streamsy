@@ -1,8 +1,8 @@
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Layer, ManagedRuntime } from "effect";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import { composition } from "./scenarios.ts";
 interface Env {
   readonly PROJECTION: {
@@ -21,7 +21,7 @@ export class ProjectionObject {
     this.#ctx = ctx;
   }
   async fetch(): Promise<Response> {
-    const host = ProjectionSql.layerStorage.pipe(
+    const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layerProtocol({
           client: { storage: this.#ctx.storage },

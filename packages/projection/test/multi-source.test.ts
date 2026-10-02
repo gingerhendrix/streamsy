@@ -11,7 +11,7 @@ import {
   type Entry,
   type Unit,
 } from "@streamsy/projection";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerMemory } from "./support/memory.ts";
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });

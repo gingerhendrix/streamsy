@@ -2,6 +2,7 @@
 /* oxlint-disable eslint/no-underscore-dangle -- Test results use the public tagged-outcome `_tag`. */
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Scope, Stream } from "effect";
 import {
+  CommitBoundary,
   Offset,
   Storage,
   StreamId,
@@ -11,7 +12,7 @@ import {
 } from "@streamsy/core";
 import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { CommitBoundary, type BoundaryTestProbe } from "../../src/boundary.ts";
+import type { BoundaryTestProbe } from "../../src/boundary.ts";
 
 const one = Offset.make("0000000000000001_0000000000000000");
 

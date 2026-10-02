@@ -139,10 +139,10 @@ export const layerProtocol = (options: Options) =>
 
 /** Remote streams have no local change feed. */
 export function layer<const Keys extends ReadonlyArray<Any>>(
-  options: Options,
   group: Group.Group<Keys>,
+  options: Options,
 ): Layer.Layer<Identifiers<Keys>, TransportFault, HttpClient.HttpClient>;
-export function layer(options: Options, group: Group.Group) {
+export function layer(group: Group.Group, options: Options) {
   const protocol = layerProtocol(options);
   return bind(protocol, group);
 }

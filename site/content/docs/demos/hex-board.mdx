@@ -25,13 +25,13 @@ The tests use a SQLite file in a temporary folder and also run the same fold on 
 
 Each number in the diagram is also a section number below.
 
-| Step | What happens                                                 | Streamsy feature                                 | File                   |
-| ---- | ------------------------------------------------------------ | ------------------------------------------------ | ---------------------- |
-| 1    | One stream for each game holds its events                    | `Streamsy.json`                                  | `src/board/fold.ts`    |
-| 2    | A checkpointed fold folds each event into the board          | `Projection.fold` with `state` and `fold`        | `src/board/fold.ts`    |
-| 3    | The SQLite host saves state and offsets in one record        | `ProjectionSql.layerStorage`, `BunStorage.layer` | `test/restart.test.ts` |
-| 4    | The test runs the projection and reads the board             | `Projection.run`, `Projection.read`              | `test/restart.test.ts` |
-| 5    | A second process on the same file resumes from the saved cut | Checkpoint and state on restart                  | `test/restart.test.ts` |
+| Step | What happens                                                 | Streamsy feature                            | File                   |
+| ---- | ------------------------------------------------------------ | ------------------------------------------- | ---------------------- |
+| 1    | One stream for each game holds its events                    | `Streamsy.json`                             | `src/board/fold.ts`    |
+| 2    | A checkpointed fold folds each event into the board          | `Projection.fold` with `state` and `fold`   | `src/board/fold.ts`    |
+| 3    | The SQLite host saves state and offsets in one record        | `CheckpointStore.layer`, `BunStorage.layer` | `test/restart.test.ts` |
+| 4    | The test runs the projection and reads the board             | `Projection.run`, `Projection.read`         | `test/restart.test.ts` |
+| 5    | A second process on the same file resumes from the saved cut | Checkpoint and state on restart             | `test/restart.test.ts` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -97,12 +97,12 @@ The test host puts the stream storage and the projection record in one SQLite fi
 
 ```ts title="test/restart.test.ts"
 const sqlite = (filename: string) =>
-  ProjectionSql.layerStorage.pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
+  CheckpointStore.layer.pipe(
+    Layer.provideMerge(BunStorage.layer(Streamsy.group(GameEvents), { client: { filename } })),
   );
 ```
 
-The demo creates no application tables. State and offsets share one record in `streamsy_projection_v2_records`.
+The demo creates no application tables. State and offsets share one record in `streamsy_owner_records`.
 
 See [SQLite storage](/docs/hosting/bun#sqlite-storage).
 

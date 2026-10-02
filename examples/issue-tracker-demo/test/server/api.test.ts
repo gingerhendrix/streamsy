@@ -13,7 +13,7 @@ const { handler, dispose } = HttpRouter.toWebHandler(
     Layer.provide(SeedLive),
     Layer.provide(IssueTrackerLive),
     Layer.provide([
-      Memory.layer({}, Streamsy.group(Workspaces)),
+      Memory.layer(Streamsy.group(Workspaces)),
       BunCrypto.layer,
       BunHttpServer.layerHttpServices,
     ]),

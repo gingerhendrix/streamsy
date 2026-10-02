@@ -72,7 +72,7 @@ export const storiesAddress = HackerNewsStories.at({});
 ```
 
 One SQLite file holds the stream, the projection record with its state.
-`BunStorage.layer` stores the stream. `ProjectionSql.layerStorage` adds the
+`BunStorage.layer` stores the stream. `CheckpointStore.layer` adds the
 checkpoint record to the same database. The app creates the stream at
 boot, so the first `GET /state/newest?offset=-1` returns 200 with an empty
 array before the first poll.
@@ -85,21 +85,18 @@ export const createStoriesLayer = Layer.effectDiscard(
   Effect.flatMap(HackerNewsStories, (stories) => stories.create({})),
 );
 
-// ...
-const sqliteHost = (databasePath: string): HostLayer =>
-  Layer.unwrap(
-    Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
-      Effect.as(
-        ProjectionSql.layerStorage.pipe(
-          Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
-        ),
-      ),
-    ),
-  );
+const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
+  databasePath === "memory"
+    ? Memory.layer(streams, options)
+    : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
+
+/** The checkpoints join the owner of the stream: one SQLite file, or memory. */
+export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
+  CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 ```
 
-With `HN_DB=memory`, the host is `ProjectionMemory.layer` over
-`Memory.layer(options, streams)` in its place. The host reads `HN_DB` through
+With `HN_DB=memory`, `Memory.layer(streams, options)` takes the place of the
+SQLite file. The host reads `HN_DB` through
 `Config` when the layer starts.
 
 See [Declare streams](/docs/streams/declare) and [Layers and storage](/docs/hosting).
