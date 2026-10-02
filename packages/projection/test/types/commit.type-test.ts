@@ -1,4 +1,4 @@
-import * as ProjectionMemory from "../support/memory.ts";
+import { layerMemory } from "../support/memory.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Protocol } from "@streamsy/core/protocol";
 import { Context, Effect, Layer, Option, Schema } from "effect";
@@ -141,7 +141,7 @@ const hostProcess = Projection.process({
   commit: Commit.transaction,
   process: () => Effect.asVoid(SqlClient.SqlClient),
 }).at({});
-const memoryHost = ProjectionMemory.layerMemory();
+const memoryHost = layerMemory();
 const memoryRun = Projection.run(hostProcess).pipe(
   Effect.provide(
     Protocol.bind(memoryHost, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryHost)),
