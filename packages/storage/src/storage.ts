@@ -167,6 +167,18 @@ const sqlFault = (operation: string, error: SqlError): StorageFault =>
     cause: error,
   });
 
+// A concurrent create of the same id has no row to lock, so the loser meets the
+// primary key. Retrying runs preflight again, which then rejects with `exists`.
+const createFault = (error: SqlError): StorageFault =>
+  Predicate.isTagged(error.reason, "UniqueViolation")
+    ? new StorageFault({
+        operation: "mutate.create-record",
+        message: error.message,
+        retryable: true,
+        cause: error,
+      })
+    : sqlFault("mutate.create-record", error);
+
 const attempt = <A>(operation: string, effect: Effect.Effect<A, SqlError>) =>
   effect.pipe(Effect.mapError((error) => sqlFault(operation, error)));
 
@@ -190,6 +202,34 @@ const streamIdTooLong = (id: StreamId): Option.Option<StorageFault> => {
       )
     : Option.none();
 };
+
+/**
+ * Serialise writers on the stream rows. This must be the first statement of a
+ * mutation transaction: on MySQL at REPEATABLE READ, any plain read before it
+ * fixes the snapshot, and later plain reads miss commits made while waiting.
+ * Sorted ids give every writer one lock order. SQLite already has one writer.
+ */
+const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => {
+  const sorted = [...new Set(ids)].toSorted();
+  return sql.onDialectOrElse({
+    sqlite: () => Effect.void,
+    orElse: () =>
+      execute(
+        "mutate.lock",
+        sql`SELECT stream_id FROM streamsy_streams WHERE stream_id IN ${sql.in(sorted)}
+ ORDER BY stream_id FOR UPDATE`,
+      ),
+  });
+};
+
+const lockIds = (mutation: Mutation): ReadonlyArray<StreamId> =>
+  mutation.operations.flatMap((operation) =>
+    Predicate.isTagged(operation, "Create")
+      ? operation.forkSource === undefined
+        ? [operation.record.id]
+        : [operation.record.id, operation.forkSource.id]
+      : [operation.streamId],
+  );
 
 const recordColumns = (sql: SqlClient.SqlClient) =>
   sql.literal(
@@ -227,9 +267,9 @@ const recordValues = (record: StreamRecord) => ({
 });
 
 const insertRecord = (sql: SqlClient.SqlClient, record: StreamRecord) =>
-  execute(
-    "mutate.create-record",
-    sql`INSERT INTO streamsy_streams ${sql.insert({ stream_id: record.id, ...recordValues(record) })}`,
+  sql`INSERT INTO streamsy_streams ${sql.insert({ stream_id: record.id, ...recordValues(record) })}`.pipe(
+    Effect.mapError(createFault),
+    Effect.asVoid,
   );
 
 const updateRecord = (sql: SqlClient.SqlClient, record: StreamRecord) =>
@@ -400,6 +440,9 @@ const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
         sql`DELETE FROM streamsy_streams WHERE stream_id = ${current.id}`,
       );
       if (parentId === undefined) return;
+      // Two children of one soft-deleted parent can purge at once. Each waits here
+      // for the other, so the last one sees no dependents and removes the parent.
+      yield* lockStreams(sql, [parentId]);
       const parent: Option.Option<StreamRecord> = yield* readRecord(sql, parentId);
       if (
         Option.isNone(parent) ||
@@ -416,6 +459,7 @@ const applyMutation = (
   mutation: Mutation,
 ): Effect.Effect<MutationApplied, MutationRejected | StorageFault> =>
   Effect.gen(function* () {
+    yield* lockStreams(sql, lockIds(mutation));
     yield* preflight(sql, mutation);
     const records = new Map<StreamId, StreamRecord>();
     const results: Array<OperationResult> = [];
