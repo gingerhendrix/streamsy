@@ -21,10 +21,11 @@ export const STORAGE_VERSION_TABLE_DDL: DialectSql<string> = {
 };
 
 // MySQL keys need a bounded VARCHAR. Stream ids are capped at 512 characters by storage.
-const MYSQL_STREAM_ID = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin";
+// `utf8mb4_0900_bin` compares bytes and does not pad, so "x" and "x " are different ids.
+const MYSQL_STREAM_ID = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 // InnoDB limits an index key to 3072 bytes. The producer key holds a stream id
 // (2048 bytes) and a producer id, so the producer id gets 255 characters (1020 bytes).
-const MYSQL_PRODUCER_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin";
+const MYSQL_PRODUCER_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 const MYSQL_OFFSET = "VARCHAR(33) CHARACTER SET ascii COLLATE ascii_bin";
 
 /**

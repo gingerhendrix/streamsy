@@ -11,12 +11,15 @@ const TABLE = "streamsy_projection_v3_records";
 const storageFailure = (phase: ProjectionFault["phase"], message: string) => (cause: unknown) =>
   new ProjectionFault({ phase, reason: "storage-failure", message, cause });
 
-/** `key` is reserved in MySQL, so the columns carry a prefix. */
+/**
+ * `key` is reserved in MySQL, so the columns carry a prefix. `utf8mb4_0900_bin`
+ * does not pad, so keys that differ only by trailing spaces stay distinct.
+ */
 const createTable = (sql: SqlClient.SqlClient) =>
   sql.onDialectOrElse({
     mysql: () =>
       sql`CREATE TABLE IF NOT EXISTS streamsy_projection_v3_records (
- checkpoint_key VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+ checkpoint_key VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL PRIMARY KEY,
  checkpoint_value LONGTEXT NOT NULL)`,
     orElse: () =>
       sql`CREATE TABLE IF NOT EXISTS streamsy_projection_v3_records (

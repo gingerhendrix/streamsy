@@ -312,6 +312,54 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
         after: 1,
       });
     });
+
+    // A padding collation such as MySQL `utf8mb4_bin` would make "x" and "x " one key.
+    test("ids that differ only by a trailing space are different streams and producers", async () => {
+      const result = await Effect.runPromise(
+        withStore((storage, sql) =>
+          Effect.gen(function* () {
+            const ids = ["x", "x "];
+            for (const id of ids)
+              yield* storage.mutate({
+                operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
+              });
+            for (const [lastSeq, producerId] of ["p", "p "].entries())
+              yield* storage.mutate({
+                operations: [
+                  {
+                    _tag: "Append",
+                    streamId: StreamId.make("x"),
+                    messages: [],
+                    patch: {},
+                    producer: {
+                      producerId: ProducerId.make(producerId),
+                      expected: Option.none(),
+                      next: { epoch: 0, lastSeq },
+                    },
+                  },
+                ],
+              });
+            const records = yield* Effect.forEach(ids, (id) => storage.record(StreamId.make(id)));
+            const producers = yield* Effect.forEach(["p", "p "], (id) =>
+              storage.producer(StreamId.make("x"), ProducerId.make(id)),
+            );
+            return {
+              ids: records.map(Option.map(({ id }) => id)),
+              seqs: producers.map(Option.map(({ lastSeq }) => lastSeq)),
+              counts: [
+                yield* count(sql, "streamsy_streams"),
+                yield* count(sql, "streamsy_producers"),
+              ],
+            };
+          }),
+        ),
+      );
+      expect(result).toEqual({
+        ids: [Option.some(StreamId.make("x")), Option.some(StreamId.make("x "))],
+        seqs: [Option.some(0), Option.some(1)],
+        counts: [2, 2],
+      });
+    });
   });
 
   describe(`${dialect.name} migrations`, () => {

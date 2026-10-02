@@ -132,6 +132,33 @@ for (const dialect of dialects) {
     );
 
     test(
+      "checkpoint keys that differ only by a trailing space are different rows",
+      async () => {
+        if (url === undefined) return;
+        const result = await onFreshDatabase(dialect, url, (fresh) =>
+          Effect.gen(function* () {
+            const context = yield* Layer.build(
+              ProjectionSql.layer.pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
+            );
+            const sql = Context.get(context, SqlClient.SqlClient);
+            // Encoded keys end in "]", so the column is checked directly.
+            for (const checkpoint_key of ["x", "x "])
+              yield* sql`INSERT INTO streamsy_projection_v3_records ${sql.insert({
+                checkpoint_key,
+                checkpoint_value: "{}",
+              })}`;
+            const rows = yield* sql<{
+              readonly checkpoint_key: string;
+            }>`SELECT checkpoint_key FROM streamsy_projection_v3_records WHERE checkpoint_key = ${"x"}`;
+            return rows.map(({ checkpoint_key }) => checkpoint_key);
+          }),
+        );
+        expect(result).toEqual(["x"]);
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
       "a fused commit writes the app row, the output append and the checkpoint together",
       async () => {
         if (url === undefined) return;
