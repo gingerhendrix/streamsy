@@ -14,6 +14,7 @@ import { DateTime } from "effect";
  *   the cursor still advances even when no real interval has elapsed.
  * - The previous cursor is parsed with `parseInt(previous, 10)`, preserving
  *   lenient parsing for unexpected cursor strings.
+ * - A previous cursor that does not parse to a number is treated as absent.
  * - `random` defaults to `Math.random` and may be injected for tests.
  *
  * Used by `ReadNextService` when shaping every read-next response cursor.
@@ -35,6 +36,8 @@ export function generateCursor(
   const currentInterval = Math.floor((clock.now() - CURSOR_EPOCH_MS) / CURSOR_INTERVAL_MS);
   if (!previous) return String(currentInterval);
   const previousInterval = parseInt(previous, 10);
-  if (previousInterval < currentInterval) return String(currentInterval);
+  if (Number.isNaN(previousInterval) || previousInterval < currentInterval) {
+    return String(currentInterval);
+  }
   return String(previousInterval + Math.max(1, Math.floor(random() * 180)));
 }
