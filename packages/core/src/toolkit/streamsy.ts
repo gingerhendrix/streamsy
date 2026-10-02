@@ -364,6 +364,8 @@ export interface Group<Keys extends ReadonlyArray<Any> = ReadonlyArray<Any>> {
   readonly streams: Keys;
 }
 export type Services<G extends Group> = G["streams"][number]["Identifier"];
+/** What every host Layer gives for a group: its stream services and their change feeds. */
+export type Host<G extends Group> = Services<G> | ChangeFeed<Services<G>>;
 export function group<const Keys extends ReadonlyArray<Any>>(...keys: Keys): Group<Keys> {
   checkStreams(keys);
   return Object.freeze({ streams: Object.freeze(keys) });

@@ -5,7 +5,7 @@ import { Layer } from "effect";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import { layerWithDurableObjectTransactions, type SqlStorageOptions } from "./storage.ts";
 
-export interface DurableObjectStorageOptions extends SqlStorageOptions {
+interface DurableObjectStorageOptions extends SqlStorageOptions {
   /** Full DurableObjectStorage is required because Storage mutations are transactional. */
   readonly client: Parameters<typeof SqliteClient.make>[0] & {
     readonly storage: NonNullable<Parameters<typeof SqliteClient.make>[0]["storage"]>;
@@ -14,8 +14,8 @@ export interface DurableObjectStorageOptions extends SqlStorageOptions {
 
 export const DEFAULT_LONG_POLL_TIMEOUT_MS = 25_000;
 
-export interface DurableObjectProtocolOptions
-  extends DurableObjectStorageOptions, Protocol.ProtocolOptions {}
+/** Options for `layer` and `layerProtocol`. */
+export interface Options extends DurableObjectStorageOptions, Protocol.ProtocolOptions {}
 
 /** Official local/host Durable Object SQLite layer with commit-boundary support. */
 const storageLayer = (options: DurableObjectStorageOptions) => {
@@ -24,7 +24,7 @@ const storageLayer = (options: DurableObjectStorageOptions) => {
 };
 
 /** Protocol over the official Durable Object SQLite layer. */
-export const layerProtocol = (options: DurableObjectProtocolOptions) =>
+export const layerProtocol = (options: Options) =>
   Protocol.layer({
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
@@ -32,15 +32,13 @@ export const layerProtocol = (options: DurableObjectProtocolOptions) =>
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   group: Streamsy.Group<Keys>,
-  options: DurableObjectProtocolOptions,
+  options: Options,
 ): Layer.Layer<
-  | Layer.Success<ReturnType<typeof storageLayer>>
-  | Streamsy.Services<Streamsy.Group<Keys>>
-  | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
+  Layer.Success<ReturnType<typeof storageLayer>> | Streamsy.Host<Streamsy.Group<Keys>>,
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(group: Streamsy.Group, options: DurableObjectProtocolOptions) {
+export function layer(group: Streamsy.Group, options: Options) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer({
     ...options,

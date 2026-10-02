@@ -73,7 +73,7 @@ const sqlErrors: Equal<Layer.Error<typeof rawSql>, StorageFault> = true;
 const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Streamsy.ChangeFeed(Notes)).pipe(
   Effect.provide(bun),
 );
-function exactDurable(options: DurableObjectStorage.DurableObjectStorageOptions) {
+function exactDurable(options: DurableObjectStorage.Options) {
   const host = DurableObjectStorage.layer(group, options);
   const outputs: Equal<
     Layer.Success<typeof host>,

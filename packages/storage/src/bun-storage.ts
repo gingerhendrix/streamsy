@@ -10,11 +10,12 @@ import * as SqliteFile from "./sqlite-file.ts";
 import { storageLayer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
 import { transactionRetryPolicy } from "./transaction-retry.ts";
 
-export interface BunStorageOptions extends SqlStorageOptions {
+interface BunStorageOptions extends SqlStorageOptions {
   readonly client: Parameters<typeof SqliteClient.make>[0];
 }
 
-export interface BunProtocolOptions extends BunStorageOptions, Protocol.ProtocolOptions {}
+/** Options for `layer` and `layerProtocol`. */
+export interface Options extends BunStorageOptions, Protocol.ProtocolOptions {}
 
 const SqliteOpenError = Schema.Struct({
   code: Schema.optional(Schema.String),
@@ -102,19 +103,17 @@ const storageLayer = (options: BunStorageOptions) => {
 };
 
 /** Complete persistent protocol Layer for an HttpRouter application. */
-export const layerProtocol = (options: BunProtocolOptions) =>
+export const layerProtocol = (options: Options) =>
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   group: Streamsy.Group<Keys>,
-  options: BunProtocolOptions,
+  options: Options,
 ): Layer.Layer<
-  | Layer.Success<ReturnType<typeof storageLayer>>
-  | Streamsy.Services<Streamsy.Group<Keys>>
-  | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
+  Layer.Success<ReturnType<typeof storageLayer>> | Streamsy.Host<Streamsy.Group<Keys>>,
   Layer.Error<ReturnType<typeof storageLayer>>
 >;
-export function layer(group: Streamsy.Group, options: BunProtocolOptions) {
+export function layer(group: Streamsy.Group, options: Options) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));

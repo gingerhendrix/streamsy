@@ -1,4 +1,4 @@
-import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy, type StorageFault } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Effect, Layer } from "effect";
@@ -17,9 +17,13 @@ const storage = (databasePath: string, options: { readonly readLimit?: number } 
     ? MemoryStorage.layer(streams, options)
     : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
+type HostLayer = Layer.Layer<Streamsy.Host<typeof streams> | CheckpointStore, StorageFault>;
+
 /** The checkpoints join the owner of the stream: one SQLite file, or memory. */
-export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
-  CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
+export const host = (
+  databasePath: string,
+  options: { readonly readLimit?: number } = {},
+): HostLayer => CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 
 const hostLayer = Layer.unwrap(Effect.map(DemoConfig, ({ databasePath }) => host(databasePath)));
 
