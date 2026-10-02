@@ -3,22 +3,7 @@ import { expect, test } from "bun:test";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { applyChange, newestRows } from "../../src/server/newest-rows.ts";
-import { storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
-
-test("applyChange replaces upserts and removes rows without mutating its input", () => {
-  const row = story(101, 30, "first");
-  const updated = { ...row, title: "updated" };
-  const events = DurableState.changes(storiesAddress, { offset: ZERO_OFFSET }, [
-    DurableState.upsert("hn-story", updated),
-    DurableState.remove("hn-story", updated.id, { oldValue: updated }),
-  ]);
-  const before = { "101": row };
-  const next = applyChange(before, events[0]);
-  expect(next).toEqual({ "101": updated });
-  expect(applyChange(next, events[1])).toEqual({});
-  expect(before).toEqual({ "101": row });
-});
 
 test("fold resumes across pages, accepts the tail, and writes no extra stream events", async () => {
   const h = await demoHarness(1);
@@ -50,7 +35,12 @@ test("fold resumes across pages, accepts the tail, and writes no extra stream ev
       items: 0,
       units: 0,
     });
-    expect(await h.read()).toHaveLength(4);
+    const events = await h.read();
+    expect(events).toHaveLength(4);
+    // The fold and the poller's reconcile share applyChange, which must copy its input.
+    const rows = { "101": first };
+    expect(applyChange(rows, events[2])).toEqual({});
+    expect(rows).toEqual({ "101": first });
   } finally {
     await h.close();
   }

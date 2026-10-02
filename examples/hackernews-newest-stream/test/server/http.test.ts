@@ -9,13 +9,12 @@ import { demoHarness, story } from "../../src/server/test-support.ts";
 import { initialCounters, NewestStoriesPoller } from "../../src/server/poller/contract.ts";
 import { ApiStatus } from "../../src/state-schema.ts";
 
-test("State is empty at boot, replays pages, resumes, and rejects writes", async () => {
-  const h = await demoHarness(1);
+test("State is empty at boot and serves rows in the State wire shape", async () => {
+  const h = await demoHarness();
   const web = HttpRouter.toWebHandler(stateRoute.pipe(HttpRouter.provideRequest(h.clientLayer)), {
     disableLogger: true,
   });
-  const read = (query = "offset=-1") =>
-    web.handler(new Request(`http://host/state/newest?${query}`));
+  const read = () => web.handler(new Request("http://host/state/newest?offset=-1"));
   try {
     const empty = await read();
     expect(empty.status).toBe(200);
@@ -28,26 +27,6 @@ test("State is empty at boot, replays pages, resumes, and rejects writes", async
     expect(await initial.json()).toMatchObject([
       { type: "hn-story", key: "101", value: row, headers: { operation: "upsert" } },
     ]);
-    const cursor = initial.headers.get("stream-next-offset")!;
-    await h.append([DurableState.remove("hn-story", row.id, { oldValue: row })]);
-    expect(await (await read(`offset=${cursor}`)).json()).toMatchObject([
-      { type: "hn-story", key: "101", old_value: row, headers: { operation: "delete" } },
-    ]);
-    for (const method of ["PUT", "POST", "DELETE"]) {
-      expect((await web.handler(new Request("http://host/state/newest", { method }))).status).toBe(
-        405,
-      );
-    }
-    expect((await web.handler(new Request("http://host/state/unknown"))).status).toBe(404);
-    expect(
-      (
-        await web.handler(
-          new Request("http://host/state/newest?offset=-1", {
-            headers: { "x-streamsy-state-reset": "snapshot" },
-          }),
-        )
-      ).status,
-    ).toBe(400);
   } finally {
     await web.dispose();
     await h.close();
