@@ -1,9 +1,17 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real HTTP host lifecycle test.
 import { describe, expect, it } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { Context, Deferred, Duration, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Schema, Scope } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { Streamsy } from "@streamsy/core";
 import { ShutdownSignal } from "@streamsy/core/http";
+import {
+  Protocol,
+  routes as protocolRoutes,
+  Streams,
+  StreamsReader,
+  StreamsWriter,
+} from "@streamsy/core/protocol";
 import { Serve } from "../src/index.ts";
 import { memoryLayer, parkableLayer } from "./support/parkable.ts";
 import { listener } from "./support/runtime.ts";
@@ -94,6 +102,80 @@ it("without a drain a parked long poll does not get the drain 204", async () => 
     await Effect.runPromise(host.stop);
   }
 });
+
+it("a client abort of a long poll on a Serve.mount route interrupts the read", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<boolean>();
+      const protocol = Layer.effectContext(
+        Effect.gen(function* () {
+          const reader = yield* StreamsReader;
+          const writer = yield* StreamsWriter;
+          return Context.make(StreamsWriter, writer).pipe(
+            Context.add(
+              StreamsReader,
+              StreamsReader.of({
+                ...reader,
+                readNext: (id, options) =>
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(reader.readNext(id, options)),
+                    Effect.onExit((exit) =>
+                      Deferred.succeed(
+                        finished,
+                        Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
+                      ),
+                    ),
+                  ),
+              }),
+            ),
+          );
+        }),
+      ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })));
+      class Events extends Streamsy.json<Events>()(
+        "serve/serve-layer.test/Events",
+        "events/:seat",
+        {
+          params: { seat: Schema.String },
+          schema: Schema.String,
+        },
+      ) {}
+      const context = yield* Layer.build(
+        Serve.layer(Layer.mergeAll(protocolRoutes(), Serve.mount(Events, "/feed/:seat")), {
+          disableLogger: true,
+          disableListenLog: true,
+        }).pipe(
+          Layer.provide(
+            Protocol.bind(protocol, Streamsy.group(Events)).pipe(Layer.provideMerge(protocol)),
+          ),
+          Layer.provideMerge(listener({ port: 0 })),
+        ),
+      );
+      const base = HttpServer.formatAddress(Context.get(context, HttpServer.HttpServer).address);
+      const created = yield* Effect.promise(() =>
+        fetch(`${base}/events/a`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: '"seed"',
+        }),
+      );
+      expect(created.status).toBe(201);
+      const tail = created.headers.get("stream-next-offset");
+      expect(tail).not.toBeNull();
+      const abort = new AbortController();
+      yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
+      const pending = fetch(`${base}/feed/a?offset=${tail}&live=long-poll`, {
+        signal: abort.signal,
+      }).then(
+        () => undefined,
+        () => undefined,
+      );
+      yield* Deferred.await(started).pipe(Effect.timeout(2000));
+      abort.abort();
+      yield* Effect.promise(() => pending);
+      expect(yield* Deferred.await(finished).pipe(Effect.timeout(2000))).toBe(true);
+    }).pipe(Effect.scoped),
+  ));
 
 /**
  * Serve one route that counts as a live read and never ends, so the drain can
