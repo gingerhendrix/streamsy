@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  blockName,
   pageFiles,
   pageLocations,
   pageSnippets,
@@ -30,11 +29,6 @@ test("only ts blocks are snippets, numbered from 1 in page order", () => {
     { index: 1, code: "export const a = 1;", line: 3 },
     { index: 2, code: "const b = a + 1;", line: 11 },
   ]);
-});
-
-test("blocks keep their numbered names without support", () => {
-  const names = pageFiles("page", pageSnippets(text)).map((file) => file.name);
-  expect(names).toEqual([blockName(1), blockName(2)]);
 });
 
 test("support renames, prefixes, skips and adds modules", () => {

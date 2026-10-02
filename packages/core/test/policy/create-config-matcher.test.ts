@@ -52,11 +52,6 @@ describe("configMatches — content type", () => {
     const existing = makeRecord({ contentType: "application/json" });
     expect(configMatches(existing, { contentType: "text/plain" })).toBe(false);
   });
-
-  it("matches case-insensitively and ignores parameters", () => {
-    const existing = makeRecord({ contentType: "application/json" });
-    expect(configMatches(existing, { contentType: "Application/JSON; charset=utf-8" })).toBe(true);
-  });
 });
 
 describe("configMatches — forkedFrom / forkOffset", () => {

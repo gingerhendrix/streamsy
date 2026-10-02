@@ -1,7 +1,7 @@
 import { Commit, Transaction } from "@streamsy/projection";
 import { tmpdir } from "node:os";
 import { restore } from "../src/checkpoint-store.ts";
-import { runKernel, run as runWithPermit } from "../src/run.ts";
+import { run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { expect, test } from "bun:test";
@@ -373,49 +373,11 @@ test("Checkpoint SQL failures retain phase and the storage fault with its driver
   }
 });
 
-test("SQLite competing commit during the read window preserves the winner's state", async () => {
-  const runtime = ManagedRuntime.make(sqlite());
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* Projection.run(total);
-        yield* Streams.append(input, [7]);
-        const owner = yield* CheckpointStore;
-        let firstLoad = true;
-        const result = yield* Projection.run(total).pipe(
-          Effect.provideService(CheckpointStore, {
-            ...owner,
-            load: (key) =>
-              Effect.gen(function* () {
-                const before = yield* owner.load(key);
-                if (firstLoad) {
-                  firstLoad = false;
-                  yield* runKernel(total).pipe(Effect.provideService(CheckpointStore, owner));
-                }
-                return before;
-              }),
-          }),
-          Effect.result,
-        );
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure")
-          expect(result.failure).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
-        expect((yield* Projection.read(total)).state).toBe(12);
-        expect((yield* owner.load(total)).token).toBe("2");
-      }),
-    );
-  } finally {
-    await runtime.dispose();
-  }
-});
-
 test("fold saves one record per nonempty pass and skips the initial factory after creation", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
       const state = yield* CheckpointStore;
-      let loads = 0;
       let saves = 0;
       let starts = 0;
       const counted = Projection.fold({
@@ -434,11 +396,6 @@ test("fold saves one record per nonempty pass and skips the initial factory afte
       const run = Projection.run(counted).pipe(
         Effect.provideService(CheckpointStore, {
           ...state,
-          load: (key) =>
-            Effect.suspend(() => {
-              loads += 1;
-              return state.load(key);
-            }),
           compareAndSet: (key, token, record) =>
             Effect.suspend(() => {
               saves += 1;
@@ -449,7 +406,7 @@ test("fold saves one record per nonempty pass and skips the initial factory afte
       yield* run;
       yield* Streams.append(input, [7, 11]);
       yield* run;
-      expect({ loads, saves, starts }).toEqual({ loads: 4, saves: 2, starts: 1 });
+      expect({ saves, starts }).toEqual({ saves: 2, starts: 1 });
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });

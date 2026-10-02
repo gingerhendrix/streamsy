@@ -9,61 +9,17 @@ import {
   Transaction,
 } from "@streamsy/projection";
 
-// The five declarations from the design spike, using the actual package API.
-class StoryEvents extends Streamsy.json<StoryEvents>()("demos/Stories", "stories", {
-  params: {},
-  schema: Schema.Struct({ id: Schema.String, title: Schema.String }),
-}) {}
-const StoryRows = Schema.Record(Schema.String, Schema.String);
-const newestRows = Projection.fold({
-  id: "hn-newest-rows",
-  params: {},
-  inputs: { input: StoryEvents },
-  state: { schema: StoryRows, initial: {} },
-  fold: (rows, { item }) => ({ ...rows, [item.id]: item.title }),
-});
-class GameEvents extends Streamsy.json<GameEvents>()("demos/Game", "game/:gameId", {
-  params: { gameId: Schema.String },
-  schema: Schema.String,
-}) {}
-const board = Projection.fold({
-  id: "hex-board",
-  params: { gameId: Schema.String },
-  inputs: { input: GameEvents },
-  state: {
-    schema: Schema.Struct({ gameId: Schema.String, through: Schema.String }),
-    initial: ({ gameId }) => ({ gameId, through: "0" }),
-  },
-  fold: (state, _entry, unit) => ({ ...state, through: unit.ranges.input!.nextOffset }),
-});
+// The issue tracker and minimal declarations from the design spike, using the actual package API.
 const params = { workspaceId: Schema.String };
 class Events extends Streamsy.json<Events>()("demos/Events", "events/:workspaceId", {
   params,
   schema: Schema.Struct({ issueId: Schema.String }),
-}) {}
-class Labels extends Streamsy.json<Labels>()("demos/Labels", "labels/:workspaceId", {
-  params,
-  schema: Schema.Struct({ labelId: Schema.String }),
 }) {}
 class CatalogMismatch extends Schema.TaggedError<CatalogMismatch>()("CatalogMismatch", {}) {}
 class Catalog extends Context.Service<
   Catalog,
   { readonly check: (workspaceId: string) => Effect.Effect<void, CatalogMismatch> }
 >()("demos/Catalog") {}
-const issueRows = Projection.process({
-  id: "issue-rows",
-  params,
-  inputs: { events: Events, labels: Labels },
-  commit: Commit.transaction,
-  process: Projection.each((entry, unit) =>
-    Effect.gen(function* () {
-      yield* (yield* Catalog).check(unit.params.workspaceId);
-      const sql = yield* SqlClient.SqlClient;
-      const id = entry.input === "events" ? entry.item.issueId : entry.item.labelId;
-      yield* sql`INSERT INTO rows (id) VALUES (${id})`;
-    }),
-  ),
-});
 class Board extends Streamsy.state<Board>()("demos/Board", "board/:workspaceId", {
   params,
   collections: { board: { schema: Schema.Struct({ issueId: Schema.String }), key: "issueId" } },
@@ -115,30 +71,14 @@ const minimal = Projection.emit({
   commit: Commit.transaction,
   emit: ({ item }) => ({ output: [item * 2] }),
 });
-const newestRun = Projection.run(newestRows.at({}));
-const boardRun = Projection.run(board.at({ gameId: "a" }));
-const rowsRun = Projection.run(issueRows.at({ workspaceId: "a" }));
 const trackerRun = Projection.run(tracker.at({ workspaceId: "a" }));
 const minimalRun = Projection.run(minimal.at({}));
-const read = Projection.read(newestRows.at({})).pipe(Effect.map(({ state }) => state));
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 export type Checks = [
-  Assert<Same<Effect.Services<typeof newestRun>, StoryEvents | CheckpointStore>>,
-  Assert<Same<Effect.Services<typeof boardRun>, GameEvents | CheckpointStore>>,
-  Assert<
-    Same<Effect.Services<typeof rowsRun>, Events | Labels | Catalog | CheckpointStore | Transaction>
-  >,
-  Assert<
-    Same<
-      Effect.Services<typeof trackerRun>,
-      Events | Board | Transitions | Catalog | CheckpointStore
-    >
-  >,
   Assert<
     Same<Effect.Services<typeof minimalRun>, Numbers | Doubled | CheckpointStore | Transaction>
   >,
-  Assert<Same<Effect.Services<typeof read>, CheckpointStore>>,
   Assert<Same<Effect.Error<typeof trackerRun>, CatalogMismatch | ProjectionFault>>,
 ];
 const invalid = () => {

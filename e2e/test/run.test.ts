@@ -187,16 +187,6 @@ test("non-zero destroys and a surviving exact worker fail the owned workflow", a
   expect(surviving.report?.audit.status).toBe("failure");
 });
 
-test("a declared failing official result is recorded as a failed step", async () => {
-  const services = makeServices({
-    runOfficialSuite: () => Effect.succeed({ passed: 0, skipped: 6, status: "failure" }),
-  });
-  const exit = await runWithClock(runEvidence(identity), services.layer);
-  expect(Exit.isFailure(exit)).toBe(true);
-  expect(services.report?.conformance.status).toBe("failure");
-  expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
-});
-
 test("only the fixed affirmative conformance profile is successful", async () => {
   for (const status of ["", "error", "pending", "failed", "failure", "success"] as const) {
     const services = makeServices({
@@ -205,6 +195,7 @@ test("only the fixed affirmative conformance profile is successful", async () =>
     const exit = await runWithClock(runEvidence(identity), services.layer);
     expect(Exit.isFailure(exit)).toBe(status !== "success");
     expect(services.report?.conformance.status).toBe(status === "success" ? "success" : "failure");
+    expect(services.calls.slice(-3)).toEqual(["destroy", "destroy", "audit"]);
   }
   const zero = makeServices({
     runOfficialSuite: () => Effect.succeed({ passed: 0, skipped: 6, status: "success" }),
@@ -242,35 +233,21 @@ test("malformed output never creates an untrusted gone target", async () => {
   expect(services.report?.gone.status).toBe("unavailable");
 });
 
-test("report persistence failure is surfaced after cleanup", async () => {
-  const services = makeServices({}, true);
-  const exit = await runWithClock(runEvidence(identity), services.layer);
-  expect(Exit.isFailure(exit)).toBe(true);
-  expect(services.report).toBeDefined();
-  expect(services.calls.slice(-1)).toEqual(["audit"]);
-});
-
-test("an interrupted workflow still performs cleanup", async () => {
-  const started = Deferred.makeUnsafe<void>();
-  const services = makeServices({
-    deploy: () =>
-      Effect.gen(function* () {
-        services.calls.push("deploy");
-        yield* Deferred.succeed(started, undefined);
-        return yield* Effect.never;
-      }),
-  });
-  const exit = await Effect.runPromiseExit(
-    Effect.gen(function* () {
-      const fiber = yield* runEvidence(identity).pipe(Effect.forkChild);
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(fiber);
-      return yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(services.layer)),
-  );
-  expect(Exit.isFailure(exit)).toBe(true);
-  expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
-  expect(services.report?.primaryFailure).toContain("interrupted");
+test("report persistence failure is surfaced after cleanup, beside any primary failure", async () => {
+  for (const primary of [false, true]) {
+    const services = makeServices(
+      primary
+        ? { deploy: () => Effect.fail(new ContractError({ message: "original deploy failure" })) }
+        : {},
+      true,
+    );
+    const exit = await runWithClock(runEvidence(identity), services.layer);
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(services.report).toBeDefined();
+    expect(services.calls.slice(-1)).toEqual(["audit"]);
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("report: ContractError");
+    if (primary) expect(services.report?.primaryFailure).toContain("original deploy failure");
+  }
 });
 
 const interruptAt = async (
@@ -294,59 +271,6 @@ const interruptAt = async (
       return yield* Fiber.join(fiber);
     }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))),
   );
-
-test("external interruption preserves typed and synchronous report failures", async () => {
-  for (const reportFailure of [true, "sync"] as const) {
-    const started = Deferred.makeUnsafe<void>();
-    const services = makeServices(
-      {
-        deploy: () =>
-          Effect.gen(function* () {
-            services.calls.push("deploy");
-            yield* Deferred.succeed(started, undefined);
-            return yield* Effect.never;
-          }),
-      },
-      reportFailure,
-    );
-    const exit = await interruptAt(runEvidence(identity), started, services.layer);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const message = Cause.pretty(exit.cause);
-      expect(Cause.hasInterrupts(exit.cause)).toBe(true);
-      expect(message).toContain("interrupted");
-      expect(message).toContain("write");
-    }
-    expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
-  }
-});
-
-test("external interruption preserves cleanup and report failures together", async () => {
-  const started = Deferred.makeUnsafe<void>();
-  const services = makeServices(
-    {
-      deploy: () =>
-        Effect.gen(function* () {
-          services.calls.push("deploy");
-          yield* Deferred.succeed(started, undefined);
-          return yield* Effect.never;
-        }),
-      destroy: () => Effect.fail(new ContractError({ message: "destroy secondary" })),
-      auditExactWorker: () => Effect.fail(new ContractError({ message: "audit secondary" })),
-    },
-    true,
-  );
-  const exit = await interruptAt(runEvidence(identity), started, services.layer);
-  expect(Exit.isFailure(exit)).toBe(true);
-  if (Exit.isFailure(exit)) {
-    const message = Cause.pretty(exit.cause);
-    expect(Cause.hasInterrupts(exit.cause)).toBe(true);
-    expect(message).toContain("interrupted");
-    expect(message).toContain("destroy secondary");
-    expect(message).toContain("audit secondary");
-    expect(message).toContain("write failed");
-  }
-});
 
 const superviseInterruptedWorkflow = async (
   reportFailure: boolean | "sync" = false,
@@ -401,17 +325,21 @@ test("the actual workflow supervisor preserves interruption under clean cleanup"
   if (Exit.isFailure(result.childExit))
     expect(Cause.hasInterrupts(result.childExit.cause)).toBe(true);
   expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
+  expect(result.services.report?.primaryFailure).toContain("interrupted");
 });
 
-test("the actual workflow supervisor preserves report-failure evidence under interruption", async () => {
-  const result = await superviseInterruptedWorkflow(true);
-  expect(Exit.isFailure(result.joinExit)).toBe(true);
-  expect(result.observed).toBe(true);
-  expect(result.typedRecovered).toBe(false);
-  if (Exit.isFailure(result.joinExit)) {
-    const message = Cause.pretty(result.joinExit.cause);
-    expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
-    expect(message).toContain("write");
+test("the actual workflow supervisor preserves typed and synchronous report failures under interruption", async () => {
+  for (const reportFailure of [true, "sync"] as const) {
+    const result = await superviseInterruptedWorkflow(reportFailure);
+    expect(Exit.isFailure(result.joinExit)).toBe(true);
+    expect(result.observed).toBe(true);
+    expect(result.typedRecovered).toBe(false);
+    if (Exit.isFailure(result.joinExit)) {
+      const message = Cause.pretty(result.joinExit.cause);
+      expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
+      expect(message).toContain("write");
+    }
+    expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
   }
 });
 
@@ -545,19 +473,6 @@ test("synchronous cleanup throws do not skip later cleanup or reporting", async 
   ]);
   expect(services.report).toBeDefined();
   expect(services.report?.cleanupFailures.join(" ")).toContain("destroy #1");
-});
-
-test("primary and report failures are both observable", async () => {
-  const services = makeServices(
-    {
-      deploy: () => Effect.fail(new ContractError({ message: "original deploy failure" })),
-    },
-    true,
-  );
-  const exit = await runWithClock(runEvidence(identity), services.layer);
-  expect(Exit.isFailure(exit)).toBe(true);
-  expect(services.report?.primaryFailure).toContain("original deploy failure");
-  if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("report: ContractError");
 });
 
 test("fake measurement success and invalid body failures are part of the owned workflow", async () => {

@@ -135,13 +135,14 @@ const failingAppends = (count: number) => {
 };
 
 /** An outputs projection that doubles numbers into strings; both refs are unique per scenario. */
-const scenario = (name: string) => {
+const scenario = (name: string, version = 1) => {
   const input = In.at({ name });
   const output = Out.at({ name });
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
   const definition = {
     id: `doubled-${name}`,
     params: {},
+    version,
     inputs: { input },
     outputs: { output: output },
   };
@@ -174,7 +175,7 @@ const pinnedRecord = (record: CheckpointRecord | undefined) => {
 test("crash after append and before the checkpoint settles by Duplicate without duplicate output", () =>
   run(
     Effect.gen(function* () {
-      const s = scenario("settle-duplicate");
+      const s = scenario("settle-duplicate", 7);
       yield* s.initialize;
       let saves = 0;
       const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
@@ -214,12 +215,13 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
       expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
       expect(after.token).toBe("2");
-      // The retry processed exactly the pinned range under the same unit key.
+      // The retry processed exactly the pinned range under the same unit key and version.
       expect(s.seen.map((entry) => entry.items)).toEqual([
         [1, 2, 3],
         [1, 2, 3],
       ]);
       expect(s.seen[1]?.unit.key).toBe(s.seen[0]?.unit.key ?? "");
+      expect(s.seen.map((entry) => entry.unit.version)).toEqual([7, 7]);
     }),
   ));
 

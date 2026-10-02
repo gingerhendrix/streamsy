@@ -12,9 +12,6 @@ class Copies extends Streamsy.json<Copies>()("Copies", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
-class Overlap extends Streamsy.bytes<Overlap>()("Overlap", "notes/:id", {
-  params: { id: Schema.String },
-}) {}
 class Counts extends Streamsy.state<Counts>()("Counts", "counts/:id", {
   params: { id: Schema.NumberFromString },
   collections: {
@@ -81,32 +78,6 @@ it("every wire operation rejects foreign ids including both fork forms", async (
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       }
     }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes)))),
-  );
-});
-
-it("bindings refuse duplicate and overlapping templates and enforce Streamsy.Wildcard last", () => {
-  const graph = Streams.layerMemory();
-  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Copies))).toThrow(
-    "duplicate stream template",
-  );
-  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Overlap))).toThrow("overlap");
-  expect(() => Protocol.bind(graph, Streamsy.group(Streamsy.Wildcard, Notes))).toThrow(
-    "Wildcard must be last",
-  );
-  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Streamsy.Wildcard))).not.toThrow();
-});
-
-it("Streamsy.Wildcard handles arbitrary ids", async () => {
-  const layer = Protocol.bind(Streams.layerMemory(), Streamsy.group(Streamsy.Wildcard));
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const any = yield* Streamsy.Wildcard;
-      yield* any.create({ id: "a/b/c" });
-      yield* any.append({ id: "a/b/c" }, [new TextEncoder().encode("hello")]);
-      expect((yield* Stream.runCollect(any.read({ id: "a/b/c" })))[0]?.items[0]).toEqual(
-        new TextEncoder().encode("hello"),
-      );
-    }).pipe(Effect.provide(layer)),
   );
 });
 

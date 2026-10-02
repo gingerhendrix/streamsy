@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test src test",
-    "test:unit": "bun test src test",
+    "test": "bun test test",
+    "test:unit": "bun test test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,13 +1,6 @@
-import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
-import {
-  applicationLayer,
-  createInputs,
-  hostLayer,
-  sqliteStorage,
-  streams,
-} from "../server/host.ts";
+import { applicationLayer, createInputs, hostLayer, sqliteStorage } from "../server/host.ts";
 import { Users } from "../server/streams.ts";
 import {
   scratchDirectory,
@@ -71,7 +64,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
   }
 });
 
-test("the host runtime exposes only streams, feeds and application storage services", async () => {
+test("the host runtime provides application storage services and no Storage", async () => {
   const { Storage } = await import("@streamsy/core");
   const { CheckpointStore, Transaction } = await import("@streamsy/projection");
   const { SqlClient } = await import("effect/unstable/sql");
@@ -80,21 +73,9 @@ test("the host runtime exposes only streams, feeds and application storage servi
       Effect.gen(function* () {
         const context = yield* Layer.build(hostLayer(sqliteStorage(":memory:")));
         expect(Option.isNone(Context.getOption(context, Storage))).toBe(true);
-        expect([...context.mapUnsafe.keys()].sort()).toEqual(
-          [
-            Layer.CurrentMemoMap.key,
-            CheckpointStore.key,
-            Transaction.key,
-            SqlClient.SqlClient.key,
-            ...streams.streams.map((stream) => stream.key),
-            ...streams.streams.map(
-              (stream) =>
-                Streamsy.ChangeFeed<import("@streamsy/core").Streamsy.Services<typeof streams>>(
-                  stream,
-                ).key,
-            ),
-          ].sort(),
-        );
+        expect(Option.isSome(Context.getOption(context, CheckpointStore))).toBe(true);
+        expect(Option.isSome(Context.getOption(context, Transaction))).toBe(true);
+        expect(Option.isSome(Context.getOption(context, SqlClient.SqlClient))).toBe(true);
       }),
     ),
   );

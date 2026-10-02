@@ -4,9 +4,10 @@ import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
-import { emptySlice } from "../src/batch.ts";
 import { producerId } from "../src/commit/producer.ts";
-import { unitOf } from "../src/unit.ts";
+import { Streams } from "@streamsy/core/protocol";
+import * as FamilyFixture from "./support/families.ts";
+import * as Memory from "./support/memory.ts";
 
 class facts extends Streamsy.json<facts>()("declaration.test/facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
@@ -96,17 +97,24 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
   }) {}
   const seen: Array<{ readonly id: number; readonly key: string }> = [];
   const declared = Projection.process({
-    commit: Commit.transaction,
+    commit: Commit.atLeastOnce,
     id: "units",
     params: { id: Schema.FiniteFromString },
     inputs: { numbered },
     process: (_batch, unit) => Effect.sync(() => seen.push({ id: unit.params.id, key: unit.key })),
   });
   const bound = declared.at({ id: 7 });
-  const kernelUnit = unitOf("units", 1, 1, bound.params, {});
-  await Effect.runPromise(bound.process({ numbered: emptySlice("0") }, kernelUnit));
-  expect(seen).toEqual([{ id: 7, key: kernelUnit.key }]);
-  expect(kernelUnit.params).toEqual({ id: "7" });
+  const host = FamilyFixture.withFamilies(Memory.layerMemory(), numbered);
+  const run = Effect.gen(function* () {
+    yield* Streams.create(bound.inputs.numbered);
+    yield* Streams.append(bound.inputs.numbered, ["a"]);
+    yield* Projection.run(bound);
+  });
+  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The test is the entry point.
+  await Effect.runPromise(run.pipe(Effect.provide(host)));
+  expect(seen.map(({ id }) => id)).toEqual([7]);
+  // The key is a list of encoded parts; its params part holds the string "7".
+  expect(JSON.parse(seen[0]?.key ?? "[]")).toContain(JSON.stringify({ id: "7" }));
 });
 
 test("number parameters encode to strings and parse back", () => {

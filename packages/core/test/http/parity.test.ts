@@ -91,6 +91,13 @@ for (const visibility of ["private", "public"] as const) {
       const catchUp = await compare("/api.v1/s?offset=-1");
       const etag = catchUp.headers.get("etag");
       if (!etag) throw new Error("Expected catch-up ETag");
+      // An unknown live mode reads as a plain catch-up, byte for byte.
+      const catchUpFixture = fixtures[visibility][position - 1];
+      if (catchUpFixture === undefined) throw new Error("Missing frozen catch-up response");
+      await assertWire(
+        await edge.handler(new Request("http://example.test/api.v1/s?offset=-1&live=other")),
+        catchUpFixture,
+      );
       await compare("/api.v1/s?offset=-1", { headers: { "if-none-match": etag } });
       await compare("/api.v1/s?offset=now");
       await compare("/api.v1/s?offset=bad");
@@ -209,6 +216,50 @@ for (const visibility of ["private", "public"] as const) {
       await compare("/api.v1/child", { method: "DELETE" });
       await compare("/api.v1/child");
       expect(position).toBe(fixtures[visibility].length);
+    } finally {
+      await edge.dispose();
+    }
+  });
+}
+
+for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
+  it(`the ${prefix} mount registers once and resolves fork sources with or without it`, async () => {
+    const edge = HttpRouter.toWebHandler(
+      protocolRoutes({ prefix }).pipe(Layer.provideMerge(Streams.layerMemory())),
+      { disableLogger: true },
+    );
+    const mount = prefix.replace(/\/$/, "");
+    try {
+      if (mount !== "") {
+        // The prefix registers once, with or without its trailing slash.
+        expect((await edge.handler(new Request(`http://example.test${mount}`))).status).toBe(400);
+        expect((await edge.handler(new Request(`http://example.test${mount}/`))).status).toBe(400);
+        expect(
+          (await edge.handler(new Request(`http://example.test${mount}-other/x`))).status,
+        ).toBe(404);
+      }
+      const created = await edge.handler(
+        new Request(`http://example.test${mount}/v1/stream/source`, {
+          method: "PUT",
+          headers: { "content-type": "text/plain" },
+          body: "a",
+        }),
+      );
+      expect(created.status).toBe(201);
+      const sources = [`${mount}/v1/stream/source`, "/v1/stream/source", "v1/stream/source"];
+      for (const [index, source] of sources.entries()) {
+        const fork = await edge.handler(
+          new Request(`http://example.test${mount}/fork/${index}`, {
+            method: "PUT",
+            headers: { "stream-forked-from": source },
+          }),
+        );
+        expect(fork.status).toBe(201);
+        const read = await edge.handler(
+          new Request(`http://example.test${mount}/fork/${index}?offset=-1`),
+        );
+        expect(await read.text()).toBe("a");
+      }
     } finally {
       await edge.dispose();
     }

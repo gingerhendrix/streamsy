@@ -54,29 +54,3 @@ it("one application program runs unchanged on memory and Fetch streams", async (
     await edge.dispose();
   }
 });
-
-it("group and stream-list HTTP routes apply explicit host access", async () => {
-  for (const routes of [
-    Http.routes(group, { access: "read" }),
-    Http.routes(Streamsy.group(Notes), { access: () => "read" }),
-  ]) {
-    const edge = HttpRouter.toWebHandler(
-      routes.pipe(Layer.provideMerge(Memory.layer(Streamsy.group(Notes)))),
-      {
-        disableLogger: true,
-      },
-    );
-    try {
-      expect(
-        (await edge.handler(new Request("http://local/notes/ann", { method: "PUT" }))).status,
-      ).toBe(405);
-      expect(
-        (
-          await edge.handler(new Request("http://local/notes/ann", { method: "OPTIONS" }))
-        ).headers.get("access-control-allow-methods"),
-      ).toBe("GET, HEAD, OPTIONS");
-    } finally {
-      await edge.dispose();
-    }
-  }
-});

@@ -1,7 +1,7 @@
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
-import { Array, Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
+import { Array, Deferred, Effect, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { SqlClient } from "effect/unstable/sql";
@@ -39,6 +39,13 @@ const fault = (value: Option.Option<unknown>): ProjectionFault => {
   if (!(error instanceof ProjectionFault)) throw new Error("Expected a ProjectionFault");
   return error;
 };
+const sum = Projection.fold({
+  id: "sum",
+  params: {},
+  inputs: { input },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (total, { item }) => total + item,
+}).at({});
 /** Substitutes the reader's `read` for one effect; every other operation is untouched. */
 const withRead = <A, E, R>(
   body: Effect.Effect<A, E, R | StreamsReader>,
@@ -270,25 +277,29 @@ test("record change between load and transaction is a token conflict", () =>
       yield* initialize;
       const services = yield* Effect.context<Services>();
       // A competing runner completes inside this runner's read window.
-      const failed = fault(
-        yield* failure(
+      const raced = <A, E>(pass: Effect.Effect<A, E, Services>) =>
+        failure(
           withRead(
-            Projection.pass(positives),
+            pass,
             (reader) => (id, options) =>
-              Projection.pass(positives).pipe(
+              pass.pipe(
                 FamilyFixture.provideReader(reader),
                 Effect.provide(services),
                 Effect.orDie,
                 Effect.andThen(reader.read(id, options)),
               ),
           ),
-        ),
-      );
+        ).pipe(Effect.map(fault));
+      const failed = yield* raced(Projection.pass(positives));
       expect(failed.phase).toBe("checkpoint");
       expect(failed.reason).toBe("token-conflict");
       const stored = yield* inspect;
       expect(stored.output).toEqual([1, 3]);
       expect(stored.loaded.token).toBe("1");
+      // The loser of a fold race leaves the winner's state.
+      expect((yield* raced(Projection.pass(sum))).reason).toBe("token-conflict");
+      expect((yield* Projection.read(sum)).state).toBe(3);
+      expect((yield* (yield* CheckpointStore).load(sum)).token).toBe("1");
     }),
   ));
 
@@ -342,40 +353,6 @@ test("two competing passes on one SQLite host: the second conflicts and output i
     }),
   ));
 
-test("interruption inside the transaction rolls back the output append and the checkpoint", () =>
-  run(
-    Effect.gen(function* () {
-      yield* initialize;
-      const appended = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const blocking = Projection.process({
-        commit: Commit.transaction,
-        id: positives.id,
-        params: {},
-        inputs: { input },
-        process: (batch, unit) =>
-          positives
-            .process(batch, unit)
-            .pipe(
-              Effect.andThen(Deferred.succeed(appended, undefined)),
-              Effect.andThen(Deferred.await(release)),
-            ),
-      }).at({});
-      const fiber = yield* Effect.forkChild(Projection.run(blocking));
-      yield* Deferred.await(appended);
-      yield* Fiber.interrupt(fiber);
-      const [exit] = yield* Fiber.awaitAll([fiber]);
-      expect(exit !== undefined && Exit.hasInterrupts(exit)).toBe(true);
-      const stored = yield* inspect;
-      expect(stored.output).toEqual([]);
-      expect(Option.isNone(stored.loaded.record)).toBe(true);
-      expect(stored.loaded.token).toBe("0");
-      const result = yield* Projection.run(positives);
-      expect(result.items).toBe(3);
-      expect((yield* inspect).output).toEqual([1, 3]);
-    }),
-  ));
-
 test("handler failure rolls back the output append and the checkpoint", () =>
   run(
     Effect.gen(function* () {
@@ -417,53 +394,4 @@ test("run without a limit drains more than one hundred server pages", () =>
       expect(result.items).toBe(101);
     }),
     1,
-  ));
-
-test("stream units retain the declared version on a fresh pass and pinned retry", () =>
-  run(
-    Effect.gen(function* () {
-      yield* initialize;
-      const versions: number[] = [];
-      const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
-      const projection = Projection.emit({
-        commit: Commit.producer,
-        id: "versioned-stream",
-        params: {},
-        version: 7,
-        inputs: { input },
-        outputs: { output: output },
-        emit: (entry, unit) =>
-          Effect.sync(() => {
-            versions.push(unit.version);
-            return { output: [entry.item] };
-          }),
-      }).at({});
-      const owner = yield* CheckpointStore;
-      let saves = 0;
-      const failed = yield* Projection.run(projection).pipe(
-        Effect.provideService(CheckpointStore, {
-          ...owner,
-          compareAndSet: (key, token, record) => {
-            saves += 1;
-            return saves === 2
-              ? Effect.fail(
-                  new ProjectionFault({
-                    phase: "checkpoint",
-                    reason: "storage-failure",
-                    message: "after append",
-                  }),
-                )
-              : owner.compareAndSet(key, token, record);
-          },
-        }),
-        Effect.result,
-      );
-      expect(failed._tag).toBe("Failure");
-      expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeDefined();
-      expect(versions).toEqual([7, 7, 7]);
-      yield* Projection.run(projection);
-      expect(versions).toEqual([7, 7, 7, 7, 7, 7]);
-      expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeUndefined();
-      expect(yield* readAll(output)).toEqual([1, -1, 3]);
-    }),
   ));

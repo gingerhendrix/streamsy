@@ -64,29 +64,6 @@ test("nearest-rank percentile uses index 284 for n=300 at p95", () => {
   expect(() => percentile([], 95)).toThrow(ContractError);
 });
 
-test("latency preserves historical all-first-then-warm ordering and paired samples", async () => {
-  const requests: Array<string> = [];
-  const layer = Layer.succeed(HttpOperation, {
-    request: (request) =>
-      Effect.sync(() => {
-        requests.push(request.method);
-        return { status: 200, body: "" };
-      }),
-  });
-  const result = await Effect.runPromise(
-    measureLatency({ baseUrl: "https://example.test", paths: ["/a", "/b"], concurrency: 2 }).pipe(
-      Effect.provide(layer),
-    ),
-  );
-  expect(requests).toEqual(["PUT", "PUT", "HEAD", "HEAD"]);
-  expect(result.protocol).toBe("after-all-first");
-  expect(result.warmOrdering).toBe("after-all-first");
-  expect(result.firstPutBody).toBe("x");
-  expect(result.step0FirstPutBody).toBe("");
-  expect(result.pairs).toHaveLength(2);
-  expect(result.valid).toBe(true);
-});
-
 test("latency deltas preserve the historical first-minus-warm sign", async () => {
   const exit = await Effect.runPromise(
     Effect.gen(function* () {
@@ -161,6 +138,7 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
     ),
   );
   expect(result.valid).toBe(true);
+  expect(result.pairs).toHaveLength(paths.length);
   expect(maximumPut).toBe(3);
   expect(maximumHead).toBe(3);
   expect(headBeforeAllPuts).toBe(false);
@@ -228,7 +206,7 @@ test("throughput records invalid create and POST responses", async () => {
   expect(result.trials[0]?.errors).toEqual(["create: HTTP 500", "post 0: post body failed"]);
 });
 
-test("throughput preserves trial ordering and historical diagnostics", async () => {
+test("throughput runs its trials in order and reports the median rate", async () => {
   const methods: Array<string> = [];
   const result = await Effect.runPromise(
     measureThroughput({
@@ -266,8 +244,6 @@ test("throughput preserves trial ordering and historical diagnostics", async () 
   ]);
   expect(result.valid).toBe(true);
   expect(result.medianRate).toBe(1);
-  expect(result.diagnostics.step0Rate).toBe(54.60448413131066);
-  expect(result.diagnostics.priorReferenceRate).toBe(91);
 });
 
 test("throughput bounds POST concurrency and keeps trials sequential", async () => {

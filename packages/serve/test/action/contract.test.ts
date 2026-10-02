@@ -42,15 +42,8 @@ const define = (overrides: { readonly name?: string; readonly version?: number }
   });
 
 describe("an action-sink declaration", () => {
-  test("carries the observed relation's key and is frozen", () => {
-    const sink = define();
-    expect(sink.kind).toBe("checked-action-sink");
-    expect(sink.key).toBe("id");
-    expect(Object.isFrozen(sink)).toBe(true);
-    expect(sink.fingerprint).toMatch(/^[0-9a-f]{8}$/);
-  });
-
   test("the fingerprint moves when the handler version moves", () => {
+    expect(Object.isFrozen(define())).toBe(true);
     expect(define().fingerprint).toBe(define().fingerprint);
     expect(define({ version: 2 }).fingerprint).not.toBe(define().fingerprint);
     expect(define({ name: "test.other" }).fingerprint).not.toBe(define().fingerprint);
@@ -81,16 +74,16 @@ describe("an action-sink declaration", () => {
     expect([1, 2, 3, 4, 5].map((attempt) => backoffAfter(delivery, attempt))).toEqual([
       100, 200, 400, 800, 1_000,
     ]);
+    // An infinite cap keeps growing and is a different fingerprint from a finite one.
+    const uncapped = defineActionSink({
+      ...define(),
+      delivery: { ...delivery, maxBackoffMs: Infinity },
+    });
+    const capped = defineActionSink({
+      ...define(),
+      delivery: { ...delivery, maxBackoffMs: 30_000 },
+    });
+    expect(backoffAfter(uncapped.delivery, 20)).toBe(52_428_800);
+    expect(uncapped.fingerprint).not.toBe(capped.fingerprint);
   });
-});
-
-test("infinite delivery backoff retains D8 behavior and has a distinct fingerprint", () => {
-  const uncapped = defineActionSink({
-    ...define(),
-    delivery: { ...delivery, maxBackoffMs: Infinity },
-  });
-  const capped = defineActionSink({ ...define(), delivery: { ...delivery, maxBackoffMs: 30_000 } });
-  expect(uncapped.delivery.maxBackoffMs).toBe(Infinity);
-  expect(backoffAfter(uncapped.delivery, 20)).toBe(52_428_800);
-  expect(uncapped.fingerprint).not.toBe(capped.fingerprint);
 });

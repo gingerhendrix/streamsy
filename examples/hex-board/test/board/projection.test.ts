@@ -1,18 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { Schema } from "effect";
-import { BoardState } from "./fold.ts";
-import { foldAggregate } from "../domain/aggregate.ts";
-import { fullGame, longGame } from "../../test/fixtures.ts";
+import { BoardState } from "../../src/board/fold.ts";
+import { foldAggregate } from "../../src/domain/aggregate.ts";
+import { fullGame, longGame } from "../fixtures.ts";
 import {
   aggregateBoardView,
   boardsEqual,
   initialProjection,
   projectEvent,
   projectionBoardView,
-  ProjectionIntegrityError,
   MOVE_FEED_LIMIT,
   moveId,
-} from "./projection.ts";
+} from "../../src/board/projection.ts";
 
 describe("Hex Domination board projection reducer", () => {
   for (const [name, events] of [
@@ -37,6 +36,12 @@ describe("Hex Domination board projection reducer", () => {
           expect(board.hexes).toEqual([...event.map.tiles]);
           expect(board.territories.map((t) => t.adjacentTerritoryIds)).toEqual(
             event.map.territories.map((t) => [...t.adjacentTerritoryIds]),
+          );
+          expect(board.territories.map((t) => t.labelAnchor)).toEqual(
+            event.map.territories.map((t) => t.labelAnchor),
+          );
+          expect(board.continents.map((c) => c.territoryIds)).toEqual(
+            event.map.continents.map((c) => [...c.territoryIds]),
           );
         }
         if (event.type === "AttackDeclared") {
@@ -93,21 +98,6 @@ describe("Hex Domination board projection reducer", () => {
     }
     expect(declarations).toBeGreaterThan(0);
     expect(captures).toBeGreaterThan(0);
-  });
-
-  it("projects the canonical map snapshot verbatim, including label anchors", () => {
-    const event = longGame.find((candidate) => candidate.type === "GameStarted")!;
-    const board = projectEvent(initialProjection("game"), event, "0", 0);
-    expect(board.hexes).toEqual([...event.map.tiles]);
-    expect(board.territories.map((t) => t.adjacentTerritoryIds)).toEqual(
-      event.map.territories.map((t) => [...t.adjacentTerritoryIds]),
-    );
-    expect(board.territories.map((t) => t.labelAnchor)).toEqual(
-      event.map.territories.map((t) => t.labelAnchor),
-    );
-    expect(board.continents.map((c) => c.territoryIds)).toEqual(
-      event.map.continents.map((c) => [...c.territoryIds]),
-    );
   });
 
   it("tracks the current-turn reinforcement breakdown through placement and reset", () => {
@@ -169,19 +159,5 @@ describe("Hex Domination board projection reducer", () => {
         sourceOffset: "one-boundary",
       })),
     );
-  });
-
-  it("rejects a resolution that contradicts its declaration", () => {
-    let board = initialProjection("game");
-    for (const [index, event] of fullGame.entries()) {
-      if (event.type === "AttackResolved") {
-        expect(() =>
-          projectEvent(board, { ...event, attackerRolls: [1, 1, 1] }, String(index), index),
-        ).toThrow(ProjectionIntegrityError);
-        return;
-      }
-      board = projectEvent(board, event, String(index), index);
-    }
-    throw new Error("fixture has no resolution");
   });
 });

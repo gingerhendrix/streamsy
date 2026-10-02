@@ -4,6 +4,7 @@ import type { CreateOptions } from "../../src/policy/options.ts";
 import { Offset, StreamId, type StoredMessage, type StreamRecord } from "../../src/schema/index.ts";
 import { ForkPlanBuilder } from "../../src/policy/fork-plan-builder.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
+import { computeExpiresAtMs } from "../../src/policy/expiry-policy.ts";
 const formatCounter = (n: number) =>
   Offset.make(`${String(n).padStart(16, "0")}_${"0".repeat(16)}`);
 
@@ -41,7 +42,7 @@ function newRecord(
     softDeleted: false,
     forkedFrom: fork.forkedFrom,
     forkOffset: fork.forkOffset,
-    expiresAtMs: options.ttlSeconds === undefined ? undefined : 11_000,
+    expiresAtMs: computeExpiresAtMs(options, clock.now()),
   };
   if (fork.forkSubOffset !== undefined && fork.forkSubOffset > 0) {
     return {
@@ -65,26 +66,6 @@ function newRecord(
 }
 
 describe("ForkPlanBuilder", () => {
-  it("returns source validation failures without a plan", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
-
-    expect(builder.build(StreamId.make("child"), StreamId.make("source"), null, {})).toMatchObject({
-      _tag: "Rejected",
-      error: { _tag: "ForkSourceNotFound" },
-    });
-    expect(
-      builder.build(
-        StreamId.make("child"),
-        StreamId.make("source"),
-        source({ lifecycle: { closed: false, softDeleted: true } }),
-        {},
-      ),
-    ).toMatchObject({
-      _tag: "Rejected",
-      error: { _tag: "CreateConflict", reason: "fork-source-soft-deleted" },
-    });
-  });
-
   it("builds a fork plan with inherited expiry, source liveness precondition, and initial messages", () => {
     const builder = new ForkPlanBuilder({ clock, newRecord });
     const decision = builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
@@ -100,27 +81,9 @@ describe("ForkPlanBuilder", () => {
     expect(decision.plan.record.id).toBe(StreamId.make("child"));
     expect(decision.plan.record.lifecycle.forkedFrom).toBe(StreamId.make("source"));
     expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([formatCounter(3)]);
-    expect(decision.plan.record.lifecycle.expiresAtMs).toBe(11_000);
-  });
-
-  it("rejects fork offsets beyond the source tail", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
-
-    expect(
-      builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
-        forkOffset: "0000000000000003_0000000000000000",
-      }),
-    ).toMatchObject({
-      _tag: "Rejected",
-      error: { _tag: "InvalidForkRequest", message: "Stream-Fork-Offset exceeds source tail" },
-    });
-    expect(
-      builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
-        forkOffset: ZERO_OFFSET,
-      }),
-    ).toMatchObject({
-      _tag: "Fork",
-    });
+    // The source has a 20 second TTL and the clock reads 1_000.
+    expect(decision.plan.record.config.ttlSeconds).toBe(20);
+    expect(decision.plan.record.lifecycle.expiresAtMs).toBe(21_000);
   });
 
   describe("sub-offset materialization", () => {

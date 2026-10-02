@@ -105,20 +105,6 @@ test("an address handler reads the middleware seat and unauthenticated requests 
   }
 });
 
-test("prefix registers once; bare prefix is 400 and neighbouring paths are 404", async () => {
-  const web = HttpRouter.toWebHandler(
-    protocolRoutes({ prefix: "/streams/" }).pipe(HttpRouter.provideRequest(storage)),
-    { disableLogger: true },
-  );
-  try {
-    expect((await web.handler(new Request("http://host/streams"))).status).toBe(400);
-    expect((await web.handler(new Request("http://host/streams/"))).status).toBe(400);
-    expect((await web.handler(new Request("http://host/streams-other/x"))).status).toBe(404);
-  } finally {
-    await web.dispose();
-  }
-});
-
 test("state has collection fingerprint, replay headers and no snapshot reset", async () => {
   const web = app();
   try {

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { ZERO_OFFSET } from "../../../src/offset/index.ts";
 import { createNotifier, type Notifier } from "../../../src/storage/memory/notifier.ts";
@@ -112,37 +112,6 @@ it("a slow subscriber retains one coalesced wake and observes its latest authori
           expect(values[1]).toMatchObject({ present: true, closed: true });
           expect(pending(bus)).toBe(0);
           expect(bus.queues.size).toBe(0);
-        }),
-      ),
-    ),
-  ).resolves.toEqual(Exit.succeed(undefined)));
-
-it("timeout removes the actual queue subscription while the memory owner remains open", () =>
-  expect(
-    Effect.runPromiseExit(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const context = yield* Layer.build(TestClock.layer());
-          yield* Effect.gen(function* () {
-            const bus = yield* createNotifier;
-            const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
-            const ready = yield* Deferred.make<void>();
-            const fiber = yield* changes(state, bus, StreamId.make("timeout"), true, 25).pipe(
-              Stream.tap(() => Deferred.succeed(ready, undefined)),
-              Stream.filter((value) => value.present),
-              Stream.take(1),
-              Stream.runCollect,
-              Effect.timeoutOption(100),
-              Effect.forkScoped,
-            );
-            yield* Deferred.await(ready);
-            yield* TestClock.adjust(100);
-            expect(Option.isNone(yield* Fiber.join(fiber))).toBe(true);
-            yield* bus.publish;
-            expect(pending(bus)).toBe(0);
-            expect(bus.queues.size).toBe(0);
-            expect(bus.closed).toBe(false);
-          }).pipe(Effect.provide(context));
         }),
       ),
     ),

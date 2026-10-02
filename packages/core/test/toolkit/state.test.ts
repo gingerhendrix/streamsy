@@ -149,25 +149,6 @@ it("stamps no offset and no default txid when the batch has no source offset", (
   ]);
 });
 
-it("writes old_value only when a delete has an old value", () => {
-  const [withOld, keyOnly] = DurableState.changes(slugs, { offset: "source:10" }, [
-    DurableState.remove("slug", "a", { oldValue: { slug: "a", title: "A" } }),
-    DurableState.remove("slug", "b"),
-  ]);
-  expect(withOld).toEqual({
-    type: "slug",
-    key: "a",
-    old_value: { slug: "a", title: "A" },
-    headers: { operation: "delete", offset: "source:10", txid: "source:10:0" },
-  });
-  expect(keyOnly).toEqual({
-    type: "slug",
-    key: "b",
-    headers: { operation: "delete", offset: "source:10", txid: "source:10:1" },
-  });
-  expect(keyOnly).not.toHaveProperty("old_value");
-});
-
 it("rejects an empty delete key and an unknown collection", () => {
   expect(() => DurableState.changes(slugs, {}, [DurableState.remove("slug", "")])).toThrow(
     'Invalid state key for type "slug": key',

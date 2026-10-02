@@ -137,8 +137,10 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
         const [exit] = yield* Fiber.awaitAll([fiber]);
         expect(exit !== undefined && Exit.hasInterrupts(exit)).toBe(true);
         expect(yield* count).toBe(0);
-        const owner = yield* CheckpointStore;
-        expect((yield* owner.load(Projection.key(positives))).token).toBe("0");
+        const stored = yield* inspect;
+        expect(stored.output).toEqual([]);
+        expect(Option.isNone(stored.loaded.record)).toBe(true);
+        expect(stored.loaded.token).toBe("0");
         const result = yield* Projection.run(positives);
         expect(result.status).toBe("caught-up");
         expect(result.items).toBe(3);
