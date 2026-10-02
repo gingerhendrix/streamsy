@@ -242,6 +242,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "@streamsy/serve": "workspace:*",
@@ -250,10 +251,12 @@
         "typescript": "catalog:",
       },
       "peerDependencies": {
+        "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
       },
       "optionalPeers": [
+        "@effect/platform-bun",
         "@effect/sql-sqlite-bun",
         "@effect/sql-sqlite-do",
       ],

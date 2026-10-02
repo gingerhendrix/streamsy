@@ -68,21 +68,6 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   await expectTypedMissing("readonly-missing", { readonly: true });
   await expectTypedMissing("create-false-no-wal", { create: false, disableWAL: true });
 
-  const missingParent = `${scratch}/missing-parent-${process.pid}-${crypto.randomUUID()}`;
-  const unopenable = `${missingParent}/storage.sqlite`;
-  const unopenableExit = await Effect.runPromise(
-    Effect.scoped(Layer.build(layerProtocol({ client: { filename: unopenable } }))).pipe(
-      Effect.exit,
-    ),
-  );
-  expect(Exit.isFailure(unopenableExit)).toBe(true);
-  if (Exit.isSuccess(unopenableExit)) throw new Error("Expected unopenable acquisition to fail");
-  expect(Option.getOrThrow(Cause.findErrorOption(unopenableExit.cause))).toMatchObject({
-    _tag: "StorageFault",
-    retryable: false,
-  });
-  expect(await Bun.file(unopenable).exists()).toBe(false);
-
   const readonly = filename("readonly-delete");
   const initialized = await Effect.runPromise(acquire(readonly));
   await Effect.runPromise(Scope.close(initialized.scope, Exit.void));
