@@ -173,6 +173,24 @@ const attempt = <A>(operation: string, effect: Effect.Effect<A, SqlError>) =>
 const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>) =>
   attempt(operation, statement).pipe(Effect.asVoid);
 
+/** MySQL keys hold at most this many characters, so every dialect enforces it. */
+export const MAX_STREAM_ID_LENGTH = 512;
+
+const streamIdTooLong = (id: StreamId): Option.Option<StorageFault> => {
+  // MySQL VARCHAR counts code points, which is what the spread yields.
+  // oxlint-disable-next-line typescript/no-misused-spread -- code points are the intended unit
+  const length = [...id].length;
+  return length > MAX_STREAM_ID_LENGTH
+    ? Option.some(
+        new StorageFault({
+          operation: "mutate.stream-id",
+          message: `Stream id has ${length} characters; the limit is ${MAX_STREAM_ID_LENGTH}`,
+          retryable: false,
+        }),
+      )
+    : Option.none();
+};
+
 const recordColumns = (sql: SqlClient.SqlClient) =>
   sql.literal(
     "stream_id,content_type,ttl_seconds,expires_at,created_at,current_offset,last_seq," +
@@ -541,6 +559,11 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
       );
       if (ids.length === 0 || new Set(ids).size !== ids.length)
         return Effect.die(new Error("Mutation requires distinct streams within atomicScope"));
+      for (const operation of mutation.operations) {
+        if (!Predicate.isTagged(operation, "Create")) continue;
+        const tooLong = streamIdTooLong(operation.record.id);
+        if (Option.isSome(tooLong)) return Effect.fail(tooLong.value);
+      }
       return boundary
         .mutation({
           keys: [STORAGE_KEY],
