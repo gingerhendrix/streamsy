@@ -354,7 +354,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
       expect(result).toMatchObject({ _tag: "Some", value: { at: 42, streamId: "kept" } });
     });
 
-    test("an injected migration failure rolls back schema and version rows", async () => {
+    test("an injected migration failure records no version and a rerun completes", async () => {
       const result = await Effect.runPromise(
         withDatabase((fresh) =>
           Effect.gen(function* () {
@@ -374,11 +374,27 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                     )
                   : Effect.void,
             }).pipe(Effect.exit);
-            return { failed: Exit.isFailure(failed), tables: yield* tableNames(sql) };
+            const tables = yield* tableNames(sql);
+            const versions = tables.includes(STORAGE_VERSION_TABLE)
+              ? yield* count(sql, STORAGE_VERSION_TABLE)
+              : 0;
+            yield* migrate(sql);
+            return {
+              failed: Exit.isFailure(failed),
+              tables,
+              versions,
+              rerun: yield* tableNames(sql),
+            };
           }),
         ),
       );
-      expect(result).toEqual({ failed: true, tables: [] });
+      expect(result).toEqual({
+        failed: true,
+        // MySQL commits DDL by itself, so only its version table outlives the failure.
+        tables: dialect.name === "mysql" ? [STORAGE_VERSION_TABLE] : [],
+        versions: 0,
+        rerun: [...STORAGE_TABLES, STORAGE_VERSION_TABLE].toSorted(),
+      });
     });
 
     test("legacy and too-new schemas reject without changes", async () => {

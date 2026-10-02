@@ -7,13 +7,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "effect";
-import { Storage, StreamId } from "@streamsy/core";
+import { Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { storageLayer } from "../../src/storage.ts";
+import { makeBoundaryTestProbe } from "../../src/boundary.ts";
+import { layerWithTestProbe } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
 
-const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg];
+const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
 const APPENDS = 200;
 const POOL_SIZE = 20;
@@ -21,11 +22,12 @@ const RACES = 20;
 const TIMEOUT_MS = 120_000;
 const contentType = "application/octet-stream";
 
-/** One host: protocol and storage over its own pool. */
-const host = (dialect: SqlDialect, url: string) =>
-  Layer.build(
+/** One host: protocol and storage over its own pool. The probe counts transactions. */
+const host = (dialect: SqlDialect, url: string) => {
+  const probe = makeBoundaryTestProbe();
+  return Layer.build(
     Protocol.layer().pipe(
-      Layer.provideMerge(storageLayer()),
+      Layer.provideMerge(layerWithTestProbe({}, probe)),
       Layer.provideMerge(dialectClient(dialect, url, { maxConnections: POOL_SIZE })),
     ),
   ).pipe(
@@ -33,8 +35,10 @@ const host = (dialect: SqlDialect, url: string) =>
       writer: Context.get(context, StreamsWriter),
       storage: Context.get(context, Storage),
       sql: Context.get(context, SqlClient.SqlClient),
+      probe,
     })),
   );
+};
 
 type Host = Effect.Success<ReturnType<typeof host>>;
 
@@ -63,6 +67,29 @@ const nthOffset = (n: number) => `${String(n).padStart(16, "0")}_${"0".repeat(16
 const tagOf = <A, E extends { readonly _tag: string }>(result: Result.Result<A, E>) =>
   Result.match(result, { onSuccess: () => "ok", onFailure: ({ _tag: tag }) => tag });
 
+/** A storage-level create of an empty stream. */
+const create = (id: string): Mutation => ({
+  operations: [
+    {
+      _tag: "Create",
+      record: {
+        id: StreamId.make(id),
+        config: { contentType, createdAt: 0 },
+        lifecycle: { closed: false, softDeleted: false },
+        currentOffset: ZERO_OFFSET,
+      },
+      initialMessages: [],
+    },
+  ],
+});
+
+/** The applied tag, or the rejection reason. */
+const mutateTag = (storage: Host["storage"], mutation: Mutation) =>
+  storage.mutate(mutation).pipe(
+    Effect.map(({ _tag }) => _tag),
+    Effect.catchTag("MutationRejected", ({ reason }) => Effect.succeed(`rejected:${reason}`)),
+  );
+
 const payload = (index: number) => new TextEncoder().encode(`${index}:${"x".repeat(index % 7)}`);
 
 for (const dialect of dialects) {
@@ -78,7 +105,7 @@ for (const dialect of dialects) {
             Effect.gen(function* () {
               yield* left.writer.create(id, { contentType });
               let busy = 0;
-              // A writer that loses eight replans in a row gets StreamBusy; a client retries.
+              // A writer that loses every replan gets StreamBusy; a client retries.
               const append = (writer: Host["writer"], index: number) =>
                 writer.append(id, { data: payload(index), contentType }).pipe(
                   Effect.tapError((error) =>
@@ -212,6 +239,54 @@ SELECT c.stream_id FROM streamsy_streams c
           ),
         );
         expect(result).toEqual({ kept: [], rows: 0 });
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "concurrent creates give one stream per id and a clean exists rejection",
+      async () => {
+        if (url === undefined) return;
+        const result = await Effect.runPromise(
+          withHosts(dialect, url, (left, right) =>
+            Effect.gen(function* () {
+              const same: Array<string> = [];
+              const distinct: Array<string> = [];
+              for (let race = 0; race < RACES; race++) {
+                // On MySQL, the lock on an id that does not exist yet is a gap lock.
+                // Two creates in one gap can deadlock; the boundary retries them.
+                const [a, b, c, d] = yield* Effect.all(
+                  [
+                    mutateTag(left.storage, create(`create-race/${race}/same`)),
+                    mutateTag(right.storage, create(`create-race/${race}/same`)),
+                    mutateTag(left.storage, create(`create-race/${race}/left`)),
+                    mutateTag(right.storage, create(`create-race/${race}/right`)),
+                  ],
+                  { concurrency: 4 },
+                );
+                same.push([a, b].toSorted().join(" "));
+                distinct.push(`${c} ${d}`);
+              }
+              const retries = [left.probe, right.probe].reduce(
+                (total, probe) => total + probe.transactionAttempts - probe.completedMutations,
+                0,
+              );
+              const rows = yield* left.sql<{
+                readonly count: unknown;
+              }>`SELECT COUNT(*) AS count FROM streamsy_streams`;
+              return { same, distinct, retries, rows: Number(rows[0]?.count) };
+            }),
+          ),
+        );
+        console.log(
+          `${dialect.name} create races: ${RACES * 4}, transaction retries: ${result.retries}`,
+        );
+        expect({ ...result, retries: undefined }).toEqual({
+          same: Array.from({ length: RACES }, () => "Applied rejected:exists"),
+          distinct: Array.from({ length: RACES }, () => "Applied Applied"),
+          retries: undefined,
+          rows: RACES * 3,
+        });
       },
       TIMEOUT_MS,
     );
