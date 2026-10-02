@@ -117,6 +117,8 @@ describe("draining an action sink", () => {
     const outbox = makeMemoryOutboxBacking();
     const log = recorder();
     enqueue(outbox, [note("a"), note("b")]);
+    // A repeated enqueue of the same fact is absorbed, so it adds no second effect.
+    expect(enqueue(outbox, [note("a")])).toEqual({ enqueued: 0, absorbed: 1 });
 
     return runWithOutbox(
       outbox,
@@ -137,21 +139,6 @@ describe("draining an action sink", () => {
 
         // A second pass has nothing due: a delivered effect is never re-delivered.
         expect(yield* drainAt(handlerFor(log), 10_000)).toMatchObject({ claimed: 0 });
-      }),
-    );
-  });
-
-  test("a repeated enqueue of the same fact produces no second effect", () => {
-    const outbox = makeMemoryOutboxBacking();
-    const log = recorder();
-    expect(enqueue(outbox, [note("a")])).toEqual({ enqueued: 1, absorbed: 0 });
-    expect(enqueue(outbox, [note("a")])).toEqual({ enqueued: 0, absorbed: 1 });
-
-    return runWithOutbox(
-      outbox,
-      Effect.gen(function* () {
-        yield* drainAt(handlerFor(log), 0);
-        expect(log.deliveries).toHaveLength(1);
       }),
     );
   });
