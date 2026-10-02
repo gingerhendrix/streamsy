@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { nodeBufferBase64, toArrayBuffer } from "../../src/http/bytes.ts";
+import { toArrayBuffer } from "../../src/http/bytes.ts";
 import * as MessageBody from "../../src/http/message-body-codec.ts";
 
 describe("toArrayBuffer", () => {
@@ -24,8 +24,6 @@ describe("toArrayBuffer", () => {
     expect(Array.from(new Uint8Array(result))).toEqual([1, 2, 3]);
   });
 });
-
-type HostValue = null | undefined | boolean | number | bigint | string | symbol | object;
 
 function restoreBuffer(descriptor: PropertyDescriptor | undefined): void {
   if (descriptor === undefined) Reflect.deleteProperty(globalThis, "Buffer");
@@ -54,46 +52,6 @@ function withBufferGlobal<Result, Replacement>(
 function foreignBuffer<Result>(from: () => Result) {
   return Object.assign(function foreign() {}, { from });
 }
-
-describe("nodeBufferBase64", () => {
-  it("encodes only the bytes the view covers", () => {
-    const backing = new Uint8Array([255, 1, 2, 3, 255]);
-    const encoded = nodeBufferBase64(backing.subarray(1, 4));
-
-    // The fallback path is the reference encoding for the same three bytes.
-    expect(encoded).toBe(btoa(String.fromCharCode(1, 2, 3)));
-  });
-
-  it("returns undefined when the host has no Buffer global", () => {
-    const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
-    Reflect.deleteProperty(globalThis, "Buffer");
-    try {
-      expect(nodeBufferBase64(new Uint8Array([1, 2, 3]))).toBeUndefined();
-    } finally {
-      restoreBuffer(original);
-    }
-  });
-
-  // Each case is a value a foreign `Buffer` global can return that the encoder
-  // must reject by returning `undefined` rather than by throwing. `toBeUndefined`
-  // fails on a thrown error, so these pin both halves of that contract.
-  const unusable: [string, () => HostValue][] = [
-    ["null", () => null],
-    ["undefined", () => undefined],
-    ["a primitive", () => 7],
-    ["an object with no toString", () => Object.create(null)],
-    ["an object with a non-callable toString", () => ({ toString: "not-callable" })],
-    ["an object whose toString returns a non-string", () => ({ toString: () => 42 })],
-  ];
-
-  for (const [description, from] of unusable) {
-    it(`returns undefined when a foreign Buffer.from returns ${description}`, () => {
-      expect(
-        withBufferGlobal(foreignBuffer(from), () => nodeBufferBase64(new Uint8Array([1, 2, 3]))),
-      ).toBeUndefined();
-    });
-  }
-});
 
 describe("MessageBodyCodec base64 fallback", () => {
   it("encodes a partial view identically with and without the Buffer global", () => {

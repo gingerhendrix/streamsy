@@ -56,6 +56,24 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
   } finally {
     await edge.dispose();
   }
+  const readOnly = HttpRouter.toWebHandler(
+    Http.routes(Streamsy.group(Outputs), { access: "read" }).pipe(
+      HttpRouter.provideRequest(Memory.layer(Streamsy.group(Outputs))),
+    ),
+    { disableLogger: true },
+  );
+  try {
+    expect(
+      (await readOnly.handler(new Request("http://host/outputs/a", { method: "PUT" }))).status,
+    ).toBe(405);
+    expect(
+      (
+        await readOnly.handler(new Request("http://host/outputs/a", { method: "OPTIONS" }))
+      ).headers.get("access-control-allow-methods"),
+    ).toBe("GET, HEAD, OPTIONS");
+  } finally {
+    await readOnly.dispose();
+  }
 });
 
 it("append access allows POST but refuses creation and deletion", async () => {
