@@ -70,8 +70,11 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 
 ## Good to know
 
-- Only fresh 0.4-format files are accepted. Older Streamsy files and newer
-  unknown schemas are rejected without being changed.
+- Only files in the current storage format are accepted. Older Streamsy files,
+  including those from earlier 0.4 builds, and newer unknown schemas are
+  rejected without being changed. Use a fresh database path.
+- Stream ids are limited to 512 characters. A longer id fails with a
+  non-retryable `StorageFault`.
 - Bun defaults the client `busyTimeout` to zero and retries storage-owned
   transactions with a bounded yielding policy. Tune `client.busyTimeout`,
   `transactionRetryAttempts`, and `transactionRetryDelayMs` if you need to.
