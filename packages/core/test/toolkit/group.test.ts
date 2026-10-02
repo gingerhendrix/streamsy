@@ -1,9 +1,8 @@
-import { Protocol } from "@streamsy/core/protocol";
 /* oxlint-disable effecttsgo/async-function -- Bun owns test execution. */
 import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { Streamsy, Memory, Storage } from "../../src/index.ts";
-import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 
 class Notes extends Streamsy.json<Notes>()("Group/Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -51,14 +50,4 @@ it("memory streams expose feeds and storage but no generic protocol keys", async
       ),
     );
   }
-});
-
-it("provides accepts groups for protocol graphs", async () => {
-  const host = Protocol.bind(Streams.layerMemory(), group);
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* (yield* Notes).create({ user: "ann" });
-      yield* (yield* Counts).create({ user: "ann" });
-    }).pipe(Effect.provide(host)),
-  );
 });

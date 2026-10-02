@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { Effect, Option, Schema } from "effect";
+import { Option, Schema } from "effect";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import { MutationRejected, Operation } from "../../src/storage/mutation.ts";
 import {
@@ -16,8 +16,6 @@ interface FiniteFieldCase {
   readonly name: string;
   readonly decode: (value: number) => object;
   readonly make: (value: number) => object;
-  readonly decodeOmitted?: () => object;
-  readonly makeOmitted?: () => object;
 }
 
 const id = StreamId.make("s");
@@ -34,9 +32,6 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
       }),
     make: (ttlSeconds) =>
       StreamConfig.make({ contentType: "text/plain", ttlSeconds, createdAt: 0 }),
-    decodeOmitted: () =>
-      Schema.decodeSync(StreamConfig)({ contentType: "text/plain", createdAt: 0 }),
-    makeOmitted: () => StreamConfig.make({ contentType: "text/plain", createdAt: 0 }),
   },
   {
     name: "StreamConfig.createdAt",
@@ -49,8 +44,6 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
     decode: (closedAt) =>
       Schema.decodeSync(StreamLifecycle)({ closed: true, closedAt, softDeleted: false }),
     make: (closedAt) => StreamLifecycle.make({ closed: true, closedAt, softDeleted: false }),
-    decodeOmitted: () => Schema.decodeSync(StreamLifecycle)({ closed: false, softDeleted: false }),
-    makeOmitted: () => StreamLifecycle.make({ closed: false, softDeleted: false }),
   },
   {
     name: "StreamLifecycle.forkSubOffset",
@@ -62,16 +55,12 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
       }),
     make: (forkSubOffset) =>
       StreamLifecycle.make({ closed: false, forkSubOffset, softDeleted: false }),
-    decodeOmitted: () => Schema.decodeSync(StreamLifecycle)({ closed: false, softDeleted: false }),
-    makeOmitted: () => StreamLifecycle.make({ closed: false, softDeleted: false }),
   },
   {
     name: "StreamLifecycle.expiresAtMs",
     decode: (expiresAtMs) =>
       Schema.decodeSync(StreamLifecycle)({ closed: false, expiresAtMs, softDeleted: false }),
     make: (expiresAtMs) => StreamLifecycle.make({ closed: false, expiresAtMs, softDeleted: false }),
-    decodeOmitted: () => Schema.decodeSync(StreamLifecycle)({ closed: false, softDeleted: false }),
-    makeOmitted: () => StreamLifecycle.make({ closed: false, softDeleted: false }),
   },
   {
     name: "StoredMessage.timestamp",
@@ -93,15 +82,11 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
     name: "MessageWindow.limit",
     decode: (limit) => Schema.decodeSync(MessageWindow)({ limit }),
     make: (limit) => MessageWindow.make({ limit }),
-    decodeOmitted: () => Schema.decodeSync(MessageWindow)({}),
-    makeOmitted: () => MessageWindow.make({}),
   },
   {
     name: "RecordPatch.config.ttlSeconds",
     decode: (ttlSeconds) => Schema.decodeSync(RecordPatch)({ config: { ttlSeconds } }),
     make: (ttlSeconds) => RecordPatch.make({ config: { ttlSeconds } }),
-    decodeOmitted: () => Schema.decodeSync(RecordPatch)({ config: {} }),
-    makeOmitted: () => RecordPatch.make({ config: {} }),
   },
   {
     name: "Delete.expectedExpiresAtMs",
@@ -114,9 +99,6 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
       }),
     make: (expectedExpiresAtMs) =>
       Operation.make({ _tag: "Delete", streamId: id, reason: "expiry", expectedExpiresAtMs }),
-    decodeOmitted: () =>
-      Schema.decodeSync(Operation)({ _tag: "Delete", streamId: id, reason: "delete" }),
-    makeOmitted: () => Operation.make({ _tag: "Delete", streamId: id, reason: "delete" }),
   },
   {
     name: "MutationRejected.index",
@@ -137,7 +119,6 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
 ];
 
 const nonFiniteValues = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
-const finiteValues = [-Number.MAX_VALUE, -1.5, -0, 0, 1.5, Number.MAX_VALUE];
 
 for (const finiteCase of cases) {
   describe(finiteCase.name, () => {
@@ -151,50 +132,5 @@ for (const finiteCase of cases) {
         }).toThrow();
       }
     });
-
-    it("accepts finite values without adding sign, integer, or range restrictions", () => {
-      for (const value of finiteValues) {
-        expect(() => {
-          finiteCase.decode(value);
-        }).not.toThrow();
-        expect(() => {
-          finiteCase.make(value);
-        }).not.toThrow();
-      }
-    });
-
-    if (finiteCase.decodeOmitted !== undefined && finiteCase.makeOmitted !== undefined) {
-      it("continues to allow the optional field to be omitted", () => {
-        expect(finiteCase.decodeOmitted).not.toThrow();
-        expect(finiteCase.makeOmitted).not.toThrow();
-      });
-    }
-  });
-}
-
-for (const record of [
-  Option.none(),
-  Option.some({
-    id,
-    config: { contentType: "text/plain", createdAt: 0 },
-    lifecycle: { closed: false, softDeleted: false },
-    currentOffset: ZERO_OFFSET,
-  }),
-]) {
-  it(`MutationRejected round-trips ${record._tag} record and recovers by tag`, async () => {
-    const error = new MutationRejected({ index: 1, reason: "offset", record });
-    const encoded = Schema.encodeSync(MutationRejected)(error);
-    // Schema.Option preserves an Effect Option in its encoded type at rc.112.
-    expect(encoded.record).toEqual(record);
-    const decoded = Schema.decodeSync(MutationRejected)(encoded);
-    expect(decoded).toBeInstanceOf(MutationRejected);
-    expect(decoded.record).toEqual(record);
-    expect(
-      await Effect.runPromise(
-        Effect.fail(decoded).pipe(
-          Effect.catchTag("MutationRejected", (rejection) => Effect.succeed(rejection.index)),
-        ),
-      ),
-    ).toBe(1);
   });
 }

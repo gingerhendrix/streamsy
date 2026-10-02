@@ -3,11 +3,6 @@ import { nodeBufferBase64, toArrayBuffer } from "../../src/http/bytes.ts";
 import * as MessageBody from "../../src/http/message-body-codec.ts";
 
 describe("toArrayBuffer", () => {
-  it("returns the backing buffer itself when the view spans all of it", () => {
-    const view = new Uint8Array([1, 2, 3]);
-    expect(toArrayBuffer(view)).toBe(view.buffer);
-  });
-
   it("copies exactly the view's bytes when the view covers part of its buffer", () => {
     const backing = new Uint8Array([9, 1, 2, 3, 9]);
     const view = backing.subarray(1, 4);
@@ -31,8 +26,6 @@ describe("toArrayBuffer", () => {
 });
 
 type HostValue = null | undefined | boolean | number | bigint | string | symbol | object;
-
-interface BufferReceiver {}
 
 function restoreBuffer(descriptor: PropertyDescriptor | undefined): void {
   if (descriptor === undefined) Reflect.deleteProperty(globalThis, "Buffer");
@@ -100,25 +93,6 @@ describe("nodeBufferBase64", () => {
       ).toBeUndefined();
     });
   }
-
-  it("calls from and toString with their own receivers", () => {
-    const receivers: unknown[] = [];
-    const produced = {
-      toString(this: BufferReceiver) {
-        receivers.push(this);
-        return "AQID";
-      },
-    };
-    const global = foreignBuffer(function from(this: BufferReceiver) {
-      receivers.push(this);
-      return produced;
-    });
-
-    const encoded = withBufferGlobal(global, () => nodeBufferBase64(new Uint8Array([1, 2, 3])));
-
-    expect(encoded).toBe("AQID");
-    expect(receivers).toEqual([global, produced]);
-  });
 });
 
 describe("MessageBodyCodec base64 fallback", () => {

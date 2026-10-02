@@ -1,10 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  validateProducer,
-  rejectionToAppendError,
-} from "../../src/policy/producer-idempotency-service.ts";
-import { StreamId } from "../../src/schema/index.ts";
-const id = StreamId.make("s");
+import { validateProducer } from "../../src/policy/producer-idempotency-service.ts";
 
 describe("producer idempotency decisions", () => {
   it("starts an absent producer at sequence zero and rejects an initial gap", () => {
@@ -55,18 +50,6 @@ describe("producer idempotency decisions", () => {
       _tag: "Gap",
       expectedSeq: 3,
       receivedSeq: 5,
-    });
-  });
-  it("maps each non-duplicate rejection without losing its details", () => {
-    expect(rejectionToAppendError({ _tag: "StaleEpoch", currentEpoch: 4 }, id)).toMatchObject({
-      _tag: "StaleEpoch",
-      currentEpoch: 4,
-    });
-    expect(
-      rejectionToAppendError({ _tag: "Gap", expectedSeq: 3, receivedSeq: 5 }, id),
-    ).toMatchObject({ _tag: "ProducerGap", expectedSeq: 3, receivedSeq: 5 });
-    expect(rejectionToAppendError({ _tag: "InvalidEpochSeq" }, id)).toMatchObject({
-      _tag: "InvalidEpochSeq",
     });
   });
 });

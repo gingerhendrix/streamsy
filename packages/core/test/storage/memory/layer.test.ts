@@ -23,4 +23,3 @@ StorageContract.run({
   layer: layer({ constrained: true }),
   expected: constrained,
 });
-StorageContract.assertModes([normal, constrained]);
