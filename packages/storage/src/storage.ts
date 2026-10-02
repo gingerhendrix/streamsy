@@ -187,20 +187,44 @@ const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>)
 
 /** MySQL keys hold at most this many characters, so every dialect enforces it. */
 export const MAX_STREAM_ID_LENGTH = 512;
+/** The MySQL producer key holds a stream id and at most this many producer id characters. */
+export const MAX_PRODUCER_ID_LENGTH = 255;
 
-const streamIdTooLong = (id: StreamId): Option.Option<StorageFault> => {
+const tooLong = (
+  operation: string,
+  label: string,
+  value: string,
+  limit: number,
+): Option.Option<StorageFault> => {
   // MySQL VARCHAR counts code points, which is what the spread yields.
   // oxlint-disable-next-line typescript/no-misused-spread -- code points are the intended unit
-  const length = [...id].length;
-  return length > MAX_STREAM_ID_LENGTH
+  const length = [...value].length;
+  return length > limit
     ? Option.some(
         new StorageFault({
-          operation: "mutate.stream-id",
-          message: `Stream id has ${length} characters; the limit is ${MAX_STREAM_ID_LENGTH}`,
+          operation,
+          message: `${label} has ${length} characters; the limit is ${limit}`,
           retryable: false,
         }),
       )
     : Option.none();
+};
+
+const oversizedKey = (mutation: Mutation): Option.Option<StorageFault> => {
+  for (const operation of mutation.operations) {
+    const fault = Predicate.isTagged(operation, "Create")
+      ? tooLong("mutate.stream-id", "Stream id", operation.record.id, MAX_STREAM_ID_LENGTH)
+      : Predicate.isTagged(operation, "Append") && operation.producer !== undefined
+        ? tooLong(
+            "mutate.producer-id",
+            "Producer id",
+            operation.producer.producerId,
+            MAX_PRODUCER_ID_LENGTH,
+          )
+        : Option.none();
+    if (Option.isSome(fault)) return fault;
+  }
+  return Option.none();
 };
 
 /**
@@ -603,11 +627,8 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
       );
       if (ids.length === 0 || new Set(ids).size !== ids.length)
         return Effect.die(new Error("Mutation requires distinct streams within atomicScope"));
-      for (const operation of mutation.operations) {
-        if (!Predicate.isTagged(operation, "Create")) continue;
-        const tooLong = streamIdTooLong(operation.record.id);
-        if (Option.isSome(tooLong)) return Effect.fail(tooLong.value);
-      }
+      const oversized = oversizedKey(mutation);
+      if (Option.isSome(oversized)) return Effect.fail(oversized.value);
       return boundary
         .mutation({
           keys: [STORAGE_KEY],
