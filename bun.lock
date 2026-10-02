@@ -133,6 +133,8 @@
         "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/platform-deno": "4.0.0-rc.115",
         "@effect/platform-node": "4.0.0-rc.115",
+        "@effect/sql-mysql2": "4.0.0-rc.115",
+        "@effect/sql-pg": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-node": "4.0.0-rc.115",
         "@streamsy/core": "workspace:*",

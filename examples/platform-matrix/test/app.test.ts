@@ -34,7 +34,11 @@ test("/healthz lists the mounted backends and the reason for each other one", as
   expect(await response.json()).toEqual({
     runtime: "test",
     backends: ["memory"],
-    unmounted: { sqlite: "SQLITE_PATH is not set" },
+    unmounted: {
+      sqlite: "SQLITE_PATH is not set",
+      pg: "STREAMSY_PG_URL is not set",
+      mysql: "STREAMSY_MYSQL_URL is not set",
+    },
   });
 });
 
@@ -50,9 +54,9 @@ test("an unknown prefix is 404", async () => {
   expect((await handler(new Request("http://matrix/nope"))).status).toBe(404);
 });
 
-test("a backend without config is not mounted", async () => {
+test.each(["sqlite", "pg", "mysql"])("%s without config is not mounted", async (backend) => {
   const response = await app()(
-    new Request("http://matrix/sqlite/s", {
+    new Request(`http://matrix/${backend}/s`, {
       method: "PUT",
       headers: { "content-type": "text/plain" },
     }),

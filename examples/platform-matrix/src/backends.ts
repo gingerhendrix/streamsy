@@ -2,8 +2,11 @@
  * The storage backends of the matrix app. Each backend is a Streamsy storage
  * Layer for the wildcard group. A backend with a config key is mounted only
  * when that key is set. The runtime entry passes the parts that depend on the
- * runtime, today the SQLite client.
+ * runtime, today the SQLite client. The Postgres and MySQL drivers are pure
+ * JS and run on Bun, Node and Deno (spike S3), so this module imports them.
  */
+import { MysqlClient } from "@effect/sql-mysql2";
+import { PgClient } from "@effect/sql-pg";
 import { Memory, type StorageFault, Streamsy } from "@streamsy/core";
 import * as Storage from "@streamsy/storage";
 import { Config, Effect, Layer, Option, type Scope } from "effect";
@@ -80,6 +83,10 @@ const define = <A>(definition: Definition<A>) =>
     });
   });
 
+/** Root storage over one SQL client, through the public `clientLayer`. */
+const sqlLayer = (client: MakeClient, options: { readonly longPollTimeoutMs?: number }) =>
+  Storage.layer(streams, options).pipe(Layer.provide(Storage.clientLayer(client)));
+
 const definitions = (drivers: Drivers) => [
   define({
     name: "memory",
@@ -91,10 +98,19 @@ const definitions = (drivers: Drivers) => [
     name: "sqlite",
     config: Config.String("SQLITE_PATH").pipe(Config.option),
     missing: "SQLITE_PATH is not set",
-    layer: (filename, options) =>
-      Storage.layer(streams, options).pipe(
-        Layer.provide(Storage.clientLayer(drivers.sqlite(filename))),
-      ),
+    layer: (filename, options) => sqlLayer(drivers.sqlite(filename), options),
+  }),
+  define({
+    name: "pg",
+    config: Config.Redacted("STREAMSY_PG_URL").pipe(Config.option),
+    missing: "STREAMSY_PG_URL is not set",
+    layer: (url, options) => sqlLayer(PgClient.make({ url }), options),
+  }),
+  define({
+    name: "mysql",
+    config: Config.Redacted("STREAMSY_MYSQL_URL").pipe(Config.option),
+    missing: "STREAMSY_MYSQL_URL is not set",
+    layer: (url, options) => sqlLayer(MysqlClient.make({ url }), options),
   }),
 ];
 
