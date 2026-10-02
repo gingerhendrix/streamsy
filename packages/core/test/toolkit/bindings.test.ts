@@ -38,25 +38,32 @@ it("declared streams and Streamsy.Wildcard share one store for declared and arbi
       expect((yield* any.head({ id: "arbitrary/path" })).contentType).toBe(
         "application/octet-stream",
       );
+      yield* any.append({ id: "arbitrary/path" }, [new TextEncoder().encode("hello")]);
+      expect(
+        (yield* Stream.runCollect(any.read({ id: "arbitrary/path" }))).flatMap((b) => b.items),
+      ).toEqual([new TextEncoder().encode("hello")]);
     }).pipe(Effect.provide(host)),
   );
 });
 
-it("stream binding shares a counted storage graph with siblings in either merge order", async () => {
+it("stream binding shares one storage graph with siblings in either merge order", async () => {
   for (const familyFirst of [true, false]) {
-    let builds = 0;
-    const counted = Layer.effectDiscard(
-      Effect.sync(() => {
-        builds += 1;
-      }),
-    );
-    const protocol = Streams.layerMemory().pipe(Layer.provideMerge(counted));
+    const protocol = Streams.layerMemory();
     const graph = Protocol.bind(protocol, Streamsy.group(Drafts));
-    const sibling = Layer.effectDiscard(Effect.void).pipe(Layer.provide(counted));
+    const sibling = Protocol.bind(protocol, Streamsy.group(Streamsy.Wildcard));
     const host = familyFirst ? Layer.merge(graph, sibling) : Layer.merge(sibling, graph);
-    await Effect.runPromise(
-      Effect.flatMap(Drafts, (drafts) => drafts.create({ user: "ann" })).pipe(Effect.provide(host)),
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        yield* drafts.create({ user: "ann" });
+        yield* drafts.append({ user: "ann" }, ["draft"]);
+        const any = yield* Streamsy.Wildcard;
+        const batches = yield* Stream.runCollect(any.read({ id: Drafts.at({ user: "ann" }).id }));
+        return batches
+          .flatMap((batch) => batch.items)
+          .map((item) => new TextDecoder().decode(item));
+      }).pipe(Effect.provide(host)),
     );
-    expect(builds).toBe(1);
+    expect(seen).toEqual(['"draft"']);
   }
 });

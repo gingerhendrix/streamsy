@@ -19,6 +19,9 @@ class DuplicateTemplate extends Streamsy.bytes<DuplicateTemplate>()(
   "notes/:user",
   { params: { user: Schema.String } },
 ) {}
+class Overlap extends Streamsy.bytes<Overlap>()("Group/Overlap", "notes/:id", {
+  params: { id: Schema.String },
+}) {}
 const group = Streamsy.group(Notes, Counts);
 
 it("groups freeze their ordered declarations and reject duplicates and misplaced catch-alls", () => {
@@ -27,6 +30,7 @@ it("groups freeze their ordered declarations and reject duplicates and misplaced
   expect(Object.isFrozen(group.streams)).toBe(true);
   expect(() => Streamsy.group(Notes, DuplicateName)).toThrow("duplicate stream name");
   expect(() => Streamsy.group(Notes, DuplicateTemplate)).toThrow("duplicate stream template");
+  expect(() => Streamsy.group(Notes, Overlap)).toThrow("overlap");
   expect(() => Streamsy.group(Streamsy.Wildcard, Notes)).toThrow("Wildcard must be last");
   expect(Streamsy.group(Notes, Streamsy.Wildcard).streams).toHaveLength(2);
 });
