@@ -10,6 +10,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import type { CommitBoundaryApi } from "@streamsy/core";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -26,12 +27,10 @@ export interface CommitBoundaryDiagnostics {
   readonly closed: boolean;
 }
 
-export interface CommitBoundary {
+/** The proof boundary keeps the public `CommitBoundary` shape and adds proof hooks. */
+export interface CommitBoundary extends CommitBoundaryApi {
   readonly sql: SqlClient.SqlClient;
   readonly reactivity: typeof Reactivity.Reactivity.Service;
-  readonly withTransaction: <A, E, R>(
-    body: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | import("effect/unstable/sql/SqlError").SqlError, R>;
   readonly mutation: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
     readonly effect: Effect.Effect<A, E, R>;

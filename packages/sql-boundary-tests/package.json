@@ -10,6 +10,7 @@
   "dependencies": {
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
+    "@streamsy/core": "workspace:*",
     "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
