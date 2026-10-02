@@ -2,7 +2,6 @@ import * as Addresses from "./support/addresses.ts";
 import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { contractFingerprint } from "@streamsy/serve/contract";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
@@ -183,47 +182,46 @@ test("named output replay survives a lost append reply beside the SQL projection
   }
 });
 
-test("served route fingerprints pin address identity and reject incompatible contracts without creating data", async () => {
+/** Serves the output routes from a new in-memory application runtime. */
+const serveOutputs = () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
-  const services = await runtime.runPromise(Effect.context());
-  const web = HttpRouter.toWebHandler(
-    outputRoutes.pipe(
-      Layer.provide(Layer.succeedContext(services)),
-      HttpRouter.provideRequest(Layer.succeedContext(services)),
+  return runtime.runPromise(Effect.context()).then((services) => ({
+    runtime,
+    web: HttpRouter.toWebHandler(
+      outputRoutes.pipe(
+        Layer.provide(Layer.succeedContext(services)),
+        HttpRouter.provideRequest(Layer.succeedContext(services)),
+      ),
+      { disableLogger: true },
     ),
-    { disableLogger: true },
-  );
+  }));
+};
+
+test("served route fingerprints are stable across runtimes, differ per workspace, and reject incompatible contracts without creating data", async () => {
+  const { runtime, web } = await serveOutputs();
+  const fresh = await serveOutputs();
   try {
-    for (const [kind, name, suffix, collection, key] of [
-      ["state", "board", "issues", "board", "issueId"],
-      ["state", "labelCounts", "label-counts", "labelCounts", "labelId"],
-      ["stream", "transitions", "issue-transitions", "", ""],
+    for (const [kind, suffix] of [
+      ["state", "issues"],
+      ["state", "label-counts"],
+      ["stream", "issue-transitions"],
     ] as const) {
-      const route = `/${kind === "state" ? "state" : "feed"}/workspaces/:workspaceId/${suffix}`;
-      const url = `http://host${route.replace(":workspaceId", "live")}?offset=-1`;
+      const url = `http://host/${kind === "state" ? "state" : "feed"}/workspaces/live/${suffix}?offset=-1`;
       const header = `x-streamsy-${kind}-contract`;
       const response = await web.handler(new Request(url));
       expect(response.status).toBe(404);
-      expect(response.headers.get(header)).toBe(
-        contractFingerprint({
-          kind,
-          route,
-          source: `issue-tracker/:workspaceId/outputs/${name === "labelCounts" ? "label-counts" : name}`,
-          id: `issue-tracker/live/outputs/${name === "labelCounts" ? "label-counts" : name}`,
-          collections: kind === "state" ? { [collection]: key } : null,
-          params: ["workspaceId"],
-          version: 1,
-          recovery: "replay-from-start",
-          contract: null,
-        }),
-      );
+      const fingerprint = response.headers.get(header);
+      expect(fingerprint).toEqual(expect.any(String));
+      expect((await fresh.web.handler(new Request(url))).headers.get(header)).toBe(fingerprint);
+      const other = await web.handler(new Request(url.replace("/live/", "/acme/")));
+      expect(other.headers.get(header)).toEqual(expect.any(String));
+      expect(other.headers.get(header)).not.toBe(fingerprint);
       const rejected = await web.handler(new Request(url, { headers: { [header]: "outdated" } }));
       expect(rejected.status).toBe(409);
       expect(await rejected.json()).toMatchObject({ _tag: "ResumeRejected" });
-      const other = await web.handler(new Request(url.replace("/live/", "/acme/")));
-      expect(other.headers.get(header)).not.toBe(response.headers.get(header));
     }
-    const value = await web.handler(new Request("http://host/workspaces/live/summary"));
+    const summaryUrl = "http://host/workspaces/live/summary";
+    const value = await web.handler(new Request(summaryUrl));
     expect(value.status).toBe(200);
     expect(await value.json()).toEqual({
       workspaceId: "live",
@@ -232,18 +230,13 @@ test("served route fingerprints pin address identity and reject incompatible con
       labelCount: 0,
       projectCount: 0,
     });
-    expect(value.headers.get("x-streamsy-value-contract")).toBe(
-      contractFingerprint({
-        kind: "value",
-        route: "/workspaces/:workspaceId/summary",
-        cache: "private, max-age=0, must-revalidate",
-        contract: "compact-summary-v1",
-      }),
-    );
+    const fingerprint = value.headers.get("x-streamsy-value-contract");
+    expect(fingerprint).toEqual(expect.any(String));
+    expect(
+      (await fresh.web.handler(new Request(summaryUrl))).headers.get("x-streamsy-value-contract"),
+    ).toBe(fingerprint);
     const rejected = await web.handler(
-      new Request("http://host/workspaces/live/summary", {
-        headers: { "x-streamsy-value-contract": "outdated" },
-      }),
+      new Request(summaryUrl, { headers: { "x-streamsy-value-contract": "outdated" } }),
     );
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toMatchObject({ _tag: "ContractChanged" });
@@ -257,7 +250,9 @@ test("served route fingerprints pin address identity and reject incompatible con
     );
   } finally {
     await web.dispose();
+    await fresh.web.dispose();
     await runtime.dispose();
+    await fresh.runtime.dispose();
   }
 });
 

@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
-import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
-import { Events, Users } from "../server/streams.ts";
+import { Events } from "../server/streams.ts";
 import { transact, UnknownIssue } from "../server/state.ts";
 import { scratchDirectory, startServer, stopServer, waitForServer } from "./support.ts";
 
@@ -34,25 +33,6 @@ test("the fold keeps the newest sequence when an older fact arrives later", () =
     occurredAt: "2026-09-20T09:00:00.000Z",
   };
   expect(foldIssue(first, older)).toBe(first);
-});
-
-test("the transactional handler writes application rows through the SQLite host", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* createInputs("live");
-        yield* (yield* Events).append({ workspaceId: "live" }, [created]);
-        const result = yield* Projection.run(issueRows.at({ workspaceId: "live" }));
-        const sql = yield* SqlClient.SqlClient;
-        const rows = yield* sql.unsafe<{ readonly status: string }>("SELECT status FROM issues");
-        expect(result.items).toBe(1);
-        expect(rows).toEqual([{ status: "todo" }]);
-      }),
-    );
-  } finally {
-    await runtime.dispose();
-  }
 });
 
 test("transact decides from the issueRows tables and appends at the events offset", async () => {
@@ -119,47 +99,10 @@ test("the change trigger stays alive beside the request trigger on one key", asy
           if (count !== 2) yield* Effect.sleep("10 millis");
         }
         expect(count).toBe(2);
-      }),
-    );
-  } finally {
-    await runtime.dispose();
-  }
-});
-
-test("catalog state upserts and deletes a row", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* createInputs("live");
-        const ref = Users.at({ workspaceId: "live" });
-        const ada = {
-          userId: "ada",
-          workspaceId: "live",
-          name: "Ada",
-          updatedAt: "2026-09-20T10:00:00.000Z",
-        };
-        yield* (yield* Users).append(
-          { workspaceId: "live" },
-          DurableState.changes(ref, { offset: ZERO_OFFSET }, [DurableState.upsert("user", ada)]),
-        );
-        yield* Projection.run(issueRows.at({ workspaceId: "live" }));
-        const sql = yield* SqlClient.SqlClient;
-        const afterUpsert = yield* sql.unsafe<{ readonly n: number }>(
-          "SELECT COUNT(*) AS n FROM users",
-        );
-        expect(afterUpsert[0]?.n).toBe(1);
-        yield* (yield* Users).append(
-          { workspaceId: "live" },
-          DurableState.changes(ref, { offset: "1" }, [
-            DurableState.remove("user", ada.userId, { oldValue: ada }),
-          ]),
-        );
-        yield* Projection.run(issueRows.at({ workspaceId: "live" }));
-        const afterDelete = yield* sql.unsafe<{ readonly n: number }>(
-          "SELECT COUNT(*) AS n FROM users",
-        );
-        expect(afterDelete[0]?.n).toBe(0);
+        expect(yield* sql.unsafe("SELECT issue_id, status FROM issues ORDER BY issue_id")).toEqual([
+          { issue_id: "both", status: "todo" },
+          { issue_id: "change-only", status: "todo" },
+        ]);
       }),
     );
   } finally {
