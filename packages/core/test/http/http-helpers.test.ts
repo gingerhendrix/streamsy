@@ -84,6 +84,14 @@ describe("HTTP streamPath", () => {
     expect(path.strip("/other/foo")).toBe("/other/foo");
     expect(path.canonicalizeForkSource("/api.v1/source")).toBe("source");
   });
+
+  it("resolves a fork source path without the mount prefix", () => {
+    const path = streamPath("/memory");
+    expect(path.canonicalizeForkSource("/v1/stream/source")).toBe("v1/stream/source");
+    expect(path.canonicalizeForkSource("/memory/v1/stream/source")).toBe("v1/stream/source");
+    expect(path.canonicalizeForkSource("source")).toBe("source");
+    expect(streamPath("/").canonicalizeForkSource("/v1/stream/source")).toBe("v1/stream/source");
+  });
 });
 
 describe("HTTP SseEventEncoder", () => {

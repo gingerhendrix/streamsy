@@ -6,6 +6,9 @@ export const streamPath = (pathPrefix = "/") => {
   return {
     requiredPathPattern: (): string => `${prefix}{path}`,
     strip,
-    canonicalizeForkSource: strip,
+    // A client that does not know the mount prefix names the source by its
+    // path below the prefix. Both forms resolve to the same stream id.
+    canonicalizeForkSource: (source: string): string =>
+      regex.test(source) ? strip(source) : source.replace(/^\//, ""),
   };
 };
