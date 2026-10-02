@@ -2,6 +2,7 @@ import { spawnServer } from "@streamsy/test-support/server";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
+import { ServerConfig, storageChoice } from "../server/config.ts";
 
 export class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,
@@ -19,7 +20,21 @@ export const scratchDatabase = (prefix: string) =>
     return path.join(directory, "tracker.sqlite");
   });
 
-/** Starts the server on `database`. Pass the old port to restart it at the same URL. */
+/**
+ * The database that a spawned server uses, as a name for the smoke output. The
+ * server reads the same config: `STREAMSY_PG_URL` or `STREAMSY_MYSQL_URL` when
+ * set, else the SQLite file. Both URLs fail here, before any server starts.
+ */
+export const serverDatabase = Effect.gen(function* () {
+  const choice = yield* storageChoice(yield* ServerConfig);
+  return choice.dialect === "pg" ? "Postgres" : choice.dialect === "mysql" ? "MySQL" : "SQLite";
+});
+
+/**
+ * Starts the server on `database`, a SQLite file. With a database URL set,
+ * the server uses that database instead, and a restart finds the same data.
+ * Pass the old port to restart it at the same URL.
+ */
 export const startServer = (database: string, port?: number) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;

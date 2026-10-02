@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker, Board, LabelCounts } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels, Projects, Users } from "../server/streams.ts";
 
@@ -37,7 +37,7 @@ const project = { workspaceId: "live", projectId: "p1", key: "p1", name: "Projec
 const label = { workspaceId: "live", labelId: "bug", name: "Bug", color: "#123456", updatedAt: at };
 
 test("indexed touched-key output matches full scans byte for byte across catalog and membership changes", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {

@@ -5,7 +5,7 @@ import { Console, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { IssueEvent } from "../domain/issue.ts";
 import { LabelCountRow, WorkspaceSummary } from "../domain/outputs.ts";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
 import { Labels, LabelEvents } from "../server/streams.ts";
 import {
@@ -69,7 +69,7 @@ const smoke = Effect.gen(function* () {
   const database = yield* scratchDatabase("streamsy-issue-serve");
   // The producer closes its SQLite connection before the server opens the file.
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The producer layer must close here.
-  yield* produce.pipe(Effect.provide(applicationLayer(database)));
+  yield* produce.pipe(Effect.provide(applicationLayer(sqliteStorage(database))));
   const server = yield* startServer(database);
   const baseUrl = server.url;
   yield* post(`${baseUrl}/api/workspaces/live/commands`, {

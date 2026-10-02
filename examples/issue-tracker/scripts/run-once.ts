@@ -1,7 +1,7 @@
 import { BunRuntime } from "@effect/platform-bun";
 import { Projection } from "@streamsy/projection";
 import { Config, Effect, Layer, Schema } from "effect";
-import { applicationLayer } from "../server/host.ts";
+import { applicationLayer, sqliteStorage } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
 
@@ -17,7 +17,11 @@ const program = Effect.gen(function* () {
   yield* Effect.log(yield* Projection.run(tracker.at({ workspaceId })));
 });
 
-const host = Layer.unwrap(Effect.map(Config.String("ISSUE_TRACKER_DB"), applicationLayer));
+const host = Layer.unwrap(
+  Effect.map(Config.String("ISSUE_TRACKER_DB"), (filename) =>
+    applicationLayer(sqliteStorage(filename)),
+  ),
+);
 
 // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.
 BunRuntime.runMain(program.pipe(Effect.provide(host)));

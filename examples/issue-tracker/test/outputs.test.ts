@@ -6,7 +6,7 @@ import { contractFingerprint } from "@streamsy/serve/contract";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { outputRoutes } from "../server/app.ts";
 import { tracker, Board, Transitions } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
@@ -25,7 +25,7 @@ const created = {
 };
 
 test("key-only catalog deletes stay in the address workspace and advance both checkpoints", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -81,7 +81,7 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
 });
 
 test("catalog values cannot write another workspace in either projection", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -133,7 +133,7 @@ test("catalog values cannot write another workspace in either projection", async
 });
 
 test("named output replay survives a lost append reply beside the SQL projection", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -184,7 +184,7 @@ test("named output replay survives a lost append reply beside the SQL projection
 });
 
 test("served route fingerprints pin address identity and reject incompatible contracts without creating data", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   const services = await runtime.runPromise(Effect.context());
   const web = HttpRouter.toWebHandler(
     outputRoutes.pipe(
@@ -262,7 +262,7 @@ test("served route fingerprints pin address identity and reject incompatible con
 });
 
 test("compact summary excludes fold rows and keeps its ETag across a count-neutral assignment", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   const services = await runtime.runPromise(Effect.context());
   const web = HttpRouter.toWebHandler(
     outputRoutes.pipe(

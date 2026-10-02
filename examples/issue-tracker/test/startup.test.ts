@@ -1,7 +1,13 @@
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
-import { applicationLayer, createInputs, hostLayer, streams } from "../server/host.ts";
+import {
+  applicationLayer,
+  createInputs,
+  hostLayer,
+  sqliteStorage,
+  streams,
+} from "../server/host.ts";
 import { Users } from "../server/streams.ts";
 import {
   scratchDirectory,
@@ -16,7 +22,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
   const scratch = await scratchDirectory("tracker-startup-fault");
   let server: ReturnType<typeof startServer> | undefined;
   try {
-    const producer = ManagedRuntime.make(applicationLayer(scratch.database));
+    const producer = ManagedRuntime.make(applicationLayer(sqliteStorage(scratch.database)));
     try {
       await producer.runPromise(
         Effect.gen(function* () {
@@ -72,7 +78,7 @@ test("the host runtime exposes only streams, feeds and application storage servi
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const context = yield* Layer.build(hostLayer(":memory:"));
+        const context = yield* Layer.build(hostLayer(sqliteStorage(":memory:")));
         expect(Option.isNone(Context.getOption(context, Storage))).toBe(true);
         expect([...context.mapUnsafe.keys()].sort()).toEqual(
           [

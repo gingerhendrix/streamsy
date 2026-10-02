@@ -1,11 +1,21 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { check, getJson, post, readBoard, scratchDatabase, startServer } from "./support.ts";
+import {
+  check,
+  getJson,
+  post,
+  readBoard,
+  scratchDatabase,
+  serverDatabase,
+  startServer,
+} from "./support.ts";
 
 const Status = Schema.Struct({ offsets: Schema.Record(Schema.String, Schema.String) });
 
 const smoke = Effect.gen(function* () {
+  const storage = yield* serverDatabase;
+  // Used only when no database URL is set.
   const database = yield* scratchDatabase("streamsy-issue-smoke");
   const server = yield* startServer(database);
   const baseUrl = server.url;
@@ -34,7 +44,7 @@ const smoke = Effect.gen(function* () {
     (yield* readBoard(baseUrl, "live")).rows[0]?.status === "done",
     "second command missing",
   );
-  yield* Console.log("smoke:http ok: checkpoint and row resumed, then advanced once");
+  yield* Console.log(`smoke:http ok on ${storage}: checkpoint and row resumed, then advanced once`);
 });
 
 smoke.pipe(
