@@ -205,6 +205,8 @@
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
         "@effect/platform-bun": "4.0.0-rc.115",
+        "@effect/sql-mysql2": "4.0.0-rc.115",
+        "@effect/sql-pg": "4.0.0-rc.115",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "@streamsy/storage": "workspace:*",
         "@types/bun": "^1.2.0",
