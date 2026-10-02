@@ -14,6 +14,10 @@
  * runtime's cells end, also on failure and Ctrl-C. Logs, the table and
  * `result.json` show database URLs with the password redacted.
  *
+ * On the Bun row, each pg and mysql cell also runs the issue-tracker HTTP
+ * smoke, in its own fresh database `streamsy_matrix_issues_<run id>`, dropped
+ * after the smoke. The issue tracker has only a Bun entry.
+ *
  * env: MATRIX_BASE_PORT (default 4101; Bun, Node and Deno take three ports
  * from it), MATRIX_OUT (default `<package>/.matrix`), STREAMSY_PG_URL,
  * STREAMSY_MYSQL_URL.
@@ -74,6 +78,8 @@ interface Cell {
   /** The suite counts, or null when the output has no vitest summary. */
   readonly conformance?: Check & { readonly counts: Counts | null };
   readonly smoke?: Check;
+  /** The issue-tracker smoke and its own database, on the Bun pg and mysql cells. */
+  readonly issueTracker?: (Check & { readonly database: string }) | undefined;
 }
 
 interface Runtime {
@@ -115,6 +121,9 @@ const DIALECTS: ReadonlyArray<Dialect> = [
   },
 ];
 
+/** The runtime that runs the issue-tracker smoke. The issue tracker has only a Bun entry. */
+const ISSUE_TRACKER_RUNTIME: Runtime["name"] = "bun";
+
 /** A dialect whose URL is set, with an open admin connection to its base database. */
 interface Server {
   readonly dialect: Dialect;
@@ -122,7 +131,7 @@ interface Server {
   readonly admin: SqlClient.SqlClient;
 }
 
-/** A database made for one runtime. `url` holds the password; `shown` does not. */
+/** A database made for one runtime or check. `url` holds the password; `shown` does not. */
 interface Database {
   readonly dialect: Dialect;
   readonly url: string;
@@ -268,10 +277,13 @@ const program = Effect.gen(function* () {
     }),
   ).pipe(Effect.map((found) => found.flatMap(Option.toArray)));
 
-  /** Makes a fresh database for one runtime, and drops it when the runtime's scope closes. */
-  const freshDatabase = (server: Server, runtime: Runtime) =>
+  /**
+   * Makes a fresh database `streamsy_matrix_<owner>_<run id>`, and drops it when
+   * the scope closes. The owner is a runtime, or `issues` for the issue tracker.
+   */
+  const freshDatabase = (server: Server, owner: string) =>
     Effect.gen(function* () {
-      const name = `streamsy_matrix_${runtime.name}_${runId}`;
+      const name = `streamsy_matrix_${owner}_${runId}`;
       const url = withDatabase(Redacted.value(server.url), name);
       const shown = redactUrl(url);
       yield* Effect.acquireRelease(
@@ -300,7 +312,12 @@ const program = Effect.gen(function* () {
   /** Runs a command to its end and writes its combined output to `log`. */
   const run = (
     command: ReadonlyArray<string>,
-    options: { readonly cwd: string; readonly env: Record<string, string>; readonly log: string },
+    options: {
+      readonly cwd: string;
+      // An `undefined` value unsets an inherited variable.
+      readonly env: Record<string, string | undefined>;
+      readonly log: string;
+    },
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -387,7 +404,7 @@ const program = Effect.gen(function* () {
   const check = (
     command: ReadonlyArray<string>,
     cwd: string,
-    env: Record<string, string>,
+    env: Record<string, string | undefined>,
     log: string,
   ) =>
     run(command, { cwd, env, log }).pipe(
@@ -399,7 +416,42 @@ const program = Effect.gen(function* () {
       })),
     );
 
-  const runCell = (runtime: Runtime, url: string, backend: string, database?: Database) =>
+  /**
+   * The issue-tracker smoke in a fresh database of `server`, dropped after the
+   * smoke. The smoke starts and restarts its own server, so it gets only this
+   * server's URL; the other dialect's variable is unset.
+   */
+  const issueTrackerSmoke = (server: Server, name: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const database = yield* freshDatabase(server, "issues");
+        const smoke = yield* check(
+          ["bun", "run", "smoke:http"],
+          path.join(repoDir, "examples/issue-tracker"),
+          Object.fromEntries(
+            DIALECTS.map((dialect) => [
+              dialect.variable,
+              dialect === server.dialect ? database.url : undefined,
+            ]),
+          ),
+          `${name}.issue-tracker.log`,
+        );
+        return {
+          status: smoke.status,
+          exitCode: smoke.exitCode,
+          log: smoke.log,
+          database: database.shown,
+        };
+      }),
+    );
+
+  const runCell = (
+    runtime: Runtime,
+    url: string,
+    backend: string,
+    database?: Database,
+    server?: Server,
+  ) =>
     Effect.gen(function* () {
       const baseUrl = `${url}/${backend}`;
       const name = `${runtime.name}-${backend}`;
@@ -415,8 +467,16 @@ const program = Effect.gen(function* () {
         { BASE_URL: baseUrl },
         `${name}.smoke.log`,
       );
+      const issueTracker =
+        runtime.name === ISSUE_TRACKER_RUNTIME && server !== undefined
+          ? yield* issueTrackerSmoke(server, name)
+          : undefined;
       const status: Status =
-        conformance.status === "pass" && smoke.status === "pass" ? "pass" : "fail";
+        conformance.status === "pass" &&
+        smoke.status === "pass" &&
+        (issueTracker === undefined || issueTracker.status === "pass")
+          ? "pass"
+          : "fail";
       const cell: Cell = {
         runtime: runtime.name,
         backend,
@@ -430,6 +490,7 @@ const program = Effect.gen(function* () {
           counts: parseCounts(conformance.output),
         },
         smoke: { status: smoke.status, exitCode: smoke.exitCode, log: smoke.log },
+        issueTracker,
       };
       yield* Console.log(`  ${name}: ${describe(cell)}`);
       return cell;
@@ -447,7 +508,7 @@ const program = Effect.gen(function* () {
             yield* Console.log(`${runtime.name}: starting ${command.join(" ")}`);
             // Made before the entry starts, so the entry stops before they drop.
             const databases = yield* Effect.forEach(servers, (server) =>
-              freshDatabase(server, runtime),
+              freshDatabase(server, runtime.name),
             );
             const started = yield* Effect.exit(start(runtime, command, databases));
             if (Exit.isFailure(started)) {
@@ -463,6 +524,7 @@ const program = Effect.gen(function* () {
                     url,
                     backend,
                     databases.find((database) => database.dialect.backend === backend),
+                    servers.find((server) => server.dialect.backend === backend),
                   )
                 : Effect.succeed(
                     skip(
@@ -503,7 +565,10 @@ class MatrixFailed extends Schema.TaggedError<MatrixFailed>()("MatrixFailed", {
   message: Schema.String,
 }) {}
 
-/** A cell for the table, for example `pass (332 passed, 6 skipped; smoke pass)`. */
+/**
+ * A cell for the table, for example `pass (332 passed, 6 skipped; smoke pass)`,
+ * with `; issue-tracker pass` when the cell ran the issue-tracker smoke.
+ */
 const describe = (cell: Cell): string => {
   const counts = cell.conformance?.counts;
   const details = [
@@ -515,6 +580,7 @@ const describe = (cell: Cell): string => {
             `, ${counts.skipped} skipped`,
         ]),
     ...(cell.smoke === undefined ? [] : [`smoke ${cell.smoke.status}`]),
+    ...(cell.issueTracker === undefined ? [] : [`issue-tracker ${cell.issueTracker.status}`]),
   ];
   return details.length === 0 ? cell.status : `${cell.status} (${details.join("; ")})`;
 };
@@ -537,15 +603,23 @@ const table = (cells: ReadonlyArray<Cell>): string => {
   const notes = cells
     .filter((cell) => cell.reason !== undefined)
     .map((cell) => `- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`);
-  const databases = cells
-    .filter((cell) => cell.database !== undefined)
-    .map((cell) => `- ${cell.runtime} ${cell.backend}: database ${cell.database}`);
+  const databases = cells.flatMap((cell) => [
+    ...(cell.database === undefined
+      ? []
+      : [`- ${cell.runtime} ${cell.backend}: database ${cell.database}`]),
+    ...(cell.issueTracker === undefined
+      ? []
+      : [
+          `- ${cell.runtime} ${cell.backend}: issue-tracker database ${cell.issueTracker.database}`,
+        ]),
+  ]);
   return [
     line(header),
     line(widths.map((width) => "-".repeat(width))),
     ...body.map(line),
     "",
     "Counts are the official suite. Smoke is the memory-server HTTP smoke.",
+    "Issue-tracker is the issue-tracker HTTP smoke, on the Bun pg and mysql cells.",
     ...notes,
     ...databases,
   ].join("\n");
