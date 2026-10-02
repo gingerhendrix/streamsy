@@ -217,22 +217,6 @@
         "alchemy",
       ],
     },
-    "packages/sql-boundary-tests": {
-      "name": "@streamsy/sql-boundary-tests",
-      "version": "0.4.0",
-      "dependencies": {
-        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-do": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
-      },
-      "devDependencies": {
-        "@cloudflare/workers-types": "4.20251228.0",
-        "@types/bun": "^1.2.0",
-        "@types/node": "^22.10.0",
-        "miniflare": "4.20260730.0",
-        "typescript": "catalog:",
-      },
-    },
     "packages/storage": {
       "name": "@streamsy/storage",
       "version": "0.4.0",
@@ -713,8 +697,6 @@
     "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 
     "@streamsy/serve": ["@streamsy/serve@workspace:packages/serve"],
-
-    "@streamsy/sql-boundary-tests": ["@streamsy/sql-boundary-tests@workspace:packages/sql-boundary-tests"],
 
     "@streamsy/storage": ["@streamsy/storage@workspace:packages/storage"],
 

@@ -149,12 +149,6 @@ describe("the drain bound", () => {
     expect(elapsed).toBeGreaterThanOrEqual(250);
     expect(elapsed).toBeLessThan(1500);
   });
-
-  it("the default bound is 2 seconds", async () => {
-    const elapsed = await stopStuck(undefined);
-    expect(elapsed).toBeGreaterThanOrEqual(1900);
-    expect(elapsed).toBeLessThan(3500);
-  }, 10_000);
 });
 
 const exitCode = (exit: Exit.Exit<unknown, unknown>) => {

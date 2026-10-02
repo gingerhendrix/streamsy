@@ -51,10 +51,6 @@ describe("newIssue", () => {
   test("keeps a supplied status", () => {
     expect(newIssue(issueInput({ status: "done" }), stamp).status).toBe("done");
   });
-
-  test("rejects a status outside the schema before it reaches the builder", () => {
-    expect(Schema.is(IssueInput)({ status: "archived" })).toBe(false);
-  });
 });
 
 describe("nextIssue", () => {

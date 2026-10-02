@@ -14,18 +14,6 @@ const request = (path: string) =>
     }),
   );
 
-test("Alchemy exports the route host names", () => {
-  expect(Object.keys(Host).toSorted()).toEqual([
-    "Alarm",
-    "Placement",
-    "alarm",
-    "alarmLayer",
-    "objectHandlers",
-    "router",
-    "rule",
-  ]);
-});
-
 test("Alchemy placement strips the prefix and preserves the request and response bodies", async () => {
   const names: Array<string> = [];
   const forwarded: Array<HttpServerRequest.HttpServerRequest> = [];

@@ -13,7 +13,6 @@
     "src/alchemy.ts",
     "test/support/cloudflare/**/*",
     "test/support/alchemy/**/*",
-    "test/alchemy/**/*",
     "test/cloudflare/**/*",
     "test/cloudflare-host.test.ts",
     "test/cloudflare-lifecycle.test.ts",

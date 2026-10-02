@@ -9,8 +9,7 @@
     "src/cloudflare/**/*",
     "src/alchemy.ts",
     "test/support/cloudflare/**/*",
-    "test/support/alchemy/**/*",
-    "test/alchemy/**/*"
+    "test/support/alchemy/**/*"
   ],
   "exclude": ["node_modules", "dist"]
 }

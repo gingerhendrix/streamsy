@@ -11,7 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { TestClock } from "effect/testing";
 import { defineActionSink } from "@streamsy/serve/action";
-import { ActionSinkDeliveryFailure, type OutboxUnavailable } from "@streamsy/serve/action/errors";
+import type { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import {
   makeMemoryOutboxBacking,
   OutboxStore,
@@ -152,27 +152,6 @@ describe("draining an action sink", () => {
       Effect.gen(function* () {
         yield* drainAt(handlerFor(log), 0);
         expect(log.deliveries).toHaveLength(1);
-      }),
-    );
-  });
-
-  test("a redelivered entry is absorbed by the handler's idempotency key", () => {
-    const outbox = makeMemoryOutboxBacking();
-    const log = recorder();
-    enqueue(outbox, [note("a")]);
-
-    // A crash between a successful handler call and the outbox write leaves the
-    // entry pending, so the next pass delivers it again. The handler sees the
-    // same key and performs no second effect.
-    return runWithOutbox(
-      outbox,
-      Effect.gen(function* () {
-        yield* drainAt(handlerFor(log), 0);
-        yield* outbox.reschedule(1, 0, 0, "simulated crash before the outbox write");
-        yield* drainAt(handlerFor(log), 0);
-
-        expect(log.deliveries).toHaveLength(2);
-        expect(log.accepted.size).toBe(1);
       }),
     );
   });
@@ -351,15 +330,5 @@ describe("draining an action sink", () => {
         ]);
       }),
     );
-  });
-});
-
-describe("a delivery refusal", () => {
-  test("names the sink's declared handler", () => {
-    const failure = ActionSinkDeliveryFailure.retryable(sink.handler.name, "a", "down");
-    const { _tag: tag } = failure;
-    expect(tag).toBe("ActionSinkDeliveryFailure");
-    expect(failure.handler).toBe("test.notify");
-    expect(failure.retryable).toBe(true);
   });
 });

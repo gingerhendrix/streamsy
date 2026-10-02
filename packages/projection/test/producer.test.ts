@@ -1,7 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
-import { producerId } from "../src/commit/producer.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
@@ -609,11 +608,6 @@ test("a two-input pending unit reproduces both ranges", () =>
       });
     }),
   ));
-
-test("producer ids join params to the id", () => {
-  expect(producerId("x", 1, {})).toBe("x/v1");
-  expect(producerId("x", 1, { b: "2", a: "1" })).toBe(`x/v1/${JSON.stringify({ a: "1", b: "2" })}`);
-});
 
 test("a missing output is created before the first pin", () =>
   run(

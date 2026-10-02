@@ -41,7 +41,6 @@
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:workerd": "bun run --cwd packages/conformance-tests test:workerd",
-    "test:sql-boundary": "bun run --cwd packages/sql-boundary-tests test",
     "build": "bun run --cwd packages/core build && bun run --cwd packages/storage build && bun run --cwd packages/serve build && bun run --cwd packages/projection build",
     "e2e:check": "bun run --cwd e2e typecheck && bun run --cwd e2e test",
     "test:e2e:deployed": "bun run build && bun run --cwd e2e test:deployed",

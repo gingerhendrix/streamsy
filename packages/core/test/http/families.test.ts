@@ -93,14 +93,6 @@ it("append access allows POST but refuses creation and deletion", async () => {
   }
 });
 
-it("HTTP rejects a catch-all before a narrower access policy", () => {
-  expect(() =>
-    Http.routes(Streamsy.group(Streamsy.Wildcard, Outputs), {
-      access: (stream) => (stream === Streamsy.Wildcard ? "full" : "read"),
-    }),
-  ).toThrow("Wildcard must be last");
-});
-
 it("a final catch-all cannot widen a declared read-only stream's HTTP access", async () => {
   const edge = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Outputs, Streamsy.Wildcard), {

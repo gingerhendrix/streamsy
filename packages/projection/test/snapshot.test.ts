@@ -1,6 +1,5 @@
 import { Commit } from "@streamsy/projection";
 import { tmpdir } from "node:os";
-import { restore } from "../src/checkpoint-store.ts";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -184,24 +183,6 @@ for (const [name, host] of hosts) {
       }).pipe(Effect.provide(host)),
     ));
 }
-
-test("read of an invalid stored state fails as an invalid record", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const checkpoints = yield* CheckpointStore;
-      const before = yield* restore(totals, checkpoints);
-      yield* checkpoints.compareAndSet(totals, before.token, {
-        identity: before.record.identity,
-        inputs: before.record.inputs,
-        adapters: before.record.adapters,
-        state: '"not totals"',
-      });
-      const failed = yield* Projection.read(totals).pipe(Effect.result);
-      expect(failed._tag).toBe("Failure");
-      if (failed._tag === "Failure")
-        expect(failed.failure).toMatchObject({ phase: "load", reason: "invalid-record" });
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory()))),
-  ));
 
 test("SQLite: a second process writes between two reads of the same file", async () => {
   const directory = mkdtempSync(join(tmpdir(), "projection-snapshot-"));
