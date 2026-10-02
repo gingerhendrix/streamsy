@@ -1,11 +1,10 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Streams } from "@streamsy/core/protocol";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 
@@ -17,7 +16,7 @@ class rows extends Streamsy.state<rows>()("serve/serve.test/rows", "rows/:seat",
   params: { seat: Schema.String },
   collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
-const protocol = Streams.layerMemory();
+const protocol = MemoryStorage.layerProtocol();
 const storage = Protocol.bind(protocol, Streamsy.group(stream, rows)).pipe(
   Layer.provideMerge(protocol),
 );

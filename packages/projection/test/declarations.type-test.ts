@@ -2,8 +2,8 @@ import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { Effect, Schema, type Scope } from "effect";
-import { Streamsy, StreamAddress } from "@streamsy/core";
-import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
+import { Streamsy, StreamAddress, MemoryStorage } from "@streamsy/core";
+import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Projection,
@@ -97,7 +97,7 @@ export type Checks = [
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
 ];
 const missing = namedRun.pipe(
-  Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Input, Other))),
+  Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input, Other))),
 );
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
 // @ts-expect-error the declared output stream must be provided.
@@ -151,7 +151,7 @@ void cannotRunWidenedOutput;
 // oxlint-disable effecttsgo/missing-effect-context -- Negative tests deliberately omit Streamsy.ChangeFeed<Input>.
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
-  Streams.layerMemory();
+  MemoryStorage.layerProtocol();
 const withoutFeed = Projection.watch(transactional).pipe(
   Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
 );

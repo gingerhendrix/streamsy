@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the real local workerd boundary. */
 import { afterEach, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core/protocol";
+import { MemoryStorage } from "@streamsy/core";
 import { testHost } from "./support/scoped-host.ts";
 import {
   cleanupHarnesses,
@@ -58,7 +58,7 @@ const largeJson = (prefix: string) =>
 test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   const bun = await Effect.runPromise(
-    testHost({ pathPrefix: "/streams", layer: Streams.layerMemory(), port: 0 }),
+    testHost({ pathPrefix: "/streams", layer: MemoryStorage.layerProtocol(), port: 0 }),
   );
   closeAfterTest(() => Effect.runPromise(bun.stop));
   const bunRequest = (path: string, init?: RequestInit) => fetch(new URL(path, bun.url), init);

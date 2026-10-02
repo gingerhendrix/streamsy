@@ -15,6 +15,7 @@ import {
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { TransportFault } from "../../src/fault.ts";
 import { StreamAddress, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { MemoryStorage } from "../../src/index.ts";
 import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { HttpRouter } from "effect/unstable/http";
 import { RemoteStreams } from "@streamsy/core/remote";
@@ -35,7 +36,8 @@ const clock = Layer.effect(
     sleep: (duration) => live.sleep(duration),
   })),
 );
-const memory = () => Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clock));
+const memory = () =>
+  MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clock));
 const decoder = new TextDecoder();
 const asText = (item: Uint8Array) => decoder.decode(item);
 

@@ -25,7 +25,7 @@ bun add @streamsy/core effect
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamAddress } from "@streamsy/core";
+import { Streams, StreamAddress, MemoryStorage } from "@streamsy/core";
 
 const events = StreamAddress.json("events", { schema: Schema.String });
 const program = Effect.gen(function* () {
@@ -35,7 +35,7 @@ const program = Effect.gen(function* () {
 
   return yield* Streams.read(events).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol())));
 ```
 
 Read the [tutorial](https://streamsy.dev/docs/tutorial) for the path

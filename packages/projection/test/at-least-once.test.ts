@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { Cause, Effect, Exit, Option, Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Protocol, Streams } from "@streamsy/core/protocol";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
 
 class Input extends Streamsy.json<Input>()("atLeastOnce/Input", "at-least-once/input", {
   params: {},
   schema: Schema.Number,
 }) {}
-const host = Protocol.bind(Streams.layerMemory(), Streamsy.group(Input));
+const host = Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input));
 const run = <A, E>(effect: Effect.Effect<A, E, Input | CheckpointStore>) =>
   Effect.runPromise(effect.pipe(Effect.provide(host), Effect.provide(CheckpointStore.layerMemory)));
 const seed = Effect.gen(function* () {

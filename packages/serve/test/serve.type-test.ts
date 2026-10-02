@@ -1,8 +1,7 @@
 import { Protocol } from "@streamsy/core/protocol";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Streams } from "@streamsy/core/protocol";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
 class stream extends Streamsy.json<stream>()("serve/serve.type-test/stream", "events/:seat", {
@@ -32,7 +31,7 @@ const mine = Serve.route(
   "/me",
   Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
 );
-const protocol = Streams.layerMemory();
+const protocol = MemoryStorage.layerProtocol();
 const storage = Protocol.bind(protocol, Streamsy.group(stream, state)).pipe(
   Layer.provideMerge(protocol),
 );

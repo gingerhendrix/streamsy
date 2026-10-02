@@ -1,8 +1,7 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, it } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
-import { Streamsy, StreamId, StreamAddress } from "../../src/index.ts";
-import { Streams } from "../../src/protocol/index.ts";
+import { Streamsy, StreamId, StreamAddress, MemoryStorage } from "../../src/index.ts";
 
 class Notes extends Streamsy.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -43,7 +42,9 @@ it("stream statics retain their route and typed service over a protocol graph", 
       expect((yield* Stream.runCollect(counts.read({ id: 4 })))[0]?.items[0]).toMatchObject({
         value: { count: 3 },
       });
-    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes, Counts)))),
+    }).pipe(
+      Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes, Counts))),
+    ),
   );
 });
 
@@ -77,7 +78,7 @@ it("every wire operation rejects foreign ids including both fork forms", async (
         const exit = yield* Effect.exit(attempt);
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       }
-    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes)))),
+    }).pipe(Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes)))),
   );
 });
 
@@ -97,7 +98,7 @@ void typeChecks;
 const missingFamily = Effect.gen(function* () {
   yield* Notes;
   yield* Counts;
-}).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes))));
+}).pipe(Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes))));
 // oxlint-disable effecttsgo/missing-effect-context -- This negative type test deliberately omits Counts.
 // @ts-expect-error providing Notes must leave Counts in the requirement
 const missing: Effect.Effect<void> = missingFamily;
@@ -113,7 +114,7 @@ void distinctFamilies;
 
 it("separate providers cannot alias classes declared with the same template", async () => {
   expect(Notes.key).not.toBe(Copies.key);
-  const graph = Streams.layerMemory();
+  const graph = MemoryStorage.layerProtocol();
   await Effect.runPromise(
     Effect.gen(function* () {
       const notes = yield* Notes;
@@ -146,14 +147,14 @@ class CustomB extends Streamsy.custom<CustomB>()("CustomB", {
 it("stable names define service identity and duplicate names are refused", () => {
   expect(Notes.key).toBe("@streamsy/core/Stream/Notes");
   expect(SameName.key).toBe(Notes.key);
-  expect(() => Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes, SameName))).toThrow(
-    "duplicate stream name",
-  );
   expect(() =>
-    Protocol.bind(Streams.layerMemory(), Streamsy.group(CustomA, CustomB)),
+    Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes, SameName)),
+  ).toThrow("duplicate stream name");
+  expect(() =>
+    Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(CustomA, CustomB)),
   ).not.toThrow();
   expect(() =>
-    Protocol.bind(Streams.layerMemory(), Streamsy.group(CustomA, Streamsy.Wildcard)),
+    Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(CustomA, Streamsy.Wildcard)),
   ).not.toThrow();
   expect(Notes.at({ user: "ann" }).stream.key).toBe(Notes.key);
   expect(Notes.at({ user: "ann" }).id).toBe(Notes.address({ user: "ann" }).id);
@@ -161,9 +162,9 @@ it("stable names define service identity and duplicate names are refused", () =>
 
 it("Streamsy.Wildcard ordering follows stable identity across class aliases", () => {
   class AnyAgain extends Streamsy.Wildcard {}
-  expect(() => Protocol.bind(Streams.layerMemory(), Streamsy.group(AnyAgain, Notes))).toThrow(
-    "Wildcard must be last",
-  );
+  expect(() =>
+    Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(AnyAgain, Notes)),
+  ).toThrow("Wildcard must be last");
 });
 
 it("provides a scoped feed with the stream's owner", async () => {
@@ -182,7 +183,7 @@ it("provides a scoped feed with the stream's owner", async () => {
         .changes(StreamId.make("foreign/id"))
         .pipe(Stream.runDrain, Effect.exit);
       expect(Exit.isFailure(foreign)).toBe(true);
-    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes)))),
+    }).pipe(Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes)))),
   );
 });
 
@@ -194,7 +195,7 @@ it("does not expose a feed when the graph hides Storage", async () => {
       | import("../../src/protocol/index.ts").StreamsReader
       | import("../../src/protocol/index.ts").StreamsWriter
     >().pipe(Effect.map(Context.pick(StreamsReader, StreamsWriter))),
-  ).pipe(Layer.provide(Streams.layerMemory()));
+  ).pipe(Layer.provide(MemoryStorage.layerProtocol()));
   await Effect.runPromise(
     Effect.gen(function* () {
       expect(Option.isNone(yield* Effect.serviceOption(Streamsy.ChangeFeed(Notes)))).toBe(true);
@@ -205,8 +206,8 @@ it("does not expose a feed when the graph hides Storage", async () => {
 
 it("rejects a graph whose exposed Storage does not own the protocol wires", async () => {
   const { Storage } = await import("../../src/index.ts");
-  const first = Streams.layerMemory();
-  const other = Streams.layerMemory();
+  const first = MemoryStorage.layerProtocol();
+  const other = MemoryStorage.layerProtocol();
   const mixed = Layer.merge(first, Layer.effect(Storage, Storage).pipe(Layer.provide(other)));
   const result = await Effect.runPromiseExit(
     Effect.void.pipe(Effect.provide(Protocol.bind(mixed, Streamsy.group(Notes)))),
@@ -221,7 +222,7 @@ it("rejects a graph whose exposed Storage does not own the protocol wires", asyn
 it("spreading a protocol writer does not copy its ownership claim", async () => {
   const { Storage } = await import("../../src/index.ts");
   const { StreamsReader, StreamsWriter } = await import("../../src/protocol/index.ts");
-  const graph = Streams.layerMemory().pipe(
+  const graph = MemoryStorage.layerProtocol().pipe(
     Layer.flatMap((context) =>
       Layer.succeedContext(
         Context.make(StreamsReader, Context.get(context, StreamsReader)).pipe(

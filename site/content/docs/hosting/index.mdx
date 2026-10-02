@@ -114,11 +114,11 @@ Bind streams to a test graph with `Protocol.bind(layerTest(), group)`.
 
 ## Protocol tier
 
-| Name                          | Module                    | Gives                                              |
-| ----------------------------- | ------------------------- | -------------------------------------------------- |
-| `Protocol.layer`              | `@streamsy/core/protocol` | `StreamsReader` and `StreamsWriter` over `Storage` |
-| `Protocol.bind(graph, group)` | `@streamsy/core/protocol` | Stream services over a protocol graph              |
-| `layerProtocol(options)`      | SQLite and remote modules | The generic pair, with no streams                  |
-| `Streams.layerMemory()`       | `@streamsy/core/protocol` | The generic pair over memory                       |
+| Name                            | Module                    | Gives                                              |
+| ------------------------------- | ------------------------- | -------------------------------------------------- |
+| `Protocol.layer`                | `@streamsy/core/protocol` | `StreamsReader` and `StreamsWriter` over `Storage` |
+| `Protocol.bind(graph, group)`   | `@streamsy/core/protocol` | Stream services over a protocol graph              |
+| `layerProtocol(options)`        | Each host module          | The generic pair, with no streams                  |
+| `MemoryStorage.layerProtocol()` | `@streamsy/core`          | The generic pair over memory                       |
 
 Storage adapters, protocol tests, and HTTP internals use these.

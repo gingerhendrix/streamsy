@@ -1,8 +1,8 @@
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core/protocol";
+import { MemoryStorage } from "@streamsy/core";
 import { testHost } from "./scoped-host.ts";
 
-const host = await Effect.runPromise(testHost({ layer: Streams.layerMemory(), port: 0 }));
+const host = await Effect.runPromise(testHost({ layer: MemoryStorage.layerProtocol(), port: 0 }));
 try {
   const response = await fetch(new URL("/streams/events", host.url), {
     method: "PUT",

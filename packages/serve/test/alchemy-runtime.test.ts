@@ -1,8 +1,7 @@
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer } from "effect";
-import { StorageFault } from "@streamsy/core";
-import { Streams } from "@streamsy/core/protocol";
+import { StorageFault, MemoryStorage } from "@streamsy/core";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
 import { Option } from "effect";
@@ -14,7 +13,7 @@ test.each(["typed", "defect"])(
     let acquisitions = 0;
     let releases = 0;
     let alarms = 0;
-    const protocol = Streams.layerMemory();
+    const protocol = MemoryStorage.layerProtocol();
     const layer = Layer.unwrap(
       Effect.gen(function* () {
         acquisitions += 1;

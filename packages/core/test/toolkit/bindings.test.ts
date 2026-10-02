@@ -1,7 +1,6 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema, Stream } from "effect";
-import { Streams } from "../../src/protocol/index.ts";
 import { Streamsy, MemoryStorage } from "../../src/index.ts";
 
 class Drafts extends Streamsy.json<Drafts>()("Bindings/Drafts", "drafts/:user", {
@@ -48,7 +47,7 @@ it("declared streams and Streamsy.Wildcard share one store for declared and arbi
 
 it("stream binding shares one storage graph with siblings in either merge order", async () => {
   for (const familyFirst of [true, false]) {
-    const protocol = Streams.layerMemory();
+    const protocol = MemoryStorage.layerProtocol();
     const graph = Protocol.bind(protocol, Streamsy.group(Drafts));
     const sibling = Protocol.bind(protocol, Streamsy.group(Streamsy.Wildcard));
     const host = familyFirst ? Layer.merge(graph, sibling) : Layer.merge(sibling, graph);

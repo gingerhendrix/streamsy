@@ -6,7 +6,8 @@
 import { Config, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { ShutdownSignal } from "@streamsy/core/http";
-import { Streams, routes } from "@streamsy/core/protocol";
+import { MemoryStorage } from "@streamsy/core";
+import { routes } from "@streamsy/core/protocol";
 import { Serve } from "../../src/index.ts";
 import { listener, runMain } from "./runtime.ts";
 
@@ -25,6 +26,9 @@ const Listener = Layer.unwrap(Effect.map(Config.Port("PORT"), (port) => listener
 const Server = Serve.layer(Layer.mergeAll(routes({ prefix: "/streams" }), Active), {
   disableLogger: true,
   disableListenLog: true,
-}).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })), Layer.provide(Listener));
+}).pipe(
+  Layer.provide(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })),
+  Layer.provide(Listener),
+);
 
 runMain(Layer.launch(Server), { teardown: Serve.teardown });

@@ -9,6 +9,10 @@ import type { CommitBoundary } from "../commit-boundary.ts";
 import { layer as storageLayer, type MemoryOptions } from "./layer.ts";
 export type { MemoryOptions } from "./layer.ts";
 
+/** Generic reader and writer over memory storage, for protocol tools. */
+export const layerProtocol = (options: MemoryOptions & Protocol.ProtocolOptions = {}) =>
+  Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
+
 /** Memory host. Streams and their feeds share the exposed storage boundary. */
 export function layer<const Keys extends ReadonlyArray<Any>>(
   group: Group.Group<Keys>,

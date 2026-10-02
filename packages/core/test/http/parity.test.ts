@@ -3,7 +3,8 @@ import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 import { expect, it } from "bun:test";
 import { Clock, Effect, Layer } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
-import { Streams, StreamsReader } from "../../src/protocol/index.ts";
+import { MemoryStorage } from "../../src/index.ts";
+import { StreamsReader } from "../../src/protocol/index.ts";
 import fixtures from "../../src/http/fixtures/wire.json";
 import * as Http from "../../src/http/index.ts";
 import { HttpRouter } from "effect/unstable/http";
@@ -45,7 +46,7 @@ const clockLayer = Layer.effect(
 
 for (const visibility of ["private", "public"] as const) {
   it(`frozen ${visibility} status, status text, all headers and body bytes agree`, async () => {
-    const layer = Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(
+    const layer = MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(
       Layer.provideMerge(clockLayer),
     );
     const edge = HttpRouter.toWebHandler(
@@ -225,7 +226,7 @@ for (const visibility of ["private", "public"] as const) {
 for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
   it(`the ${prefix} mount registers once and resolves fork sources with or without it`, async () => {
     const edge = HttpRouter.toWebHandler(
-      protocolRoutes({ prefix }).pipe(Layer.provideMerge(Streams.layerMemory())),
+      protocolRoutes({ prefix }).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
       { disableLogger: true },
     );
     const mount = prefix.replace(/\/$/, "");
@@ -331,7 +332,7 @@ for (const fixture of expiryCases) {
   it(`frozen expiry parsing and HEAD: ${fixture.name}${fixture.effectRejects ? " (intentional Effect rejection)" : ""}`, async () => {
     const edge = HttpRouter.toWebHandler(
       protocolRoutes({}).pipe(
-        Layer.provideMerge(Streams.layerMemory().pipe(Layer.provideMerge(clockLayer))),
+        Layer.provideMerge(MemoryStorage.layerProtocol().pipe(Layer.provideMerge(clockLayer))),
       ),
       { disableLogger: true },
     );
@@ -422,7 +423,7 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
       }),
     ).pipe(
       Layer.provideMerge(
-        Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clockLayer)),
+        MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clockLayer)),
       ),
     );
     const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(readers)), {

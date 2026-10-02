@@ -13,7 +13,6 @@ import type {
 } from "../protocol/options.ts";
 import type { AppendResult, ReadResult, ReadNextResult } from "../protocol/results.ts";
 import type { StreamAddress } from "./address.ts";
-export { layerMemory } from "./layers.ts";
 
 export interface Batch<A> {
   readonly items: ReadonlyArray<A>;

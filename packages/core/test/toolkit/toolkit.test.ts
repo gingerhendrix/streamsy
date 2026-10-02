@@ -13,6 +13,7 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 import * as StreamAddress from "../../src/toolkit/address.ts";
+import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import * as Producer from "../../src/toolkit/producer.ts";
 import { DecodeFault, EncodeFault, TransportFault } from "../../src/fault.ts";
@@ -59,7 +60,7 @@ it("refs are inert and layerMemory supplies real tags", () =>
           contentType: "application/json",
         });
         expect(yield* Streams.remove(address)).toBeUndefined();
-      }).pipe(provideTest(Streams.layerMemory({ readLimit: 1 }))),
+      }).pipe(provideTest(MemoryStorage.layerProtocol({ readLimit: 1 }))),
     ),
   ).resolves.toEqual(Exit.succeed(undefined)));
 

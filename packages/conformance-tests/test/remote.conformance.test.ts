@@ -3,7 +3,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { Streams } from "@streamsy/core/protocol";
+import { MemoryStorage } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
@@ -13,7 +13,7 @@ describe("Official conformance through RemoteStreams", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {
     backend = await Effect.runPromise(
-      testHost({ layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }), port: 0 }),
+      testHost({ layer: MemoryStorage.layerProtocol({ longPollTimeoutMs: 1500 }), port: 0 }),
     );
     gateway = await Effect.runPromise(
       testHost({

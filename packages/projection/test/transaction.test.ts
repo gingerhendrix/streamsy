@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Streamsy } from "@streamsy/core";
-import { Protocol, Streams } from "@streamsy/core/protocol";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
@@ -56,7 +56,7 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
   const sqlLayer = BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } });
   const host = Layer.merge(
     Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(Layer.provideMerge(sqlLayer)),
-    Protocol.bind(Streams.layerMemory(), Streamsy.group(Input)),
+    Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input)),
   );
   return Effect.runPromise(
     Effect.gen(function* () {

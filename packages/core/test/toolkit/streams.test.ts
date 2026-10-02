@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
 import { Cause, Effect, Exit, Layer, Schedule, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
+import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import {
@@ -16,7 +17,7 @@ import { StreamId } from "../../src/schema/index.ts";
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
 /** One message per page, so every fold below reads several pages. */
 const run = <A, E>(program: Effect.Effect<A, E, StreamsReader | StreamsWriter>) =>
-  Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory({ readLimit: 1 }))));
+  Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol({ readLimit: 1 }))));
 
 it("fold reduces every page and returns the tail of the last page", () =>
   run(
