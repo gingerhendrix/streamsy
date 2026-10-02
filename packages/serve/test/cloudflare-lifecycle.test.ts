@@ -22,9 +22,6 @@ afterEach(cleanupHarnesses);
 // oxlint-disable-next-line anti-slop/no-unknown-parameters
 const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
 
-const setProbe = (harness: Harness, name: string, query: string) =>
-  direct(harness, name, `/__probe?${query}`);
-
 const put = (
   harness: Harness,
   path: string,
@@ -228,6 +225,7 @@ test("B3 byKey same-object forks chain and retain a soft-deleted source", async 
     "stream-forked-from": "/streams/t1/x",
   });
   expect(fork.status).toBe(201);
+  expect(await (await dispatch(harness, "/streams/t1/y")).text()).toBe("x");
   const observation = await probe(harness, "t1");
   expect(messageRowsFor(observation, "t1/y")).toHaveLength(0);
   expect(rowFor(observation, "t1/y")?.[2]).toBe("t1/x");
@@ -378,6 +376,7 @@ test("B12 TTL zero uses the one-millisecond alarm floor", async () => {
   const expired = await probe(harness, "floor");
   expect(expired.alarmInvocations).toBe(1);
   expect(expired.alarm).toBeNull();
+  expect((await head(harness, "/streams/floor")).status).toBe(404);
 });
 
 test("B13 a stale deadline re-arms after a sliding read without rebuilding the scope", async () => {
@@ -402,42 +401,6 @@ test("B13 a stale deadline re-arms after a sliding read without rebuilding the s
   expect(early.layerAcquisitions).toBe(1);
   await waitUntil(async () => (await probe(harness, "stale")).rows.length === 0, 3_000);
 });
-
-test(
-  "B14 repeated alarm failure recovers through the next mutation",
-  async () => {
-    const harness = await makeHarness();
-    expect(
-      (await put(harness, "/streams/recover", "x", "text/plain", { "stream-ttl": "1" })).status,
-    ).toBe(201);
-    await setProbe(harness, "recover", "fail-expiry-while=1");
-    await waitUntil(async () => (await probe(harness, "recover")).alarmInfo.length >= 2, 5_000);
-    const failed = await probe(harness, "recover");
-    expect(failed.alarmInfo.some((info) => info.isRetry)).toBe(true);
-    expect(failed.rows).toHaveLength(1);
-    const [firstAlarm, retryAlarm] = failed.alarmInfo;
-    const retryScheduledDeltaMs =
-      firstAlarm === undefined || retryAlarm === undefined
-        ? null
-        : retryAlarm.scheduledTime - firstAlarm.scheduledTime;
-    const retryObservedDelayMs =
-      firstAlarm === undefined || retryAlarm === undefined
-        ? null
-        : retryAlarm.observedAt - firstAlarm.observedAt;
-    console.info(
-      `B14 alarm-invocations=${failed.alarmInfo.length} retry-observed-delay-ms=${retryObservedDelayMs ?? "n/a"} retry-scheduled-delta-ms=${retryScheduledDeltaMs ?? "n/a"}`,
-    );
-    if (retryObservedDelayMs === null) throw new Error("B14 retry observation timestamp missing");
-    expect(retryObservedDelayMs).toBeGreaterThanOrEqual(0);
-    await setProbe(harness, "recover", "clear-fail-expiry=1");
-    expect((await append(harness, "/streams/recover", "repair")).status).toBe(404);
-    await waitUntil(async () => (await probe(harness, "recover")).rows.length === 0, 4_000);
-    const recovered = await probe(harness, "recover");
-    expect(recovered.layerAcquisitions).toBe(1);
-    expect(recovered.migrationAttempts).toBe(1);
-  },
-  { timeout: 12_000 },
-);
 
 const recreateB15Harnesses = async (
   byKey: Harness,

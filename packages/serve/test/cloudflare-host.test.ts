@@ -4,7 +4,6 @@ import {
   cleanupHarnesses,
   direct,
   dispatch,
-  disposeHarness,
   dispatchFetch,
   makeHarness,
   probe,
@@ -28,26 +27,6 @@ test("byStream isolates objects and reuses the same object identity", async () =
   expect((await direct(harness, "b", "/streams/b")).status).toBe(200);
   expect((await dispatch(harness, "/streams/a", { method: "HEAD" })).status).toBe(200);
   expect((await probe(harness, "a")).layerAcquisitions).toBe(1);
-});
-
-test("byKey co-locates same-stream forks and returns 404 for cross-stream forks", async () => {
-  const harness = await makeHarness("worker-by-key.ts");
-  expect((await create(harness, "/streams/t1/x")).status).toBe(201);
-  const same = await dispatch(harness, "/streams/t1/y", {
-    method: "PUT",
-    headers: { "stream-forked-from": "/streams/t1/x" },
-  });
-  expect(same.status).toBe(201);
-  expect(await (await dispatch(harness, "/streams/t1/y")).text()).toContain("source");
-
-  const cross = await dispatch(harness, "/streams/t2/z", {
-    method: "PUT",
-    headers: { "stream-forked-from": "/streams/t1/x" },
-  });
-  expect(cross.status).toBe(404);
-  expect(await cross.text()).toBe("Source stream not found: t1/x");
-  expect((await dispatch(harness, "/streams/t2/z")).status).toBe(404);
-  expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
 });
 
 test("the configured prefix keeps raw encoded and slash paths distinct", async () => {
@@ -137,15 +116,6 @@ test("a reconcile failure preserves the committed response and standard headers"
   expect((await probe(harness, "reconcile-failure")).alarm).not.toBeNull();
 });
 
-test("a real alarm purges an expired row without a read", async () => {
-  const harness = await makeHarness();
-  expect((await create(harness, "/streams/expiry", 1)).status).toBe(201);
-  await waitUntil(async () => (await probe(harness, "expiry")).rows.length === 0, 5_000);
-  const observation = await probe(harness, "expiry");
-  expect(observation.alarm).toBeNull();
-  expect((await dispatch(harness, "/streams/expiry", { method: "HEAD" })).status).toBe(404);
-});
-
 test("an append renews the deadline and the stream survives the original alarm", async () => {
   const harness = await makeHarness();
   expect((await create(harness, "/streams/renewed", 2)).status).toBe(201);
@@ -192,6 +162,8 @@ test("a failed alarm turn retries without rebuilding the object scope", async ()
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length > 0, 5_000);
   const failed = await probe(harness, "failing-alarm");
   expect(failed.alarmInfo[0]).toBeDefined();
+  // A failed alarm turn leaves the expired row in place for the retry.
+  expect(failed.rows).toHaveLength(1);
   expect(failed.layerAcquisitions).toBe(1);
   expect(failed.activeReads).toBe(1);
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length >= 2, 8_000);
@@ -203,18 +175,6 @@ test("a failed alarm turn retries without rebuilding the object scope", async ()
   expect(retried.migrationAttempts).toBe(1);
   await longPoll;
   expect((await dispatch(harness, "/streams/failing-alarm", { method: "HEAD" })).status).toBe(404);
-});
-
-test("a recreated Miniflare instance receives the persisted alarm", async () => {
-  const first = await makeHarness();
-  expect((await create(first, "/streams/recreated", 1)).status).toBe(201);
-  const root = first.root;
-  await disposeHarness(first, true);
-  const second = await makeHarness("worker.ts", root);
-  await waitUntil(async () => (await probe(second, "recreated")).rows.length === 0, 5_000);
-  const observation = await probe(second, "recreated");
-  expect(observation.alarm).toBeNull();
-  expect(observation.layerAcquisitions).toBe(1);
 });
 
 test("an abandoned workerd long-poll releases at the configured protocol bound", async () => {
@@ -237,29 +197,21 @@ test("an abandoned workerd long-poll releases at the configured protocol bound",
   await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 3_000);
 });
 
-test("a failed Layer build is not cached", async () => {
-  const harness = await makeHarness();
-  await direct(harness, "retry-layer", "/__probe?fail-layer-once=1");
-  const first = await create(harness, "/streams/retry-layer");
-  expect(first.status).toBe(503);
-  expect(first.headers.get("retry-after")).toBe("1");
-  expect(await first.text()).toBe("Storage unavailable");
-  expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
-  expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
-});
-
-test("a throwing layer factory returns secured 503 and retries", async () => {
-  const harness = await makeHarness();
-  await direct(harness, "retry-layer", "/__probe?throw-layer-once=1");
-  const first = await create(harness, "/streams/retry-layer");
-  expect(first.status).toBe(503);
-  expect(first.headers.get("retry-after")).toBe("1");
-  expect(first.headers.get("x-content-type-options")).toBe("nosniff");
-  expect(first.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
-  expect(await first.text()).toBe("Storage unavailable");
-  expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
-  expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
-});
+test.each(["fail-layer-once", "throw-layer-once"])(
+  "a %s layer build returns a secured 503, is not cached, and retries",
+  async (failure) => {
+    const harness = await makeHarness();
+    await direct(harness, "retry-layer", `/__probe?${failure}=1`);
+    const first = await create(harness, "/streams/retry-layer");
+    expect(first.status).toBe(503);
+    expect(first.headers.get("retry-after")).toBe("1");
+    expect(first.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(first.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+    expect(await first.text()).toBe("Storage unavailable");
+    expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
+    expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
+  },
+);
 
 test("a Durable Object app serves value handlers and respondable parameter errors", async () => {
   const harness = await makeHarness();
