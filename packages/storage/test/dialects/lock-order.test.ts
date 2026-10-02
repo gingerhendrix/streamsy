@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Tracer } from "effect";
 import {
+  CommitBoundary,
   Offset,
   ProducerId,
   Storage,
@@ -18,7 +19,6 @@ import {
   type StreamLifecycle,
 } from "@streamsy/core";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { CommitBoundary } from "../../src/boundary.ts";
 import { storageLayer } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
 

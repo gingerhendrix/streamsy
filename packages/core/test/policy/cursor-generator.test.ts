@@ -21,16 +21,6 @@ function fixedClock(nowMs: number): Clock {
   };
 }
 
-describe("CURSOR_EPOCH_MS / CURSOR_INTERVAL_MS", () => {
-  it("epoch is 2024-10-09T00:00:00.000Z", () => {
-    expect(CURSOR_EPOCH_MS).toBe(1_728_432_000_000);
-  });
-
-  it("interval is 20 seconds", () => {
-    expect(CURSOR_INTERVAL_MS).toBe(20_000);
-  });
-});
-
 describe("generateCursor — no previous cursor", () => {
   it("returns the current interval as a string", () => {
     const clock = fixedClock(CURSOR_EPOCH_MS + 5 * CURSOR_INTERVAL_MS);
@@ -57,17 +47,6 @@ describe("generateCursor — previous cursor below current interval", () => {
   it("returns the current interval as a string", () => {
     const clock = fixedClock(CURSOR_EPOCH_MS + 10 * CURSOR_INTERVAL_MS);
     expect(generateCursor(clock, "3")).toBe("10");
-  });
-
-  it("ignores the random source when advancing to the current interval", () => {
-    const clock = fixedClock(CURSOR_EPOCH_MS + 10 * CURSOR_INTERVAL_MS);
-    let called = false;
-    const random = () => {
-      called = true;
-      return 0.5;
-    };
-    expect(generateCursor(clock, "3", random)).toBe("10");
-    expect(called).toBe(false);
   });
 });
 

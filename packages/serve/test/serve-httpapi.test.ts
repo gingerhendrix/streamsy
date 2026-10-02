@@ -42,7 +42,7 @@ test("handleRaw serves stream responses; declared errors use HttpApi encoding", 
     ).pipe(
       Layer.provide(Feed),
       Layer.provide([BunServices.layer, BunHttpPlatform.layer, Etag.layer]),
-      HttpRouter.provideRequest(Memory.layer({}, Streamsy.group(Events))),
+      HttpRouter.provideRequest(Memory.layer(Streamsy.group(Events))),
     ),
     { disableLogger: true },
   );

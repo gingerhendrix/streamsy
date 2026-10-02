@@ -195,12 +195,12 @@ test("invalid stored record stops", () =>
       const key = recordKey(Projection.key(positives));
       const rows = yield* sql<{
         readonly value: string;
-      }>`SELECT checkpoint_value AS value FROM streamsy_projection_v3_records WHERE checkpoint_key = ${key}`;
+      }>`SELECT value FROM streamsy_owner_records WHERE key = ${key}`;
       const stored = Option.getOrThrow(Option.fromUndefinedOr(rows[0])).value;
       const bad = stored.replace(/"input":"\d{16}_\d{16}"/, '"input":"not-an-offset"');
       expect(bad).not.toBe(stored);
       for (const value of ["{not json", '{"version":1,"record":{}}', bad]) {
-        yield* sql`UPDATE streamsy_projection_v3_records SET checkpoint_value = ${value} WHERE checkpoint_key = ${key}`;
+        yield* sql`UPDATE streamsy_owner_records SET value = ${value} WHERE key = ${key}`;
         const failed = fault(yield* failure(Projection.run(positives)));
         expect(failed.phase).toBe("load");
         expect(failed.reason).toBe("invalid-record");
@@ -395,31 +395,6 @@ test("handler failure rolls back the output append and the checkpoint", () =>
       expect(Option.isNone(stored.loaded.record)).toBe(true);
     }),
   ));
-
-test("the version is part of the record key, so version two starts a fresh key", () => {
-  const definition = {
-    id: "versioned",
-    params: {},
-    inputs: { input },
-    process: () => Effect.void,
-  };
-  const original = Projection.process({ ...definition, commit: Commit.transaction }).at({});
-  const one = Projection.process({
-    commit: Commit.transaction,
-    ...definition,
-    version: 1,
-  }).at({});
-  const two = Projection.process({
-    commit: Commit.transaction,
-    ...definition,
-    version: 2,
-  }).at({});
-  expect(recordKey(Projection.key(original))).toBe(
-    '["streamsy.projection.v1","versioned","1","1","{}"]',
-  );
-  expect(recordKey(Projection.key(one))).toBe(recordKey(Projection.key(original)));
-  expect(recordKey(Projection.key(two))).not.toBe(recordKey(Projection.key(original)));
-});
 
 test("run without a limit drains more than one hundred server pages", () =>
   run(

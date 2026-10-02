@@ -14,7 +14,7 @@ class Journal extends Streamsy.json<Journal>()("Bindings/Journal", "journal/:use
 }) {}
 
 it("declared streams and Streamsy.Wildcard share one store for declared and arbitrary ids", async () => {
-  const host = Memory.layer({}, Streamsy.group(Drafts, Journal, Streamsy.Wildcard));
+  const host = Memory.layer(Streamsy.group(Drafts, Journal, Streamsy.Wildcard));
   await Effect.runPromise(
     Effect.gen(function* () {
       const drafts = yield* Drafts;

@@ -73,14 +73,13 @@ export const snippetSupport = new Map<string, PageSupport>([
       modules: {
         "zz-provided.ts": `import { Effect, Layer } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import { minimal, Numbers, Doubled } from "./minimal.ts";
 import { tripled } from "./tripled.ts";
 import { host } from "./block03.ts";
 export const memory: Effect.Effect<unknown, unknown, never> = Projection.run(tripled.at({})).pipe(Effect.provide(host));
-const sqlHost = ProjectionSql.layerStorage.pipe(Layer.provideMerge(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group(Numbers, Doubled))));
+const sqlHost = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(Layer.provideMerge(BunStorage.layer(Streamsy.group(Numbers, Doubled), { client: { filename: ":memory:" } })));
 export const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.provide(sqlHost));
 `,
       },
@@ -99,23 +98,20 @@ export const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.p
       preludes: {
         6: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         7: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 declare const readOrderTotals: () => Effect.Effect<number>;
 `,
         8: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 import { Streamsy } from "@streamsy/core";
@@ -125,18 +121,16 @@ const ordersByWorkspace = Projection.emit({ id: "order-totals", params: { worksp
 `,
         9: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 `,
         10: `import { Effect, Layer, Schema } from "effect";
 import { Memory } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
-const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
 `,
         11: `import { Schema as S } from "effect";
 const orderSchema = S.Struct({ orderId: S.String, amount: S.Finite });
@@ -212,7 +206,7 @@ type Needs = Layer.Services<typeof served>;
 class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", { params: { seat: Schema.String }, schema: Schema.String }) {}
 // The served app requires the Events stream service.
 export const requiresEvents: Events extends Needs ? true : false = true;
-export const provided = served.pipe(Layer.provide(Memory.layer({}, game)));
+export const provided = served.pipe(Layer.provide(Memory.layer(game)));
 type Left = Exclude<Layer.Services<typeof provided>, import("effect/unstable/http").HttpServer.HttpServer>;
 export const nothingElse: [Left] extends [never] ? true : false = true;
 `,
@@ -291,7 +285,7 @@ import { Memory, Streamsy } from "@streamsy/core";
 import { Notes } from "./streams.ts";
 import * as B2 from "./block02.ts";
 declare const all: Effect.Effect<unknown, unknown, Notes>;
-const provided: Effect.Effect<unknown, unknown, never> = all.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Notes))));
+const provided: Effect.Effect<unknown, unknown, never> = all.pipe(Effect.provide(Memory.layer(Streamsy.group(Notes))));
 export { B2, provided };
 `,
       },

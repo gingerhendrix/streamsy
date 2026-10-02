@@ -6,7 +6,6 @@ import { HttpRouter } from "effect/unstable/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
 import { IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import { Workspaces } from "../../server/streams.ts";
-import { TxId } from "../../shared/api-schema.ts";
 
 // The same API layers as the server, served in process over a memory store.
 const { handler, dispose } = HttpRouter.toWebHandler(
@@ -14,7 +13,7 @@ const { handler, dispose } = HttpRouter.toWebHandler(
     Layer.provide(SeedLive),
     Layer.provide(IssueTrackerLive),
     Layer.provide([
-      Memory.layer({}, Streamsy.group(Workspaces)),
+      Memory.layer(Streamsy.group(Workspaces)),
       BunCrypto.layer,
       BunHttpServer.layerHttpServices,
     ]),
@@ -132,15 +131,5 @@ describe("successful writes", () => {
     const { status, body } = await send("POST", "/api/workspaces");
     expect(status).toBe(201);
     expect(body.id).toMatch(/^[a-z0-9]{10}$/);
-  });
-});
-
-describe("TxId", () => {
-  test("accepts a uuid", () => {
-    expect(Schema.is(TxId)(crypto.randomUUID())).toBe(true);
-  });
-
-  test.each([["nope"], [""], [42], [undefined], [null], [{}]])("rejects %p", (value) => {
-    expect(Schema.is(TxId)(value)).toBe(false);
   });
 });

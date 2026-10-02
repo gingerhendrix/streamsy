@@ -1,13 +1,12 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
-import { Array, Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
-import { Storage, Streamsy } from "@streamsy/core";
+import { Array, Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 
 class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
@@ -18,7 +17,7 @@ class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/
   schema: Schema.Finite,
 }) {}
 const memory = Memory.layerMemory();
-const sqlite = ProjectionSql.layerStorage.pipe(
+const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
 const host = Layer.merge(
@@ -141,19 +140,4 @@ test("a custom stream wire cannot establish the owner of an transactional write"
       expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
     }).pipe(Effect.provide(unownedHost)),
   );
-});
-
-test("a custom wire graph exposing ambient Storage is rejected during binding", async () => {
-  const storageOnly = memoryGraph.pipe(
-    Layer.flatMap((context) => Layer.succeed(Storage, Context.get(context, Storage))),
-  );
-  const mixed = Layer.merge(unowned, storageOnly);
-  const result = await Effect.runPromiseExit(
-    Effect.void.pipe(Effect.provide(Protocol.bind(mixed, Streamsy.group(Source, Output)))),
-  );
-  expect(Exit.isFailure(result)).toBe(true);
-  if (Exit.isFailure(result))
-    expect(String(Cause.squash(result.cause))).toContain(
-      "The exposed Storage does not own the protocol wires",
-    );
 });

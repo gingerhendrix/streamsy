@@ -11,10 +11,7 @@ import {
   type Entry,
   type Unit,
 } from "@streamsy/projection";
-import { layerMemory } from "@streamsy/projection/memory";
-import { positives as transactionalPositives, initialize } from "./support/scenarios.ts";
-
-const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };
+import { layerMemory } from "./support/memory.ts";
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
@@ -122,21 +119,6 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(b, [], { close: true });
       expect((yield* Projection.run(projection)).status).toBe("source-closed");
       expect(batches).toHaveLength(2);
-    }),
-  ));
-
-test("a single-input projection stores a one-key inputs map", () =>
-  run(
-    Effect.gen(function* () {
-      yield* initialize;
-      const result = yield* Projection.run(positives);
-      const loaded = yield* (yield* CheckpointStore).load(Projection.key(positives));
-      const record = Option.getOrThrow(loaded.record);
-      expect(Object.keys(record.inputs)).toEqual(["input"]);
-      expect(record.inputs).toEqual(result.offsets);
-      expect(Object.keys(record.identity.inputs)).toEqual(["input"]);
-      expect(record.pending).toBeUndefined();
-      expect(record.adapters).toEqual({});
     }),
   ));
 

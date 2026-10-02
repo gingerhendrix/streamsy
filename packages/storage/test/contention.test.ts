@@ -17,6 +17,7 @@ import {
   Stream,
 } from "effect";
 import {
+  CommitBoundary,
   Offset,
   Storage,
   StreamId,
@@ -33,7 +34,6 @@ import {
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError } from "effect/unstable/sql/SqlError";
 import { layerProtocol } from "@streamsy/storage/bun";
-import { CommitBoundary } from "@streamsy/storage";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";
 import { layerWithTestProbe } from "../src/storage.ts";
 

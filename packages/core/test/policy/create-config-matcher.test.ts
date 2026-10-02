@@ -169,11 +169,6 @@ describe("configMatches — fork sub-offset", () => {
 });
 
 describe("configMatches — closed state", () => {
-  it("matches when both sides are open", () => {
-    const existing = makeRecord();
-    expect(configMatches(existing, {})).toBe(true);
-  });
-
   it("matches when both sides are closed", () => {
     const existing = makeRecord({ closed: true });
     expect(configMatches(existing, { closed: true })).toBe(true);

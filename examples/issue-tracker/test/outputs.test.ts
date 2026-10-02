@@ -250,7 +250,7 @@ test("served route fingerprints pin address identity and reject incompatible con
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v3_records")).toEqual([]);
+        expect(yield* sql.unsafe("SELECT * FROM streamsy_owner_records")).toEqual([]);
         const owner = yield* CheckpointStore;
         expect((yield* owner.load(tracker.at({ workspaceId: "live" }))).record._tag).toBe("None");
       }),

@@ -21,7 +21,7 @@ const App = Layer.mergeAll(
   Serve.mount(Events, "/feed/:seat"),
 );
 const Server = Serve.layer(App).pipe(
-  Layer.provide(Memory.layer({}, streams)),
+  Layer.provide(Memory.layer(streams)),
   Layer.provide(listener({ port: 3000 })),
 );
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });

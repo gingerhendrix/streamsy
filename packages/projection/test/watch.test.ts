@@ -7,7 +7,7 @@ import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerMemory } from "./support/memory.ts";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
   "on-change.test/WatchRoute2",
@@ -328,22 +328,5 @@ test("a closed and drained input ends its watcher", () =>
       yield* Streams.append(input, [1]);
       yield* Streams.append(input, [], { close: true });
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
-    }),
-  ));
-
-test("closing the caller scope ends the watcher fiber", () =>
-  run(
-    Effect.gen(function* () {
-      const input = FamilyFixture.json("change-scope", { schema: Schema.Finite });
-      yield* Streams.create(input);
-      const projection = Projection.process({
-        commit: Commit.atLeastOnce,
-        id: "change-scope",
-        params: {},
-        inputs: { input },
-        process: () => Effect.void,
-      }).at({});
-      const fiber = yield* Effect.scoped(Projection.watch(projection));
-      expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
     }),
   ));

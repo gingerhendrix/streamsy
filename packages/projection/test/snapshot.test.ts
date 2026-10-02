@@ -1,6 +1,5 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { tmpdir } from "node:os";
-import { restore } from "../src/checkpoint-store.ts";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -11,8 +10,7 @@ import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
@@ -39,7 +37,7 @@ const tailOf = (address: StreamAddress.StreamAddress<unknown, unknown, unknown>)
 
 const sqlite = (filename = ":memory:") =>
   FamilyFixture.withFamilies(
-    ProjectionSql.layerStorage.pipe(
+    Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
     ),
   );
@@ -184,24 +182,6 @@ for (const [name, host] of hosts) {
       }).pipe(Effect.provide(host)),
     ));
 }
-
-test("read of an invalid stored state fails as an invalid record", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const checkpoints = yield* CheckpointStore;
-      const before = yield* restore(totals, checkpoints);
-      yield* checkpoints.compareAndSet(totals, before.token, {
-        identity: before.record.identity,
-        inputs: before.record.inputs,
-        adapters: before.record.adapters,
-        state: '"not totals"',
-      });
-      const failed = yield* Projection.read(totals).pipe(Effect.result);
-      expect(failed._tag).toBe("Failure");
-      if (failed._tag === "Failure")
-        expect(failed.failure).toMatchObject({ phase: "load", reason: "invalid-record" });
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory()))),
-  ));
 
 test("SQLite: a second process writes between two reads of the same file", async () => {
   const directory = mkdtempSync(join(tmpdir(), "projection-snapshot-"));

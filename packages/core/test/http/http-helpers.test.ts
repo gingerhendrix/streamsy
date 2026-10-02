@@ -9,7 +9,6 @@ import { readQueryParser } from "../../src/http/read-query-parser.ts";
 import { isValid } from "../../src/offset/index.ts";
 import { requestBodyReader } from "../../src/http/request-body-reader.ts";
 import { discardRequestBody } from "../../src/http/request-body-discard.ts";
-import * as Responses from "../../src/http/responses.ts";
 import * as SseEvents from "../../src/http/sse-event-encoder.ts";
 import { streamPath } from "../../src/http/stream-path-service.ts";
 
@@ -244,18 +243,5 @@ describe("HTTP discardRequestBody", () => {
       }),
     });
     await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(failing)));
-  });
-});
-
-describe("HTTP HttpResponseFactory", () => {
-  it("returns canonical statuses for the common error helpers", () => {
-    const factory = Responses;
-    expect(factory.notFound().status).toBe(404);
-    expect(factory.gone().status).toBe(410);
-    expect(factory.conflict("nope").status).toBe(409);
-    expect(factory.payloadTooLarge().status).toBe(413);
-    expect(factory.invalidJson().status).toBe(400);
-    expect(factory.methodNotAllowed().status).toBe(405);
-    expect(factory.internalError().status).toBe(500);
   });
 });

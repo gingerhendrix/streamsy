@@ -331,3 +331,30 @@ it("decide passes its own failure through without an append or a retry", () =>
       expect(appends.count).toBe(0);
     }),
   ));
+
+it("decide does not retry an OffsetMismatch that its own decide raises", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 4 }]);
+      const { appends, counted } = yield* countingAppends;
+      const own = new OffsetMismatch({
+        id: StreamId.make("elsewhere"),
+        expected: "a",
+        actual: "b",
+      });
+      let decisions = 0;
+      const failure = yield* Effect.flip(
+        Streams.decide(address, {
+          ...sum,
+          decide: () => {
+            decisions += 1;
+            return Effect.fail(own);
+          },
+        }).pipe(Effect.provideService(StreamsWriter, counted)),
+      );
+      expect(failure).toBe(own);
+      expect(decisions).toBe(1);
+      expect(appends.count).toBe(0);
+    }),
+  ));

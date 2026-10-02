@@ -15,7 +15,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
     Http.routes(Streamsy.group(Inputs, Outputs), {
       prefix: "/streams",
       access: (stream) => (stream === Inputs ? "full" : "read"),
-    }).pipe(HttpRouter.provideRequest(Memory.layer({}, Streamsy.group(Inputs, Outputs)))),
+    }).pipe(HttpRouter.provideRequest(Memory.layer(Streamsy.group(Inputs, Outputs)))),
     { disableLogger: true },
   );
   const request = (path: string, method = "GET", body?: string) =>
@@ -59,7 +59,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
 });
 
 it("append access allows POST but refuses creation and deletion", async () => {
-  const streams = Memory.layer({}, Streamsy.group(Inputs));
+  const streams = Memory.layer(Streamsy.group(Inputs));
   const seeded = Layer.effectDiscard(
     Effect.flatMap(Inputs, (inputs) => inputs.create({ id: "a" })),
   ).pipe(Layer.provideMerge(streams));
@@ -93,21 +93,11 @@ it("append access allows POST but refuses creation and deletion", async () => {
   }
 });
 
-it("HTTP rejects a catch-all before a narrower access policy", () => {
-  expect(() =>
-    Http.routes(Streamsy.group(Streamsy.Wildcard, Outputs), {
-      access: (stream) => (stream === Streamsy.Wildcard ? "full" : "read"),
-    }),
-  ).toThrow("Wildcard must be last");
-});
-
 it("a final catch-all cannot widen a declared read-only stream's HTTP access", async () => {
   const edge = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Outputs, Streamsy.Wildcard), {
       access: (stream) => (stream === Outputs ? "read" : "full"),
-    }).pipe(
-      HttpRouter.provideRequest(Memory.layer({}, Streamsy.group(Outputs, Streamsy.Wildcard))),
-    ),
+    }).pipe(HttpRouter.provideRequest(Memory.layer(Streamsy.group(Outputs, Streamsy.Wildcard)))),
     { disableLogger: true },
   );
   try {

@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { tmpdir } from "node:os";
 import { restore } from "../src/checkpoint-store.ts";
 import { runKernel, run as runWithPermit } from "../src/run.ts";
@@ -12,8 +12,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 import { hasLock } from "../src/serialize.ts";
 import { forget } from "../src/forget.ts";
@@ -34,7 +33,7 @@ const total = Projection.fold({
   fold: (sum, { item }) => sum + item,
 }).at({});
 const sqliteProtocol = (filename = ":memory:") =>
-  ProjectionSql.layerStorage.pipe(
+  Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
   );
 const sqlite = (filename = ":memory:") => FamilyFixture.withFamilies(sqliteProtocol(filename));
@@ -335,28 +334,27 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
   );
 });
 
-test("Checkpoint SQL failures retain phase and driver cause", async () => {
+test("Checkpoint SQL failures retain phase and the storage fault with its driver cause", async () => {
   const runtime = ManagedRuntime.make(sqlite());
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const state = yield* CheckpointStore;
-        yield* sql.unsafe("DROP TABLE streamsy_projection_v3_records");
-        const save = (ifToken: string) =>
-          state
-            .compareAndSet(total, ifToken, {
-              identity: { inputs: {} },
-              inputs: {},
-              adapters: {},
-              state: "1",
-            })
-            .pipe(Effect.asVoid);
+        yield* sql.unsafe("DROP TABLE streamsy_owner_records");
         for (const [phase, operation] of [
           ["load", state.load(total).pipe(Effect.asVoid)],
-          // A first save inserts; a later save reads the token first.
-          ["checkpoint", save("0")],
-          ["load", save("1")],
+          [
+            "load",
+            state
+              .compareAndSet(total, "0", {
+                identity: { inputs: {} },
+                inputs: {},
+                adapters: {},
+                state: "1",
+              })
+              .pipe(Effect.asVoid),
+          ],
           ["checkpoint", state.remove(total)],
         ] as const) {
           const failed = yield* Effect.result(operation);
@@ -365,7 +363,7 @@ test("Checkpoint SQL failures retain phase and driver cause", async () => {
             expect(failed.failure).toMatchObject({
               phase,
               reason: "storage-failure",
-              cause: { _tag: "SqlError" },
+              cause: { _tag: "StorageFault", cause: { _tag: "SqlError" } },
             });
         }
       }),

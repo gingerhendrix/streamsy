@@ -19,7 +19,7 @@ import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerMemory } from "./support/memory.ts";
 import {
   input,
   output,

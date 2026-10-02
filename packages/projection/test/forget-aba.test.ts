@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
@@ -7,8 +7,7 @@ import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 
 const hosts: ReadonlyArray<
@@ -25,7 +24,7 @@ const hosts: ReadonlyArray<
   ["memory", Memory.layerMemory()],
   [
     "SQLite",
-    ProjectionSql.layerStorage.pipe(
+    Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
     ),
   ],

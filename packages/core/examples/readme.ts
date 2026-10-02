@@ -11,4 +11,4 @@ const program = Effect.gen(function* () {
   yield* events.append({}, ["hello"]);
   return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Events)))));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(Streamsy.group(Events)))));

@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertExcerpt, pairs, runExcerpt } from "../../scripts/check-excerpts.ts";
+import { assertExcerpt, runExcerpt } from "../../scripts/check-excerpts.ts";
 
 const exists = async (path: string): Promise<boolean> => {
   try {
@@ -144,12 +144,6 @@ test("excerpt validation requires a top-level citation paragraph", () => {
 
 test("excerpt validation rejects code drift", () => {
   expect(() => assertExcerpt(pair, citedDocument, "export const answer = 7;")).toThrow("verbatim");
-});
-
-test("excerpt execution is restricted to the explicit allow-list", () => {
-  const withExtraCitedProgram = `${citedDocument}\n[other](https://example.test/other.ts)`;
-  expect(() => assertExcerpt(pair, withExtraCitedProgram, code)).not.toThrow();
-  expect(pairs.map((item) => item.source)).not.toContain("other.ts");
 });
 
 test("hung excerpt descendants and owned state are reaped before root removal", async () => {

@@ -127,7 +127,7 @@ What `Projection.decide` does:
 - It reads the state and the offsets from one checkpoint record, and passes them to `decide`. `decide` must not write.
 - Empty `items` writes nothing and does not check the tail. A rejection is an answer at the offsets that were read.
 - Otherwise it appends to the input that `input` names, with that input's offset as `expectedOffset`. `input` must be a key of `inputs`, and `items` must have that input's item type.
-- After `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures.
+- When its own append fails with `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures, and it does not retry an `OffsetMismatch` that `decide` raises.
 
 It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the offset that was read.
 
@@ -139,36 +139,31 @@ The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pa
 
 `CheckpointStore` holds the records. `Transaction` supplies the SQL client and transaction boundary.
 
-| Layer                                     | Over                                                           |
-| ----------------------------------------- | -------------------------------------------------------------- |
-| `@streamsy/projection/memory` `layer`     | The store of `Memory.layer`. Not persistent                    |
-| `@streamsy/projection/sql` `layerStorage` | The `CommitBoundary` and `SqlClient` of a SQLite storage Layer |
+`CheckpointStore.layer` keeps the records on the owner of the streams. Every storage host gives that owner: `Memory.layer`, `BunStorage.layer` and `DurableObjectStorage.layer`. The checkpoints and the streams then commit in one transaction. On a SQL host, add `Transaction.layer` for `Commit.transaction`:
 
 ```ts
 import { Effect, Layer } from "effect";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import { program } from "./run.ts";
 import { shop } from "./streams.ts";
 
-const host = ProjectionSql.layerStorage.pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop)),
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } })),
 );
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-| Layer                            | Provides                            | Requires                              |
-| -------------------------------- | ----------------------------------- | ------------------------------------- |
-| `ProjectionSql.layerStorage`     | `CheckpointStore`, `Transaction`    | `SqlClient`, storage `CommitBoundary` |
-| `ProjectionSql.layer`            | `CheckpointStore`, `Transaction`    | A plain `SqlClient`                   |
-| `ProjectionMemory.layer`         | `CheckpointStore`                   | The memory storage boundary           |
-| `ProjectionMemory.layerMemory()` | `CheckpointStore`, protocol streams | Nothing                               |
-| `CheckpointStore.layerMemory`    | `CheckpointStore`                   | Nothing                               |
+| Layer                         | Provides          | Requires                                           |
+| ----------------------------- | ----------------- | -------------------------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore` | The `CommitBoundary` of any storage host           |
+| `Transaction.layer`           | `Transaction`     | The `CommitBoundary` and `SqlClient` of a SQL host |
+| `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                            |
 
-Memory Layers provide no `Transaction`. `CheckpointStore.layerMemory` is an independent store for rebuilt values and tests. `ProjectionMemory.layer` joins the stream host, so producer outputs on that owner can be created automatically.
+A memory host provides no `SqlClient`, so `Transaction.layer` does not fit it. `CheckpointStore.layerMemory` is an independent store for rebuilt values and tests. `CheckpointStore.layer` joins the stream host, so producer outputs on that owner can be created automatically.
 
-SQL stores state and offsets in `streamsy_projection_v3_records`. There is no separate state table or State service. Older projection tables are not read or migrated; projections rebuild from zero.
+SQL hosts store state and offsets in the storage table `streamsy_owner_records`. There is no separate state table or State service. Older projection tables are not read or migrated; projections rebuild from zero.
 
 Build the Layer once for each host lifetime.
 
