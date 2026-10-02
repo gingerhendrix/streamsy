@@ -8,8 +8,9 @@
     "app:full": "bun run scripts/full-app.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "run:once": "bun run scripts/run-once.ts",
-    "test": "bun test test",
-    "test:unit": "bun test test",
+    "test": "bun test ./test",
+    "test:unit": "bun test ./test",
+    "test:dialects": "bun test ./test-dialects",
     "typecheck": "tsc --noEmit",
     "smoke:serve": "bun run scripts/serve-smoke.ts"
   },

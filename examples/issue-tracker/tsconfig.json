@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["domain", "server", "shared", "scripts", "test"]
+  "include": ["domain", "server", "shared", "scripts", "test", "test-dialects"]
 }
