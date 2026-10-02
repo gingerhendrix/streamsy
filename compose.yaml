@@ -1,0 +1,35 @@
+# Local databases for the Postgres and MySQL storage tests.
+# Start with `bun run db:up`, stop with `bun run db:down`.
+name: streamsy
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: streamsy
+      POSTGRES_PASSWORD: streamsy
+      POSTGRES_DB: streamsy
+    ports: ["54329:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamsy"]
+      interval: 2s
+      retries: 30
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: streamsy
+      MYSQL_DATABASE: streamsy
+      MYSQL_USER: streamsy
+      MYSQL_PASSWORD: streamsy
+    ports: ["33069:3306"]
+    configs:
+      - source: mysql-test-grants
+        target: /docker-entrypoint-initdb.d/streamsy-test-grants.sql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -pstreamsy"]
+      interval: 2s
+      retries: 60
+configs:
+  # Dialect tests create one database per test, named streamsy_<suffix>.
+  mysql-test-grants:
+    content: |
+      GRANT ALL PRIVILEGES ON `streamsy\_%`.* TO 'streamsy'@'%';
