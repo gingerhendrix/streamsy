@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option, Schema, Semaphore } from "effect";
-import { ZERO_OFFSET } from "@streamsy/core";
+import { CommitBoundary, ZERO_OFFSET, type StorageFault } from "@streamsy/core";
+import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
 import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import { Counter, PendingUnit, canonicalParams, encodeKey, type Range } from "./unit.ts";
@@ -54,10 +55,56 @@ export interface CheckpointStoreApi {
   /** Deletes the record. Absent keys are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
+const storageFailure =
+  (phase: ProjectionFault["phase"], message: string) => (cause: StorageFault) =>
+    new ProjectionFault({ phase, reason: "storage-failure", message, cause });
+
 /** Stores each projection's offsets and encoded state in one compare-and-set record. */
 export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreApi>()(
   "@streamsy/projection/CheckpointStore",
 ) {
+  /**
+   * Checkpoints on the storage owner, in its transaction. Works over every Streamsy
+   * storage host, so checkpoints and streams always share one owner.
+   */
+  static readonly layer: Layer.Layer<CheckpointStore, never, CommitBoundary | OwnerRecords> =
+    Layer.effect(
+      this,
+      Effect.gen(function* () {
+        const boundary = yield* CommitBoundary;
+        const records = yield* OwnerRecords;
+        const checkpoints = fromStore({
+          read: (key) =>
+            records
+              .read(key)
+              .pipe(Effect.mapError(storageFailure("load", "Cannot read a checkpoint"))),
+          write: (key, value) =>
+            records
+              .write(key, value)
+              .pipe(Effect.mapError(storageFailure("checkpoint", "Cannot write a checkpoint"))),
+          remove: (key) =>
+            records
+              .remove(key)
+              .pipe(Effect.mapError(storageFailure("checkpoint", "Cannot delete a checkpoint"))),
+          withTransaction: (body) =>
+            boundary.withTransaction(body).pipe(
+              Effect.catchTag("SqlError", (cause) =>
+                Effect.fail(
+                  new ProjectionFault({
+                    phase: "checkpoint",
+                    reason: "storage-failure",
+                    message: "The owner transaction failed",
+                    cause,
+                  }),
+                ),
+              ),
+            ),
+        });
+        attachOwner(checkpoints.load, ownerOf(boundary));
+        return checkpoints;
+      }),
+    );
+  /** An independent store for rebuilt values and tests. It shares no owner with streams. */
   static readonly layerMemory = Layer.effect(
     this,
     Effect.gen(function* () {
@@ -81,7 +128,7 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
   );
 }
 
-/** The encoded seam a host owner provides; both shipped Layers build on it. */
+/** The encoded seam a checkpoint Layer builds on; both shipped Layers use it. */
 export interface EncodedStore {
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;

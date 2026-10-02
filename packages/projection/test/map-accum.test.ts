@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { Commit, Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
+import * as Memory from "./support/memory.ts";
 import * as Family from "./support/families.ts";
 import { readAll } from "./support/scenarios.ts";
 

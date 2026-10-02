@@ -11,7 +11,7 @@ import {
   type Entry,
   type Unit,
 } from "@streamsy/projection";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerMemory } from "./support/memory.ts";
 import { positives as transactionalPositives, initialize } from "./support/scenarios.ts";
 
 const positives = { ...transactionalPositives, commit: Commit.atLeastOnce };

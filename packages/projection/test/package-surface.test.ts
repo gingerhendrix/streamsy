@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Layer } from "effect";
-import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import type {
   Declaration,
   Offsets,
@@ -15,8 +15,6 @@ import type {
   RunOptions,
   CheckpointStoreApi,
 } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import manifest from "../package.json";
 
 type PublicHelperTypes =
@@ -69,12 +67,11 @@ test("built public entries and declared files exist", () => {
       message: "",
     })._tag,
   ).toBe("ProjectionFault");
-  expect(Layer.isLayer(Memory.layer)).toBe(true);
-  expect(Memory.layerMemory).toBeFunction();
-  expect(Layer.isLayer(ProjectionSql.layerStorage)).toBe(true);
-  expect(Layer.isLayer(ProjectionSql.layer)).toBe(true);
+  expect(Layer.isLayer(CheckpointStore.layer)).toBe(true);
   expect(Layer.isLayer(CheckpointStore.layerMemory)).toBe(true);
-  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sql", "./checkpoint"]);
+  expect(Layer.isLayer(Transaction.layer)).toBe(true);
+  expect(Object.keys(manifest.exports)).toEqual([".", "./checkpoint"]);
+  expect(Object.keys(manifest.dependencies).sort()).toEqual(["@streamsy/core", "effect"]);
   for (const entry of Object.values(manifest.exports)) {
     expect(existsSync(join(import.meta.dir, "..", entry.types))).toBe(true);
     expect(existsSync(join(import.meta.dir, "..", entry.import))).toBe(true);
@@ -120,7 +117,7 @@ test("root exports stay explicit", () => {
   ]);
 });
 
-test("Commit and storage subpaths expose only their author contracts", () => {
+test("Commit and checkpoint subpaths expose only their author contracts", () => {
   expect(Object.keys(Root.Commit).sort()).toEqual([
     "Accumulated",
     "Emitted",
@@ -140,6 +137,4 @@ test("Commit and storage subpaths expose only their author contracts", () => {
     "fromStore",
     "recordKey",
   ]);
-  expect(Object.keys(Memory).sort()).toEqual(["layer", "layerMemory"]);
-  expect(Object.keys(ProjectionSql).sort()).toEqual(["layer", "layerStorage"]);
 });

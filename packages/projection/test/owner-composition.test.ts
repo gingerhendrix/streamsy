@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Array, Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
@@ -6,8 +6,7 @@ import { Storage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as Memory from "./support/memory.ts";
 
 class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
@@ -18,7 +17,7 @@ class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/
   schema: Schema.Finite,
 }) {}
 const memory = Memory.layerMemory();
-const sqlite = ProjectionSql.layerStorage.pipe(
+const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
 const host = Layer.merge(

@@ -3,7 +3,7 @@ import { Effect, Schema, Stream } from "effect";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import * as Memory from "@streamsy/projection/memory";
+import * as Memory from "./support/memory.ts";
 import * as Families from "./support/families.ts";
 
 class Input extends Streamsy.json<Input>()("multi/Input", "multi/input/:id", {

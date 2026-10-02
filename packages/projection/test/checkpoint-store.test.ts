@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { CommitBoundary, Memory, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import * as BunStorage from "@streamsy/storage/bun";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
 
 const key = { id: "storage", version: 1, generation: 1, params: {} };
@@ -43,10 +43,11 @@ test("standalone memory checkpoints compare tokens and keep state without a Tran
     }).pipe(Effect.provide(CheckpointStore.layerMemory)),
   ));
 
-const sql = SqliteClient.layer({ filename: ":memory:" });
-const plain = ProjectionSql.layer.pipe(Layer.provideMerge(sql));
+const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group())),
+);
 
-test("plain SQL checkpoints join an outer transaction and roll back as one row", () =>
+test("SQL owner checkpoints join the owner transaction and roll back as one row", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const store = yield* CheckpointStore;
@@ -65,13 +66,31 @@ test("plain SQL checkpoints join an outer transaction and roll back as one row",
       expect(Result.isFailure(failed)).toBe(true);
       expect((yield* store.load(key)).token).toBe("0");
       yield* store.compareAndSet(key, "0", record);
-      expect(yield* client.unsafe("SELECT key FROM streamsy_projection_v2_records")).toHaveLength(
-        1,
-      );
-      expect(
-        yield* client.unsafe(
-          "SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_v1_state'",
-        ),
-      ).toHaveLength(0);
-    }).pipe(Effect.provide(plain)),
+      expect(yield* client.unsafe("SELECT key FROM streamsy_owner_records")).toHaveLength(1);
+      for (const legacy of ["streamsy_projection_v1_state", "streamsy_projection_v2_records"])
+        expect(
+          yield* client.unsafe("SELECT name FROM sqlite_master WHERE name = ?", [legacy]),
+        ).toHaveLength(0);
+    }).pipe(Effect.provide(sqlite)),
+  ));
+
+test("memory owner checkpoints roll back with the boundary transaction", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* CheckpointStore;
+      const boundary = yield* CommitBoundary;
+      const failed = yield* boundary
+        .withTransaction(
+          Effect.andThen(store.compareAndSet(key, "0", record), Effect.fail("rollback")),
+        )
+        .pipe(Effect.result);
+      expect(Result.isFailure(failed)).toBe(true);
+      expect((yield* store.load(key)).token).toBe("0");
+      expect(yield* store.compareAndSet(key, "0", record)).toBe("1");
+      expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
+    }).pipe(
+      Effect.provide(
+        CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer({}, Streamsy.group()))),
+      ),
+    ),
   ));

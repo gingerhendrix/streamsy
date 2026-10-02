@@ -21,8 +21,7 @@ steps, use `unit` for parameters and offsets only.
 ```ts
 import { Effect, Layer, Schema } from "effect";
 import { Memory, Streamsy } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 
 class Numbers extends Streamsy.json<Numbers>()("Example/Numbers", "numbers", {
   params: {},
@@ -40,7 +39,7 @@ const doubled = Projection.emit({
   commit: Commit.producer,
   emit: ({ item }) => ({ output: [item * 2] }),
 });
-const host = ProjectionMemory.layer.pipe(
+const host = CheckpointStore.layer.pipe(
   Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
 );
 const program = Effect.gen(function* () {
@@ -106,17 +105,26 @@ collection. Two outputs cannot name the same stream or an input.
 
 ## Hosts
 
-| Layer                                     | Provides                            | Requires                              |
-| ----------------------------------------- | ----------------------------------- | ------------------------------------- |
-| `ProjectionSql.layerStorage` from `./sql` | `CheckpointStore`, `Transaction`    | Storage `CommitBoundary`, `SqlClient` |
-| `ProjectionSql.layer` from `./sql`        | `CheckpointStore`, `Transaction`    | Plain `SqlClient`                     |
-| `ProjectionMemory.layer` from `./memory`  | `CheckpointStore`                   | Memory storage boundary               |
-| `ProjectionMemory.layerMemory()`          | `CheckpointStore`, protocol streams | Nothing                               |
-| `CheckpointStore.layerMemory`             | Independent `CheckpointStore`       | Nothing                               |
+| Layer                         | Provides                      | Requires                        |
+| ----------------------------- | ----------------------------- | ------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore`             | `CommitBoundary`, owner records |
+| `Transaction.layer`           | `Transaction`                 | `CommitBoundary`, `SqlClient`   |
+| `CheckpointStore.layerMemory` | Independent `CheckpointStore` | Nothing                         |
 
-Compose the projection Layer over storage with `Layer.provideMerge` and retain
-one Layer graph for the host lifetime. SQL uses `streamsy_projection_v2_records`.
-Old v1 projection tables are not migrated or read; projections rebuild from zero.
+`CheckpointStore.layer` keeps checkpoints on the owner of the streams. It works
+over every Streamsy storage host: `Memory.layer`, `BunStorage.layer`, and
+`DurableObjectStorage.layer`. Add `Transaction.layer` on a SQL host for
+`Commit.transaction`. Compose the projection Layers over storage with
+`Layer.provideMerge` and retain one Layer graph for the host lifetime:
+
+```ts
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
+);
+```
+
+SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
+are not migrated or read; projections rebuild from zero.
 Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`.
 
 ## Run and recover
