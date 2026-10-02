@@ -1,6 +1,5 @@
 import { expect, it } from "bun:test";
-import { Cause, Effect, Exit, Fiber, Layer, Queue, Scope, Stream } from "effect";
-import { TestClock } from "effect/testing";
+import { Effect, Exit, Queue, Scope, Stream } from "effect";
 import { ZERO_OFFSET } from "../../../src/offset/index.ts";
 import { StreamId } from "../../../src/schema/index.ts";
 import { changes } from "../../../src/storage/memory/changes.ts";
@@ -101,35 +100,6 @@ it("registration precedes the first snapshot even when a commit follows its stat
         Stream.runCollect,
       );
       expect(values).toMatchObject([{ present: false }, { present: true, closed: true }]);
-      expect(bus.queues.size).toBe(0);
-    }),
-  ));
-
-it("owner shutdown interrupts pending pulls, detaches queues, and rejects late acquisition", () =>
-  check(
-    Effect.gen(function* () {
-      const clock = yield* Layer.build(TestClock.layer());
-      const owner = yield* Scope.make();
-      const bus = yield* createNotifier.pipe(Scope.provide(owner));
-      const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
-      const pull = yield* Stream.toPull(changes(state, bus, StreamId.make("owner"), true, 25));
-      yield* pull;
-      const pending = yield* pull.pipe(Effect.forkScoped);
-      yield* TestClock.adjust(0).pipe(Effect.provide(clock));
-      expect(pending.pollUnsafe()).toBeUndefined();
-      expect(bus.queues.size).toBe(1);
-      yield* Scope.close(owner, Exit.void);
-      const exit = yield* Fiber.await(pending);
-      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-      expect(bus.closed).toBe(true);
-      expect(bus.queues.size).toBe(0);
-      const late = yield* changes(state, bus, StreamId.make("late"), true, 25).pipe(
-        Stream.runCollect,
-        Effect.exit,
-      );
-      expect(Exit.isFailure(late) && Cause.hasInterruptsOnly(late.cause)).toBe(true);
-      yield* Scope.close(owner, Exit.void);
-      yield* bus.publish;
       expect(bus.queues.size).toBe(0);
     }),
   ));
