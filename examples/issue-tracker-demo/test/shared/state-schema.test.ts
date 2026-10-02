@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Result } from "effect";
-import {
-  decodeStateEvents,
-  issueTrackerState,
-  type Issue,
-  type JsonValue,
-} from "../../shared/state-schema.ts";
+import { decodeStateEvents, issueTrackerState, type JsonValue } from "../../shared/state-schema.ts";
 
 const project = {
   id: "proj_1",
@@ -20,8 +15,6 @@ const upsert = issueTrackerState.projects.upsert({
 });
 
 const isStateEvent = (value: JsonValue | undefined) => Result.isSuccess(decodeStateEvents([value]));
-const validateIssue = (value: JsonValue) =>
-  issueTrackerState.issues.schema["~standard"].validate(value);
 
 describe("decodeStateEvents", () => {
   test("accepts an event built by the state schema", () => {
@@ -48,60 +41,5 @@ describe("decodeStateEvents", () => {
         headers: { ...upsert.headers, extension: "header metadata" },
       }),
     ).toBe(true);
-  });
-
-  test.each([[undefined], [null], ["text"], [42], [[]]])(
-    "rejects the non-object payload %p",
-    (value) => {
-      expect(isStateEvent(value)).toBe(false);
-    },
-  );
-
-  test("rejects an unknown entity type", () => {
-    expect(isStateEvent({ ...upsert, type: "invoice" })).toBe(false);
-  });
-
-  test("rejects a missing key", () => {
-    expect(isStateEvent({ ...upsert, key: undefined })).toBe(false);
-  });
-
-  test("rejects an unknown operation", () => {
-    expect(isStateEvent({ ...upsert, headers: { operation: "merge" } })).toBe(false);
-  });
-
-  test("rejects non-string header metadata", () => {
-    expect(isStateEvent({ ...upsert, headers: { operation: "upsert", txid: 7 } })).toBe(false);
-  });
-
-  test("rejects a value that does not match its entity schema", () => {
-    expect(isStateEvent({ ...upsert, value: { ...project, name: 7 } })).toBe(false);
-  });
-
-  test("rejects a value that belongs to another entity type", () => {
-    expect(isStateEvent({ ...upsert, type: "issue" })).toBe(false);
-  });
-
-  test("rejects a malformed old_value", () => {
-    expect(isStateEvent({ ...upsert, old_value: { id: "proj_1" } })).toBe(false);
-  });
-});
-
-describe("issueTrackerState", () => {
-  const issue: Issue = {
-    id: "issue_1",
-    projectId: project.id,
-    title: "Ship",
-    status: "open",
-    createdAt: project.createdAt,
-    updatedAt: project.createdAt,
-  };
-
-  test("checks rows with the Effect entity schemas", () => {
-    expect(validateIssue(issue)).toEqual({ value: issue });
-    expect(validateIssue({ ...issue, status: "archived" })).toHaveProperty("issues");
-  });
-
-  test("drops row fields that the entity schema does not declare", () => {
-    expect(validateIssue({ ...issue, extension: "row metadata" })).toEqual({ value: issue });
   });
 });

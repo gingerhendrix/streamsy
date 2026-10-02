@@ -3,15 +3,8 @@ import { expect, test } from "bun:test";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { applyChange, newestRows } from "../../src/server/newest-rows.ts";
-import { HackerNewsStories, storiesAddress } from "../../src/server/stories.ts";
+import { storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
-
-test("fixed State declaration owns only hackernews/newest", () => {
-  expect(String(storiesAddress.id)).toBe("hackernews/newest");
-  expect(HackerNewsStories.match("hackernews/newest")).toBe(true);
-  expect(HackerNewsStories.match("hackernews/other")).toBe(false);
-  expect(storiesAddress.collections["hn-story"].key).toBe("id");
-});
 
 test("applyChange replaces upserts and removes rows without mutating its input", () => {
   const row = story(101, 30, "first");

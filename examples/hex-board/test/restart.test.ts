@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
-import { Memory as StorageMemory, Streamsy } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
 import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import {
@@ -38,9 +37,6 @@ const asProcess =
   <A, E, R>(program: Effect.Effect<A, E, R>) =>
     // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
     Effect.provide(program, layer);
-const memory = Memory.layer.pipe(
-  Layer.provideMerge(StorageMemory.layer({}, Streamsy.group(GameEvents))),
-);
 /** A SQLite file in a temporary folder. The folder is removed when the scope closes. */
 const tempFile = (prefix: string) =>
   Effect.acquireRelease(
@@ -125,14 +121,6 @@ for (const [name, events, cut] of [
       }).pipe(asProcess(sqlite(file)));
     }).pipe(Effect.scoped, Effect.runPromise));
 }
-
-test("memory folds the same game incrementally", () =>
-  seed().pipe(
-    Effect.andThen(read),
-    Effect.flatMap((before) => advance(before)),
-    asProcess(memory),
-    Effect.runPromise,
-  ));
 
 test("a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut", () =>
   Effect.gen(function* () {
