@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { DurableState, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker, Board, LabelCounts, Transitions } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels } from "../server/streams.ts";
 const at = "2026-09-23T10:00:00Z";
@@ -100,7 +100,7 @@ const run = (failOn: number | undefined) =>
 test("stop between outputs recovers to the same outputs as a clean run", async () => {
   const results = [];
   for (const failOn of [undefined, 2, 3]) {
-    const rt = ManagedRuntime.make(applicationLayer(":memory:"));
+    const rt = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
     try {
       results.push(await rt.runPromise(run(failOn)));
     } finally {

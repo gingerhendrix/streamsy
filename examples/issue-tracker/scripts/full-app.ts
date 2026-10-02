@@ -6,7 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import recording from "./recordings/acme.json";
 import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import { Projects, Users, Labels, Events, LabelEvents } from "../server/streams.ts";
 import {
@@ -80,7 +80,7 @@ const produce = Effect.gen(function* () {
     ["users", 2],
     ["labels", 2],
   ] as const) {
-    const rows = yield* sql.unsafe<{ readonly n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
+    const rows = yield* sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM ${sql(table)}`;
     yield* check(rows[0]?.n === expected, `expected ${expected} ${table}, got ${rows[0]?.n}`);
   }
 });
@@ -89,7 +89,7 @@ const app = Effect.gen(function* () {
   const database = yield* scratchDatabase("streamsy-issue-full");
   // The producer closes its SQLite connection before the server opens the file.
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The producer layer must close here.
-  yield* produce.pipe(Effect.provide(applicationLayer(database)));
+  yield* produce.pipe(Effect.provide(applicationLayer(sqliteStorage(database))));
 
   const server = yield* startServer(database);
   const baseUrl = server.url;

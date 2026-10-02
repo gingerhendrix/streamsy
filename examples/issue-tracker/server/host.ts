@@ -1,7 +1,9 @@
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@streamsy/projection";
+import * as Storage from "@streamsy/storage";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Fiber, Layer, type Scope } from "effect";
+import type { Reactivity } from "effect/unstable/reactivity";
 import { SqlClient } from "effect/unstable/sql";
 import { tracker, outputStreams } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
@@ -9,9 +11,22 @@ import { prepareSchema } from "./schema.ts";
 import { routes } from "./streams.ts";
 
 export const streams = Streamsy.group(...Object.values(routes), ...outputStreams);
-export const hostLayer = (filename: string) => {
+
+/** Root Streamsy storage for `streams` over a SQL client: Postgres, MySQL or SQLite. */
+export const sqlStorage = <E>(
+  makeClient: Effect.Effect<SqlClient.SqlClient, E, Scope.Scope | Reactivity.Reactivity>,
+) => Storage.layer(streams).pipe(Layer.provideMerge(Storage.clientLayer(makeClient)));
+
+/** The storage services the host needs, as `sqlStorage` and `sqliteStorage` give them. */
+export type HostStorage = Layer.Success<ReturnType<typeof sqlStorage>>;
+
+/** Bun SQLite storage for `streams` in `filename`. `:memory:` gives a private database. */
+export const sqliteStorage = (filename: string) =>
+  BunStorage.layer(streams, { client: { filename } });
+
+export const hostLayer = <E>(storage: Layer.Layer<HostStorage, E>) => {
   const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-    Layer.provideMerge(BunStorage.layer(streams, { client: { filename } })),
+    Layer.provideMerge(storage),
   );
   return Layer.effectContext(
     Effect.context<
@@ -59,7 +74,10 @@ const watchEnded =
       Effect.forkScoped,
     );
 
-export const applicationLayer = (filename: string, workspaces: ReadonlyArray<string> = []) =>
+export const applicationLayer = <E>(
+  storage: Layer.Layer<HostStorage, E>,
+  workspaces: ReadonlyArray<string> = [],
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       yield* prepareSchema;
@@ -76,7 +94,7 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
         yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
       }
     }),
-  ).pipe(Layer.provideMerge(hostLayer(filename)));
+  ).pipe(Layer.provideMerge(hostLayer(storage)));
 
 /** Create declared inputs; a mismatched existing config stops startup. */
 export const createInputs = (workspaceId: string) =>

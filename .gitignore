@@ -35,3 +35,6 @@ examples/issue-tracker-demo/.data/
 
 # Deployed e2e run reports
 e2e/reports/
+
+# Platform matrix run results
+examples/platform-matrix/.matrix/

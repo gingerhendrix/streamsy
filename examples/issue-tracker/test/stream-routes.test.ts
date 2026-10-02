@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { HttpRouter } from "effect/unstable/http";
 import { app } from "../server/app.ts";
-import { applicationLayer } from "../server/host.ts";
+import { applicationLayer, sqliteStorage } from "../server/host.ts";
 import { Layer } from "effect";
 
 test("tracker streams expose declared streams with host access rules", async () => {
-  const host = applicationLayer(":memory:", ["live"]);
+  const host = applicationLayer(sqliteStorage(":memory:"), ["live"]);
   const web = HttpRouter.toWebHandler(
     app(["live"]).pipe(Layer.provide(host), HttpRouter.provideRequest(host)),
     { disableLogger: true },

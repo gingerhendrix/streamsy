@@ -4,7 +4,7 @@ import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
 import { transact, UnknownIssue } from "../server/state.ts";
@@ -37,7 +37,7 @@ test("the fold keeps the newest sequence when an older fact arrives later", () =
 });
 
 test("the transactional handler writes application rows through the SQLite host", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -56,7 +56,7 @@ test("the transactional handler writes application rows through the SQLite host"
 });
 
 test("transact decides from the issueRows tables and appends at the events offset", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -93,7 +93,7 @@ test("transact decides from the issueRows tables and appends at the events offse
 });
 
 test("the change trigger stays alive beside the request trigger on one key", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:", ["live"]));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:"), ["live"]));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -127,7 +127,7 @@ test("the change trigger stays alive beside the request trigger on one key", asy
 });
 
 test("catalog state upserts and deletes a row", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
