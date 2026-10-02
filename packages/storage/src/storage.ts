@@ -693,37 +693,34 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
   });
 
 /** Encoded owner records; statements join the boundary transaction when one is open. */
-const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
-  // MySQL reserves `key`, so the column goes through the dialect's identifier quoting.
-  const column = sql("key");
-  return OwnerRecords.of({
+const makeOwnerRecords = (sql: SqlClient.SqlClient) =>
+  OwnerRecords.of({
     read: Effect.fn("SqlStorage.records.read")((key: string) =>
       attempt(
         "records.read",
         sql<{
-          readonly value: string;
-        }>`SELECT value FROM streamsy_owner_records WHERE ${column} = ${key}`,
-      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.value))),
+          readonly owner_value: string;
+        }>`SELECT owner_value FROM streamsy_owner_records WHERE owner_key = ${key}`,
+      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.owner_value))),
     ),
-    write: Effect.fn("SqlStorage.records.write")((key: string, encoded: string) =>
-      attempt(
+    write: Effect.fn("SqlStorage.records.write")((key: string, encoded: string) => {
+      const row = sql.insert({ owner_key: key, owner_value: encoded });
+      return execute(
         "records.write",
         sql.onDialectOrElse({
           mysql: () =>
-            sql`INSERT INTO streamsy_owner_records (${column}, value) VALUES (${key}, ${encoded}) ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+            sql`INSERT INTO streamsy_owner_records ${row}
+ ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value)`,
           orElse: () =>
-            sql`INSERT INTO streamsy_owner_records (${column}, value) VALUES (${key}, ${encoded}) ON CONFLICT (${column}) DO UPDATE SET value = excluded.value`,
+            sql`INSERT INTO streamsy_owner_records ${row}
+ ON CONFLICT (owner_key) DO UPDATE SET owner_value = excluded.owner_value`,
         }),
-      ).pipe(Effect.asVoid),
-    ),
+      );
+    }),
     remove: Effect.fn("SqlStorage.records.remove")((key: string) =>
-      attempt(
-        "records.remove",
-        sql`DELETE FROM streamsy_owner_records WHERE ${column} = ${key}`,
-      ).pipe(Effect.asVoid),
+      execute("records.remove", sql`DELETE FROM streamsy_owner_records WHERE owner_key = ${key}`),
     ),
   });
-};
 
 const makeLayer = (
   options: SqlStorageOptions,

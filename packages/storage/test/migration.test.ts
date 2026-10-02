@@ -146,7 +146,7 @@ test("an injected migration failure rolls back schema and version rows", async (
 });
 
 test("legacy and too-new files reject without changing retained bytes", async () => {
-  for (const kind of ["legacy", "legacy-0.4", "newer"] as const) {
+  for (const kind of ["legacy", "legacy-0.4", "owner-v3", "owner-only", "newer"] as const) {
     const path = filename(kind);
     const db = new Database(path, { create: true });
     if (kind === "legacy") {
@@ -159,6 +159,19 @@ test("legacy and too-new files reject without changing retained bytes", async ()
         "CREATE TABLE streamsy_storage_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
       );
       db.run("INSERT INTO streamsy_storage_schema_version VALUES (2, 1)");
+    } else if (kind === "owner-v3") {
+      // The pre-reset 0.4 layout with migration 3 and its unprefixed owner records.
+      db.run(
+        "CREATE TABLE streamsy_storage_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
+      );
+      db.run("INSERT INTO streamsy_storage_schema_version VALUES (3, 1)");
+      db.run(
+        "CREATE TABLE streamsy_owner_records (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
+      );
+    } else if (kind === "owner-only") {
+      db.run(
+        "CREATE TABLE streamsy_owner_records (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
+      );
     } else {
       db.run(
         `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
@@ -169,7 +182,7 @@ test("legacy and too-new files reject without changing retained bytes", async ()
     const before = await Bun.file(path).arrayBuffer();
     const exit = await Effect.runPromise(acquire(path).pipe(Effect.exit));
     expect(Exit.isFailure(exit)).toBe(true);
-    if (kind === "legacy-0.4" && Exit.isFailure(exit))
+    if (kind !== "legacy" && kind !== "newer" && Exit.isFailure(exit))
       expect(Option.getOrThrow(Cause.findErrorOption(exit.cause)).message).toContain(
         "use a fresh database path",
       );

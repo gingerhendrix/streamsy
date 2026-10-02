@@ -12,6 +12,7 @@ export const STORAGE_TABLES = [
   "streamsy_streams",
   "streamsy_messages",
   "streamsy_producers",
+  "streamsy_owner_records",
 ] as const;
 
 export const STORAGE_VERSION_TABLE_DDL: DialectSql<string> = {
@@ -27,6 +28,8 @@ const MYSQL_STREAM_ID = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900
 // (2048 bytes) and a producer id, so the producer id gets 255 characters (1020 bytes).
 const MYSQL_PRODUCER_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 const MYSQL_OFFSET = "VARCHAR(33) CHARACTER SET ascii COLLATE ascii_bin";
+// Owner record keys are encoded projection keys, bounded like stream ids and compared as bytes.
+const MYSQL_OWNER_KEY = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 
 /**
  * Migration versions in order. Version `n` is entry `n - 1`. SQLite and
@@ -57,6 +60,7 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
  WHERE forked_from IS NOT NULL`,
       `CREATE INDEX idx_streamsy_streams_expiry ON streamsy_streams(expires_at_ms, stream_id)
  WHERE expires_at_ms IS NOT NULL AND soft_deleted = 0`,
+      `CREATE TABLE streamsy_owner_records (owner_key TEXT PRIMARY KEY, owner_value TEXT NOT NULL)`,
     ],
     pg: [
       `CREATE TABLE streamsy_streams (
@@ -82,6 +86,9 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
  WHERE forked_from IS NOT NULL`,
       `CREATE INDEX idx_streamsy_streams_expiry ON streamsy_streams(expires_at_ms, stream_id)
  WHERE expires_at_ms IS NOT NULL AND soft_deleted = 0`,
+      `CREATE TABLE streamsy_owner_records (
+ owner_key TEXT COLLATE "C" PRIMARY KEY, owner_value TEXT NOT NULL
+)`,
     ],
     // MySQL has no CREATE INDEX IF NOT EXISTS, so the indexes live in CREATE TABLE.
     mysql: [
@@ -105,6 +112,9 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
  epoch DOUBLE NOT NULL, last_seq DOUBLE NOT NULL,
  PRIMARY KEY(stream_id, producer_id),
  FOREIGN KEY(stream_id) REFERENCES streamsy_streams(stream_id) ON DELETE CASCADE
+) ENGINE=InnoDB`,
+      `CREATE TABLE IF NOT EXISTS streamsy_owner_records (
+ owner_key ${MYSQL_OWNER_KEY} PRIMARY KEY, owner_value LONGTEXT NOT NULL
 ) ENGINE=InnoDB`,
     ],
   },

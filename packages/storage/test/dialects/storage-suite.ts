@@ -32,7 +32,12 @@ import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "../../src/schema.
 import { storageLayer } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, type SqlDialect } from "./support.ts";
 
-const STORAGE_TABLES = ["streamsy_messages", "streamsy_producers", "streamsy_streams"] as const;
+const STORAGE_TABLES = [
+  "streamsy_messages",
+  "streamsy_owner_records",
+  "streamsy_producers",
+  "streamsy_streams",
+] as const;
 
 const died = <A, E>(exit: Exit.Exit<A, E>): boolean =>
   Exit.isFailure(exit) && Cause.hasDies(exit.cause);
@@ -103,6 +108,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
     name: `${dialect.name} Storage contract`,
     layer: storeLayer.pipe(Layer.orDie),
     expected: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
+    ownerRecords: true,
   });
 
   const withStore = <A, E>(

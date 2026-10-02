@@ -48,7 +48,13 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       );
       expect(result).toEqual({
         versions: [STORAGE_SCHEMA_VERSION],
-        tables: ["streamsy_messages", "streamsy_producers", "streamsy_schema", "streamsy_streams"],
+        tables: [
+          "streamsy_messages",
+          "streamsy_owner_records",
+          "streamsy_producers",
+          "streamsy_schema",
+          "streamsy_streams",
+        ],
       });
     });
 
