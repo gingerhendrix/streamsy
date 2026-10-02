@@ -1,11 +1,22 @@
-/* oxlint-disable effecttsgo/async-function -- Bun file/package import boundary. */
 import { expect, test } from "bun:test";
+import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
 
-test("host entries and optional peers keep the package graph exact", async () => {
-  const root = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
-  expect(root).not.toContain("@effect/sql-sqlite-bun");
-  expect(root).not.toContain("@effect/sql-sqlite-do");
-  expect(root).not.toContain("@effect/sql-pg");
-  expect(root).not.toContain("@effect/sql-mysql2");
-  expect(root).not.toContain("@effect/platform-bun");
+const dist = (name: string) => new URL(`../dist/${name}`, import.meta.url).pathname;
+
+const drivers = [
+  "@effect/sql-sqlite-",
+  "@effect/sql-pg",
+  "@effect/sql-mysql2",
+  "@effect/platform-",
+];
+
+test("the root entry reaches no SQL driver or runtime platform", () => {
+  expect(matching(entryImports(dist("index.js")), drivers)).toEqual([]);
+});
+
+test("each host entry reaches its own driver", () => {
+  const bun = entryImports(dist("bun.js"));
+  expect(bun.has("@effect/sql-sqlite-bun")).toBe(true);
+  expect(matching(bun, ["@effect/platform-bun"])).not.toEqual([]);
+  expect(entryImports(dist("durable-object.js")).has("@effect/sql-sqlite-do")).toBe(true);
 });

@@ -1,8 +1,9 @@
-import { join } from "node:path";
 import { expect, test } from "bun:test";
+import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
 
-test("the root entry does not import a SQL driver", async () => {
-  const root = await Bun.file(join(import.meta.dir, "..", "dist", "index.js")).text();
-  expect(root).not.toContain("@effect/sql");
-  expect(root).not.toContain("effect/unstable/sql");
+const dist = (name: string) => new URL(`../dist/${name}`, import.meta.url).pathname;
+
+// `effect/unstable/sql` is allowed: it is the driverless SQL interface in `effect`.
+test("the root entry reaches no SQLite driver", () => {
+  expect(matching(entryImports(dist("index.js")), ["@effect/sql-sqlite-"])).toEqual([]);
 });
