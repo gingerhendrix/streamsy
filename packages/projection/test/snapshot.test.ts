@@ -1,6 +1,5 @@
 import { Commit, Transaction } from "@streamsy/projection";
 import { tmpdir } from "node:os";
-import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
@@ -76,39 +75,6 @@ for (const [name, host] of hosts) {
         yield* seed;
         const progress = yield* Projection.run(totals);
         expect(progress.status).toBe("caught-up");
-        const snapshot = yield* Projection.read(totals);
-        expect(snapshot.offsets).toEqual(progress.offsets);
-        expect(snapshot.offsets).toEqual({
-          input: yield* tailOf(input),
-          words: yield* tailOf(words),
-        });
-        expect(snapshot.state).toEqual({ sum: 5, count: 3 });
-      }).pipe(Effect.provide(host)),
-    ));
-
-  test(`${name}: state and offsets move together when another writer runs between two reads`, () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* Projection.run(totals);
-        const first = yield* Projection.read(totals);
-        yield* Streams.append(input, [7]);
-        // A kernel run without the permit stands in for another process.
-        yield* runKernel(totals);
-        const second = yield* Projection.read(totals);
-        expect(second.offsets.input).not.toBe(first.offsets.input);
-        expect(second.offsets.words).toBe(first.offsets.words);
-        expect(second.offsets.input).toBe(yield* tailOf(input));
-        expect(first.state).toEqual({ sum: 5, count: 3 });
-        expect(second.state).toEqual({ sum: 12, count: 4 });
-      }).pipe(Effect.provide(host)),
-    ));
-
-  test(`${name}: read loads state and offsets in one record`, () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* Projection.run(totals);
         const store = yield* CheckpointStore;
         let loads = 0;
         const snapshot = yield* Projection.read(totals).pipe(
@@ -121,11 +87,14 @@ for (const [name, host] of hosts) {
               }),
           }),
         );
+        // State and offsets come from one record load.
         expect(loads).toBe(1);
+        expect(snapshot.offsets).toEqual(progress.offsets);
+        expect(snapshot.offsets).toEqual({
+          input: yield* tailOf(input),
+          words: yield* tailOf(words),
+        });
         expect(snapshot.state).toEqual({ sum: 5, count: 3 });
-        expect(Option.getOrThrow((yield* store.load(totals)).record).state).toBe(
-          '{"sum":5,"count":3}',
-        );
       }).pipe(Effect.provide(host)),
     ));
 

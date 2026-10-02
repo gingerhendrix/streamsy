@@ -329,32 +329,6 @@ for (const point of ["read", "append"] as const) {
     ));
 }
 
-test("follow honours a finite retry budget and run remains single-shot", () =>
-  run(
-    Effect.gen(function* () {
-      yield* Streams.create(input);
-      let attempts = 0;
-      const reader = yield* StreamsReader;
-      const broken = {
-        ...reader,
-        read: () =>
-          Effect.suspend(() => {
-            attempts += 1;
-            return Effect.fail(
-              new TransportFault({ reason: "request", operation: "read", message: "offline" }),
-            );
-          }),
-      };
-      const fiber = yield* Projection.follow(positives, { retry: Schedule.recurs(2) }).pipe(
-        FamilyFixture.provideReader(broken),
-      );
-      expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
-      expect(attempts).toBe(3);
-      yield* Projection.run(positives).pipe(FamilyFixture.provideReader(broken), Effect.result);
-      expect(attempts).toBe(4);
-    }),
-  ));
-
 test("follow does not retry non-storage faults or handler failures", () =>
   run(
     Effect.gen(function* () {
@@ -508,6 +482,9 @@ for (const explicit of [false, true]) {
         );
         expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
         expect(attempts).toBe(explicit ? 3 : 1);
+        // run stays single-shot: one read, no retry.
+        yield* Projection.run(positives).pipe(FamilyFixture.provideReader(broken), Effect.result);
+        expect(attempts).toBe(explicit ? 4 : 2);
       }),
     ));
 }
