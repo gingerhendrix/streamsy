@@ -129,29 +129,43 @@ The append's error type follows its options. Only an append with `expectedOffset
 
 ### Read, fold, append
 
-The [issue tracker](/docs/demos/issue-tracker#5-read-fold-append) puts this pattern in one function, `IssueTracker.mutate`:
+`decide` does the loop above in one call. It folds the stream, calls `decide` with the state and the tail it read, and appends with that tail as `expectedOffset`:
 
 ```ts
-const mutate = <A, E>(
-  workspaceId: string,
-  attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
-) =>
+import { Effect } from "effect";
+import { Orders, apply, initial } from "./orders.ts";
+
+const reserve = (sku: string) =>
   Effect.gen(function* () {
-    const { state, headOffset } = yield* materialize(workspaceId);
-    const { change, value } = yield* attempt(state);
-    const ack = yield* append(workspaceId, change, headOffset);
-    return { value, awaitOffset: ack.offset };
-  }).pipe(
-    Effect.retry({
-      schedule: Schedule.recurs(3),
-      while: Predicate.isTagged("OffsetMismatch"),
-    }),
-    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
-    Effect.withSpan("IssueTracker.mutate"),
-  );
+    const orders = yield* Orders;
+    return yield* orders.decide(
+      {},
+      {
+        initial: () => initial,
+        fold: apply,
+        decide: (state) =>
+          Effect.succeed(
+            state.reserved.has(sku)
+              ? { value: "rejected" as const, items: [] }
+              : { value: "reserved" as const, items: [{ type: "reserved" as const, sku }] },
+          ),
+      },
+    );
+  });
 ```
 
-`attempt` has no side effects. It returns the change and the answer, or a typed error. A retry runs all of `mutate` again with the new state. After three retries, `mutate` fails with `WriteConflict`.
+What `decide` does:
+
+- It folds the stream from the start with `initial` and `fold`.
+- It calls `decide` with the state and the tail it read. `decide` must not write and must not change the state.
+- Empty `items` returns at once. There is no append and no tail check.
+- Otherwise it appends the items with `expectedOffset` set to that tail.
+- After `OffsetMismatch`, it folds only the new items onto the same state and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`.
+- It does not retry other failures. A lost reply can hide an append that landed, so a caller that retries the whole call must make `decide` safe against its own write.
+
+It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the tail that was read. `Streams.decide(address, spec)` is the same call on an address.
+
+On a Durable State stream, pass the offset to `DurableState.changes`, so each change records the offset that the append checks. The [issue tracker](/docs/demos/issue-tracker#5-read-fold-append) does this in `IssueTracker.mutate`.
 
 To project a stream into state and then append, see [Read, decide, append](/docs/projections/state#read-decide-append).
 

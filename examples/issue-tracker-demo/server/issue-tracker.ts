@@ -1,6 +1,6 @@
 import { MaterializedState } from "@durable-streams/state";
 import { ZERO_OFFSET } from "@streamsy/core";
-import { Context, Crypto, DateTime, Effect, Layer, Predicate, Schedule, Schema } from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from "effect";
 import type { Issue, Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
 import {
@@ -11,7 +11,12 @@ import {
   type Stamp,
   type WorkspaceState,
 } from "./state.ts";
-import { workspaceEvents, Workspaces, type WorkspaceChange } from "./streams.ts";
+import {
+  workspaceEvents,
+  Workspaces,
+  type WorkspaceChange,
+  type WorkspaceEvent,
+} from "./streams.ts";
 
 export class WorkspaceNotFound extends Schema.TaggedError<WorkspaceNotFound>()(
   "WorkspaceNotFound",
@@ -41,7 +46,7 @@ export class IssueTracker extends Context.Service<
   {
     /** Fold one workspace from its durable stream. */
     readonly materialize: (workspaceId: string) => Effect.Effect<Materialized, WorkspaceNotFound>;
-    /** Read, fold, append with `expectedOffset`; retry only an `OffsetMismatch`. */
+    /** Read, decide, append with `Workspaces.decide`; a lost race is retried three times. */
     readonly mutate: <A, E>(
       workspaceId: string,
       attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
@@ -55,6 +60,16 @@ export class IssueTracker extends Context.Service<
   }
 >()("IssueTrackerDemo/IssueTracker") {}
 
+const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
+  materialized.apply(event);
+  return materialized;
+};
+const view = (state: MaterializedState): WorkspaceState => ({
+  getProject: (projectId: string) => state.get<Project>("project", projectId),
+  getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
+  hasProjects: () => state.getType("project").size > 0,
+});
+
 export const IssueTrackerLive = Layer.effect(
   IssueTracker,
   Effect.gen(function* () {
@@ -67,66 +82,59 @@ export const IssueTrackerLive = Layer.effect(
       return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4) };
     }, Effect.orDie);
 
-    // Each change records the head it was validated against as its source
-    // offset, and the append only lands if that head is still the tail. A lost
-    // race stays typed for the retry; any other rejection is a defect.
+    // A seed or a new workspace appends at the head it read, and only lands if
+    // that head is still the tail.
     const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
-      workspaces
-        .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
-          expectedOffset: head,
-        })
-        .pipe(
-          Effect.catchTag(
-            "OffsetMismatch",
-            (error) => Effect.fail(error),
-            (error) => Effect.die(error),
-          ),
-        );
+      workspaces.append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
+        expectedOffset: head,
+      });
+
+    // A missing workspace is typed; any other store failure is a defect.
+    const notFoundOrDie = (workspaceId: string) => (error: { readonly _tag: string }) =>
+      Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
+        ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
+        : Effect.die(error);
 
     const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
       const { state, offset } = yield* workspaces
-        .fold(
-          { workspaceId },
-          () => new MaterializedState(),
-          (materialized, event) => {
-            materialized.apply(event);
-            return materialized;
-          },
-        )
-        .pipe(
-          Effect.catch((error) =>
-            Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
-              ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
-              : Effect.die(error),
-          ),
-        );
-      return {
-        state: {
-          getProject: (projectId: string) => state.get<Project>("project", projectId),
-          getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
-          hasProjects: () => state.getType("project").size > 0,
-        },
-        headOffset: offset,
-      };
+        .fold({ workspaceId }, () => new MaterializedState(), fold)
+        .pipe(Effect.catch(notFoundOrDie(workspaceId)));
+      return { state: view(state), headOffset: offset };
     });
 
     const mutate = <A, E>(
       workspaceId: string,
       attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
     ) =>
-      Effect.gen(function* () {
-        const { state, headOffset } = yield* materialize(workspaceId);
-        const { change, value } = yield* attempt(state);
-        const ack = yield* append(workspaceId, change, headOffset);
-        return { value, awaitOffset: ack.offset };
-      }).pipe(
-        Effect.retry({
-          schedule: Schedule.recurs(3),
-          while: Predicate.isTagged("OffsetMismatch"),
-        }),
-        Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
-        Effect.withSpan("IssueTracker.mutate"),
-      );
+      workspaces
+        .decide(
+          { workspaceId },
+          {
+            initial: () => new MaterializedState(),
+            fold,
+            // Each change records the head it was validated against as its source
+            // offset; the same offset is the append's `expectedOffset`. A domain
+            // failure is an answer at that head, so it appends nothing.
+            decide: (state, { offset }) =>
+              Effect.map(Effect.result(attempt(view(state))), (answer) => ({
+                value: answer,
+                items: Result.isSuccess(answer)
+                  ? workspaceEvents(workspaceId, offset, [answer.success.change])
+                  : [],
+              })),
+          },
+        )
+        .pipe(
+          Effect.catchTag(
+            "OffsetMismatch",
+            () => Effect.fail(new WriteConflict({ workspaceId })),
+            notFoundOrDie(workspaceId),
+          ),
+          Effect.flatMap(({ value: answer, offset }) =>
+            Effect.map(Effect.fromResult(answer), ({ value }) => ({ value, awaitOffset: offset })),
+          ),
+          Effect.withSpan("IssueTracker.mutate"),
+        );
 
     const create = Effect.gen(function* () {
       const bytes = yield* crypto.randomBytes(10);

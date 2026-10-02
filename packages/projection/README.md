@@ -91,6 +91,9 @@ the actual writes. See the [bucket example](https://streamsy.dev/docs/projection
 `initial` can depend on decoded parameters. State and offsets share one record.
 `Projection.read(bound)` reads through the Commit's `load` and returns
 `{ state, offsets }`, using `initial` before the first unit.
+`Projection.decide(bound, { input, decide })` runs to the tail, reads, decides,
+and appends to one input with that input's offset as `expectedOffset`. It
+retries on `OffsetMismatch`. See [Read, decide, append](https://streamsy.dev/docs/projections/state#read-decide-append).
 
 `Serve.value(schema, effect)` serves values computed with `Projection.read`.
 Before the first saved unit, reads return the declared initial value.

@@ -1,4 +1,10 @@
-import { DurableState, Memory, Streamsy, type StorageFault } from "@streamsy/core";
+import {
+  DurableState,
+  Memory,
+  Streamsy,
+  type StorageFault,
+  type StreamAddress,
+} from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { type Array, Effect, Layer, Option, Schema } from "effect";
 import { Comment, Issue, Project } from "../shared/state-schema.ts";
@@ -19,6 +25,8 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
 ) {}
 
 export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>;
+/** One stamped event on a workspace stream. */
+export type WorkspaceEvent = StreamAddress.CollectionsChange<typeof Workspaces.collections>;
 
 /**
  * Stamp changes for one workspace. The tracker writes its own events, so the

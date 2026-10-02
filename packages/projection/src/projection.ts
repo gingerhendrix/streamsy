@@ -28,4 +28,5 @@ export const each =
     Effect.forEach(items(batch), (entry) => handle(entry, unit), { discard: true });
 
 export { read } from "./snapshot.ts";
+export { decide } from "./decide.ts";
 export { forget } from "./forget.ts";

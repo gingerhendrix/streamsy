@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Cause, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Schedule, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
@@ -10,7 +10,7 @@ import {
   StreamNotFound,
 } from "../../src/protocol/errors.ts";
 import { StreamsReader, StreamsWriter, type Writer } from "../../src/protocol/tags.ts";
-import type { StreamsFault } from "../../src/fault.ts";
+import { TransportFault, type StreamsFault } from "../../src/fault.ts";
 import { StreamId } from "../../src/schema/index.ts";
 
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
@@ -156,5 +156,178 @@ it("append dies on a rejection that its options rule out", () =>
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
         expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
       }
+    }),
+  ));
+
+const sum = {
+  initial: () => 0,
+  fold: (total: number, event: { readonly n: number }) => total + event.n,
+};
+/** The memory writer, with every append counted. */
+const countingAppends = Effect.gen(function* () {
+  const writer = yield* StreamsWriter;
+  const appends = { count: 0 };
+  const counted: Writer<StreamsFault> = {
+    ...writer,
+    append: (streamId, options) =>
+      Effect.suspend(() => {
+        appends.count += 1;
+        return writer.append(streamId, options);
+      }),
+  };
+  return { appends, counted };
+});
+
+it("decide with no items makes no append and no tail check", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 1 }, { n: 2 }]);
+      const { appends, counted } = yield* countingAppends;
+      const decided = yield* Streams.decide(address, {
+        ...sum,
+        decide: (total, { offset }) =>
+          // A rival write after the read: a no-write answer does not check the tail.
+          Streams.append(address, [{ n: 10 }]).pipe(
+            Effect.as({ value: `${total}@${offset}`, items: [] }),
+          ),
+      }).pipe(Effect.provideService(StreamsWriter, counted));
+      const tail = (yield* Streams.head(address)).nextOffset;
+      expect(decided.appended).toBe(false);
+      expect(decided.value).toBe(`3@${decided.offset}`);
+      expect(decided.offset).not.toBe(tail);
+      // The one append is the rival's.
+      expect(appends.count).toBe(1);
+    }),
+  ));
+
+it("decide retries a lost race and folds only the new items from the old tail", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 1 }, { n: 2 }, { n: 3 }]);
+      let initials = 0;
+      let folded = 0;
+      const seen: Array<{ readonly total: number; readonly offset: string }> = [];
+      const decided = yield* Streams.decide(address, {
+        initial: () => {
+          initials += 1;
+          return 0;
+        },
+        fold: (total: number, event) => {
+          folded += 1;
+          return total + event.n;
+        },
+        decide: (total, { offset }) =>
+          Effect.gen(function* () {
+            seen.push({ total, offset });
+            // The first decision loses to a rival write.
+            if (seen.length === 1) yield* Streams.append(address, [{ n: 10 }]);
+            return { value: total, items: [{ n: total }] };
+          }),
+      });
+      expect(seen.map(({ total }) => total)).toEqual([6, 16]);
+      expect(seen[1]?.offset).not.toBe(seen[0]?.offset);
+      expect(initials).toBe(1);
+      // Three items on the first read, then only the rival's item.
+      expect(folded).toBe(4);
+      expect(decided).toEqual({
+        value: 16,
+        offset: (yield* Streams.head(address)).nextOffset,
+        appended: true,
+      });
+      expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 2, 3, 10, 16]);
+    }),
+  ));
+
+it("decide fails with the last OffsetMismatch when the schedule ends", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      const offsets: Array<string> = [];
+      const failure = yield* Effect.flip(
+        Streams.decide(address, {
+          ...sum,
+          decide: (_total, { offset }) =>
+            Effect.gen(function* () {
+              offsets.push(offset);
+              yield* Streams.append(address, [{ n: 1 }]);
+              return { value: undefined, items: [{ n: 0 }] };
+            }),
+          retry: Schedule.recurs(2),
+        }),
+      );
+      expect(offsets).toHaveLength(3);
+      expect(failure).toBeInstanceOf(OffsetMismatch);
+      expect(failure).toMatchObject({ expected: offsets[2] });
+      expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 1, 1]);
+    }),
+  ));
+
+it("decide does not retry other append failures", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [], { close: true });
+      let closedDecisions = 0;
+      const closedFailure = yield* Effect.flip(
+        Streams.decide(address, {
+          ...sum,
+          decide: () => {
+            closedDecisions += 1;
+            return Effect.succeed({ value: undefined, items: [{ n: 1 }] });
+          },
+        }),
+      );
+      expect(closedFailure).toBeInstanceOf(StreamClosed);
+      expect(closedDecisions).toBe(1);
+
+      // A lost reply may hide a landed append, so a transport fault is not retried.
+      const other = StreamAddress.json("other", { schema: Schema.Struct({ n: Schema.Finite }) });
+      yield* Streams.create(other);
+      const fault = new TransportFault({
+        operation: "append",
+        reason: "response",
+        message: "lost",
+      });
+      const writer = yield* StreamsWriter;
+      let faultDecisions = 0;
+      const faultFailure = yield* Effect.flip(
+        Streams.decide(other, {
+          ...sum,
+          decide: () => {
+            faultDecisions += 1;
+            return Effect.succeed({ value: undefined, items: [{ n: 1 }] });
+          },
+        }).pipe(
+          Effect.provideService(StreamsWriter, { ...writer, append: () => Effect.fail(fault) }),
+        ),
+      );
+      expect(faultFailure).toBe(fault);
+      expect(faultDecisions).toBe(1);
+    }),
+  ));
+
+class Refused extends Schema.TaggedError<Refused>()("Refused", { total: Schema.Finite }) {}
+
+it("decide passes its own failure through without an append or a retry", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(address);
+      yield* Streams.append(address, [{ n: 4 }]);
+      const { appends, counted } = yield* countingAppends;
+      let decisions = 0;
+      const failure = yield* Effect.flip(
+        Streams.decide(address, {
+          ...sum,
+          decide: (total) => {
+            decisions += 1;
+            return Effect.fail(new Refused({ total }));
+          },
+        }).pipe(Effect.provideService(StreamsWriter, counted)),
+      );
+      expect(failure).toEqual(new Refused({ total: 4 }));
+      expect(decisions).toBe(1);
+      expect(appends.count).toBe(0);
     }),
   ));

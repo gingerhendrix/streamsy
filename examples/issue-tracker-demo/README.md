@@ -59,17 +59,17 @@ schemas in `shared/state-schema.ts` type the stream collections on the server
 and, through `Schema.toStandardSchemaV1`, the StreamDB collections in the
 browser.
 
-`IssueTracker.mutate` is the read, fold, append recipe: read the workspace,
-fold its State changes, validate against the resulting view, and append with
-`expectedOffset`. A `Schedule` retries the whole recipe on an `OffsetMismatch`
-only, so parallel writers cannot silently overwrite one another; after three
-retries the API answers 409. The validation rules in `server/state.ts` return
+`IssueTracker.mutate` is the read, decide, append recipe in one
+`Workspaces.decide` call: fold the workspace's State changes, validate against
+the resulting view, and append with `expectedOffset`. `decide` retries on an
+`OffsetMismatch` only, so parallel writers cannot silently overwrite one
+another; after three retries the API answers 409. The validation rules in `server/state.ts` return
 the change to append or a typed error, and the handlers map those errors to
 400, 404 or 409. Project, issue, and comment changes share one
 `Streamsy.state` declaration, `Workspaces`, whose collections type both reads
 and writes. `DurableState.changes` stamps each change for the append. Because
 the tracker appends its own events rather than projecting an upstream, each
-change records the workspace head read by the recipe as its source offset.
+change records the workspace head that `decide` read as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as

@@ -45,14 +45,14 @@ The poller is the working example of the
 
 Each number in the diagram is a section below.
 
-| Step | What happens                                                     | Streamsy feature                                                    | File                              |
-| ---- | ---------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------- |
-| 1    | The app declares one State stream and hosts it in SQLite         | `Streamsy.state`, `Streamsy.group`, `BunStorage.layer`              | `stories.ts`, `streams.ts`        |
-| 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                           | `newest-rows.ts`                  |
-| 3    | The poller reads the rows and their offset, decides, and appends | `Projection.run`, `Projection.read`, `append` with `expectedOffset` | `poller/reconcile.ts`             |
-| 4    | A conflict retries the whole pass                                | `OffsetMismatch`                                                    | `poller/poller.ts`                |
-| 5    | The server publishes the stream as Durable State                 | `Serve.mount`, `Serve.layer`, `listener`, `Serve.teardown`          | `http.ts`, `index.ts`             |
-| 6    | The browser replays the stream, then follows live changes        | Durable State client                                                | `client/db.ts`, `client/main.tsx` |
+| Step | What happens                                                     | Streamsy feature                                           | File                              |
+| ---- | ---------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------- |
+| 1    | The app declares one State stream and hosts it in SQLite         | `Streamsy.state`, `Streamsy.group`, `BunStorage.layer`     | `stories.ts`, `streams.ts`        |
+| 2    | A projection folds the stream into story rows                    | `Projection.fold` with `state` and `fold`                  | `newest-rows.ts`                  |
+| 3    | The poller reads the rows and their offset, decides, and appends | `Projection.decide`                                        | `poller/reconcile.ts`             |
+| 4    | A conflict retries the whole pass                                | `OffsetMismatch`, `retry` schedule                         | `poller/poller.ts`                |
+| 5    | The server publishes the stream as Durable State                 | `Serve.mount`, `Serve.layer`, `listener`, `Serve.teardown` | `http.ts`, `index.ts`             |
+| 6    | The browser replays the stream, then follows live changes        | Durable State client                                       | `client/db.ts`, `client/main.tsx` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 
@@ -132,24 +132,32 @@ browser follows.
 ## 3. Read, decide, append
 
 Each pass fetches the newest ids and their stories once. `reconcileNewest` then
-does one pass of the recipe:
+does the recipe with one `Projection.decide` call. It runs the projection to the
+tail, reads the rows and the offset of `input`, and appends the events with that
+offset as `expectedOffset`. No change gives no events, so nothing is appended
+and the tail is not checked:
 
 ```ts title="src/server/poller/reconcile.ts"
-export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+export const reconcileNewest = (
   fetched: FetchResult,
-) {
-  // Run to the tail. A run with a limit would leave the offset behind the tail.
-  yield* Projection.run(newestRows);
-  // The rows and the offset they are at, from one transaction.
-  const { state: rows, offsets } = yield* Projection.read(newestRows);
-  const changes = diffNewest(rows, fetched);
-  // An append needs items. No change appends nothing, so it does not check the tail.
-  if (!Array.isReadonlyArrayNonEmpty(changes)) return { rows, changes, offset: offsets.input };
-  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
-  const stories = yield* HackerNewsStories;
-  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
-  return { rows: events.reduce(applyChange, rows), changes, offset: appended.offset };
-});
+  retry: Schedule.Schedule<unknown, OffsetMismatch>,
+) =>
+  Projection.decide(newestRows, {
+    input: "input",
+    decide: ({ state: rows, offsets }) => {
+      const changes = diffNewest(rows, fetched);
+      // No change gives no events: `decide` then appends nothing and does not check the tail.
+      const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+      return Effect.succeed({
+        value: { rows: events.reduce(applyChange, rows), changes },
+        items: events,
+      });
+    },
+    retry,
+  }).pipe(
+    Effect.map(({ value, offset }) => ({ ...value, offset })),
+    Effect.withSpan("NewestStoriesPoller.reconcile"),
+  );
 ```
 
 `diffNewest` is the decision. It deletes rows whose ids left the newest set,
@@ -160,19 +168,15 @@ See [Read, decide, append](/docs/projections/state#read-decide-append).
 
 ## 4. Retry on a conflict
 
-The poller retries the whole pass on `OffsetMismatch`, up to three times. It
-does not fetch from Hacker News again:
+After an `OffsetMismatch`, `Projection.decide` runs, reads and decides again,
+up to three times. The poller passes the schedule as `retry`. It does not fetch
+from Hacker News again:
 
 ```ts title="src/server/poller/poller.ts"
 const pass = Effect.gen(function* () {
   // ... fetch the newest ids and their stories once, into `fetched` ...
   // A retry runs, reads and decides again, so the diff uses the new rows.
-  const { rows, changes, offset } = yield* reconcileNewest(fetched).pipe(
-    Effect.retry({
-      schedule: conflictRetries,
-      while: Predicate.isTagged("OffsetMismatch"),
-    }),
-  );
+  const { rows, changes, offset } = yield* reconcileNewest(fetched, conflictRetries);
   // ... record the counters ...
 });
 ```

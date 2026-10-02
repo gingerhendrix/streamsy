@@ -94,22 +94,28 @@ for (const exhaust of [false, true]) {
       let storiesFetched = 0;
       const service = Context.get(h.context, HackerNewsStories);
       const expectedOffsets: (string | undefined)[] = [];
+      // `Projection.decide` appends through the stream's wire, so the race sits there.
       const raced = Context.add(h.context, HackerNewsStories, {
         ...service,
-        append: (params, events, options) =>
-          Effect.gen(function* () {
-            appends++;
-            expectedOffsets.push(options?.expectedOffset);
-            if (exhaust || appends === 1) {
-              yield* service.append(
-                {},
-                DurableState.changes(storiesAddress, { offset: ZERO_OFFSET }, [
-                  DurableState.upsert("hn-story", b),
-                ]),
-              );
-            }
-            return yield* service.append(params, events, options);
-          }),
+        wire: {
+          ...service.wire,
+          append: (id, options) =>
+            Effect.gen(function* () {
+              appends++;
+              expectedOffsets.push(options.expectedOffset);
+              if (exhaust || appends === 1) {
+                yield* service
+                  .append(
+                    {},
+                    DurableState.changes(storiesAddress, { offset: ZERO_OFFSET }, [
+                      DurableState.upsert("hn-story", b),
+                    ]),
+                  )
+                  .pipe(Effect.orDie);
+              }
+              return yield* service.wire.append(id, options);
+            }),
+        },
       });
       try {
         const poller = await Effect.runPromise(

@@ -57,19 +57,22 @@ test("two concurrent writers land without a lost update", async () => {
       const reader = yield* Workspaces;
       const firstReads = yield* Ref.make(0);
       const bothRead = yield* Deferred.make<void>();
-      // Hold both writers' first reads until each has folded the same head,
+      // Hold both writers' first decisions until each has folded the same head,
       // so exactly one of the two conditional appends must lose.
       const barrierReader = Workspaces.of({
         ...reader,
-        fold: (params, initial, f, options) =>
-          Effect.gen(function* () {
-            const result = yield* reader.fold(params, initial, f, options);
-            const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
-            if (readNumber <= 2) {
-              if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
-              yield* Deferred.await(bothRead);
-            }
-            return result;
+        decide: (params, spec) =>
+          reader.decide(params, {
+            ...spec,
+            decide: (state, at) =>
+              Effect.gen(function* () {
+                const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+                if (readNumber <= 2) {
+                  if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+                  yield* Deferred.await(bothRead);
+                }
+                return yield* spec.decide(state, at);
+              }),
           }),
       });
       const tracker = yield* IssueTracker.pipe(

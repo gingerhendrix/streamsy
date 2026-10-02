@@ -27,15 +27,15 @@ Open http://localhost:1338. The server keeps workspaces in memory, so a restart 
 
 The server has no read API. Writes go through the JSON API, and reads come from the stream. Each number in the diagram is also the number of a section below.
 
-| Step | What happens                                                                       | Feature                                                        | File                                                              |
-| ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 1    | One stream per workspace holds projects, issues and comments                       | `Streamsy.state` with collections                              | `server/streams.ts`                                               |
-| 2    | One layer graph opens the storage, seeds `main` and starts the listener            | `Memory.layer`, `BunStorage.layer`, `Streamsy.group`           | `server/streams.ts`, `server/index.ts`, `server/issue-tracker.ts` |
-| 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                   | `src/db.ts`                                                       |
-| 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                               | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
-| 5    | The service reads and folds the workspace, then appends if the stream did not move | `read`, `DurableState.changes`, `append` with `expectedOffset` | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
-| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `Serve.layer`, `Serve.teardown`                 | `server/index.ts`                                                 |
-| 7    | The browser follows the stream and confirms its own change                         | Durable State client                                           | `src/db.ts`, `src/App.tsx`                                        |
+| Step | What happens                                                                       | Feature                                              | File                                                              |
+| ---- | ---------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| 1    | One stream per workspace holds projects, issues and comments                       | `Streamsy.state` with collections                    | `server/streams.ts`                                               |
+| 2    | One layer graph opens the storage, seeds `main` and starts the listener            | `Memory.layer`, `BunStorage.layer`, `Streamsy.group` | `server/streams.ts`, `server/index.ts`, `server/issue-tracker.ts` |
+| 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                         | `src/db.ts`                                                       |
+| 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                     | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
+| 5    | The service reads and folds the workspace, then appends if the stream did not move | `decide`, `DurableState.changes`                     | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
+| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `Serve.layer`, `Serve.teardown`       | `server/index.ts`                                                 |
+| 7    | The browser follows the stream and confirms its own change                         | Durable State client                                 | `src/db.ts`, `src/App.tsx`                                        |
 
 The code in each section is from the demo. Lines marked `// ...` are left out.
 
@@ -250,73 +250,55 @@ export const createIssue =
   };
 ```
 
-To get that state, `materialize` folds the whole workspace stream into a `MaterializedState` from `@durable-streams/state`. This is the same fold that the browser does. The server keeps no cache between requests. `fold` also returns the offset it read up to. That offset is the head that this state describes. A missing stream becomes `WorkspaceNotFound`.
+To get that state, the service folds the whole workspace stream into a `MaterializedState` from `@durable-streams/state`. This is the same fold that the browser does. The server keeps no cache between requests. The validation step gets a read-only view of it.
 
 ```ts title="server/issue-tracker.ts"
-const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
-  const { state, offset } = yield* workspaces
-    .fold(
-      { workspaceId },
-      () => new MaterializedState(),
-      (materialized, event) => {
-        materialized.apply(event);
-        return materialized;
-      },
-    )
-    .pipe(
-      Effect.catch((error) =>
-        Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
-          ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
-          : Effect.die(error),
-      ),
-    );
-  return {
-    state: {
-      getProject: (projectId: string) => state.get<Project>("project", projectId),
-      getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
-      hasProjects: () => state.getType("project").size > 0,
-    },
-    headOffset: offset,
-  };
+const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
+  materialized.apply(event);
+  return materialized;
+};
+const view = (state: MaterializedState): WorkspaceState => ({
+  getProject: (projectId: string) => state.get<Project>("project", projectId),
+  getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
+  hasProjects: () => state.getType("project").size > 0,
 });
 ```
 
-`mutate` is the read, fold, append recipe. It appends with `expectedOffset` set to the head it read. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. The retry runs the whole recipe again: read, fold, validate and build the change. So each change is checked against the state at the exact position where it lands. After three retries the service fails with `WriteConflict`, and the API answers 409.
+`mutate` is the read, decide, append recipe in one `workspaces.decide` call. `decide` folds the stream and passes the state and the offset it read up to. The validation step runs on that state. The change is stamped with that offset, and the append uses the same offset as `expectedOffset`. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. `decide` then folds the new events onto the state and validates again. So each change is checked against the state at the exact position where it lands. A domain failure appends nothing. After three retries the service fails with `WriteConflict`, and the API answers 409. A missing stream becomes `WorkspaceNotFound`. Any other store failure is a defect.
 
 ```ts title="server/issue-tracker.ts"
 const mutate = <A, E>(
   workspaceId: string,
   attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
 ) =>
-  Effect.gen(function* () {
-    const { state, headOffset } = yield* materialize(workspaceId);
-    const { change, value } = yield* attempt(state);
-    const ack = yield* append(workspaceId, change, headOffset);
-    return { value, awaitOffset: ack.offset };
-  }).pipe(
-    Effect.retry({
-      schedule: Schedule.recurs(3),
-      while: Predicate.isTagged("OffsetMismatch"),
-    }),
-    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
-    Effect.withSpan("IssueTracker.mutate"),
-  );
-```
-
-`append` calls the `Workspaces` service with `expectedOffset` set to the head that the recipe read. It keeps `OffsetMismatch` as a typed failure for the retry. Any other rejection becomes a defect.
-
-```ts title="server/issue-tracker.ts"
-const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
   workspaces
-    .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
-      expectedOffset: head,
-    })
+    .decide(
+      { workspaceId },
+      {
+        initial: () => new MaterializedState(),
+        fold,
+        // Each change records the head it was validated against as its source
+        // offset; the same offset is the append's `expectedOffset`. A domain
+        // failure is an answer at that head, so it appends nothing.
+        decide: (state, { offset }) =>
+          Effect.map(Effect.result(attempt(view(state))), (answer) => ({
+            value: answer,
+            items: Result.isSuccess(answer)
+              ? workspaceEvents(workspaceId, offset, [answer.success.change])
+              : [],
+          })),
+      },
+    )
     .pipe(
       Effect.catchTag(
         "OffsetMismatch",
-        (error) => Effect.fail(error),
-        (error) => Effect.die(error),
+        () => Effect.fail(new WriteConflict({ workspaceId })),
+        notFoundOrDie(workspaceId),
       ),
+      Effect.flatMap(({ value: answer, offset }) =>
+        Effect.map(Effect.fromResult(answer), ({ value }) => ({ value, awaitOffset: offset })),
+      ),
+      Effect.withSpan("IssueTracker.mutate"),
     );
 ```
 
