@@ -343,19 +343,20 @@ test("Checkpoint SQL failures retain phase and driver cause", async () => {
         const sql = yield* SqlClient.SqlClient;
         const state = yield* CheckpointStore;
         yield* sql.unsafe("DROP TABLE streamsy_projection_v3_records");
+        const save = (ifToken: string) =>
+          state
+            .compareAndSet(total, ifToken, {
+              identity: { inputs: {} },
+              inputs: {},
+              adapters: {},
+              state: "1",
+            })
+            .pipe(Effect.asVoid);
         for (const [phase, operation] of [
           ["load", state.load(total).pipe(Effect.asVoid)],
-          [
-            "load",
-            state
-              .compareAndSet(total, "0", {
-                identity: { inputs: {} },
-                inputs: {},
-                adapters: {},
-                state: "1",
-              })
-              .pipe(Effect.asVoid),
-          ],
+          // A first save inserts; a later save reads the token first.
+          ["checkpoint", save("0")],
+          ["load", save("1")],
           ["checkpoint", state.remove(total)],
         ] as const) {
           const failed = yield* Effect.result(operation);

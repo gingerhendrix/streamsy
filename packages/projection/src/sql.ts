@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option, Predicate } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { ownerOf, attachOwner } from "@streamsy/core/internal/memory";
 import { CommitBoundary } from "@streamsy/storage";
@@ -33,14 +33,19 @@ const make = (sql: SqlClient.SqlClient, transaction: typeof Transaction.Service)
     yield* createTable(sql).pipe(
       Effect.mapError(storageFailure("load", `Cannot prepare ${TABLE}`)),
     );
-    const read = Effect.fn("Projection.Sql.read")((key: string) =>
+    const select = (key: string, lock: string) =>
       sql<{
         readonly checkpoint_value: string;
       }>`SELECT checkpoint_value FROM streamsy_projection_v3_records
- WHERE checkpoint_key = ${key}`.pipe(
+ WHERE checkpoint_key = ${key}${sql.literal(lock)}`.pipe(
         Effect.mapError(storageFailure("load", `Cannot read ${TABLE}`)),
         Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.checkpoint_value)),
-      ),
+      );
+    const read = Effect.fn("Projection.Sql.read")((key: string) => select(key, ""));
+    // Compare-and-set holds the row until commit, so a concurrent save waits and then sees
+    // the new token. SQLite has one writer and no FOR UPDATE.
+    const readForUpdate = Effect.fn("Projection.Sql.readForUpdate")((key: string) =>
+      select(key, sql.onDialectOrElse({ sqlite: () => "", orElse: () => " FOR UPDATE" })),
     );
     const write = Effect.fn("Projection.Sql.write")((key: string, value: string) => {
       const row = sql.insert({ checkpoint_key: key, checkpoint_value: value });
@@ -58,6 +63,20 @@ const make = (sql: SqlClient.SqlClient, transaction: typeof Transaction.Service)
           Effect.asVoid,
         );
     });
+    // A concurrent first save of the same key meets the primary key and reports false.
+    const insert = Effect.fn("Projection.Sql.insert")((key: string, value: string) =>
+      sql`INSERT INTO streamsy_projection_v3_records ${sql.insert({
+        checkpoint_key: key,
+        checkpoint_value: value,
+      })}`.pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) => Predicate.isTagged(error.reason, "UniqueViolation"),
+          () => Effect.succeed(false),
+        ),
+        Effect.mapError(storageFailure("checkpoint", `Cannot insert into ${TABLE}`)),
+      ),
+    );
     const remove = Effect.fn("Projection.Sql.remove")((key: string) =>
       sql`DELETE FROM streamsy_projection_v3_records WHERE checkpoint_key = ${key}`.pipe(
         Effect.mapError(storageFailure("checkpoint", `Cannot delete from ${TABLE}`)),
@@ -66,7 +85,9 @@ const make = (sql: SqlClient.SqlClient, transaction: typeof Transaction.Service)
     );
     const store: EncodedStore = {
       read,
+      readForUpdate,
       write,
+      insert,
       remove,
       withTransaction: transaction.withTransaction,
     };

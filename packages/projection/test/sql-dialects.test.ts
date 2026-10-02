@@ -23,6 +23,7 @@ import {
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 const TIMEOUT_MS = 60_000;
+const SAVES = 8;
 
 const key = (id: string) => ({ id, version: 1, generation: 1, params: { tenant: "ä/1" } });
 const record = (state: string): CheckpointRecord => ({
@@ -126,6 +127,56 @@ for (const dialect of dialects) {
           json: true,
           removed: "0",
           other: Option.some("other"),
+        });
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "concurrent saves of one key from two pools have one winner",
+      async () => {
+        if (url === undefined) return;
+        const result = await onFreshDatabase(dialect, url, (fresh) =>
+          Effect.gen(function* () {
+            const pool = () =>
+              Layer.build(ProjectionSql.layer.pipe(Layer.provide(dialectClient(dialect, fresh))));
+            const first = Context.get(yield* pool(), CheckpointStore);
+            const stores = [first, Context.get(yield* pool(), CheckpointStore)];
+            /** SAVES saves of `id` from `ifToken`, alternating pools, all at once. */
+            const race = (id: string, ifToken: string) =>
+              Effect.all(
+                Array.makeBy(SAVES, (index) =>
+                  stores[index % 2]!.compareAndSet(key(id), ifToken, record(`save-${index}`)).pipe(
+                    Effect.map((token) => ({ index, outcome: `saved ${token}` })),
+                    Effect.catchTag("ProjectionFault", (fault) =>
+                      Effect.succeed({ index, outcome: fault.reason }),
+                    ),
+                  ),
+                ),
+                { concurrency: "unbounded" },
+              ).pipe(
+                Effect.flatMap((outcomes) =>
+                  Effect.map(first.load(key(id)), (loaded) => {
+                    const winners = outcomes.filter(({ outcome }) => outcome.startsWith("saved"));
+                    return {
+                      outcomes: outcomes.map(({ outcome }) => outcome).toSorted(),
+                      // The stored record is the winner's, not a later loser's.
+                      stored:
+                        winners.length === 1 &&
+                        Option.getOrUndefined(loaded.record)?.state === `save-${winners[0]!.index}`,
+                      token: loaded.token,
+                    };
+                  }),
+                ),
+              );
+            yield* first.compareAndSet(key("existing"), "0", record("seed"));
+            return { existing: yield* race("existing", "1"), absent: yield* race("absent", "0") };
+          }),
+        );
+        const conflicts = Array.replicate("token-conflict", SAVES - 1);
+        expect(result).toEqual({
+          existing: { outcomes: ["saved 2", ...conflicts].toSorted(), stored: true, token: "2" },
+          absent: { outcomes: ["saved 1", ...conflicts].toSorted(), stored: true, token: "1" },
         });
       },
       TIMEOUT_MS,
