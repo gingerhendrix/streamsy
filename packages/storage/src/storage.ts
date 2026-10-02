@@ -1,4 +1,4 @@
-import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
+import { attachOwner, ownerOf } from "@streamsy/core/internal";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
   type Streamsy,

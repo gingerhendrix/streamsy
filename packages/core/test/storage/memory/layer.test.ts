@@ -17,10 +17,12 @@ StorageContract.run({
   name: "Memory chain / store / push / indexed",
   layer: layer(),
   expected: normal,
+  ownerRecords: true,
 });
 StorageContract.run({
   name: "Memory copy / stream / poll / lazy",
   layer: layer({ constrained: true }),
   expected: constrained,
+  ownerRecords: true,
 });
 StorageContract.assertModes([normal, constrained]);
