@@ -1,7 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 /**
- * The SQL checkpoint store and fused commits on Postgres and MySQL. Each
- * dialect runs in its own fresh database and skips when its URL is absent.
+ * Checkpoints on the storage owner (`CheckpointStore.layer`) and fused commits on
+ * Postgres and MySQL. Each dialect runs in its own fresh database and skips when
+ * its URL is absent.
  */
 import { describe, expect, test } from "bun:test";
 import { Array, Context, Effect, Layer, Option, Result } from "effect";
@@ -9,9 +10,14 @@ import { SqlClient } from "effect/unstable/sql";
 import { Storage, StreamId } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import * as StreamsyStorage from "@streamsy/storage";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
-import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Commit,
+  Projection,
+  ProjectionFault,
+  Transaction,
+} from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { initialize, input, output, readAll } from "./support/scenarios.ts";
 import {
@@ -46,11 +52,18 @@ const onFreshDatabase = <A, E>(
     ),
   );
 
-/** Projection checkpoints joined to storage, as one host process over its own pool. */
+/** Checkpoints on the storage owner, over one pool. */
+const checkpoints = (dialect: SqlDialect, url: string) =>
+  CheckpointStore.layer.pipe(
+    Layer.provideMerge(StreamsyStorage.layerProtocol()),
+    Layer.provideMerge(dialectClient(dialect, url)),
+  );
+
+/** Projection checkpoints and transactions joined to storage, as one host process over its own pool. */
 const host = (dialect: SqlDialect, url: string) =>
   Layer.build(
     FamilyFixture.withFamilies(
-      ProjectionSql.layerStorage.pipe(
+      Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
         Layer.provideMerge(StreamsyStorage.layerProtocol()),
         Layer.provideMerge(dialectClient(dialect, url)),
       ),
@@ -82,12 +95,9 @@ for (const dialect of dialects) {
         if (url === undefined) return;
         const result = await onFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
-            const plain = ProjectionSql.layer.pipe(
-              Layer.provideMerge(dialectClient(dialect, fresh)),
-            );
-            const context = yield* Layer.build(plain);
-            // A second build finds the table and creates nothing.
-            yield* Layer.build(plain);
+            const context = yield* Layer.build(checkpoints(dialect, fresh));
+            // A second build finds the schema migrated and creates nothing.
+            yield* Layer.build(checkpoints(dialect, fresh));
             const store = Context.get(context, CheckpointStore);
             const sql = Context.get(context, SqlClient.SqlClient);
             const absent = yield* store.load(key("upper"));
@@ -100,9 +110,9 @@ for (const dialect of dialects) {
               .compareAndSet(key("upper"), first, record("stale"))
               .pipe(Effect.result);
             const rows = yield* sql<{
-              readonly checkpoint_key: string;
-              readonly checkpoint_value: string;
-            }>`SELECT checkpoint_key, checkpoint_value FROM streamsy_projection_v3_records`;
+              readonly owner_key: string;
+              readonly owner_value: string;
+            }>`SELECT owner_key, owner_value FROM streamsy_owner_records`;
             yield* store.remove(key("upper"));
             // Removing an absent key is ignored.
             yield* store.remove(key("upper"));
@@ -112,7 +122,7 @@ for (const dialect of dialects) {
               loaded: [loaded.token, Option.map(loaded.record, ({ state }) => state)],
               stale: Result.isFailure(stale) ? stale.failure.reason : "applied",
               rows: rows.length,
-              json: rows.every(({ checkpoint_value }) => checkpoint_value.startsWith("{")),
+              json: rows.every(({ owner_value }) => owner_value.startsWith("{")),
               removed: (yield* store.load(key("upper"))).token,
               other: Option.map((yield* store.load(key("UPPER"))).record, ({ state }) => state),
             };
@@ -138,8 +148,7 @@ for (const dialect of dialects) {
         if (url === undefined) return;
         const result = await onFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
-            const pool = () =>
-              Layer.build(ProjectionSql.layer.pipe(Layer.provide(dialectClient(dialect, fresh))));
+            const pool = () => Layer.build(checkpoints(dialect, fresh));
             const first = Context.get(yield* pool(), CheckpointStore);
             const stores = [first, Context.get(yield* pool(), CheckpointStore)];
             /** SAVES saves of `id` from `ifToken`, alternating pools, all at once. */
@@ -188,20 +197,18 @@ for (const dialect of dialects) {
         if (url === undefined) return;
         const result = await onFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
-            const context = yield* Layer.build(
-              ProjectionSql.layer.pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
-            );
+            const context = yield* Layer.build(checkpoints(dialect, fresh));
             const sql = Context.get(context, SqlClient.SqlClient);
             // Encoded keys end in "]", so the column is checked directly.
-            for (const checkpoint_key of ["x", "x "])
-              yield* sql`INSERT INTO streamsy_projection_v3_records ${sql.insert({
-                checkpoint_key,
-                checkpoint_value: "{}",
+            for (const owner_key of ["x", "x "])
+              yield* sql`INSERT INTO streamsy_owner_records ${sql.insert({
+                owner_key,
+                owner_value: "{}",
               })}`;
             const rows = yield* sql<{
-              readonly checkpoint_key: string;
-            }>`SELECT checkpoint_key FROM streamsy_projection_v3_records WHERE checkpoint_key = ${"x"}`;
-            return rows.map(({ checkpoint_key }) => checkpoint_key);
+              readonly owner_key: string;
+            }>`SELECT owner_key FROM streamsy_owner_records WHERE owner_key = ${"x"}`;
+            return rows.map(({ owner_key }) => owner_key);
           }),
         );
         expect(result).toEqual(["x"]);
