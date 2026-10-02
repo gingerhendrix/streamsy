@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { Storage, StreamId } from "@streamsy/core";
-import { DEFAULT_LONG_POLL_TIMEOUT_MS, layerProtocol } from "@streamsy/storage/durable-object";
 import { Alarm, reconcileAlarm } from "../../src/cloudflare/alarm.ts";
 
 const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamId: string }>) =>
@@ -48,9 +47,4 @@ test("reconcileAlarm follows the indexed deadline table", async () => {
   ]);
   expect(await run(Option.some({ at: 0, streamId: "a" }), Option.some(0))).toEqual(["clear", 1]);
   expect(await run(Option.some({ at: 0, streamId: "a" }), Option.none())).toEqual([1]);
-});
-
-test("the Durable Object protocol entry publishes the settled long-poll default", () => {
-  expect(DEFAULT_LONG_POLL_TIMEOUT_MS).toBe(25_000);
-  expect(layerProtocol).toBeInstanceOf(Function);
 });

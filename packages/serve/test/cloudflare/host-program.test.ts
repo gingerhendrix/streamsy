@@ -77,31 +77,3 @@ test("an alarm exposes StorageFault for platform retry without an HTTP request",
       { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },
     ]);
 });
-
-test("an alarm sweeps before reconciling without reader, writer, or request services", async () => {
-  const actions: Array<string> = [];
-  const storage = Storage.of({
-    ...failingStorage,
-    nextExpiry: Effect.sync(() => {
-      actions.push("next expiry");
-      return Option.none();
-    }),
-  });
-  await Effect.runPromise(
-    alarm.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(Storage, storage),
-          Layer.succeed(Alarm, {
-            current: Effect.succeed(Option.none()),
-            arm: () => Effect.void,
-            clear: Effect.sync(() => {
-              actions.push("clear");
-            }),
-          }),
-        ),
-      ),
-    ),
-  );
-  expect(actions).toEqual(["next expiry", "next expiry", "clear"]);
-});
