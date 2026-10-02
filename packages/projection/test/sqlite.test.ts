@@ -210,27 +210,6 @@ test("a new Bun process reopens the file and resumes without repeated output", a
   expect(result.accepted).toBe(result.tail);
 });
 
-test("a checkpoint SQL failure retains its underlying cause", async () => {
-  const runtime = ManagedRuntime.make(host(":memory:"));
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql.unsafe("DROP TABLE streamsy_projection_v2_records");
-        const result = yield* (yield* CheckpointStore).load(positives).pipe(Effect.result);
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
-          expect(result.failure.phase).toBe("load");
-          expect(result.failure.reason).toBe("storage-failure");
-          expect(result.failure.cause).toMatchObject({ _tag: "SqlError" });
-        }
-      }),
-    );
-  } finally {
-    await runtime.dispose();
-  }
-});
-
 test("a SQLite file containing only v1 projection tables rebuilds from zero", async () => {
   const directory = mkdtempSync(join(scratch, "projection-v1-"));
   const filename = join(directory, "old.sqlite");

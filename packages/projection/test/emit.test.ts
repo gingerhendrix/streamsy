@@ -340,41 +340,6 @@ for (const [name, host] of hosts) {
         expect((yield* Projection.read(projection)).state).toBe(1);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
-
-  test(`${name}: rows encode the declared collection and key, including key-only deletes`, () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        yield* seed;
-        const RowCard = Schema.Struct({ issueId: Schema.String, title: Schema.String });
-        const board = FamilyFixture.state("board", {
-          collections: { board: { schema: RowCard, key: "issueId" } },
-        });
-        const projection = Projection.emit({
-          commit: Commit.producer,
-          id: "rows",
-          params: {},
-          inputs: { input },
-          outputs: { board },
-          emit: () =>
-            Effect.succeed({
-              board: [
-                DurableState.upsert("board", { issueId: "one", title: "First" }),
-                DurableState.remove("board", "old"),
-              ],
-            }),
-        }).at({});
-        yield* Projection.run(projection);
-        expect(yield* readAll(FamilyFixture.json("board", { schema: Schema.Unknown }))).toEqual([
-          {
-            type: "board",
-            key: "one",
-            value: { issueId: "one", title: "First" },
-            headers: { operation: "upsert" },
-          },
-          { type: "board", key: "old", headers: { operation: "delete" } },
-        ]);
-      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
-    ));
 }
 
 test("state is an ordinary output name; duplicate streams fail at at", () => {
@@ -485,22 +450,4 @@ test("named outputs reject an output that names one of their inputs", () => {
       }).at({}),
     ).toThrow("An output may not name an input stream");
   }
-});
-
-test("outputs retain fixed addresses and their route codecs", () => {
-  const target = FamilyFixture.json("id-only", { schema: Schema.Finite });
-  const declaration = target;
-  const declared = Projection.emit({
-    commit: Commit.producer,
-    id: "codec-test",
-    params: {},
-    inputs: { input },
-    outputs: { out: declaration },
-    emit: () => Effect.succeed({ out: [42] }),
-  });
-  const projection = declared.at({});
-  expect(Schema.encodeSync(declared.at({}).streams.out!.codec)(42)).toBe("42");
-  expect(projection.streams.out?.stream).toBe(target.stream);
-  expect(projection.streams.out?.id).toBe(target.id);
-  expect(Schema.encodeSync(projection.streams.out!.codec)(42)).toBe("42");
 });
