@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/serve",
   "version": "0.4.0",
-  "description": "Effect HttpRouter routes, Bun, Node and Cloudflare hosts, and durable action delivery.",
+  "description": "Effect HttpRouter routes, Bun, Node, Deno and Cloudflare hosts, and durable action delivery.",
   "license": "MIT",
   "files": [
     "dist"
@@ -44,6 +44,11 @@
       "import": "./dist/node.js",
       "default": "./dist/node.js"
     },
+    "./deno": {
+      "types": "./dist/deno.d.ts",
+      "import": "./dist/deno.js",
+      "default": "./dist/deno.js"
+    },
     "./cloudflare": {
       "types": "./dist/cloudflare.d.ts",
       "import": "./dist/cloudflare.js",
@@ -69,7 +74,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/contract.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sql.ts src/bun.ts src/node.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
+    "build": "tsdown src/index.ts src/contract.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sql.ts src/bun.ts src/node.ts src/deno.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.cloudflare-tests.json --noEmit",
     "test:unit": "bun test test",
     "test:dialects": "bun test test/action/outbox-dialects.test.ts"
@@ -81,6 +86,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
     "@effect/platform-bun": "4.0.0-rc.115",
+    "@effect/platform-deno": "4.0.0-rc.115",
     "@effect/platform-node": "4.0.0-rc.115",
     "@effect/sql-mysql2": "4.0.0-rc.115",
     "@effect/sql-pg": "4.0.0-rc.115",
@@ -93,11 +99,15 @@
   },
   "peerDependencies": {
     "@effect/platform-bun": "4.0.0-rc.115",
+    "@effect/platform-deno": "4.0.0-rc.115",
     "@effect/platform-node": "4.0.0-rc.115",
     "alchemy": "2.0.0-beta.79"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-deno": {
       "optional": true
     },
     "@effect/platform-node": {
