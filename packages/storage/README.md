@@ -77,10 +77,11 @@ every dialect: on MySQL they are locking reads (`FOR UPDATE` or `FOR SHARE`),
 so they see the latest committed rows even when your SQL fixed the
 transaction's snapshot first. A stale plan is rejected, never written.
 
-On MySQL, the protocol still plans an append with plain reads. If another
-writer appends to the same stream after your transaction's first read, every
-replan reads the old snapshot, and the append fails with `StreamBusy`. Retry the
-whole transaction.
+The protocol plans an append from `storage.record` and `storage.producer`.
+Inside a transaction on MySQL, these reads are `FOR UPDATE` too, so each replan
+sees the latest tail and the stream row stays locked until your transaction
+ends. Other writers to that stream wait for your commit. Outside a transaction
+they are plain reads and take no lock.
 
 Your reads of your own tables are your job. On Postgres each statement reads
 the latest committed rows. On MySQL at the default REPEATABLE READ, a plain

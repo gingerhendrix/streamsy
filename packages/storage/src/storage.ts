@@ -263,6 +263,18 @@ const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
     orElse: () => sql.literal(""),
   });
 
+/**
+ * The lock for a read the protocol plans a mutation from. Inside an open
+ * transaction on this client, such as a fused commit, it is `update`: on MySQL a
+ * plain read would return the snapshot fixed by the transaction's first read, so
+ * every replan would see the same stale tail. The row then stays locked until the
+ * mutation. Outside a transaction the read stays plain and takes no lock.
+ */
+const planningLock = (sql: SqlClient.SqlClient) =>
+  Effect.map(Effect.serviceOption(sql.transactionService), (open) =>
+    Option.isSome(open) ? ("update" as const) : undefined,
+  );
+
 const lockIds = (mutation: Mutation): ReadonlyArray<StreamId> =>
   mutation.operations.flatMap((operation) =>
     Predicate.isTagged(operation, "Create")
@@ -635,10 +647,14 @@ const snapshot = (sql: SqlClient.SqlClient, id: StreamId) =>
 const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
   Storage.of({
     capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
-    record: Effect.fn("SqlStorage.record")((id) => readRecord(sql, id)),
+    record: Effect.fn("SqlStorage.record")((id) =>
+      Effect.flatMap(planningLock(sql), (lock) => readRecord(sql, id, lock)),
+    ),
     messages: Effect.fn("SqlStorage.messages")((id, window) => readMessages(sql, id, window)),
     producer: Effect.fn("SqlStorage.producer")((id, producerId) =>
-      readProducer(sql, "producer", id, producerId),
+      Effect.flatMap(planningLock(sql), (lock) =>
+        readProducer(sql, "producer", id, producerId, lock),
+      ),
     ),
     mutate: Effect.fn("SqlStorage.mutate")((mutation) => {
       const ids = mutation.operations.map((operation) =>

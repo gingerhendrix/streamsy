@@ -10,7 +10,7 @@ import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "e
 import { Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { makeBoundaryTestProbe } from "../../src/boundary.ts";
+import { CommitBoundary, makeBoundaryTestProbe } from "../../src/boundary.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
 
@@ -35,6 +35,7 @@ const host = (dialect: SqlDialect, url: string) => {
       writer: Context.get(context, StreamsWriter),
       storage: Context.get(context, Storage),
       sql: Context.get(context, SqlClient.SqlClient),
+      boundary: Context.get(context, CommitBoundary),
       probe,
     })),
   );
@@ -89,6 +90,8 @@ const mutateTag = (storage: Host["storage"], mutation: Mutation) =>
     Effect.map(({ _tag }) => _tag),
     Effect.catchTag("MutationRejected", ({ reason }) => Effect.succeed(`rejected:${reason}`)),
   );
+
+const text = (value: string) => new TextEncoder().encode(value);
 
 const payload = (index: number) => new TextEncoder().encode(`${index}:${"x".repeat(index % 7)}`);
 
@@ -159,6 +162,48 @@ for (const dialect of dialects) {
           bytes: sent.reduce((total, data) => total + data.byteLength, 0),
           payloads: sent.map((data) => new TextDecoder().decode(data)).toSorted(),
           busy: undefined,
+        });
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "a fused append after a plain read wins over an append from another pool",
+      async () => {
+        if (url === undefined) return;
+        const id = StreamId.make("race/fused");
+        const result = await Effect.runPromise(
+          withHosts(dialect, url, (left, right) =>
+            Effect.gen(function* () {
+              yield* right.writer.create(id, { contentType });
+              const outcome = yield* left.boundary
+                .withTransaction(
+                  Effect.gen(function* () {
+                    // On MySQL this plain read fixes the transaction's snapshot.
+                    yield* left.sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
+                    // Another process appends after that read.
+                    yield* right.writer.append(id, { data: text("other"), contentType });
+                    return yield* left.writer.append(id, { data: text("fused"), contentType });
+                  }),
+                )
+                .pipe(Effect.result);
+              const messages = yield* right.storage.messages(id, {});
+              const record = Option.getOrThrow(yield* right.storage.record(id));
+              const decoder = new TextDecoder();
+              return {
+                outcome: tagOf(outcome),
+                offsets: messages.map(({ offset }) => String(offset)),
+                payloads: messages.map(({ data }) => decoder.decode(data)),
+                tail: String(record.currentOffset),
+              };
+            }),
+          ),
+        );
+        expect(result).toEqual({
+          outcome: "ok",
+          offsets: [nthOffset(1), nthOffset(2)],
+          payloads: ["other", "fused"],
+          tail: nthOffset(2),
         });
       },
       TIMEOUT_MS,
