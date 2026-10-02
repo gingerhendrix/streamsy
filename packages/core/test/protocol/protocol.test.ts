@@ -543,10 +543,14 @@ for (const when of ["before", "after"] as const) {
           );
           const result = yield* reader.read(id);
           expect(result.messages.length).toBe(1);
+          const storage = yield* Storage;
+          expect(yield* storage.producer(id, ProducerId.make("p"))).toEqual(
+            Option.some({ epoch: 0, lastSeq: 0 }),
+          );
         }).pipe(
           provideTest(
             Protocol.layer().pipe(
-              Layer.provide(faultyStorage(Memory.layer(), { failOn: 2, when })),
+              Layer.provideMerge(faultyStorage(Memory.layer(), { failOn: 2, when })),
             ),
           ),
         ),
