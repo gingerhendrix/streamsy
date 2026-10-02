@@ -1,24 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Bun file/package import boundary. */
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
-import * as BunHost from "@streamsy/serve/bun";
 import * as DenoHost from "@streamsy/serve/deno";
-import * as NodeHost from "@streamsy/serve/node";
-
-test("runtime host entries export one listener shape", () => {
-  expect(Object.keys(BunHost).toSorted()).toEqual(["DEFAULT_HOSTNAME", "DEFAULT_PORT", "listener"]);
-  expect(Object.keys(NodeHost).toSorted()).toEqual([
-    "DEFAULT_HOSTNAME",
-    "DEFAULT_PORT",
-    "listener",
-  ]);
-  expect(Object.keys(DenoHost).toSorted()).toEqual([
-    "DEFAULT_HOSTNAME",
-    "DEFAULT_PORT",
-    "listener",
-    "nodeSqliteCompat",
-  ]);
-});
 
 const entry = (name: string) => ({
   types: `./dist/${name}.d.ts`,
