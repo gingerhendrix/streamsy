@@ -91,3 +91,107 @@ jobs:
 
       - name: E2E package checks
         run: bun run e2e:check
+
+  # The platform matrix runs the app on Bun, Node and Deno against memory,
+  # SQLite, Postgres and MySQL (examples/platform-matrix). It runs on push to
+  # `effect` and on manual dispatch only, so it does not block pull requests
+  # while it is new. The services use the same ports, users and passwords as
+  # compose.yaml, so the job uses the same database URLs as a local run.
+  matrix:
+    name: Platform matrix
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/effect')
+    runs-on: ubuntu-latest
+    # A local run of the dialect suites and the matrix takes about 2.5 min. The
+    # limit leaves room for the service images, the install and the build on
+    # a cold runner, and stops a hung entry or test long before the 6 h default.
+    timeout-minutes: 30
+    env:
+      STREAMSY_PG_URL: postgres://streamsy:streamsy@127.0.0.1:54329/streamsy
+      STREAMSY_MYSQL_URL: mysql://streamsy:streamsy@127.0.0.1:33069/streamsy
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: streamsy
+          POSTGRES_PASSWORD: streamsy
+          POSTGRES_DB: streamsy
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U streamsy"
+          --health-interval 2s
+          --health-retries 30
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: streamsy
+          MYSQL_DATABASE: streamsy
+          MYSQL_USER: streamsy
+          MYSQL_PASSWORD: streamsy
+        ports:
+          - 33069:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pstreamsy"
+          --health-interval 2s
+          --health-retries 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # A service container cannot mount the compose grant file, so grant the
+      # same rights here. The dialect tests and the runner create databases
+      # named streamsy_<suffix> as the streamsy user.
+      - name: Grant MySQL test databases
+        env:
+          MYSQL_CONTAINER: ${{ job.services.mysql.id }}
+        run: |
+          docker exec -i "$MYSQL_CONTAINER" mysql -uroot -pstreamsy <<'SQL'
+          GRANT ALL PRIVILEGES ON `streamsy\_%`.* TO 'streamsy'@'%';
+          SHOW GRANTS FOR 'streamsy'@'%';
+          SQL
+
+      - name: Show runtime versions
+        run: |
+          bun --version
+          node --version
+          deno --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build publishable packages
+        run: bun run build
+
+      - name: SQL dialect tests
+        run: bun run test:sql-dialects
+
+      - name: Issue-tracker dialect tests
+        run: bun run --cwd examples/issue-tracker test:dialects
+
+      - name: Platform matrix
+        run: bun run --cwd examples/platform-matrix matrix
+
+      - name: Upload matrix results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-matrix
+          path: examples/platform-matrix/.matrix/
+          # upload-artifact skips hidden paths by default, and .matrix is one.
+          include-hidden-files: true
+          if-no-files-found: warn
