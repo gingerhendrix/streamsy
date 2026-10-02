@@ -65,9 +65,9 @@ test("plain SQL checkpoints join an outer transaction and roll back as one row",
       expect(Result.isFailure(failed)).toBe(true);
       expect((yield* store.load(key)).token).toBe("0");
       yield* store.compareAndSet(key, "0", record);
-      expect(yield* client.unsafe("SELECT key FROM streamsy_projection_v2_records")).toHaveLength(
-        1,
-      );
+      expect(
+        yield* client.unsafe("SELECT checkpoint_key FROM streamsy_projection_v3_records"),
+      ).toHaveLength(1);
       expect(
         yield* client.unsafe(
           "SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_v1_state'",

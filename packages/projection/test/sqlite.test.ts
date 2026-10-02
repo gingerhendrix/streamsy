@@ -216,7 +216,7 @@ test("a checkpoint SQL failure retains its underlying cause", async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql.unsafe("DROP TABLE streamsy_projection_v2_records");
+        yield* sql.unsafe("DROP TABLE streamsy_projection_v3_records");
         const result = yield* (yield* CheckpointStore).load(positives).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") {
@@ -261,7 +261,9 @@ test("a SQLite file containing only v1 projection tables rebuilds from zero", as
         expect(yield* sql.unsafe("SELECT value FROM streamsy_projection_v1_state")).toEqual([
           { value: "999" },
         ]);
-        expect(yield* sql.unsafe("SELECT key FROM streamsy_projection_v2_records")).toHaveLength(1);
+        expect(
+          yield* sql.unsafe("SELECT checkpoint_key FROM streamsy_projection_v3_records"),
+        ).toHaveLength(1);
       }),
     );
   } finally {

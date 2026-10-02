@@ -51,7 +51,7 @@ those tables and its checkpoint through the same SQL transaction. The separate
 `tracker` uses `Projection.mapAccumBatch` with `Commit.producer`: `Board` and
 `LabelCounts` are `Streamsy.state` routes, `Transitions` is a `Streamsy.json` route,
 and the workspace value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
-`@streamsy/projection` owns only `streamsy_projection_v2_records`, containing offsets and the
+`@streamsy/projection` owns only `streamsy_projection_v3_records`, containing offsets and the
 persisted value. The command path still reads facts rather than the projection state.
 
 `ProjectBoardCard` extends the issue row with label ids and nullable project/assignee

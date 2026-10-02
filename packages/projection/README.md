@@ -115,8 +115,9 @@ collection. Two outputs cannot name the same stream or an input.
 | `CheckpointStore.layerMemory`             | Independent `CheckpointStore`       | Nothing                               |
 
 Compose the projection Layer over storage with `Layer.provideMerge` and retain
-one Layer graph for the host lifetime. SQL uses `streamsy_projection_v2_records`.
-Old v1 projection tables are not migrated or read; projections rebuild from zero.
+one Layer graph for the host lifetime. SQL uses `streamsy_projection_v3_records`
+on SQLite, Postgres and MySQL, and creates it when the Layer is built. Older
+projection tables are not migrated or read; projections rebuild from zero.
 Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`.
 
 ## Run and recover

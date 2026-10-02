@@ -342,7 +342,7 @@ test("Checkpoint SQL failures retain phase and driver cause", async () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const state = yield* CheckpointStore;
-        yield* sql.unsafe("DROP TABLE streamsy_projection_v2_records");
+        yield* sql.unsafe("DROP TABLE streamsy_projection_v3_records");
         for (const [phase, operation] of [
           ["load", state.load(total).pipe(Effect.asVoid)],
           [

@@ -168,7 +168,7 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 Memory Layers provide no `Transaction`. `CheckpointStore.layerMemory` is an independent store for rebuilt values and tests. `ProjectionMemory.layer` joins the stream host, so producer outputs on that owner can be created automatically.
 
-SQL stores state and offsets in `streamsy_projection_v2_records`. There is no separate state table or State service. Old v1 projection tables are not read or migrated; projections rebuild from zero.
+SQL stores state and offsets in `streamsy_projection_v3_records`. There is no separate state table or State service. Older projection tables are not read or migrated; projections rebuild from zero.
 
 Build the Layer once for each host lifetime.
 
