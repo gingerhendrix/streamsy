@@ -55,12 +55,14 @@ const enqueue = (payloads: ReadonlyArray<Welcome>) =>
 
 Enqueue in the same transaction as the fact that causes the action. A draft with a sink and key that are already in the outbox is absorbed.
 
-| Backing                          | Module                          |
-| -------------------------------- | ------------------------------- |
-| `createSqliteOutboxBacking(sql)` | `@streamsy/serve/action/sqlite` |
-| `makeMemoryOutboxBacking()`      | `@streamsy/serve/action/outbox` |
+| Backing                       | Module                          |
+| ----------------------------- | ------------------------------- |
+| `createSqlOutboxBacking(sql)` | `@streamsy/serve/action/sql`    |
+| `makeMemoryOutboxBacking()`   | `@streamsy/serve/action/outbox` |
 
-`createSqliteOutboxBacking` uses the `SqlClient` you give it, so an enqueue joins that client's transaction. `migrateOutbox(sql)` creates the tables. `outboxStoreLayer(backing)` provides `OutboxStore`.
+`createSqlOutboxBacking` uses the `SqlClient` you give it, so an enqueue joins that client's transaction. It runs on SQLite, Postgres and MySQL. `migrateOutbox(sql)` creates the tables. `outboxStoreLayer(backing)` provides `OutboxStore`.
+
+On SQLite and Postgres, the backing also creates the tables on first use. On MySQL, DDL commits the open transaction, so run `migrateOutbox(sql)` once at startup, outside a transaction. The MySQL backing only checks that the tables exist, and fails with `OutboxUnavailable` when they do not.
 
 ## Deliver
 

@@ -21,7 +21,7 @@ import {
   type OutboxBacking,
   type OutboxDraft,
 } from "@streamsy/serve/action/outbox";
-import { createSqliteOutboxBacking } from "@streamsy/serve/action/sqlite";
+import { createSqlOutboxBacking } from "@streamsy/serve/action/sql";
 
 const draft = (key: string, partitionId = "main", enqueuedAtMs = 1_000): OutboxDraft => ({
   sink: "test.sink",
@@ -48,7 +48,7 @@ const runSqlite = <A, E>(
 ) => {
   const runtime = ManagedRuntime.make(SqliteClient.layer({ filename, create: true }));
   const sql = runtime.runSync(SqlClient.SqlClient);
-  const outbox = createSqliteOutboxBacking(sql);
+  const outbox = createSqlOutboxBacking(sql);
   return runtime.runPromise(effect({ outbox, sql })).finally(() => runtime.dispose());
 };
 
