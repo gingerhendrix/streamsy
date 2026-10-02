@@ -5,8 +5,8 @@ import {
   SessionId,
   type LogEntry,
 } from "@humanlayer/fold-core";
-import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Predicate, Schema, Stream } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Effect, Predicate, Schema } from "effect";
 
 /** One JSON stream for each Fold session, `fold/sessions/<session>/events`. */
 export class Sessions extends Streamsy.json<Sessions>()(
@@ -34,11 +34,7 @@ export const corrupt = (message: string) =>
   new EventLogCorruptEntryError({ operation: "entries", message });
 
 export const readHistory = Effect.fn("Fold.readHistory")(function* (params: SessionParams) {
-  const batches = yield* Stream.runCollect((yield* Sessions).read(params));
-  return {
-    items: batches.flatMap((batch) => batch.items),
-    offset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
-  };
+  return yield* (yield* Sessions).collect(params);
 });
 
 /** Fold requires exactly one `session_started` entry, and it must be the first. */

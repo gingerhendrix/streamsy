@@ -1,7 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Console, Effect, Layer, Schema } from "effect";
+import { Array, Console, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import recording from "./recordings/acme.json";
@@ -9,20 +9,36 @@ import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import { Projects, Users, Labels, Events, LabelEvents } from "../server/streams.ts";
-import { check, getJson, post, readBoard, scratchDatabase, startServer } from "./support.ts";
+import {
+  check,
+  getJson,
+  post,
+  readBoard,
+  scratchDatabase,
+  SmokeFailure,
+  startServer,
+} from "./support.ts";
 
 const Rows = Schema.Struct({ rows: Schema.Array(Schema.Unknown) });
+
+/** Fails when a recorded catalog is empty, because `append` needs at least one item. */
+const nonEmpty = <A>(rows: ReadonlyArray<A>) =>
+  Array.isReadonlyArrayNonEmpty(rows)
+    ? Effect.succeed(rows)
+    : Effect.fail(new SmokeFailure({ message: "The recording has an empty catalog" }));
 
 /** Loads the recording and the catalog, then checks the SQL rows of the catalog. */
 const produce = Effect.gen(function* () {
   yield* createInputs("acme");
   yield* (yield* Events).append(
     { workspaceId: "acme" },
-    yield* Schema.decodeUnknownEffect(Schema.Array(IssueEvent))(recording.issueEvents),
+    yield* Schema.decodeUnknownEffect(Schema.NonEmptyArray(IssueEvent))(recording.issueEvents),
   );
   yield* (yield* LabelEvents).append(
     { workspaceId: "acme" },
-    yield* Schema.decodeUnknownEffect(Schema.Array(IssueLabelEvent))(recording.issueLabelEvents),
+    yield* Schema.decodeUnknownEffect(Schema.NonEmptyArray(IssueLabelEvent))(
+      recording.issueLabelEvents,
+    ),
   );
   const projectRef = Projects.at({ workspaceId: "acme" });
   const userRef = Users.at({ workspaceId: "acme" });
@@ -32,7 +48,9 @@ const produce = Effect.gen(function* () {
     DurableState.changes(
       projectRef,
       { offset: ZERO_OFFSET },
-      recording.catalog.projects.map((row) => DurableState.upsert("project", row)),
+      Array.map(yield* nonEmpty(recording.catalog.projects), (row) =>
+        DurableState.upsert("project", row),
+      ),
     ),
   );
   yield* (yield* Users).append(
@@ -40,7 +58,9 @@ const produce = Effect.gen(function* () {
     DurableState.changes(
       userRef,
       { offset: ZERO_OFFSET },
-      recording.catalog.users.map((row) => DurableState.upsert("user", row)),
+      Array.map(yield* nonEmpty(recording.catalog.users), (row) =>
+        DurableState.upsert("user", row),
+      ),
     ),
   );
   yield* (yield* Labels).append(
@@ -48,7 +68,9 @@ const produce = Effect.gen(function* () {
     DurableState.changes(
       labelRef,
       { offset: ZERO_OFFSET },
-      recording.catalog.labels.map((row) => DurableState.upsert("label", row)),
+      Array.map(yield* nonEmpty(recording.catalog.labels), (row) =>
+        DurableState.upsert("label", row),
+      ),
     ),
   );
   yield* Projection.run(issueRows.at({ workspaceId: "acme" }));

@@ -3,7 +3,17 @@ import * as FamilyFixture from "./support/families.ts";
 import { ProjectionRetry } from "@streamsy/projection";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
 import { expect, test } from "bun:test";
-import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
+import {
+  Array,
+  Duration,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Schema,
+  Schedule,
+  type Scope,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
@@ -111,10 +121,8 @@ test("a write to the second input wakes a two-input follower", () =>
         inputs: { a, b },
         process: (batch) =>
           Effect.gen(function* () {
-            yield* Streams.append(
-              target,
-              Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
-            );
+            const entries = Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
+            if (Array.isReadonlyArrayNonEmpty(entries)) yield* Streams.append(target, entries);
             if (batch.b.items.length > 0) yield* Deferred.succeed(woke, undefined);
           }),
       }).at({});
@@ -168,10 +176,10 @@ test("a closed and drained input beside an open one does not wake every cycle", 
         params: {},
         inputs: { a, b },
         process: (batch) =>
-          Streams.append(
-            target,
-            Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
-          ),
+          Effect.gen(function* () {
+            const entries = Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
+            if (Array.isReadonlyArrayNonEmpty(entries)) yield* Streams.append(target, entries);
+          }),
       }).at({});
       let reads = 0;
       let hints = 0;
@@ -226,7 +234,7 @@ test("a completed wake hint echoes its cursor on the next hint for that input", 
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.create(output);
-      const cursors: Array<string | undefined> = [];
+      const cursors: (string | undefined)[] = [];
       const second = yield* Deferred.make<void>();
       const fiber = yield* withReader(
         Projection.follow(positives, { repairIntervalMs: 10_000 }),

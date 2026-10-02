@@ -114,7 +114,7 @@ The test appends the first part of a game and runs the projection to the end of 
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
     yield* (yield* GameEvents).create(params);
-    yield* (yield* GameEvents).append(params, events.slice(0, cut));
+    yield* (yield* GameEvents).append(params, nonEmpty(events.slice(0, cut)));
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
 const snapshot = Effect.gen(function* () {

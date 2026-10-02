@@ -1,4 +1,5 @@
 import { Data, Predicate, type Types } from "effect";
+import type { NonEmptyReadonlyArray } from "effect/Array";
 import type {
   Collections,
   CollectionsChange,
@@ -73,6 +74,16 @@ const readKey = <A, Key extends StateKey<A>>(type: string, field: Key, value: A)
  * Stamp Durable State changes with their key and headers. With an `offset`, each
  * change gets that offset and a default txid of `<offset>:<index>`.
  */
+export function changes<C extends Collections, RD, RE>(
+  address: StateAddress<C, RD, RE>,
+  options: { readonly offset?: string },
+  entries: NonEmptyReadonlyArray<Change<C>>,
+): NonEmptyReadonlyArray<CollectionsChange<C>>;
+export function changes<C extends Collections, RD, RE>(
+  address: StateAddress<C, RD, RE>,
+  options: { readonly offset?: string },
+  entries: ReadonlyArray<Change<C>>,
+): ReadonlyArray<CollectionsChange<C>>;
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },

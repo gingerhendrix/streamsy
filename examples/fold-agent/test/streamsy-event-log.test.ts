@@ -385,7 +385,7 @@ describe("Fold writer capability failures", () => {
           const failing = {
             ...sessions,
             ...(operation === "read"
-              ? { read: () => Stream.fail(fault) }
+              ? { collect: () => Effect.fail(fault) }
               : { create: () => Effect.fail(fault) }),
           };
           const failure = yield* Effect.flip(

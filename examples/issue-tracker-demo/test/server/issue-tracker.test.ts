@@ -61,18 +61,16 @@ test("two concurrent writers land without a lost update", async () => {
       // so exactly one of the two conditional appends must lose.
       const barrierReader = Workspaces.of({
         ...reader,
-        read: (params, options) =>
-          Stream.unwrap(
-            Effect.gen(function* () {
-              const result = yield* reader.read(params, options).pipe(Stream.runCollect);
-              const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
-              if (readNumber <= 2) {
-                if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
-                yield* Deferred.await(bothRead);
-              }
-              return Stream.fromIterable(result);
-            }),
-          ),
+        fold: (params, initial, f, options) =>
+          Effect.gen(function* () {
+            const result = yield* reader.fold(params, initial, f, options);
+            const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+            if (readNumber <= 2) {
+              if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+              yield* Deferred.await(bothRead);
+            }
+            return result;
+          }),
       });
       const tracker = yield* IssueTracker.pipe(
         Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),

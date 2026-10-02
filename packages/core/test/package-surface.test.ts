@@ -113,7 +113,9 @@ test("protocol subpath exposes protocol services and tools", () => {
   ]);
   expect(Object.keys(Protocol.Streams).sort()).toEqual([
     "append",
+    "collect",
     "create",
+    "fold",
     "follow",
     "head",
     "items",

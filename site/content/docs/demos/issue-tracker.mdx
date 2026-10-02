@@ -250,27 +250,33 @@ export const createIssue =
   };
 ```
 
-To get that state, `materialize` reads the whole workspace stream and applies every change to a `MaterializedState` from `@durable-streams/state`. This is the same fold that the browser does. The server keeps no cache between requests. The offset after the last batch is the head that this state describes. A missing stream becomes `WorkspaceNotFound`.
+To get that state, `materialize` folds the whole workspace stream into a `MaterializedState` from `@durable-streams/state`. This is the same fold that the browser does. The server keeps no cache between requests. `fold` also returns the offset it read up to. That offset is the head that this state describes. A missing stream becomes `WorkspaceNotFound`.
 
 ```ts title="server/issue-tracker.ts"
 const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
-  const batches = yield* workspaces.read({ workspaceId }).pipe(
-    Stream.runCollect,
-    Effect.catch((error) =>
-      Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
-        ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
-        : Effect.die(error),
-    ),
-  );
-  const state = new MaterializedState();
-  for (const batch of batches) for (const event of batch.items) state.apply(event);
+  const { state, offset } = yield* workspaces
+    .fold(
+      { workspaceId },
+      () => new MaterializedState(),
+      (materialized, event) => {
+        materialized.apply(event);
+        return materialized;
+      },
+    )
+    .pipe(
+      Effect.catch((error) =>
+        Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
+          ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
+          : Effect.die(error),
+      ),
+    );
   return {
     state: {
       getProject: (projectId: string) => state.get<Project>("project", projectId),
       getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
       hasProjects: () => state.getType("project").size > 0,
     },
-    headOffset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
+    headOffset: offset,
   };
 });
 ```
@@ -297,7 +303,7 @@ const mutate = <A, E>(
   );
 ```
 
-`append` calls the `Workspaces` service with `expectedOffset` set to the head that the recipe read. It keeps `OffsetMismatch` as a typed failure for the retry. Any other storage failure becomes a defect.
+`append` calls the `Workspaces` service with `expectedOffset` set to the head that the recipe read. It keeps `OffsetMismatch` as a typed failure for the retry. Any other rejection becomes a defect.
 
 ```ts title="server/issue-tracker.ts"
 const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
@@ -306,8 +312,10 @@ const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
       expectedOffset: head,
     })
     .pipe(
-      Effect.catch((error) =>
-        Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+      Effect.catchTag(
+        "OffsetMismatch",
+        (error) => Effect.fail(error),
+        (error) => Effect.die(error),
       ),
     );
 ```
@@ -318,7 +326,7 @@ const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
 export const workspaceEvents = (
   workspaceId: string,
   sourceOffset: string,
-  changes: ReadonlyArray<WorkspaceChange>,
+  changes: Array.NonEmptyReadonlyArray<WorkspaceChange>,
 ) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
 ```
 

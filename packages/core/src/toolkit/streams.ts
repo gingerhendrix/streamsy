@@ -1,13 +1,17 @@
+import type { NonEmptyReadonlyArray } from "effect/Array";
+import type { LazyArg } from "effect/Function";
 import { Duration, Effect, Option, Predicate, Schedule, Schema, Stream } from "effect";
-import { DecodeFault, EncodeFault } from "../fault.ts";
+import { DecodeFault, EncodeFault, type StreamsFault } from "../fault.ts";
+import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
+import type { AppendError, AppendErrorFor } from "../protocol/errors.ts";
 import type {
-  AppendOptions,
+  AppendCallOptions,
   CreateOptions,
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import type { ReadResult, ReadNextResult } from "../protocol/results.ts";
+import type { AppendResult, ReadResult, ReadNextResult } from "../protocol/results.ts";
 import type { StreamAddress } from "./address.ts";
 export { layerMemory } from "./layers.ts";
 
@@ -27,12 +31,43 @@ export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
     contentType: address.contentType,
   });
 });
-export const append = Effect.fn("Streams.append")(function* <A, RD, RE>(
+/**
+ * The items one append takes. An append carries at least one item, unless it
+ * closes the stream: an empty append always fails with `InvalidAppendRequest`.
+ */
+export type AppendItems<A, O> = O extends { readonly close: true }
+  ? ReadonlyArray<A>
+  : NonEmptyReadonlyArray<A>;
+/** Whether these options can lead to this rejection. Any other rejection is a host bug. */
+const possibleFor = (options: AppendCallOptions, error: AppendError | StreamsFault): boolean =>
+  Predicate.isTagged(error, "OffsetMismatch")
+    ? options.expectedOffset !== undefined
+    : Predicate.isTagged(error, "StaleEpoch") ||
+        Predicate.isTagged(error, "ProducerGap") ||
+        Predicate.isTagged(error, "InvalidEpochSeq")
+      ? options.producer !== undefined
+      : true;
+/**
+ * Append items to one stream. The error type lists only the rejections that the
+ * options make possible; a host that answers another one dies.
+ */
+export const append = Effect.fn("Streams.append")(function* <
+  A,
+  RD,
+  RE,
+  const O extends AppendCallOptions = {},
+>(
   address: StreamAddress<A, RD, RE>,
-  items: ReadonlyArray<A>,
-  options: Omit<AppendOptions, "data" | "contentType"> = {},
-) {
-  const encoded = yield* Effect.forEach(items, (item) =>
+  items: AppendItems<A, O>,
+  options?: O,
+): Effect.fn.Return<
+  AppendResult,
+  AppendErrorFor<O> | StreamsFault | EncodeFault,
+  StreamsWriter | RE
+> {
+  const callOptions: AppendCallOptions = options ?? {};
+  const list: ReadonlyArray<A> = items;
+  const encoded = yield* Effect.forEach(list, (item) =>
     Schema.encodeEffect(address.codec)(item).pipe(
       Effect.mapError(
         (cause) => new EncodeFault({ message: `Cannot encode ${address.id}`, cause }),
@@ -40,18 +75,18 @@ export const append = Effect.fn("Streams.append")(function* <A, RD, RE>(
     ),
   );
   const data =
-    items.length === 0 && options.close
+    list.length === 0 && callOptions.close
       ? // A close-only append is the protocol's empty body. An empty JSON array is
         // a malformed append on every transport, so it must not carry the close.
         new Uint8Array()
       : Predicate.isTagged(address, "Json")
         ? new TextEncoder().encode(`[${encoded.join(",")}]`)
         : concatBytes(encoded);
-  return yield* (yield* StreamsWriter).append(address.id, {
-    ...options,
-    data,
-    contentType: address.contentType,
-  });
+  const possible = (error: AppendError | StreamsFault): error is AppendErrorFor<O> | StreamsFault =>
+    possibleFor(callOptions, error);
+  return yield* (yield* StreamsWriter)
+    .append(address.id, { ...callOptions, data, contentType: address.contentType })
+    .pipe(Effect.catch((error) => (possible(error) ? Effect.fail(error) : Effect.die(error))));
 });
 function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
   const arrays = parts.map((part) =>
@@ -105,6 +140,55 @@ export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: Read
     }),
   );
 }
+/** A folded value and the tail it was read up to. `offset` is this stream's CAS token. */
+export interface Folded<S> {
+  readonly state: S;
+  readonly offset: string;
+}
+/** Every item read and the tail they were read up to. */
+export interface Collected<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly offset: string;
+}
+/**
+ * Read the stream up to its tail and fold every item into one value. Pass
+ * `options.offset` to fold on from a tail that an earlier fold returned.
+ */
+export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
+  address: StreamAddress<A, RD, RE>,
+  initial: LazyArg<S>,
+  f: (state: S, item: A) => S,
+  options: ReadOptions = {},
+) {
+  return yield* read(address, options).pipe(
+    Stream.runFold(
+      // The first page always replaces this offset, so it never reaches the caller.
+      (): Folded<S> => ({ state: initial(), offset: options.offset ?? ZERO_OFFSET }),
+      (folded, batch): Folded<S> => {
+        let state = folded.state;
+        for (const item of batch.items) state = f(state, item);
+        return { state, offset: batch.nextOffset };
+      },
+    ),
+  );
+});
+/** Read the stream up to its tail and return its items. */
+export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+  options: ReadOptions = {},
+) {
+  const { state, offset } = yield* fold(
+    address,
+    (): Array<A> => [],
+    (items: Array<A>, item: A) => {
+      items.push(item);
+      return items;
+    },
+    options,
+  );
+  const collected: Collected<A> = { items: state, offset };
+  return collected;
+});
 export interface FollowOptions extends ReadOptions {
   /**
    * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.

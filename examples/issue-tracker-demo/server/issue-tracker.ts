@@ -1,16 +1,6 @@
 import { MaterializedState } from "@durable-streams/state";
 import { ZERO_OFFSET } from "@streamsy/core";
-import {
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Predicate,
-  Schedule,
-  Schema,
-  Stream,
-} from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Predicate, Schedule, Schema } from "effect";
 import type { Issue, Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
 import {
@@ -79,36 +69,44 @@ export const IssueTrackerLive = Layer.effect(
 
     // Each change records the head it was validated against as its source
     // offset, and the append only lands if that head is still the tail. A lost
-    // race stays typed for the retry; any other storage failure is a defect.
+    // race stays typed for the retry; any other rejection is a defect.
     const append = (workspaceId: string, change: WorkspaceChange, head: string) =>
       workspaces
         .append({ workspaceId }, workspaceEvents(workspaceId, head, [change]), {
           expectedOffset: head,
         })
         .pipe(
-          Effect.catch((error) =>
-            Predicate.isTagged(error, "OffsetMismatch") ? Effect.fail(error) : Effect.die(error),
+          Effect.catchTag(
+            "OffsetMismatch",
+            (error) => Effect.fail(error),
+            (error) => Effect.die(error),
           ),
         );
 
     const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
-      const batches = yield* workspaces.read({ workspaceId }).pipe(
-        Stream.runCollect,
-        Effect.catch((error) =>
-          Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
-            ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
-            : Effect.die(error),
-        ),
-      );
-      const state = new MaterializedState();
-      for (const batch of batches) for (const event of batch.items) state.apply(event);
+      const { state, offset } = yield* workspaces
+        .fold(
+          { workspaceId },
+          () => new MaterializedState(),
+          (materialized, event) => {
+            materialized.apply(event);
+            return materialized;
+          },
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
+              ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
+              : Effect.die(error),
+          ),
+        );
       return {
         state: {
           getProject: (projectId: string) => state.get<Project>("project", projectId),
           getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
           hasProjects: () => state.getType("project").size > 0,
         },
-        headOffset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
+        headOffset: offset,
       };
     });
 

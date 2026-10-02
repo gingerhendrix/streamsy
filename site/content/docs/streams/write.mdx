@@ -106,32 +106,24 @@ Advance the position only after `Appended` or `Duplicate`. Send the same bytes o
 `expectedOffset` writes only if the tail still equals it. `ZERO_OFFSET` means the stream must be empty. A miss writes nothing and fails with `OffsetMismatch`, with `expected` and `actual`.
 
 ```ts
-import { Effect, Stream } from "effect";
-import { ZERO_OFFSET } from "@streamsy/core";
+import { Effect, Predicate } from "effect";
 import { Orders, apply, initial } from "./orders.ts";
 
 const reserve = (sku: string) =>
   Effect.gen(function* () {
     const orders = yield* Orders;
-    const empty: string = ZERO_OFFSET;
-    const folded = yield* orders.read({}).pipe(
-      Stream.runFold(
-        () => ({ state: initial, tail: empty }),
-        (acc, batch) => ({
-          state: batch.items.reduce(apply, acc.state),
-          tail: batch.nextOffset,
-        }),
-      ),
-    );
-    if (folded.state.reserved.has(sku)) return { _tag: "Rejected" as const };
+    const { state, offset } = yield* orders.fold({}, () => initial, apply);
+    if (state.reserved.has(sku)) return { _tag: "Rejected" as const };
     const appended = yield* orders.append({}, [{ type: "reserved", sku }], {
-      expectedOffset: folded.tail,
+      expectedOffset: offset,
     });
     return { _tag: "Committed" as const, offset: appended.offset };
-  }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+  }).pipe(Effect.retry({ while: Predicate.isTagged("OffsetMismatch"), times: 5 }));
 ```
 
-A competing writer moves the tail, so the append fails and the retry reads again. To give one writer ownership of a stream, use a producer epoch.
+`fold` returns the folded state and the tail it read up to. That tail is the `expectedOffset`. A competing writer moves the tail, so the append fails and the retry reads again. To give one writer ownership of a stream, use a producer epoch.
+
+The append's error type follows its options. Only an append with `expectedOffset` can fail with `OffsetMismatch`, and only an append with `producer` can fail with `StaleEpoch`, `ProducerGap` or `InvalidEpochSeq`. An append needs at least one item, unless it sets `close: true`.
 
 `expectedOffset` is a Streamsy extension to the protocol. See [Extensions](/docs/http/routes#extensions).
 
