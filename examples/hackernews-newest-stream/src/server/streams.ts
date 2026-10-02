@@ -14,8 +14,8 @@ export const createStoriesLayer = Layer.effectDiscard(
 
 const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
   databasePath === "memory"
-    ? Memory.layer(options, streams)
-    : BunStorage.layer({ ...options, client: { filename: databasePath } }, streams);
+    ? Memory.layer(streams, options)
+    : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
 /** The checkpoints join the owner of the stream: one SQLite file, or memory. */
 export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>

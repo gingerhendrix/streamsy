@@ -134,7 +134,7 @@ import { Numbers } from "./minimal.ts";
 import { Tripled } from "./tripled.ts";
 
 export const host = CheckpointStore.layer.pipe(
-  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Tripled))),
+  Layer.provideMerge(Memory.layer(Streamsy.group(Numbers, Tripled))),
 );
 ```
 

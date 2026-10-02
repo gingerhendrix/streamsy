@@ -36,7 +36,7 @@ import { layer } from "@streamsy/storage/bun";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 const Server = HttpRouter.serve(Http.routes(streams, { prefix: "/streams", access: "full" })).pipe(
-  Layer.provide(layer({ client: { filename: "./streams.sqlite" } }, streams)),
+  Layer.provide(layer(streams, { client: { filename: "./streams.sqlite" } })),
   Layer.provide(listener({ port: 3000 })),
 );
 BunRuntime.runMain(Layer.launch(Server));

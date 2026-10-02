@@ -47,7 +47,7 @@ const issueKeys = Effect.gen(function* () {
 });
 
 const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Workspaces)))));
+  Effect.runPromise(effect.pipe(Effect.provide(Memory.layer(Streamsy.group(Workspaces)))));
 
 test("two concurrent writers land without a lost update", async () => {
   let attempts = 0;

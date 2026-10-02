@@ -44,7 +44,7 @@ test("standalone memory checkpoints compare tokens and keep state without a Tran
   ));
 
 const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group())),
+  Layer.provideMerge(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
 );
 
 test("SQL owner checkpoints join the owner transaction and roll back as one row", () =>
@@ -90,7 +90,7 @@ test("memory owner checkpoints roll back with the boundary transaction", () =>
       expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
     }).pipe(
       Effect.provide(
-        CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer({}, Streamsy.group()))),
+        CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(Streamsy.group()))),
       ),
     ),
   ));

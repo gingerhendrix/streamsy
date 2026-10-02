@@ -149,7 +149,7 @@ import { program } from "./run.ts";
 import { shop } from "./streams.ts";
 
 const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop)),
+  Layer.provideMerge(BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } })),
 );
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));

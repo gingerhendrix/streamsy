@@ -11,7 +11,7 @@ import { Memory } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
-const runtime = ManagedRuntime.make(Memory.layer({}, shop));
+const runtime = ManagedRuntime.make(Memory.layer(shop));
 try {
   await runtime.runPromise(write);
 } finally {
@@ -28,16 +28,16 @@ try {
 
 | Layer                                        | Persists              | Package                            | Page                                   |
 | -------------------------------------------- | --------------------- | ---------------------------------- | -------------------------------------- |
-| `Memory.layer(options, group)`               | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
-| `BunStorage.layer(options, group)`           | SQLite file           | `@streamsy/storage/bun`            | [Bun](/docs/hosting/bun)               |
-| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
-| `Fetch.layer(options, group)`                | Remote                | `@streamsy/core/fetch`             | [Fetch client](/docs/http/fetch)       |
+| `Memory.layer(group, options)`               | No                    | `@streamsy/core`                   | [Memory](#memory)                      |
+| `BunStorage.layer(group, options)`           | SQLite file           | `@streamsy/storage/bun`            | [Bun](/docs/hosting/bun)               |
+| `DurableObjectStorage.layer(group, options)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
+| `Fetch.layer(group, options)`                | Remote                | `@streamsy/core/fetch`             | [Fetch client](/docs/http/fetch)       |
 
 A storage Layer also gives a `Streamsy.ChangeFeed` key for each stream. `Projection.watch` needs these keys.
 
 ## Memory
 
-`Memory.layer(options, group)` keeps streams in the process. The data is lost when the Layer is disposed.
+`Memory.layer(group, options)` keeps streams in the process. The data is lost when the Layer is disposed.
 
 | Option              | Effect                                                         |
 | ------------------- | -------------------------------------------------------------- |
@@ -59,8 +59,8 @@ import * as BunStorage from "@streamsy/storage/bun";
 import { Drafts, Journal } from "./streams.ts";
 
 export const layer = Layer.merge(
-  Memory.layer({}, Streamsy.group(Drafts)),
-  BunStorage.layer({ client: { filename: "./journal.sqlite" } }, Streamsy.group(Journal)),
+  Memory.layer(Streamsy.group(Drafts)),
+  BunStorage.layer(Streamsy.group(Journal), { client: { filename: "./journal.sqlite" } }),
 );
 ```
 
@@ -103,7 +103,7 @@ A `MutationRejected` that leaves the boundary rolls back both writes. Catch it o
 
 ## Testing
 
-Application tests provide `Memory.layer({}, group)` and run the same program.
+Application tests provide `Memory.layer(group)` and run the same program.
 
 | Tool                       | Module                   | Use                                                             |
 | -------------------------- | ------------------------ | --------------------------------------------------------------- |

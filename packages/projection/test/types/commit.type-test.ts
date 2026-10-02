@@ -150,7 +150,7 @@ const memoryRun = Projection.run(hostProcess).pipe(
 const sqlHost = Layer.merge(
   Protocol.bind(memoryHost, Streamsy.group(Input)),
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-    Layer.provide(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group())),
+    Layer.provide(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
   ),
 );
 const sqlRun = Projection.run(hostProcess).pipe(Effect.provide(sqlHost));

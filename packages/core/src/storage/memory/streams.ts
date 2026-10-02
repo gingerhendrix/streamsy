@@ -11,12 +11,12 @@ export type { MemoryOptions } from "./layer.ts";
 
 /** Memory host. Streams and their feeds share the exposed storage boundary. */
 export function layer<const Keys extends ReadonlyArray<Any>>(
-  options: MemoryOptions & Protocol.ProtocolOptions,
   group: Group.Group<Keys>,
+  options?: MemoryOptions & Protocol.ProtocolOptions,
 ): Layer.Layer<
   Storage | CommitBoundary | OwnerRecords | Identifiers<Keys> | ChangeFeed<Identifiers<Keys>>
 >;
-export function layer(options: MemoryOptions & Protocol.ProtocolOptions = {}, group: Group.Group) {
+export function layer(group: Group.Group, options: MemoryOptions & Protocol.ProtocolOptions = {}) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return bind(protocol, group).pipe(Layer.provideMerge(storage));

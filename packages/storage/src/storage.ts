@@ -683,8 +683,8 @@ export const layerProtocol = (options: SqlStorageOptions & Protocol.ProtocolOpti
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
-  options: SqlStorageOptions & Protocol.ProtocolOptions,
   group: Streamsy.Group<Keys>,
+  options?: SqlStorageOptions & Protocol.ProtocolOptions,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | Streamsy.Services<Streamsy.Group<Keys>>
@@ -693,8 +693,8 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
 export function layer(
-  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
   group: Streamsy.Group,
+  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
 ) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));

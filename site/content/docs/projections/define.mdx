@@ -175,7 +175,7 @@ import { CheckpointStore, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
 const program = Projection.run(orderTotalsProjection, { limit: 10 });
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));

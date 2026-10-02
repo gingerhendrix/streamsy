@@ -14,6 +14,6 @@ const Listener = Layer.unwrap(
 
 const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
   disableLogger: true,
-}).pipe(Layer.provide(Memory.layer({}, streams)), Layer.provide(Listener));
+}).pipe(Layer.provide(Memory.layer(streams)), Layer.provide(Listener));
 
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });

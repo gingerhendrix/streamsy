@@ -77,7 +77,7 @@ import { HttpRouter } from "effect/unstable/http";
 import * as BunStorage from "@streamsy/storage/bun";
 import { App, game } from "./app.ts";
 
-const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
+const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });
 
 const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage)), {
   disableLogger: true,

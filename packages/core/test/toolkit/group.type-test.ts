@@ -20,9 +20,9 @@ const group = Streamsy.group(A, B);
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 const union: Equal<Streamsy.Services<typeof group>, A | B> = true;
-const memory = Memory.layer({}, group);
-const fetch = Fetch.layer({ baseUrl: "http://localhost" }, group);
-const list = Fetch.layer({ baseUrl: "http://localhost" }, Streamsy.group(A, B));
+const memory = Memory.layer(group);
+const fetch = Fetch.layer(group, { baseUrl: "http://localhost" });
+const list = Fetch.layer(Streamsy.group(A, B), { baseUrl: "http://localhost" });
 const remote: Equal<Layer.Success<typeof fetch>, A | B> = true;
 const remoteList: Equal<Layer.Success<typeof list>, A | B> = true;
 const client: Equal<Layer.Services<typeof fetch>, HttpClient.HttpClient> = true;
@@ -74,7 +74,7 @@ const pointFreeFetch: Equal<
   StreamsReader | StreamsWriter
 > = true;
 const hasFeed: Effect.Effect<void> = needsFeed.pipe(Effect.provide(memory));
-const emptyGroup = Memory.layer({}, Streamsy.group());
+const emptyGroup = Memory.layer(Streamsy.group());
 const emptyExact: Equal<
   Layer.Success<typeof emptyGroup>,
   Storage | CommitBoundary | OwnerRecords
@@ -95,7 +95,7 @@ Fetch.layer({ baseUrl: "http://localhost" });
 Http.routes({ prefix: "/streams" });
 
 // @ts-expect-error Hosts require an explicit group.
-Memory.layer({}, A);
+Memory.layer(A);
 // @ts-expect-error HTTP requires an explicit group.
 Http.routes([A], { access: "read" });
 // @ts-expect-error Declaration metadata is internal.

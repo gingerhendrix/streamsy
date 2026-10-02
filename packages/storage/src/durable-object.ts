@@ -31,8 +31,8 @@ export const layerProtocol = (options: DurableObjectProtocolOptions) =>
   }).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
-  options: DurableObjectProtocolOptions,
   group: Streamsy.Group<Keys>,
+  options: DurableObjectProtocolOptions,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | Streamsy.Services<Streamsy.Group<Keys>>
@@ -40,7 +40,7 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(options: DurableObjectProtocolOptions, group: Streamsy.Group) {
+export function layer(group: Streamsy.Group, options: DurableObjectProtocolOptions) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer({
     ...options,

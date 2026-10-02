@@ -23,7 +23,7 @@ const program = Effect.gen(function* () {
   yield* events.append({}, ["hello"]);
   return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Events)))));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(Streamsy.group(Events)))));
 ```
 
 Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/examples/readme.ts).
@@ -60,7 +60,7 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 | Entry                     | Contents                                                                           |
 | ------------------------- | ---------------------------------------------------------------------------------- |
 | `@streamsy/core`          | Streamsy, Memory, StreamAddress, DurableState, Producer, storage contracts, errors |
-| `@streamsy/core/fetch`    | `Fetch.layer({ baseUrl }, streams)`: the same stream services over HTTP            |
+| `@streamsy/core/fetch`    | `Fetch.layer(streams, { baseUrl })`: the same stream services over HTTP            |
 | `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                      |
 | `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, StreamRoute, and raw routes       |
 | `@streamsy/core/testing`  | Contract tests and fault injection for backends                                    |
@@ -80,7 +80,7 @@ provides output routes and host glue.
 Browsers use the official `@durable-streams/client` and
 `@durable-streams/state` packages directly against any Streamsy host.
 
-`Memory.layer({ readLimit: 1000 }, streams)` sets the server catch-up page size.
+`Memory.layer(streams, { readLimit: 1000 })` sets the server catch-up page size.
 Protocol adapters can use `Protocol.layer({ readLimit })` from `@streamsy/core/protocol`. The default is
 1000 messages; `readNext` returns the whole available tail. Fetch clients send
 only an offset and accept the remote server’s page size. Both direct read

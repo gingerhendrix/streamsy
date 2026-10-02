@@ -87,15 +87,15 @@ export const createStoriesLayer = Layer.effectDiscard(
 
 const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
   databasePath === "memory"
-    ? Memory.layer(options, streams)
-    : BunStorage.layer({ ...options, client: { filename: databasePath } }, streams);
+    ? Memory.layer(streams, options)
+    : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
 /** The checkpoints join the owner of the stream: one SQLite file, or memory. */
 export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
   CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 ```
 
-With `HN_DB=memory`, `Memory.layer(options, streams)` takes the place of the
+With `HN_DB=memory`, `Memory.layer(streams, options)` takes the place of the
 SQLite file. The host reads `HN_DB` through
 `Config` when the layer starts.
 

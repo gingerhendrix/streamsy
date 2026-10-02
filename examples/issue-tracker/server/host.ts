@@ -11,7 +11,7 @@ import { routes } from "./streams.ts";
 export const streams = Streamsy.group(...Object.values(routes), ...outputStreams);
 export const hostLayer = (filename: string) => {
   const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
+    Layer.provideMerge(BunStorage.layer(streams, { client: { filename } })),
   );
   return Layer.effectContext(
     Effect.context<

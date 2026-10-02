@@ -40,7 +40,7 @@ const doubled = Projection.emit({
   emit: ({ item }) => ({ output: [item * 2] }),
 });
 const host = CheckpointStore.layer.pipe(
-  Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Doubled))),
+  Layer.provideMerge(Memory.layer(Streamsy.group(Numbers, Doubled))),
 );
 const program = Effect.gen(function* () {
   const numbers = yield* Numbers;
@@ -119,7 +119,7 @@ over every Streamsy storage host: `Memory.layer`, `BunStorage.layer`, and
 
 ```ts
 const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
+  Layer.provideMerge(BunStorage.layer(streams, { client: { filename } })),
 );
 ```
 

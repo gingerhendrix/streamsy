@@ -53,7 +53,7 @@ test("non-foreign-owner defects remain defects on SQLite", () =>
   ));
 
 test("SQL from Transaction is sufficient and rolls back with the checkpoint", () => {
-  const sqlLayer = BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group());
+  const sqlLayer = BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } });
   const host = Layer.merge(
     Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(Layer.provideMerge(sqlLayer)),
     Protocol.bind(Streams.layerMemory(), Streamsy.group(Input)),

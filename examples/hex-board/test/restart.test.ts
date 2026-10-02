@@ -25,7 +25,7 @@ const resolution = fullGame[split];
 if (resolution?.type !== "AttackResolved") throw new Error("fixture has no AttackResolved");
 const sqlite = (filename: string) =>
   CheckpointStore.layer.pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
+    Layer.provideMerge(BunStorage.layer(Streamsy.group(GameEvents), { client: { filename } })),
   );
 /**
  * Runs `program` as one process on `layer`: it opens the Layer, runs, and closes it.

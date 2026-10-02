@@ -20,19 +20,16 @@ export const DatabasePath = Config.String("FOLD_AGENT_DB").pipe(
 const sessions = Streamsy.group(Sessions);
 
 export const memoryLayer = (options: { readonly longPollTimeoutMs?: number } = {}) =>
-  Memory.layer(options, sessions);
+  Memory.layer(sessions, options);
 
 /** `BunStorage.layer` creates the parent folder of a new file. */
 export const sqliteLayer = (filename: string, options: StoreOptions = {}) =>
-  BunStorage.layer(
-    {
-      client: { filename },
-      ...(options.longPollTimeoutMs === undefined
-        ? {}
-        : { longPollTimeoutMs: options.longPollTimeoutMs }),
-    },
-    sessions,
-  );
+  BunStorage.layer(sessions, {
+    client: { filename },
+    ...(options.longPollTimeoutMs === undefined
+      ? {}
+      : { longPollTimeoutMs: options.longPollTimeoutMs }),
+  });
 
 /** Memory for `:memory:` or no filename, Bun SQLite otherwise. */
 export const storeLayer = (options: StoreOptions = {}): Layer.Layer<Sessions, StorageFault> => {

@@ -217,7 +217,7 @@ import { listener } from "@streamsy/serve/bun";
 import { App, game } from "./app.ts";
 
 const Server = Serve.layer(App, { drainTimeout: "2 seconds" }).pipe(
-  Layer.provide(Memory.layer({}, game)),
+  Layer.provide(Memory.layer(game)),
   Layer.provide(listener({ port: 3000 })),
 );
 

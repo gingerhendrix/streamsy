@@ -100,7 +100,7 @@ import { Memory } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
-await Effect.runPromise(write.pipe(Effect.provide(Memory.layer({}, shop))));
+await Effect.runPromise(write.pipe(Effect.provide(Memory.layer(shop))));
 ```
 
 A projection also needs `CheckpointStore`. Merge its Layer over the same storage:
@@ -113,7 +113,7 @@ import { catchUp } from "./projection.ts";
 import { write } from "./write.ts";
 import { shop } from "./streams.ts";
 
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
 
 await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)));
 ```
@@ -124,7 +124,7 @@ Use SQLite when the data must survive a restart:
 import * as BunStorage from "@streamsy/storage/bun";
 import { shop } from "./streams.ts";
 
-export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop);
+export const storage = BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } });
 ```
 
 `CheckpointStore.layer` works over this Layer too, and keeps the checkpoints in the same file. See [Layers and storage](/docs/hosting).
@@ -171,13 +171,10 @@ import { FetchHttpClient } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
 import { shop } from "./streams.ts";
 
-export const remote = Fetch.layer(
-  {
-    baseUrl: "https://streamsy-app.example.workers.dev/streams",
-    capabilities: { expectedOffset: true, producer: true },
-  },
-  shop,
-).pipe(Layer.provide(FetchHttpClient.layer));
+export const remote = Fetch.layer(shop, {
+  baseUrl: "https://streamsy-app.example.workers.dev/streams",
+  capabilities: { expectedOffset: true, producer: true },
+}).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
 `remote` gives the same stream services, so `watch` runs over it with no change.

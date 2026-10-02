@@ -18,15 +18,15 @@ class Notes extends Streamsy.json<Notes>()("StorageFamilies/Notes", "notes", {
 }) {}
 const group = Streamsy.group(Notes);
 const options = { client: { filename: ":memory:" } };
-const bun = BunStorage.layer(options, group);
-const sql = SqlStorage.layer({}, Streamsy.group(Notes)).pipe(
+const bun = BunStorage.layer(group, options);
+const sql = SqlStorage.layer(Streamsy.group(Notes)).pipe(
   Layer.provide(
     Layer.effectContext(sharedSqlClientLayer(SqliteClient.make({ filename: ":memory:" }))),
   ),
 );
 
 it("Bun and SQL stream layers share storage and feeds without exporting the generic pair", async () => {
-  for (const host of [bun, BunStorage.layer(options, Streamsy.group(Notes)), sql]) {
+  for (const host of [bun, BunStorage.layer(Streamsy.group(Notes), options), sql]) {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -63,7 +63,7 @@ const feeds: Equal<
   Streamsy.ChangeFeed<Notes>
 > = true;
 function durableTypes(options: DurableObjectStorage.DurableObjectStorageOptions) {
-  const host = DurableObjectStorage.layer(options, group);
+  const host = DurableObjectStorage.layer(group, options);
   const hidden: Equal<
     Extract<Layer.Success<typeof host>, StreamsReader | StreamsWriter>,
     never
@@ -85,7 +85,7 @@ const bunExact: Equal<
 > = true;
 const bunRequirements: Equal<Layer.Services<typeof bun>, never> = true;
 const bunErrors: Equal<Layer.Error<typeof bun>, StorageFault> = true;
-const rawSql = SqlStorage.layer({}, group);
+const rawSql = SqlStorage.layer(group);
 const sqlExact: Equal<
   Layer.Success<typeof rawSql>,
   SqlOutputs | Notes | Streamsy.ChangeFeed<Notes>
@@ -96,7 +96,7 @@ const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Streamsy.Change
   Effect.provide(bun),
 );
 function exactDurable(options: DurableObjectStorage.DurableObjectStorageOptions) {
-  const host = DurableObjectStorage.layer(options, group);
+  const host = DurableObjectStorage.layer(group, options);
   const outputs: Equal<
     Layer.Success<typeof host>,
     HostOutputs | Notes | Streamsy.ChangeFeed<Notes>

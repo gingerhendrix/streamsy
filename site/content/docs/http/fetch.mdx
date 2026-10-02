@@ -3,7 +3,7 @@ title: Fetch client
 description: Provide stream services from a remote Durable Streams host with the fetch Layer.
 ---
 
-`Fetch.layer(options, group)` gives the stream services of a group from a remote host.
+`Fetch.layer(group, options)` gives the stream services of a group from a remote host.
 
 ```ts
 import { Layer } from "effect";
@@ -11,13 +11,10 @@ import { FetchHttpClient } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
 import { game } from "./streams.ts";
 
-const remote = Fetch.layer(
-  {
-    baseUrl: "https://streams.example.com/streams",
-    capabilities: { expectedOffset: true, producer: true },
-  },
-  game,
-).pipe(Layer.provide(FetchHttpClient.layer));
+const remote = Fetch.layer(game, {
+  baseUrl: "https://streams.example.com/streams",
+  capabilities: { expectedOffset: true, producer: true },
+}).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
 A program runs over `remote` with no change.

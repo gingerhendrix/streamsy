@@ -45,7 +45,7 @@ export const StorageLive = Layer.unwrap(
 
 function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, StorageFault> {
   return Option.match(databasePath, {
-    onNone: () => Memory.layer({}, Streamsy.group(Workspaces)),
-    onSome: (filename) => BunStorage.layer({ client: { filename } }, Streamsy.group(Workspaces)),
+    onNone: () => Memory.layer(Streamsy.group(Workspaces)),
+    onSome: (filename) => BunStorage.layer(Streamsy.group(Workspaces), { client: { filename } }),
   });
 }

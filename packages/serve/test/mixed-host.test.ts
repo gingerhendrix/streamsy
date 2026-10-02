@@ -16,8 +16,8 @@ class SqliteFamily extends Streamsy.json<SqliteFamily>()("MixedHost/Sqlite", "sq
 
 const streams = Streamsy.group(MemoryFamily, SqliteFamily);
 const hostLayer = Layer.merge(
-  Memory.layer({}, Streamsy.group(MemoryFamily)),
-  BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group(SqliteFamily)),
+  Memory.layer(Streamsy.group(MemoryFamily)),
+  BunStorage.layer(Streamsy.group(SqliteFamily), { client: { filename: ":memory:" } }),
 );
 
 test("one Http.routes host serves memory and SQLite streams", async () => {

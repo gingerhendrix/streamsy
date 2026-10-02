@@ -19,7 +19,7 @@ interface Env {
 }
 export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof game>>({
   app: Http.routes(game, { prefix: "/streams", access: "append" }),
-  layer: (state) => DurableObjectStorage.layer({ client: { storage: state.storage } }, game),
+  layer: (state) => DurableObjectStorage.layer(game, { client: { storage: state.storage } }),
 }) {}
 export default router<Env>({
   prefix: "/streams",
@@ -36,7 +36,7 @@ The second type parameter of `StreamsyObject.make` is the services that the app 
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
 import { shop } from "./streams.ts";
 
-const storage = DurableObjectStorage.layer({ client: { storage: ctx.storage } }, shop);
+const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storage } });
 ```
 
 Pass the full `ctx.storage` handle. The driver needs its transaction API. The long-poll timeout is 25 s.
@@ -99,7 +99,7 @@ export class Streams extends Cloudflare.DurableObject<Streams>()(
       Host.objectHandlers({
         app: Http.routes(streams, { prefix: "/streams", access: "full" }),
         layer: Layer.mergeAll(
-          DurableObjectStorage.layer({ client: { storage: state.raw.storage } }, streams),
+          DurableObjectStorage.layer(streams, { client: { storage: state.raw.storage } }),
           Host.alarmLayer(state.raw.storage),
         ),
       }),

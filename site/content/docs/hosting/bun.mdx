@@ -21,7 +21,7 @@ const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "append" }),
   Serve.mount(Events, "/feed/:seat"),
 );
-const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
+const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });
 
 const Server = Serve.layer(App).pipe(
   Layer.provide(storage),
@@ -52,7 +52,7 @@ On `SIGINT` or `SIGTERM`, `Serve.layer` answers live reads before the routes clo
 
 ## SQLite storage
 
-`BunStorage.layer(options, group)` keeps streams in one SQLite file.
+`BunStorage.layer(group, options)` keeps streams in one SQLite file.
 
 | Option                     | Default    | Value                                                 |
 | -------------------------- | ---------- | ----------------------------------------------------- |

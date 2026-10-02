@@ -98,7 +98,7 @@ The test host puts the stream storage and the projection record in one SQLite fi
 ```ts title="test/restart.test.ts"
 const sqlite = (filename: string) =>
   CheckpointStore.layer.pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
+    Layer.provideMerge(BunStorage.layer(Streamsy.group(GameEvents), { client: { filename } })),
   );
 ```
 

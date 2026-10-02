@@ -24,7 +24,7 @@ const program = Effect.gen(function* () {
   );
 });
 
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Notes)))));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(Streamsy.group(Notes)))));
 ```
 
 The stream class is a service key. The program asks for the service, and the Layer decides where the streams are kept.

@@ -16,7 +16,7 @@ const streams = Streamsy.group(Streamsy.Wildcard);
 export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof streams>>({
   app: Http.routes(streams, { prefix: host.prefix, access: "full" }),
   layer: (state) =>
-    layer({ client: { storage: state.storage }, longPollTimeoutMs: 1_500 }, streams),
+    layer(streams, { client: { storage: state.storage }, longPollTimeoutMs: 1_500 }),
 }) {}
 
 export default router<Env>({

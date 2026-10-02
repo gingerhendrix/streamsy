@@ -32,7 +32,7 @@ it("groups freeze their ordered declarations and reject duplicates and misplaced
 });
 
 it("memory streams expose feeds and storage but no generic protocol keys", async () => {
-  for (const host of [Memory.layer({}, group), Memory.layer({}, Streamsy.group(Notes, Counts))]) {
+  for (const host of [Memory.layer(group), Memory.layer(Streamsy.group(Notes, Counts))]) {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
