@@ -40,9 +40,9 @@ const storage = Storage.layer({}, streams).pipe(
 );
 ```
 
-On Postgres, every mutation transaction first locks the rows of the streams it
-writes (`SELECT ... FOR UPDATE`), so writers on many connections or processes
-apply one after the other.
+On Postgres and MySQL, every mutation transaction first locks the rows of the
+streams it writes (`SELECT ... FOR UPDATE`), so writers on many connections or
+processes apply one after the other.
 
 ## Serve a SQLite-backed host on Bun
 
@@ -72,11 +72,21 @@ shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation
 inside the transaction, not when the transaction starts. Your SQL before that
-mutation runs before the lock. On Postgres this is safe: each statement reads
-the latest committed rows. On MySQL at the default REPEATABLE READ, a read
-before the lock fixes the transaction's snapshot, and storage's own reads after
-the lock can then miss another writer's commit. Until that is fixed, do not
-commit your own SQL with stream writes on MySQL.
+mutation runs before the lock. Storage's reads inside a mutation are safe on
+every dialect: on MySQL they are locking reads (`FOR UPDATE` or `FOR SHARE`),
+so they see the latest committed rows even when your SQL fixed the
+transaction's snapshot first. A stale plan is rejected, never written.
+
+On MySQL, the protocol still plans an append with plain reads. If another
+writer appends to the same stream after your transaction's first read, every
+replan reads the old snapshot, and the append fails with `StreamBusy`. Retry the
+whole transaction.
+
+Your reads of your own tables are your job. On Postgres each statement reads
+the latest committed rows. On MySQL at the default REPEATABLE READ, a plain
+read uses the snapshot of the transaction's first plain read, which can be
+older than the stream lock. If a decision depends on a row another writer can
+change, read it with `FOR UPDATE` or `FOR SHARE` on MySQL.
 
 For a projection on that same connection:
 

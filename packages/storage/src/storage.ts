@@ -228,9 +228,9 @@ const oversizedKey = (mutation: Mutation): Option.Option<StorageFault> => {
 };
 
 /**
- * Serialise writers on the stream rows. This must be the first statement of a
- * mutation transaction: on MySQL at REPEATABLE READ, any plain read before it
- * fixes the snapshot, and later plain reads miss commits made while waiting.
+ * Serialise writers on the stream rows. This is the first statement of a
+ * mutation transaction. On MySQL, the reads after it are locking reads, so they
+ * see commits made while it waited, even when the caller read first.
  * Sorted ids give every writer one lock order. SQLite already has one writer.
  */
 const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => {
@@ -245,6 +245,23 @@ const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => 
       ),
   });
 };
+
+/** The row lock a mutation read takes on MySQL. */
+type RowLock = "share" | "update";
+
+/**
+ * A mutation reads with a row lock on MySQL. At REPEATABLE READ a plain read uses
+ * the snapshot of the transaction's first plain read, which app SQL in a fused
+ * commit may have fixed before the stream lock. A locking read sees the latest
+ * committed row. SQLite has one writer, and Postgres at READ COMMITTED reads the
+ * latest commit in each statement, so both keep plain reads.
+ */
+const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
+  sql.onDialectOrElse({
+    mysql: () =>
+      sql.literal(lock === undefined ? "" : lock === "update" ? " FOR UPDATE" : " FOR SHARE"),
+    orElse: () => sql.literal(""),
+  });
 
 const lockIds = (mutation: Mutation): ReadonlyArray<StreamId> =>
   mutation.operations.flatMap((operation) =>
@@ -261,10 +278,10 @@ const recordColumns = (sql: SqlClient.SqlClient) =>
       "closed,closed_at,forked_from,fork_offset,fork_sub_offset,soft_deleted,expires_at_ms",
   );
 
-const readRecord = (sql: SqlClient.SqlClient, id: StreamId) =>
+const readRecord = (sql: SqlClient.SqlClient, id: StreamId, lock?: RowLock) =>
   attempt(
     "record",
-    sql<RecordDatabaseRow>`SELECT ${recordColumns(sql)} FROM streamsy_streams WHERE stream_id = ${id}`,
+    sql<RecordDatabaseRow>`SELECT ${recordColumns(sql)} FROM streamsy_streams WHERE stream_id = ${id}${lockingRead(sql, lock)}`,
   ).pipe(
     Effect.flatMap((rows) => {
       const row = rows[0];
@@ -323,11 +340,12 @@ const readProducer = (
   operation: string,
   id: StreamId,
   producerId: string,
+  lock?: RowLock,
 ) =>
   attempt(
     operation,
     sql<ProducerDatabaseRow>`SELECT epoch, last_seq FROM streamsy_producers
- WHERE stream_id = ${id} AND producer_id = ${producerId}`,
+ WHERE stream_id = ${id} AND producer_id = ${producerId}${lockingRead(sql, lock)}`,
   ).pipe(
     Effect.flatMap((rows) =>
       rows[0] === undefined
@@ -370,12 +388,12 @@ const preflight = (
   Effect.gen(function* () {
     for (const [index, operation] of mutation.operations.entries()) {
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
-      const current = yield* readRecord(sql, id);
+      const current = yield* readRecord(sql, id, "update");
       if (Predicate.isTagged(operation, "Create")) {
         if (Option.isSome(current))
           return yield* new MutationRejected({ index, reason: "exists", record: current });
         if (operation.forkSource !== undefined) {
-          const source = yield* readRecord(sql, operation.forkSource.id);
+          const source = yield* readRecord(sql, operation.forkSource.id, "share");
           if (
             Option.isNone(source) ||
             source.value.lifecycle.softDeleted ||
@@ -419,6 +437,7 @@ const preflight = (
           "mutate.preflight-producer",
           id,
           operation.producer.producerId,
+          "update",
         );
         const expected = operation.producer.expected;
         if (
@@ -438,7 +457,7 @@ const hasDependents = (sql: SqlClient.SqlClient, id: StreamId) =>
   attempt(
     "mutate.dependents",
     sql<DependentsDatabaseRow>`SELECT CASE WHEN EXISTS(
- SELECT 1 FROM streamsy_streams WHERE forked_from = ${id}
+ SELECT 1 FROM streamsy_streams WHERE forked_from = ${id}${lockingRead(sql, "share")}
 ) THEN 1 ELSE 0 END AS present`,
   ).pipe(
     Effect.flatMap((rows) => decodeDependentsRow(rows[0] ?? { present: 0 })),
@@ -467,7 +486,7 @@ const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
       // Two children of one soft-deleted parent can purge at once. Each waits here
       // for the other, so the last one sees no dependents and removes the parent.
       yield* lockStreams(sql, [parentId]);
-      const parent: Option.Option<StreamRecord> = yield* readRecord(sql, parentId);
+      const parent: Option.Option<StreamRecord> = yield* readRecord(sql, parentId, "update");
       if (
         Option.isNone(parent) ||
         !parent.value.lifecycle.softDeleted ||
@@ -499,7 +518,7 @@ const applyMutation = (
 
     for (const operation of mutation.operations) {
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
-      const current = records.get(id) ?? Option.getOrThrow(yield* readRecord(sql, id));
+      const current = records.get(id) ?? Option.getOrThrow(yield* readRecord(sql, id, "update"));
       if (Predicate.isTagged(operation, "Create")) {
         results.push(OperationResults.Created({ record: copyRecord(current) }));
         continue;
