@@ -1,7 +1,5 @@
-import { Memory, Streamsy, type Storage, type StorageFault } from "@streamsy/core";
-import type { CheckpointStore, ProjectionFault } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
+import { Memory, Streamsy } from "@streamsy/core";
+import { CheckpointStore } from "@streamsy/projection";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Effect, Layer } from "effect";
 import { DemoConfig } from "./config.ts";
@@ -14,25 +12,16 @@ export const createStoriesLayer = Layer.effectDiscard(
   Effect.flatMap(HackerNewsStories, (stories) => stories.create({})),
 );
 
-type HostLayer = Layer.Layer<
-  CheckpointStore | Storage | HackerNewsStories | Streamsy.ChangeFeed<HackerNewsStories>,
-  ProjectionFault | StorageFault
->;
+const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
+  databasePath === "memory"
+    ? Memory.layer(options, streams)
+    : BunStorage.layer({ ...options, client: { filename: databasePath } }, streams);
 
-const sqliteHost = (databasePath: string): HostLayer =>
-  ProjectionSql.layerStorage.pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
-  );
+/** The checkpoints join the owner of the stream: one SQLite file, or memory. */
+export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
+  CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 
-export const memoryHost = (
-  options: Parameters<typeof Memory.layer>[0] & { readonly readLimit?: number } = {},
-): HostLayer => ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer(options, streams)));
-
-const hostLayer = Layer.unwrap(
-  Effect.map(DemoConfig, ({ databasePath }) =>
-    databasePath === "memory" ? memoryHost() : sqliteHost(databasePath),
-  ),
-);
+const hostLayer = Layer.unwrap(Effect.map(DemoConfig, ({ databasePath }) => host(databasePath)));
 
 /** One SQLite file owns the stream, checkpoint and fold state. */
 export const demoHostLayer = createStoriesLayer.pipe(Layer.provideMerge(hostLayer));

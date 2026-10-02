@@ -6,8 +6,6 @@ import { Effect, Layer, Option } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Memory as StorageMemory, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import {
   type BoardState,
@@ -26,7 +24,7 @@ const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const resolution = fullGame[split];
 if (resolution?.type !== "AttackResolved") throw new Error("fixture has no AttackResolved");
 const sqlite = (filename: string) =>
-  ProjectionSql.layerStorage.pipe(
+  CheckpointStore.layer.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
   );
 /**
@@ -38,7 +36,7 @@ const asProcess =
   <A, E, R>(program: Effect.Effect<A, E, R>) =>
     // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
     Effect.provide(program, layer);
-const memory = Memory.layer.pipe(
+const memory = CheckpointStore.layer.pipe(
   Layer.provideMerge(StorageMemory.layer({}, Streamsy.group(GameEvents))),
 );
 /** A SQLite file in a temporary folder. The folder is removed when the scope closes. */
