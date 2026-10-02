@@ -112,6 +112,29 @@ test("upgrades a nonempty supported new-format v1 database", async () => {
   await Effect.runPromise(Scope.close(opened.scope, Exit.void));
 });
 
+test("upgrades a v2 database with the owner records table", async () => {
+  const path = filename("upgrade-v2");
+  const db = new Database(path, { create: true });
+  db.run(
+    `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
+  );
+  for (const statement of [...STORAGE_MIGRATIONS[0], ...STORAGE_MIGRATIONS[1]]) db.run(statement);
+  db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (1, 1), (2, 1)`);
+  db.close(false);
+  const opened = await Effect.runPromise(acquire(path));
+  await Effect.runPromise(Scope.close(opened.scope, Exit.void));
+  const upgraded = new Database(path, { readonly: true });
+  expect(
+    upgraded
+      .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
+      .get()?.version,
+  ).toBe(3);
+  expect(
+    upgraded.query("SELECT name FROM sqlite_master WHERE name='streamsy_owner_records'").get(),
+  ).not.toBeNull();
+  upgraded.close(false);
+});
+
 test("an injected migration failure rolls back schema and version rows", async () => {
   const path = filename("rollback");
   const owner = await Effect.runPromise(Scope.make());

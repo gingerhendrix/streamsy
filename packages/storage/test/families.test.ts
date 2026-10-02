@@ -2,7 +2,8 @@
 import { expect, it } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import { Storage, type StorageFault, Streamsy } from "@streamsy/core";
+import { type CommitBoundary, Storage, type StorageFault, Streamsy } from "@streamsy/core";
+import type { OwnerRecords } from "@streamsy/core/internal";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -75,7 +76,7 @@ function durableTypes(options: DurableObjectStorage.DurableObjectStorageOptions)
 }
 void [hidden, feeds, durableTypes];
 
-type SqlOutputs = Storage | SqlStorage.CommitBoundary;
+type SqlOutputs = Storage | CommitBoundary | OwnerRecords;
 type ClientServices = SqlClient.SqlClient | Reactivity.Reactivity;
 type HostOutputs = SqlOutputs | ClientServices;
 const bunExact: Equal<

@@ -15,20 +15,11 @@ import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { isSqlError } from "effect/unstable/sql/SqlError";
+import type { CommitBoundaryApi } from "@streamsy/core";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 class PendingInvalidations extends Context.Service<PendingInvalidations, Set<string>>()(
   "@streamsy/storage/PendingInvalidations",
-) {}
-
-export interface CommitBoundaryApi {
-  readonly withTransaction: <A, E, R>(
-    body: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | SqlError, R>;
-}
-
-export class CommitBoundary extends Context.Service<CommitBoundary, CommitBoundaryApi>()(
-  "@streamsy/storage/CommitBoundary",
 ) {}
 
 interface ActiveSubscription {

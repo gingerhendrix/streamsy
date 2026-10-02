@@ -6,7 +6,6 @@ import * as DurableObjectStorage from "@streamsy/storage/durable-object";
 
 test("the public root keeps migration internals private", () => {
   expect(Object.keys(StoragePackage).toSorted()).toEqual([
-    "CommitBoundary",
     "DEFAULT_REPAIR_INTERVAL_MS",
     "DEFAULT_TRANSACTION_RETRY_ATTEMPTS",
     "DEFAULT_TRANSACTION_RETRY_DELAY_MS",

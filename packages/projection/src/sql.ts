@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { ownerOf, attachOwner } from "@streamsy/core/internal";
-import { CommitBoundary } from "@streamsy/storage";
+import { CommitBoundary } from "@streamsy/core";
 import { CheckpointStore, fromStore, type EncodedStore } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 import { Transaction } from "./transaction.ts";

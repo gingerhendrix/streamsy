@@ -9,4 +9,5 @@ StorageContract.run({
     repairIntervalMs: 1_000,
   }).pipe(Layer.orDie),
   expected: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
+  ownerRecords: true,
 });
