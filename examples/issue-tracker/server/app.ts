@@ -6,7 +6,7 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
-import { issueRows } from "./projection.ts";
+import { issueRows, storedIssue } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
 import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { routes } from "./streams.ts";
@@ -64,30 +64,25 @@ const api = <E, R>(
     ),
   );
 
+/** The issue row and its attached label ids, as the command answer shows them. */
 const issueRow = (workspaceId: string, issueId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql.unsafe<{
-      readonly issueId: string;
-      readonly projectId: string;
-      readonly title: string;
-      readonly status: string;
-      readonly sequence: number;
-      readonly updatedAt: string;
-      readonly assigneeId: string | null;
-      readonly labelIds: string;
-    }>(
-      `SELECT i.issue_id AS issueId,i.project_id AS projectId,i.title,i.status,i.sequence,i.updated_at AS updatedAt,i.assignee_id AS assigneeId,COALESCE(GROUP_CONCAT(CASE WHEN il.attached=1 THEN il.label_id END), '') AS labelIds FROM issues i LEFT JOIN issue_labels il ON il.workspace_id=i.workspace_id AND il.issue_id=i.issue_id WHERE i.workspace_id=? AND i.issue_id=? GROUP BY i.issue_id`,
-      [workspaceId, issueId],
-    );
-    const row = rows[0];
-    return row === undefined
-      ? undefined
-      : {
-          ...row,
-          assigneeId: row.assigneeId ?? undefined,
-          labelIds: row.labelIds.split(",").filter(Boolean).sort(),
-        };
+    const issue = yield* storedIssue(sql, workspaceId, issueId);
+    if (issue === undefined) return undefined;
+    const labels = yield* sql<{
+      readonly label_id: string;
+    }>`SELECT label_id FROM issue_labels WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId} AND attached = 1`;
+    return {
+      issueId: issue.issueId,
+      projectId: issue.projectId,
+      title: issue.title,
+      status: issue.status,
+      sequence: issue.sequence,
+      updatedAt: issue.updatedAt,
+      assigneeId: issue.assigneeId,
+      labelIds: labels.map((row) => row.label_id).toSorted(),
+    };
   });
 
 const commands = (workspaces: ReadonlyArray<string>) =>
@@ -117,10 +112,8 @@ const drafts = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const workspaceId = yield* workspace(workspaces);
     const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql.unsafe(
-      `SELECT * FROM notification_drafts WHERE workspace_id=? ORDER BY event_id`,
-      [workspaceId],
-    );
+    const rows =
+      yield* sql`SELECT * FROM notification_drafts WHERE workspace_id = ${workspaceId} ORDER BY event_id`;
     return json({ workspaceId, rows });
   }).pipe(api);
 

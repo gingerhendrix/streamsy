@@ -19,11 +19,11 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
             ? undefined
             : yield* storedIssue(sql, workspaceId, command.issueId);
         if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
-        const [last] = yield* sql.unsafe<{ readonly sequence: number | null }>(
-          `SELECT MAX(sequence) AS sequence FROM issues WHERE workspace_id=?`,
-          [workspaceId],
-        );
-        const sequence = (last?.sequence ?? -1) + 1;
+        // Postgres and MySQL may return an aggregate as a `bigint` or a string.
+        const [last] = yield* sql<{
+          readonly sequence: number | bigint | string | null;
+        }>`SELECT MAX(sequence) AS sequence FROM issues WHERE workspace_id = ${workspaceId}`;
+        const sequence = (last?.sequence == null ? -1 : Number(last.sequence)) + 1;
         const occurredAt = new Date().toISOString();
         const common = {
           eventId: command.commandId,
