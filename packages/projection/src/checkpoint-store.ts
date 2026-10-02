@@ -59,6 +59,12 @@ const storageFailure =
   (phase: ProjectionFault["phase"], message: string) => (cause: StorageFault) =>
     new ProjectionFault({ phase, reason: "storage-failure", message, cause });
 
+/**
+ * SQL storage fails a write with this operation when the transaction read the key as
+ * absent and a concurrent save created it first. That save won the compare-and-set.
+ */
+const OWNER_RECORD_CONFLICT = "records.conflict";
+
 /** Stores each projection's offsets and encoded state in one compare-and-set record. */
 export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreApi>()(
   "@streamsy/projection/CheckpointStore",
@@ -79,9 +85,18 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
               .read(key)
               .pipe(Effect.mapError(storageFailure("load", "Cannot read a checkpoint"))),
           write: (key, value) =>
-            records
-              .write(key, value)
-              .pipe(Effect.mapError(storageFailure("checkpoint", "Cannot write a checkpoint"))),
+            records.write(key, value).pipe(
+              Effect.mapError((cause) =>
+                cause.operation === OWNER_RECORD_CONFLICT
+                  ? new ProjectionFault({
+                      phase: "checkpoint",
+                      reason: "token-conflict",
+                      message: "A concurrent save created the checkpoint record first",
+                      cause,
+                    })
+                  : storageFailure("checkpoint", "Cannot write a checkpoint")(cause),
+              ),
+            ),
           remove: (key) =>
             records
               .remove(key)

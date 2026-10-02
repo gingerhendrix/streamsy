@@ -23,13 +23,19 @@ import {
 import { AppendResult } from "./results.ts";
 import { Operations } from "../storage/mutation.ts";
 
+/**
+ * Semantic replans before an append gives up with `StreamBusy`. With a row lock,
+ * each round has one winner, so N parallel writers can need N replans.
+ */
+export const APPEND_REPLAN_LIMIT = 64;
+
 export const append = Effect.fn("Protocol.append")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
   options: AppendOptions,
 ): Effect.fn.Return<AppendResult, AppendError | import("../fault.ts").StorageFault> {
   // These are semantic replans, not retries of an opaque write or its fault.
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < APPEND_REPLAN_LIMIT; attempt++) {
     const found = yield* expireIfNeeded(storage, id);
     if (Option.isNone(found)) return yield* new StreamNotFound({ id });
     const record = found.value;

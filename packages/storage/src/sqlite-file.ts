@@ -1,5 +1,6 @@
 import { StorageFault } from "@streamsy/core";
 import { Effect, FileSystem, Path, Schema } from "effect";
+import { inspectFormat, newerVersionFault } from "./migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
@@ -51,26 +52,20 @@ const decodeVersions = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ version: Schema.NullOr(Schema.Finite) })),
 );
 
-const inspectFormat = (reader: SqliteFileReader) => {
+const readFormat = (reader: SqliteFileReader) => {
   const names = new Set(
     decodeTableNames(reader.all("SELECT name FROM sqlite_master WHERE type='table'")).map(
       ({ name }) => name,
     ),
   );
-  const ownsFormat = names.has(STORAGE_VERSION_TABLE);
-  const legacy =
-    names.has("streamsy_schema_version") ||
-    (!ownsFormat &&
-      ["streamsy_streams", "streamsy_messages", "streamsy_producers"].some((name) =>
-        names.has(name),
-      ));
-  const version = ownsFormat
+  const version = names.has(STORAGE_VERSION_TABLE)
     ? (decodeVersions(reader.all(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)).at(0)
         ?.version ?? 0)
     : 0;
-  return { legacy, version };
+  return { names, version };
 };
 
+/** The same format rule as the SQL migration runner, read before the client opens the file. */
 const preflight = (
   filename: string,
   driver: SqliteFileDriver,
@@ -78,18 +73,12 @@ const preflight = (
 ): Effect.Effect<void, StorageFault> =>
   Effect.gen(function* () {
     const state = yield* retryWithPolicy(
-      driver.read(filename, inspectFormat),
+      driver.read(filename, readFormat),
       retry,
       (error) => error.retryable,
     );
-    if (state.legacy)
-      return yield* openFault(
-        "Unsupported pre-0.4 Streamsy SQLite format; use a fresh database path (the file was not modified)",
-      );
-    if (state.version > STORAGE_SCHEMA_VERSION)
-      return yield* openFault(
-        `Unsupported newer Streamsy SQLite schema version ${state.version}; supported version is ${STORAGE_SCHEMA_VERSION}`,
-      );
+    yield* inspectFormat(state.names);
+    if (state.version > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(state.version);
     return undefined;
   });
 

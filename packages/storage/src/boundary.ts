@@ -93,6 +93,21 @@ export const sharedSqlClientLayer = <A extends SqlClient.SqlClient, E>(
     ),
   );
 
+/**
+ * Build a `SqlClient` and provide it with the `Reactivity` it captured, so the
+ * client and the storage boundary share one change graph.
+ *
+ * ```ts
+ * const storage = Storage.layer(streams).pipe(
+ *   Layer.provide(Storage.clientLayer(PgClient.make({ url: Redacted.make(url) }))),
+ * );
+ * ```
+ */
+export const clientLayer = <A extends SqlClient.SqlClient, E>(
+  makeClient: Effect.Effect<A, E, Scope.Scope | Reactivity.Reactivity>,
+): Layer.Layer<SqlClient.SqlClient | Reactivity.Reactivity, E> =>
+  Layer.effectContext(sharedSqlClientLayer(makeClient));
+
 const makeBoundary = (
   repairIntervalMs: number,
   transactionRetry: TransactionRetryPolicy,

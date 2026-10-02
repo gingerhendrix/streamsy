@@ -208,3 +208,83 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
   );
   expect(result).toEqual({ tags: ["Applied", "MutationRejected"], typedFault: true });
 });
+
+test("stream ids longer than 512 characters fail before any insert", async () => {
+  const result = await Effect.runPromise(
+    withStore("stream-id-limit", (storage, sql) =>
+      Effect.gen(function* () {
+        const create = (id: string) =>
+          storage.mutate({
+            operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
+          });
+        // 512 code points pass, even when they take 1024 UTF-16 units.
+        yield* create("a".repeat(512));
+        yield* create("\u{1F600}".repeat(512));
+        const tooLong = yield* create("b".repeat(513)).pipe(Effect.flip);
+        const rows = yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) count FROM streamsy_streams",
+        );
+        return {
+          fault: Predicate.isTagged(tooLong, "StorageFault")
+            ? { operation: tooLong.operation, retryable: tooLong.retryable }
+            : tooLong,
+          count: rows[0]?.count,
+        };
+      }),
+    ),
+  );
+  expect(result).toEqual({
+    fault: { operation: "mutate.stream-id", retryable: false },
+    count: 2,
+  });
+});
+
+test("producer ids longer than 255 characters fail before any write", async () => {
+  const result = await Effect.runPromise(
+    withStore("producer-id-limit", (storage, sql) =>
+      Effect.gen(function* () {
+        yield* storage.mutate({
+          operations: [{ _tag: "Create", record: record("producers"), initialMessages: [] }],
+        });
+        const one = Offset.make("0000000000000001_0000000000000000");
+        const write = (producerId: string) =>
+          storage.mutate({
+            operations: [
+              {
+                _tag: "Append",
+                streamId: StreamId.make("producers"),
+                messages: [{ offset: one, timestamp: 1, data: new TextEncoder().encode("x") }],
+                patch: { currentOffset: one },
+                producer: {
+                  producerId: ProducerId.make(producerId),
+                  expected: Option.none(),
+                  next: { epoch: 0, lastSeq: 0 },
+                },
+              },
+            ],
+          });
+        const tooLong = yield* write("p".repeat(256)).pipe(Effect.flip);
+        const producers = yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) count FROM streamsy_producers",
+        );
+        const messages = yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) count FROM streamsy_messages",
+        );
+        // 255 code points pass, even when they take 510 UTF-16 units.
+        yield* write("\u{1F600}".repeat(255));
+        return {
+          fault: Predicate.isTagged(tooLong, "StorageFault")
+            ? { operation: tooLong.operation, retryable: tooLong.retryable }
+            : tooLong,
+          before: [producers[0]?.count, messages[0]?.count],
+          after: Option.getOrThrow(yield* storage.record(StreamId.make("producers"))).currentOffset,
+        };
+      }),
+    ),
+  );
+  expect(result).toEqual({
+    fault: { operation: "mutate.producer-id", retryable: false },
+    before: [0, 0],
+    after: Offset.make("0000000000000001_0000000000000000"),
+  });
+});

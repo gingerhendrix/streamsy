@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/storage",
   "version": "0.4.0",
-  "description": "Effect SQL storage for Streamsy with Bun and Durable Object SQLite host layers.",
+  "description": "Effect SQL storage for Streamsy on SQLite, Postgres and MySQL, with Bun and Durable Object SQLite host layers.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -38,7 +38,8 @@
   "scripts": {
     "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle @streamsy/core --deps.never-bundle @effect/platform-bun --deps.never-bundle @effect/sql-sqlite-bun --deps.never-bundle @effect/sql-sqlite-do",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test test"
+    "test:unit": "bun test test",
+    "test:dialects": "bun test test/dialects"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
@@ -47,6 +48,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
     "@effect/platform-bun": "4.0.0-rc.115",
+    "@effect/sql-mysql2": "4.0.0-rc.115",
+    "@effect/sql-pg": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@streamsy/serve": "workspace:*",

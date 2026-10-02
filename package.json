@@ -41,6 +41,9 @@
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:workerd": "bun run --cwd packages/conformance-tests test:workerd",
+    "test:sql-dialects": "bun run --cwd packages/storage test:dialects && bun run --cwd packages/projection test:dialects && bun run --cwd packages/serve test:dialects && bun run --cwd packages/conformance-tests test:pg && bun run --cwd packages/conformance-tests test:mysql",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
     "build": "bun run --cwd packages/core build && bun run --cwd packages/storage build && bun run --cwd packages/serve build && bun run --cwd packages/projection build",
     "e2e:check": "bun run --cwd e2e typecheck && bun run --cwd e2e test",
     "test:e2e:deployed": "bun run build && bun run --cwd e2e test:deployed",
@@ -65,6 +68,8 @@
     "@effect/ai-anthropic": "4.0.0-rc.115",
     "@effect/ai-openai": "4.0.0-rc.115",
     "@effect/platform-node": "4.0.0-rc.115",
+    "@effect/sql-mysql2": "4.0.0-rc.115",
+    "@effect/sql-pg": "4.0.0-rc.115",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "0.1.83",
     "effect": "4.0.0-rc.115"
