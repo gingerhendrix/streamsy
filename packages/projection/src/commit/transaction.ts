@@ -1,6 +1,6 @@
 import { Array, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
+import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";

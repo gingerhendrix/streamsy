@@ -21,7 +21,7 @@ fixture prefix with the aggregate and round-trip its BoardState schema, and
 check combat, map geometry, reinforcement accounting and multi-event move keys.
 
 `test:unit` is discovered by the root workspace test runner. There is no output
-stream or application table: this example uses one `streamsy_projection_v2_records` record for state and offsets supplied by the projection Layer.
+stream or application table: this example uses one `streamsy_owner_records` record for state and offsets, written by `CheckpointStore.layer`.
 
 ## Fixtures
 

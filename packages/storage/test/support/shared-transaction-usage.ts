@@ -3,8 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
-import { Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
-import { CommitBoundary } from "@streamsy/storage";
+import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

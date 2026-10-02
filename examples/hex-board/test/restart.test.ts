@@ -6,7 +6,6 @@ import { Effect, Layer, Option } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import * as ProjectionSql from "@streamsy/projection/sql";
 import * as BunStorage from "@streamsy/storage/bun";
 import {
   type BoardState,
@@ -25,7 +24,7 @@ const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const resolution = fullGame[split];
 if (resolution?.type !== "AttackResolved") throw new Error("fixture has no AttackResolved");
 const sqlite = (filename: string) =>
-  ProjectionSql.layerStorage.pipe(
+  CheckpointStore.layer.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
   );
 /**

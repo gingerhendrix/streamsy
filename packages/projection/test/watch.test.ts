@@ -7,7 +7,7 @@ import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import { layerMemory } from "@streamsy/projection/memory";
+import { layerMemory } from "./support/memory.ts";
 
 class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
   "on-change.test/WatchRoute2",

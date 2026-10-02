@@ -108,12 +108,12 @@ A projection also needs `CheckpointStore`. Merge its Layer over the same storage
 ```ts
 import { Effect, Layer } from "effect";
 import { Memory } from "@streamsy/core";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore } from "@streamsy/projection";
 import { catchUp } from "./projection.ts";
 import { write } from "./write.ts";
 import { shop } from "./streams.ts";
 
-const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
 
 await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)));
 ```
@@ -127,7 +127,7 @@ import { shop } from "./streams.ts";
 export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop);
 ```
 
-See [Layers and storage](/docs/hosting).
+`CheckpointStore.layer` works over this Layer too, and keeps the checkpoints in the same file. See [Layers and storage](/docs/hosting).
 
 ## 6. Serve on Bun
 

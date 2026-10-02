@@ -2,6 +2,7 @@
 /* oxlint-disable anti-slop/no-shape-in-symbol-names */
 export { Storage, type StorageShape } from "./storage.ts";
 export { StorageCapabilities } from "./capabilities.ts";
+export { CommitBoundary, type CommitBoundaryApi } from "./commit-boundary.ts";
 export {
   ProducerPrecondition,
   Operation,

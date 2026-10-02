@@ -8,7 +8,7 @@ import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Streams } from "@streamsy/core/protocol";
 import { Projection } from "@streamsy/projection";
-import * as Memory from "@streamsy/projection/memory";
+import * as Memory from "./support/memory.ts";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };

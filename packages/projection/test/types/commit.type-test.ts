@@ -1,6 +1,5 @@
-import * as ProjectionMemory from "@streamsy/projection/memory";
-import * as ProjectionSql from "@streamsy/projection/sql";
-import * as SqliteClient from "@effect/sql-sqlite-bun/SqliteClient";
+import { layerMemory } from "../support/memory.ts";
+import * as BunStorage from "@streamsy/storage/bun";
 import { Protocol } from "@streamsy/core/protocol";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -142,7 +141,7 @@ const hostProcess = Projection.process({
   commit: Commit.transaction,
   process: () => Effect.asVoid(SqlClient.SqlClient),
 }).at({});
-const memoryHost = ProjectionMemory.layerMemory();
+const memoryHost = layerMemory();
 const memoryRun = Projection.run(hostProcess).pipe(
   Effect.provide(
     Protocol.bind(memoryHost, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryHost)),
@@ -150,11 +149,13 @@ const memoryRun = Projection.run(hostProcess).pipe(
 );
 const sqlHost = Layer.merge(
   Protocol.bind(memoryHost, Streamsy.group(Input)),
-  ProjectionSql.layer.pipe(Layer.provide(SqliteClient.layer({ filename: ":memory:" }))),
+  Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+    Layer.provide(BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group())),
+  ),
 );
 const sqlRun = Projection.run(hostProcess).pipe(Effect.provide(sqlHost));
 // oxlint-disable effecttsgo/missing-effect-context -- Proves that memory cannot satisfy Transaction.
-// @ts-expect-error ProjectionMemory alone leaves the SQL Transaction requirement unsatisfied
+// @ts-expect-error A memory host leaves the SQL Transaction requirement unsatisfied
 const runnableOnMemory: Effect.Effect<unknown, Effect.Error<typeof memoryRun>> = memoryRun;
 // oxlint-enable effecttsgo/missing-effect-context
 const runnableOnSql: Effect.Effect<unknown, Effect.Error<typeof sqlRun>> = sqlRun;

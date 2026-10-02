@@ -15,8 +15,10 @@ import type { StreamId } from "../../schema/index.ts";
 import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from "./state.ts";
 import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
 import { createNotifier } from "./notifier.ts";
+import { OwnerRecords } from "../../internal/owner-records.ts";
+import { CommitBoundary } from "../commit-boundary.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Layer owns the boundary and its exact stream state.
-import { makeBoundary, MemoryCommitBoundary } from "./boundary.ts";
+import { makeBoundary } from "./boundary.ts";
 import { changes } from "./changes.ts";
 
 interface CommitResult {
@@ -78,7 +80,9 @@ function reject(state: State, operation: Operation, index: number): MutationReje
   return undefined;
 }
 
-export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | MemoryCommitBoundary> =>
+export const layer = (
+  options: MemoryOptions = {},
+): Layer.Layer<Storage | CommitBoundary | OwnerRecords> =>
   Layer.effectContext(
     Effect.gen(function* () {
       const chain = !options.constrained;
@@ -87,7 +91,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
       const committed: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const bus = yield* createNotifier;
-      const boundary = yield* makeBoundary(committed, bus.publish);
+      const owner = yield* makeBoundary(committed, bus.publish);
       const commit = (state: State, mutation: Mutation): CommitResult | MutationRejected => {
         const changed = new Set<StreamId>();
         for (const [index, operation] of mutation.operations.entries()) {
@@ -149,12 +153,12 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
           expiryIndex: chain ? "indexed" : "lazy",
         },
         record: Effect.fn("Memory.record")((id) =>
-          boundary.access((state) =>
+          owner.access((state) =>
             Option.fromUndefinedOr(state.entries.get(id)?.record).pipe(Option.map(copyRecord)),
           ),
         ),
         messages: Effect.fn("Memory.messages")((id, window) =>
-          boundary.access((state) =>
+          owner.access((state) =>
             composeMessages(state, id, chain)
               .filter(
                 (message) =>
@@ -166,7 +170,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
           ),
         ),
         producer: Effect.fn("Memory.producer")((id, producerId) =>
-          boundary.access((state) =>
+          owner.access((state) =>
             Option.fromUndefinedOr(state.entries.get(id)?.producers.get(producerId)).pipe(
               Option.map((value) => ({ epoch: value.epoch, lastSeq: value.lastSeq })),
             ),
@@ -181,22 +185,23 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
               new Error("Mutation requires distinct streams within atomicScope"),
             );
           return yield* Effect.gen(function* () {
-            const result = yield* boundary.access((state) => commit(state, mutation));
+            const result = yield* owner.access((state) => commit(state, mutation));
             if (Predicate.isTagged(result, "MutationRejected")) return yield* result;
             const { outcome, changed } = result;
-            if (changed.size > 0) yield* boundary.changed;
+            if (changed.size > 0) yield* owner.changed;
             return outcome;
-          }).pipe(boundary.api.withTransaction, Effect.uninterruptible);
+          }).pipe(owner.withTransaction, Effect.uninterruptible);
         }),
         changes: (id) => changes(committed, bus, id, chain, interval),
-        nextExpiry: boundary.access((state) =>
+        nextExpiry: owner.access((state) =>
           Option.fromUndefinedOr(state.deadlines[0]).pipe(
             Option.map((deadline) => ({ ...deadline })),
           ),
         ),
       });
-      return Context.make(Storage, attachOwner(storage, ownerOf(boundary.api))).pipe(
-        Context.add(MemoryCommitBoundary, boundary.api),
+      return Context.make(Storage, attachOwner(storage, ownerOf(owner.boundary))).pipe(
+        Context.add(CommitBoundary, owner.boundary),
+        Context.add(OwnerRecords, owner.records),
       );
     }),
   );

@@ -195,12 +195,12 @@ test("invalid stored record stops", () =>
       const key = recordKey(Projection.key(positives));
       const rows = yield* sql<{
         readonly value: string;
-      }>`SELECT value FROM streamsy_projection_v2_records WHERE key = ${key}`;
+      }>`SELECT value FROM streamsy_owner_records WHERE key = ${key}`;
       const stored = Option.getOrThrow(Option.fromUndefinedOr(rows[0])).value;
       const bad = stored.replace(/"input":"\d{16}_\d{16}"/, '"input":"not-an-offset"');
       expect(bad).not.toBe(stored);
       for (const value of ["{not json", '{"version":1,"record":{}}', bad]) {
-        yield* sql`UPDATE streamsy_projection_v2_records SET value = ${value} WHERE key = ${key}`;
+        yield* sql`UPDATE streamsy_owner_records SET value = ${value} WHERE key = ${key}`;
         const failed = fault(yield* failure(Projection.run(positives)));
         expect(failed.phase).toBe("load");
         expect(failed.reason).toBe("invalid-record");

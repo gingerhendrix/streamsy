@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import * as Memory from "@streamsy/projection/memory";
+import * as Memory from "./support/memory.ts";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
   params: {},

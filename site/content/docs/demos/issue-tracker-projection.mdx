@@ -146,7 +146,7 @@ export const issueRows = Projection.process({
 });
 ```
 
-`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. `@streamsy/projection` owns only `streamsy_projection_v2_records`, which holds offsets and encoded state.
+`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. Offsets and encoded state sit in the storage table `streamsy_owner_records`.
 
 See [Commits](/docs/projections/define#commits) and [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
 

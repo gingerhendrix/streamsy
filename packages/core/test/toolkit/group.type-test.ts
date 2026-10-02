@@ -1,8 +1,15 @@
 import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpRouter } from "effect/unstable/http";
-import { type TransportFault, Http, Memory, Storage, Streamsy } from "../../src/index.ts";
+import {
+  type CommitBoundary,
+  type TransportFault,
+  Http,
+  Memory,
+  Storage,
+  Streamsy,
+} from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
-import type { MemoryCommitBoundary } from "../../src/internal/memory.ts";
+import type { OwnerRecords } from "../../src/internal/index.ts";
 import * as Fetch from "../../src/fetch/index.ts";
 class A extends Streamsy.json<A>()("GroupTypes/A", "a", {
   params: {},
@@ -50,7 +57,7 @@ void routeRequirements;
 
 const memoryExact: Equal<
   Layer.Success<typeof memory>,
-  Storage | MemoryCommitBoundary | A | B | Streamsy.ChangeFeed<A | B>
+  Storage | CommitBoundary | OwnerRecords | A | B | Streamsy.ChangeFeed<A | B>
 > = true;
 const memoryRequirements: Equal<Layer.Services<typeof memory>, never> = true;
 const memoryErrors: Equal<Layer.Error<typeof memory>, never> = true;
@@ -68,7 +75,10 @@ const pointFreeFetch: Equal<
 > = true;
 const hasFeed: Effect.Effect<void> = needsFeed.pipe(Effect.provide(memory));
 const emptyGroup = Memory.layer({}, Streamsy.group());
-const emptyExact: Equal<Layer.Success<typeof emptyGroup>, Storage | MemoryCommitBoundary> = true;
+const emptyExact: Equal<
+  Layer.Success<typeof emptyGroup>,
+  Storage | CommitBoundary | OwnerRecords
+> = true;
 void [
   memoryExact,
   memoryRequirements,
