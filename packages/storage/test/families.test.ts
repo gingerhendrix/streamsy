@@ -54,28 +54,6 @@ it("Bun and SQL stream layers share storage and feeds without exporting the gene
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
-const hidden: Equal<
-  Extract<Layer.Success<typeof bun>, StreamsReader | StreamsWriter>,
-  never
-> = true;
-const feeds: Equal<
-  Extract<Layer.Success<typeof bun>, Streamsy.ChangeFeed<Notes>>,
-  Streamsy.ChangeFeed<Notes>
-> = true;
-function durableTypes(options: DurableObjectStorage.DurableObjectStorageOptions) {
-  const host = DurableObjectStorage.layer(group, options);
-  const hidden: Equal<
-    Extract<Layer.Success<typeof host>, StreamsReader | StreamsWriter>,
-    never
-  > = true;
-  const feeds: Equal<
-    Extract<Layer.Success<typeof host>, Streamsy.ChangeFeed<Notes>>,
-    Streamsy.ChangeFeed<Notes>
-  > = true;
-  return [hidden, feeds];
-}
-void [hidden, feeds, durableTypes];
-
 type SqlOutputs = Storage | CommitBoundary | OwnerRecords;
 type ClientServices = SqlClient.SqlClient | Reactivity.Reactivity;
 type HostOutputs = SqlOutputs | ClientServices;

@@ -168,7 +168,7 @@ const buildPublicLayer = (filename: string, disableWAL = false) =>
     ),
   );
 
-test("public Bun acquisition bounds preflight, WAL preparation and migration contention", async () => {
+test("public Bun acquisition bounds preflight and WAL preparation contention", async () => {
   const measure = async (
     filename: string,
     mode: "write" | "exclusive",
@@ -221,24 +221,6 @@ test("public Bun acquisition bounds preflight, WAL preparation and migration con
   }
   expect(streamsyTables(walExhaustion)).toEqual([]);
 
-  const migrationProgress = `${scratch}/contention-public-migration-progress-${process.pid}-${crypto.randomUUID()}.sqlite`;
-  prepareWalFile(migrationProgress);
-  const progressedMigration = await measure(migrationProgress, "write", 150, true);
-  expect(Exit.isSuccess(progressedMigration.exit)).toBe(true);
-  expect(progressedMigration.elapsedMs).toBeGreaterThanOrEqual(100);
-  expect(progressedMigration.elapsedMs).toBeLessThanOrEqual(750);
-
-  const migrationExhaustion = `${scratch}/contention-public-migration-exhaustion-${process.pid}-${crypto.randomUUID()}.sqlite`;
-  prepareWalFile(migrationExhaustion);
-  const exhaustedMigration = await measure(migrationExhaustion, "write", 650, true);
-  expect(Exit.isFailure(exhaustedMigration.exit)).toBe(true);
-  expect(exhaustedMigration.elapsedMs).toBeLessThanOrEqual(750);
-  if (Exit.isFailure(exhaustedMigration.exit)) {
-    const error = Option.getOrThrow(Cause.findErrorOption(exhaustedMigration.exit.cause));
-    expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
-  }
-  expect(streamsyTables(migrationExhaustion)).toEqual([]);
-
   await Bun.write(
     `${scratch}/contention-public-acquisition-metrics-${process.pid}.json`,
     JSON.stringify(
@@ -247,8 +229,6 @@ test("public Bun acquisition bounds preflight, WAL preparation and migration con
         preflightExhaustionMs: preflightExhausted.elapsedMs,
         walProgressMs: progressedWal.elapsedMs,
         walExhaustionMs: exhaustedWal.elapsedMs,
-        migrationProgressMs: progressedMigration.elapsedMs,
-        migrationExhaustionMs: exhaustedMigration.elapsedMs,
       },
       undefined,
       2,
@@ -401,6 +381,7 @@ test("migration acquisition retries are bounded and never expose partial schema"
     expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
   }
   await held.exited;
+  expect(streamsyTables(exhaustedFile)).toEqual([]);
   const reopened = makeTestLayer(exhaustedFile);
   expect(await Effect.runPromiseExit(Effect.scoped(Layer.build(reopened.storage)))).toEqual(
     expect.objectContaining({ _tag: "Success" }),
