@@ -244,27 +244,44 @@ export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E,
       const unchanged: Decided<B> = { value, offset, appended: false };
       return unchanged;
     }
-    const appended = yield* append(address, items, { expectedOffset: offset });
+    const appended = yield* append(address, items, { expectedOffset: offset }).pipe(
+      Effect.catchTag("OffsetMismatch", (mismatch) => Effect.fail(new LostRace(mismatch))),
+    );
     const decided: Decided<B> = { value, offset: appended.offset, appended: true };
     return decided;
   });
-  // `retry` steps its schedule with every error it sees, so only a lost race may
-  // reach it. Any other outcome passes the retry as a `Result` and is raised after.
+  return yield* retryLostRace(attempt, spec.retry ?? defaultDecideRetry);
+});
+/**
+ * Marks the `OffsetMismatch` of a decide loop's own append. Only this error is
+ * retried: an `OffsetMismatch` that the caller's `decide` raises is its own
+ * failure and passes through.
+ */
+class LostRace {
+  constructor(readonly mismatch: OffsetMismatch) {}
+}
+/**
+ * Retry `attempt` after a `LostRace` while `schedule` allows, then fail with the
+ * last `OffsetMismatch`. `retry` steps its schedule with every error it sees, so
+ * every other outcome passes the retry as a `Result` and is raised after.
+ */
+const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
+  attempt: Effect.Effect<A, E, R>,
+  schedule: Schedule.Schedule<unknown, OffsetMismatch>,
+) {
   const outcome = yield* attempt.pipe(
-    Effect.result,
-    Effect.flatMap((result) =>
-      Result.isFailure(result) && isOffsetMismatch(result.failure)
-        ? Effect.fail(result.failure)
-        : Effect.succeed(result),
-    ),
-    Effect.retry(spec.retry ?? defaultDecideRetry),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        error instanceof LostRace
+          ? Effect.fail(error.mismatch)
+          : // SAFETY: `instanceof` ruled out `LostRace`; TS cannot narrow a type parameter.
+            Effect.succeed(Result.fail(error as Exclude<E, LostRace>)),
+      onSuccess: (value) => Effect.succeed(Result.succeed(value)),
+    }),
+    Effect.retry(schedule),
   );
   return yield* Effect.fromResult(outcome);
 });
-const isOffsetMismatch = <E>(
-  error: E | OffsetMismatch,
-): error is Extract<E, OffsetMismatch> | OffsetMismatch =>
-  Predicate.isTagged(error, "OffsetMismatch");
 export interface FollowOptions extends ReadOptions {
   /**
    * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.

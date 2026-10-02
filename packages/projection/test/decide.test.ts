@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { Effect, Schedule, Schema } from "effect";
-import { OffsetMismatch, Streamsy } from "@streamsy/core";
+import { OffsetMismatch, StreamId, Streamsy } from "@streamsy/core";
 import { Protocol, Streams } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 
@@ -168,5 +168,32 @@ test("decide works for a projection with no state", () =>
           Effect.succeed({ value: [...table], items: table.includes("b") ? [] : ["b"] }),
       });
       expect(again).toMatchObject({ value: ["a", "b"], appended: false });
+    }),
+  ));
+
+test("decide does not retry an OffsetMismatch that its own decide raises", () =>
+  run(
+    Effect.gen(function* () {
+      yield* seed;
+      const numbers = yield* Numbers;
+      const tail = yield* tailOf(numbers);
+      const own = new OffsetMismatch({
+        id: StreamId.make("elsewhere"),
+        expected: "a",
+        actual: "b",
+      });
+      let decisions = 0;
+      const failure = yield* Effect.flip(
+        Projection.decide(totals, {
+          input: "numbers",
+          decide: () => {
+            decisions += 1;
+            return Effect.fail(own);
+          },
+        }),
+      );
+      expect(failure).toBe(own);
+      expect(decisions).toBe(1);
+      expect(yield* tailOf(numbers)).toBe(tail);
     }),
   ));

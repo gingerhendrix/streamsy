@@ -160,8 +160,8 @@ What `decide` does:
 - It calls `decide` with the state and the tail it read. `decide` must not write and must not change the state.
 - Empty `items` returns at once. There is no append and no tail check.
 - Otherwise it appends the items with `expectedOffset` set to that tail.
-- After `OffsetMismatch`, it folds only the new items onto the same state and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`.
-- It does not retry other failures. A lost reply can hide an append that landed, so a caller that retries the whole call must make `decide` safe against its own write.
+- When its own append fails with `OffsetMismatch`, it folds only the new items onto the same state and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`.
+- It does not retry other failures. An `OffsetMismatch` that `decide` raises is not retried. A lost reply can hide an append that landed, so a caller that retries the whole call must make `decide` safe against its own write.
 
 It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the tail that was read. `Streams.decide(address, spec)` is the same call on an address.
 

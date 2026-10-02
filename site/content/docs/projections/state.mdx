@@ -127,7 +127,7 @@ What `Projection.decide` does:
 - It reads the state and the offsets from one checkpoint record, and passes them to `decide`. `decide` must not write.
 - Empty `items` writes nothing and does not check the tail. A rejection is an answer at the offsets that were read.
 - Otherwise it appends to the input that `input` names, with that input's offset as `expectedOffset`. `input` must be a key of `inputs`, and `items` must have that input's item type.
-- After `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures.
+- When its own append fails with `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures, and it does not retry an `OffsetMismatch` that `decide` raises.
 
 It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the offset that was read.
 
