@@ -769,9 +769,10 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
     write: Effect.fn("SqlStorage.records.write")(function* (key: string, encoded: string) {
       const transaction = yield* Effect.serviceOption(sql.transactionService);
       const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
-      if (absent === undefined || !absent.has(key)) return yield* upsert(key, encoded);
-      yield* insert(key, encoded);
-      absent.delete(key);
+      if (absent?.has(key) === true) {
+        yield* insert(key, encoded);
+        absent.delete(key);
+      } else yield* upsert(key, encoded);
     }),
     remove: Effect.fn("SqlStorage.records.remove")((key: string) =>
       execute("records.remove", sql`DELETE FROM streamsy_owner_records WHERE owner_key = ${key}`),
