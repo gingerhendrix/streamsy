@@ -1,6 +1,6 @@
 # Issue tracker projection
 
-This SQLite example combines five workspace inputs in two checkpointed projections.
+This example combines five workspace inputs in two checkpointed projections.
 Commands append canonical issue facts through `transact`, run both workspace addresses
 under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
 addresses. Startup attempts to catch up each configured address before accepting requests.
@@ -17,9 +17,36 @@ ISSUE_TRACKER_DB=tracker.sqlite bun run --cwd examples/issue-tracker run:once ac
 ```
 
 `server/config.ts` reads the settings with `Config`. `PORT` defaults to `1340`.
-`ISSUE_TRACKER_DB` selects the SQLite file (default:
-`/tmp/streamsy-issue-tracker-<pid>.sqlite`). `ISSUE_TRACKER_WORKSPACES` is the
-comma-separated fixed address list and defaults to `acme,live`.
+`ISSUE_TRACKER_WORKSPACES` is the comma-separated fixed address list and
+defaults to `acme,live`.
+
+The server keeps streams, checkpoints and application tables in one database:
+
+| Set                  | Database                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `STREAMSY_PG_URL`    | Postgres at that URL (`@effect/sql-pg`)                                                |
+| `STREAMSY_MYSQL_URL` | MySQL at that URL (`@effect/sql-mysql2`)                                               |
+| neither              | Bun SQLite at `ISSUE_TRACKER_DB` (default: `/tmp/streamsy-issue-tracker-<pid>.sqlite`) |
+
+Setting both URLs is an error. The server creates its tables at startup. Give
+it a database of its own. `hostLayer` and `applicationLayer` in `server/host.ts`
+take a storage Layer: `sqliteStorage(filename)` for Bun SQLite, or
+`sqlStorage(makeClient)` over any SQL client.
+
+`smoke:issue-tracker` uses the same config, so it runs against Postgres or MySQL
+when a URL is set, and restarts the server on that database. Start from an
+empty database. `smoke:issue-tracker-serve`, `app:issue-tracker` and `run:once`
+use SQLite only; run them with no URL set.
+
+```bash
+bun run db:up
+STREAMSY_PG_URL=postgres://streamsy:streamsy@127.0.0.1:54329/<empty database> bun run smoke:issue-tracker
+```
+
+`bun run --cwd examples/issue-tracker test:dialects` runs the application SQL
+(schema, upserts, the label sequence rule, ignored duplicates, catalog deletes)
+on SQLite, and on Postgres and MySQL when their URLs are set. It makes and drops
+its own database on each server. It is not part of `test:unit`.
 
 The server composes protocol, command and declared output routes with `Layer.mergeAll`
 and runs `Serve.layer` with a scoped Bun listener under `BunRuntime.runMain`.
