@@ -131,24 +131,15 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
 /** The encoded seam a checkpoint Layer builds on; both shipped Layers use it. */
 export interface EncodedStore {
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
-  /** The compare-and-set read, inside the transaction. A store with concurrent writers locks the row. Defaults to `read`. */
-  readonly readForUpdate?: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
-  /** Writes a key that must not exist yet; `false` when it already does. Without it, a first save reads and then writes. */
-  readonly insert?: (key: string, value: string) => Effect.Effect<boolean, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
-const conflict = (key: ProjectionKey, ifToken: string, found: string) =>
-  new ProjectionFault({
-    phase: "checkpoint",
-    reason: "token-conflict",
-    message: `Record for ${key.id} changed: expected token ${ifToken}, found ${found}`,
-  });
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
-  const decode = Effect.fnUntraced(function* (key: ProjectionKey, encoded: Option.Option<string>) {
+  const load = Effect.fn("Projection.CheckpointStore.load")(function* (key: ProjectionKey) {
+    const encoded = yield* store.read(recordKey(key));
     if (Option.isNone(encoded)) {
       const absent: Loaded = { record: Option.none(), token: ABSENT_TOKEN };
       return absent;
@@ -169,10 +160,6 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
     };
     return loaded;
   });
-  const load = Effect.fn("Projection.CheckpointStore.load")(function* (key: ProjectionKey) {
-    return yield* decode(key, yield* store.read(recordKey(key)));
-  });
-  const readForUpdate = store.readForUpdate ?? store.read;
   const compareAndSet = Effect.fn("Projection.CheckpointStore.compareAndSet")(function* (
     key: ProjectionKey,
     ifToken: string,
@@ -180,8 +167,15 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   ) {
     return yield* store.withTransaction(
       Effect.gen(function* () {
+        const current = yield* load(key);
+        if (current.token !== ifToken)
+          return yield* new ProjectionFault({
+            phase: "checkpoint",
+            reason: "token-conflict",
+            message: `Record for ${key.id} changed: expected token ${ifToken}, found ${current.token}`,
+          });
         const version = Number(ifToken) + 1;
-        const encode = Schema.encodeEffect(EnvelopeJson)({ version, record }).pipe(
+        const encoded = yield* Schema.encodeEffect(EnvelopeJson)({ version, record }).pipe(
           Effect.mapError(
             () =>
               new ProjectionFault({
@@ -191,15 +185,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
               }),
           ),
         );
-        // An absent key has no row to lock, so a first save relies on the key being unique.
-        if (ifToken === ABSENT_TOKEN && store.insert !== undefined) {
-          if (!(yield* store.insert(recordKey(key), yield* encode)))
-            return yield* conflict(key, ifToken, "a stored record");
-          return String(version);
-        }
-        const current = yield* decode(key, yield* readForUpdate(recordKey(key)));
-        if (current.token !== ifToken) return yield* conflict(key, ifToken, current.token);
-        yield* store.write(recordKey(key), yield* encode);
+        yield* store.write(recordKey(key), encoded);
         return String(version);
       }),
     );

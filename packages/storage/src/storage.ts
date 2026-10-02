@@ -692,35 +692,92 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
     ),
   });
 
-/** Encoded owner records; statements join the boundary transaction when one is open. */
-const makeOwnerRecords = (sql: SqlClient.SqlClient) =>
-  OwnerRecords.of({
-    read: Effect.fn("SqlStorage.records.read")((key: string) =>
-      attempt(
-        "records.read",
-        sql<{
-          readonly owner_value: string;
-        }>`SELECT owner_value FROM streamsy_owner_records WHERE owner_key = ${key}`,
-      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.owner_value))),
-    ),
-    write: Effect.fn("SqlStorage.records.write")((key: string, encoded: string) => {
-      const row = sql.insert({ owner_key: key, owner_value: encoded });
-      return execute(
-        "records.write",
-        sql.onDialectOrElse({
-          mysql: () =>
-            sql`INSERT INTO streamsy_owner_records ${row}
+/**
+ * The fault operation of an owner record write that lost a first-write race.
+ * `CheckpointStore.layer` in `@streamsy/projection` reports it as a token conflict.
+ */
+const OWNER_RECORD_CONFLICT = "records.conflict";
+
+/**
+ * Encoded owner records; statements join the boundary transaction when one is open.
+ *
+ * The checkpoint store reads a record, compares its token and writes it back in one
+ * transaction. Inside a transaction, a found record is read again with
+ * `FOR UPDATE` on Postgres and MySQL, so a concurrent save waits and then sees the
+ * new token. An absent key has no row to lock, and on MySQL a locking read of it
+ * takes a gap lock that turns two first saves into a deadlock. So the first read
+ * stays plain, the transaction remembers the absent key, and its write is a plain
+ * insert: a concurrent first save then fails on the primary key and is not lost.
+ */
+const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
+  // Each transaction or savepoint has its own connection tuple in Effect SQL.
+  const absentKeys = new WeakMap<object, Set<string>>();
+  const select = (key: string, forUpdate: boolean) =>
+    attempt(
+      "records.read",
+      sql<{
+        readonly owner_value: string;
+      }>`SELECT owner_value FROM streamsy_owner_records WHERE owner_key = ${key}${sql.literal(forUpdate ? " FOR UPDATE" : "")}`,
+    ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.owner_value)));
+  // SQLite has one writer and no FOR UPDATE.
+  const lockFound = (key: string, found: Option.Option<string>) =>
+    Option.isNone(found)
+      ? Effect.succeed(found)
+      : sql.onDialectOrElse({
+          sqlite: () => Effect.succeed(found),
+          orElse: () => select(key, true),
+        });
+  const upsert = (key: string, encoded: string) => {
+    const row = sql.insert({ owner_key: key, owner_value: encoded });
+    return execute(
+      "records.write",
+      sql.onDialectOrElse({
+        mysql: () =>
+          sql`INSERT INTO streamsy_owner_records ${row}
  ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value)`,
-          orElse: () =>
-            sql`INSERT INTO streamsy_owner_records ${row}
+        orElse: () =>
+          sql`INSERT INTO streamsy_owner_records ${row}
  ON CONFLICT (owner_key) DO UPDATE SET owner_value = excluded.owner_value`,
-        }),
-      );
+      }),
+    );
+  };
+  const insert = (key: string, encoded: string) =>
+    sql`INSERT INTO streamsy_owner_records ${sql.insert({ owner_key: key, owner_value: encoded })}`.pipe(
+      Effect.mapError((error) =>
+        Predicate.isTagged(error.reason, "UniqueViolation")
+          ? new StorageFault({
+              operation: OWNER_RECORD_CONFLICT,
+              message: `Owner record ${key} was created by a concurrent writer`,
+              retryable: false,
+              cause: error,
+            })
+          : sqlFault("records.write", error),
+      ),
+      Effect.asVoid,
+    );
+  return OwnerRecords.of({
+    read: Effect.fn("SqlStorage.records.read")(function* (key: string) {
+      const transaction = yield* Effect.serviceOption(sql.transactionService);
+      if (Option.isNone(transaction)) return yield* select(key, false);
+      const found = yield* Effect.flatMap(select(key, false), (first) => lockFound(key, first));
+      const absent = absentKeys.get(transaction.value) ?? new Set<string>();
+      absentKeys.set(transaction.value, absent);
+      if (Option.isNone(found)) absent.add(key);
+      else absent.delete(key);
+      return found;
+    }),
+    write: Effect.fn("SqlStorage.records.write")(function* (key: string, encoded: string) {
+      const transaction = yield* Effect.serviceOption(sql.transactionService);
+      const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
+      if (absent === undefined || !absent.has(key)) return yield* upsert(key, encoded);
+      yield* insert(key, encoded);
+      absent.delete(key);
     }),
     remove: Effect.fn("SqlStorage.records.remove")((key: string) =>
       execute("records.remove", sql`DELETE FROM streamsy_owner_records WHERE owner_key = ${key}`),
     ),
   });
+};
 
 const makeLayer = (
   options: SqlStorageOptions,
