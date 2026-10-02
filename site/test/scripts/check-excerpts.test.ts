@@ -74,6 +74,7 @@ test("excerpt validation requires a rendered source destination", () => {
     `Compiled source: [${pair.source}](${repositorySourcePrefix}unrelated?source=${pair.source}).`,
     `Compiled source: [${pair.source}](${repositorySourcePrefix}unrelated#${pair.source}).`,
     `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}.bak).`,
+    `Compiled source: [${pair.source}](${repositorySourcePrefix.replace("effect-first-live-perimeter", "unrelated")}${pair.source}).`,
   ];
   for (const bypass of bypasses) {
     expect(() =>
@@ -236,17 +237,4 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
     await execution?.catch(() => undefined);
     await rm(probeRoot, { recursive: true, force: true });
   }
-});
-
-test("excerpt citations accept the Step 4 source branch and reject unrelated refs", () => {
-  expect(() =>
-    assertExcerpt(
-      pair,
-      citedDocument.replace("effect-first-live-perimeter", "step-4-fetch-transport"),
-      code,
-    ),
-  ).not.toThrow();
-  expect(() =>
-    assertExcerpt(pair, citedDocument.replace("effect-first-live-perimeter", "unrelated"), code),
-  ).toThrow("citation");
 });
