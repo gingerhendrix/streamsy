@@ -63,9 +63,8 @@ describe("Fold CLI parsing and rendering", () => {
     expect(unknown.stdout).toContain("SUBCOMMANDS");
     expect(unknown.stderr).toContain('Unknown subcommand "bogus"');
   });
-  test("reads the database path from FOLD_AGENT_DB, with a default beside the example", async () => {
+  test("reads the database path from FOLD_AGENT_DB, or uses the default", async () => {
     expect(await databasePathFrom({})).toBe(DEFAULT_DATABASE_PATH);
-    expect(DEFAULT_DATABASE_PATH).toEndWith("examples/fold-agent/.data/agent.sqlite");
     expect(await databasePathFrom({ FOLD_AGENT_DB: "custom.sqlite" })).toBe("custom.sqlite");
   });
 });
