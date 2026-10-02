@@ -210,8 +210,8 @@ class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter
           readonly timestamp: number;
           readonly length: number;
         }>(
-          "SELECT stream_id, offset, timestamp, length(data) FROM streamsy_messages " +
-            "ORDER BY stream_id, offset",
+          "SELECT stream_id, msg_offset, timestamp, length(data) FROM streamsy_messages " +
+            "ORDER BY stream_id, msg_offset",
         )
         .raw(),
     );

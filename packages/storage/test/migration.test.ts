@@ -107,13 +107,13 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   inspected.close(false);
 });
 
-test("upgrades a nonempty supported new-format v1 database", async () => {
-  const path = filename("upgrade-v1");
+test("reopens a nonempty current-format v1 database", async () => {
+  const path = filename("reopen-v1");
   const db = new Database(path, { create: true });
   db.run(
     `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
   );
-  for (const statement of STORAGE_MIGRATIONS[0]) db.run(statement);
+  for (const statement of STORAGE_MIGRATIONS[0]?.sqlite ?? []) db.run(statement);
   db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (1, 1)`);
   db.run(
     "INSERT INTO streamsy_streams VALUES ('kept','text/plain',NULL,NULL,0,'0000000000000000_0000000000000000',NULL,0,NULL,NULL,NULL,NULL,0,42)",
@@ -139,7 +139,7 @@ test("an injected migration failure rolls back schema and version rows", async (
   const failed = await Effect.runPromise(
     migrate(sql, {
       beforeVersion: (version) =>
-        version === 2
+        version === 1
           ? Effect.fail(
               new StorageFault({
                 operation: "migration.injected",
@@ -161,7 +161,7 @@ test("an injected migration failure rolls back schema and version rows", async (
 });
 
 test("legacy and too-new files reject without changing retained bytes", async () => {
-  for (const kind of ["legacy", "newer"] as const) {
+  for (const kind of ["legacy", "legacy-0.4", "newer"] as const) {
     const path = filename(kind);
     const db = new Database(path, { create: true });
     if (kind === "legacy") {
@@ -169,6 +169,11 @@ test("legacy and too-new files reject without changing retained bytes", async ()
         "CREATE TABLE streamsy_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
       );
       db.run("INSERT INTO streamsy_schema_version VALUES (3, 1)");
+    } else if (kind === "legacy-0.4") {
+      db.run(
+        "CREATE TABLE streamsy_storage_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
+      );
+      db.run("INSERT INTO streamsy_storage_schema_version VALUES (2, 1)");
     } else {
       db.run(
         `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
@@ -179,6 +184,10 @@ test("legacy and too-new files reject without changing retained bytes", async ()
     const before = await Bun.file(path).arrayBuffer();
     const exit = await Effect.runPromise(acquire(path).pipe(Effect.exit));
     expect(Exit.isFailure(exit)).toBe(true);
+    if (kind === "legacy-0.4" && Exit.isFailure(exit))
+      expect(Option.getOrThrow(Cause.findErrorOption(exit.cause)).message).toContain(
+        "use a fresh database path",
+      );
     const after = await Bun.file(path).arrayBuffer();
     expect(new Uint8Array(after)).toEqual(new Uint8Array(before));
   }

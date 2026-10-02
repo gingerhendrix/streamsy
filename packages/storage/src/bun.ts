@@ -4,6 +4,7 @@ import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
 import { sharedSqlClientLayer } from "./boundary.ts";
+import { inspectFormat, newerVersionFault } from "./migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
 import { storageLayer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
 import { retryWithPolicy, transactionRetryPolicy } from "./transaction-retry.ts";
@@ -72,39 +73,21 @@ const preflightFile = (
                     .all()
                     .map(({ name }) => name),
                 );
-                const ownsFormat = names.has(STORAGE_VERSION_TABLE);
-                const legacy =
-                  names.has("streamsy_schema_version") ||
-                  (!ownsFormat &&
-                    ["streamsy_streams", "streamsy_messages", "streamsy_producers"].some((name) =>
-                      names.has(name),
-                    ));
-                const version = ownsFormat
+                const version = names.has(STORAGE_VERSION_TABLE)
                   ? (database
                       .query<{ version: number | null }, []>(
                         `SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`,
                       )
                       .get()?.version ?? 0)
                   : 0;
-                return { legacy, version };
+                return { names, version };
               }),
             ),
           (database) => Effect.sync(() => database.close(false)),
         );
         const state = yield* retryWithPolicy(inspect, retryPolicy, (error) => error.retryable);
-        if (state.legacy)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message:
-              "Unsupported pre-0.4 Streamsy SQLite format; use a fresh database path (the file was not modified)",
-            retryable: false,
-          });
-        if (state.version > STORAGE_SCHEMA_VERSION)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message: `Unsupported newer Streamsy SQLite schema version ${state.version}; supported version is ${STORAGE_SCHEMA_VERSION}`,
-            retryable: false,
-          });
+        yield* inspectFormat(state.names);
+        if (state.version > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(state.version);
         return undefined;
       });
 

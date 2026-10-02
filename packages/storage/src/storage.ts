@@ -382,7 +382,7 @@ const applyMutation = (
         yield* execute(
           sql,
           "mutate.create-message",
-          "INSERT INTO streamsy_messages(stream_id,offset,timestamp,data) VALUES (?,?,?,?)",
+          "INSERT INTO streamsy_messages(stream_id,msg_offset,timestamp,data) VALUES (?,?,?,?)",
           [operation.record.id, message.offset, message.timestamp, new Uint8Array(message.data)],
         );
       records.set(operation.record.id, operation.record);
@@ -400,7 +400,7 @@ const applyMutation = (
           yield* execute(
             sql,
             "mutate.append-message",
-            "INSERT INTO streamsy_messages(stream_id,offset,timestamp,data) VALUES (?,?,?,?)",
+            "INSERT INTO streamsy_messages(stream_id,msg_offset,timestamp,data) VALUES (?,?,?,?)",
             [id, message.offset, message.timestamp, new Uint8Array(message.data)],
           );
         const next = patchRecord(current, operation.patch);
@@ -437,22 +437,22 @@ const applyMutation = (
   });
 
 interface MessageDatabaseRow {
-  readonly offset: unknown;
+  readonly msg_offset: unknown;
   readonly timestamp: unknown;
   readonly data: unknown;
 }
 
 const directMessage = (row: MessageDatabaseRow): StoredMessage => {
   if (
-    !Predicate.isString(row.offset) ||
-    !/^\d{16}_\d{16}$/.test(row.offset) ||
+    !Predicate.isString(row.msg_offset) ||
+    !/^\d{16}_\d{16}$/.test(row.msg_offset) ||
     !Predicate.isNumber(row.timestamp) ||
     !Number.isFinite(row.timestamp) ||
     !Predicate.isUint8Array(row.data)
   )
     throw new Error("Corrupt persisted message row");
   return {
-    offset: Offset.make(row.offset),
+    offset: Offset.make(row.msg_offset),
     timestamp: row.timestamp,
     data: new Uint8Array(row.data),
   };
@@ -487,19 +487,19 @@ const readMessages = (sql: SqlClient.SqlClient, id: StreamId, window: MessageWin
       const predicates = ["stream_id=?"];
       const parameters: Array<unknown> = [segment.id];
       if (window.after !== undefined) {
-        predicates.push("offset>?");
+        predicates.push("msg_offset>?");
         parameters.push(window.after);
       }
       if (upper !== undefined) {
-        predicates.push("offset<=?");
+        predicates.push("msg_offset<=?");
         parameters.push(upper);
       }
       if (remaining !== undefined) parameters.push(remaining);
       const rows = yield* query<MessageDatabaseRow>(
         sql,
         "messages",
-        `SELECT offset,timestamp,data FROM streamsy_messages WHERE ${predicates.join(" AND ")} ` +
-          "ORDER BY offset COLLATE BINARY" +
+        `SELECT msg_offset,timestamp,data FROM streamsy_messages WHERE ${predicates.join(" AND ")} ` +
+          "ORDER BY msg_offset COLLATE BINARY" +
           (remaining === undefined ? "" : " LIMIT ?"),
         parameters,
       );
