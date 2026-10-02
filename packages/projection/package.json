@@ -31,7 +31,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/checkpoint.ts src/examples/minimal.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core",
+    "build": "tsdown src/index.ts src/checkpoint.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test",
     "test:dialects": "bun test test/sql-dialects.test.ts"
