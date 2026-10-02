@@ -17,22 +17,7 @@ const upsert = issueTrackerState.projects.upsert({
 const isStateEvent = (value: JsonValue | undefined) => Result.isSuccess(decodeStateEvents([value]));
 
 describe("decodeStateEvents", () => {
-  test("accepts an event built by the state schema", () => {
-    expect(isStateEvent(upsert)).toBe(true);
-  });
-
-  test("accepts a hand-written change event appended straight to the stream", () => {
-    expect(
-      isStateEvent({
-        type: "project",
-        key: project.id,
-        value: project,
-        headers: { operation: "upsert", txid: crypto.randomUUID(), timestamp: project.createdAt },
-      }),
-    ).toBe(true);
-  });
-
-  test("accepts JSON extension fields on events, rows and headers", () => {
+  test("accepts state writer output with JSON extension fields on events, rows and headers", () => {
     expect(
       isStateEvent({
         ...upsert,

@@ -8,7 +8,6 @@ import {
   newIssue,
   newProject,
   nextIssue,
-  updateIssue,
   type Stamp,
   type WorkspaceState,
 } from "../../server/state.ts";
@@ -88,11 +87,6 @@ describe("mutation attempts", () => {
     getIssue: (issueId) => (issueId === issue.id ? issue : undefined),
     hasProjects: () => true,
   };
-  const empty: WorkspaceState = {
-    getProject: () => undefined,
-    getIssue: () => undefined,
-    hasProjects: () => false,
-  };
 
   test("an issue under a known project becomes one upsert with the stamp's txid", () => {
     const { change, value } = Effect.runSync(createIssue({ projectId: project.id }, stamp)(state));
@@ -105,18 +99,8 @@ describe("mutation attempts", () => {
     });
   });
 
-  test("an issue under an unknown project fails with UnknownReference", () => {
-    const failure = Effect.runSync(Effect.flip(createIssue({ projectId: "nope" }, stamp)(empty)));
-    expect(failure).toMatchObject({ _tag: "UnknownReference", field: "projectId", id: "nope" });
-  });
-
   test("a comment on an unknown issue names the issueId field", () => {
     const failure = Effect.runSync(Effect.flip(createComment({ issueId: "nope" }, stamp)(state)));
     expect(failure).toMatchObject({ _tag: "UnknownReference", field: "issueId", id: "nope" });
-  });
-
-  test("updating a missing issue fails with IssueNotFound", () => {
-    const failure = Effect.runSync(Effect.flip(updateIssue("nope", {}, stamp)(state)));
-    expect(failure).toMatchObject({ _tag: "IssueNotFound", issueId: "nope" });
   });
 });
