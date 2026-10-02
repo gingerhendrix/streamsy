@@ -1,3 +1,4 @@
+import { APPEND_REPLAN_LIMIT } from "../../src/protocol/append.ts";
 import { create } from "../../src/protocol/create.ts";
 import { MutationRejected } from "../../src/storage/mutation.ts";
 import { expect, it } from "bun:test";
@@ -490,8 +491,8 @@ it("fork none refuses before any storage operation, even for an existing target"
     }),
   ));
 
-for (const rejects of [7, 8]) {
-  it(`append makes exactly eight semantic attempts with ${rejects} rejections`, () =>
+for (const rejects of [APPEND_REPLAN_LIMIT - 1, APPEND_REPLAN_LIMIT]) {
+  it(`append makes exactly APPEND_REPLAN_LIMIT semantic attempts with ${rejects} rejections`, () =>
     check(
       Effect.gen(function* () {
         const control = yield* StreamsTest;
@@ -512,11 +513,11 @@ for (const rejects of [7, 8]) {
         });
         const result = yield* Effect.gen(function* () {
           const attempt = (yield* StreamsWriter).append(id, appendOptions);
-          if (rejects === 8) return yield* Effect.flip(attempt);
+          if (rejects === APPEND_REPLAN_LIMIT) return yield* Effect.flip(attempt);
           return yield* attempt;
         }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, source)))));
-        expect(result._tag).toBe(rejects === 7 ? "Appended" : "StreamBusy");
-        expect(calls).toBe(8);
+        expect(result._tag).toBe(rejects < APPEND_REPLAN_LIMIT ? "Appended" : "StreamBusy");
+        expect(calls).toBe(APPEND_REPLAN_LIMIT);
       }),
     ));
 }
