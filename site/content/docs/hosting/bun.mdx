@@ -81,4 +81,4 @@ A commit in one process wakes followers in another process within `repairInterva
 
 ## Projection services
 
-Compose `ProjectionSql.layerStorage` from `@streamsy/projection/sql` over this storage Layer with `Layer.provideMerge`. It provides `CheckpointStore` and `Transaction` on the same SQL owner. `Commit.transaction` commits SQL, output appends, and offsets together. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).
+Compose `CheckpointStore.layer` and `Transaction.layer` from `@streamsy/projection` over this storage Layer with `Layer.provideMerge`. They provide `CheckpointStore` and `Transaction` on the same SQL owner. `Commit.transaction` commits SQL, output appends, and offsets together. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).

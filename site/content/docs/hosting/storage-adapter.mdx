@@ -102,7 +102,9 @@ An `indexed` adapter stores each deadline. An expiry delete carries the deadline
 
 ## Commit boundary
 
-To offer `CommitBoundary.withTransaction`, an adapter needs one transaction owner, a way for `mutate` to join it, and wakes that publish after the outer commit.
+To offer `CommitBoundary.withTransaction`, an adapter needs one transaction owner, a way for `mutate` to join it, and wakes that publish after the outer commit. `CommitBoundary` comes from `@streamsy/core`.
+
+`CheckpointStore.layer` from `@streamsy/projection` needs `CommitBoundary` and `OwnerRecords` from `@streamsy/core/internal`. `OwnerRecords` reads, writes and removes encoded strings by key. Calls inside `withTransaction` join that transaction. An adapter that wants projections provides both services from its storage Layer.
 
 ## Contract tests
 
@@ -117,7 +119,7 @@ StorageContract.run({
 });
 ```
 
-Run it under Bun. The kit builds a fresh Layer for each case, gives a `TestClock`, and skips cases that `expected` rules out.
+Run it under Bun. The kit builds a fresh Layer for each case, gives a `TestClock`, and skips cases that `expected` rules out. Set `ownerRecords: true` when the Layer also provides `CommitBoundary` and `OwnerRecords`. The records cases then check that records and stream writes commit and roll back together.
 
 Then run the upstream [server conformance suite](https://durablestreams.com/building-a-server) against `Http.routes(Streamsy.group(Streamsy.Wildcard), { access: "full" })` over the adapter.
 

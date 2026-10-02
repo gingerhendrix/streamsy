@@ -21,7 +21,8 @@ The Bun and Durable Object entries export `layer` and `layerProtocol`.
 `CommitBoundary`, `SqlClient`, and SQL reactivity on both hosts. Your own SQL
 can share the connection and commit with a stream mutation. `layer` exposes
 the same storage services without the protocol reader and writer. The root entry
-exports `layer` over a `SqlClient` you supply, plus `CommitBoundary`.
+exports `layer` over a `SqlClient` you supply. `CommitBoundary` comes from
+`@streamsy/core`.
 
 ## Serve a SQLite-backed host on Bun
 
@@ -43,7 +44,7 @@ BunRuntime.runMain(Layer.launch(Server));
 
 ## Commit your SQL with a stream write
 
-`CommitBoundary.withTransaction` runs application SQL and Streamsy mutations
+`CommitBoundary.withTransaction` from `@streamsy/core` runs application SQL and Streamsy mutations
 in one transaction. Nested calls join the outer boundary. A rejected mutation
 fails with `MutationRejected` and rolls the transaction back; catch it outside
 the boundary. The [Layers and storage guide](https://streamsy.dev/docs/hosting)
@@ -53,17 +54,18 @@ For a projection on that same connection:
 
 ```ts
 import { Layer } from "effect";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as ProjectionSql from "@streamsy/projection/sql";
 
-const host = ProjectionSql.layerStorage.pipe(
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } })),
 );
 ```
 
-`ProjectionSql.layerStorage` provides `CheckpointStore` and the SQL-only
-`Transaction` service. `Commit.transaction` uses them to commit SQL, same-owner
-stream appends, and the checkpoint together.
+`CheckpointStore.layer` keeps checkpoints in the storage table
+`streamsy_owner_records`. `Transaction.layer` gives the SQL-only `Transaction`
+service. `Commit.transaction` uses them to commit SQL, same-owner stream
+appends, and the checkpoint together.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.

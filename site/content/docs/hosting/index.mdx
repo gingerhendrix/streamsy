@@ -75,12 +75,11 @@ Rules:
 
 ## Commit with your own tables
 
-The SQLite Layers give `CommitBoundary`. `withTransaction` runs application SQL and a stream mutation in one transaction.
+Every storage Layer gives `CommitBoundary`. On the SQLite Layers, `withTransaction` runs application SQL and a stream mutation in one transaction.
 
 ```ts
 import { Effect } from "effect";
-import { Storage, type Mutation } from "@streamsy/core";
-import { CommitBoundary } from "@streamsy/storage";
+import { CommitBoundary, Storage, type Mutation } from "@streamsy/core";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 declare const mutation: Mutation;

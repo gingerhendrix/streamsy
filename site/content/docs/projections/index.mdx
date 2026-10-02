@@ -121,19 +121,19 @@ A projection can rebuild a state stream from the facts.
 
 Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transaction`, supplied only by SQL hosts. Provide the services over the storage Layer:
 
-| Storage        | Checkpoints Layer                         |
-| -------------- | ----------------------------------------- |
-| `Memory.layer` | `@streamsy/projection/memory` `layer`     |
-| SQLite storage | `@streamsy/projection/sql` `layerStorage` |
+| Storage                  | Projection Layers                               |
+| ------------------------ | ----------------------------------------------- |
+| `Memory.layer`           | `CheckpointStore.layer`                         |
+| SQLite storage (Bun, DO) | `CheckpointStore.layer` and `Transaction.layer` |
 
 ```ts
 import { Layer } from "effect";
 import { Memory, Streamsy } from "@streamsy/core";
-import * as ProjectionMemory from "@streamsy/projection/memory";
+import { CheckpointStore } from "@streamsy/projection";
 import { Numbers } from "./minimal.ts";
 import { Tripled } from "./tripled.ts";
 
-export const host = ProjectionMemory.layer.pipe(
+export const host = CheckpointStore.layer.pipe(
   Layer.provideMerge(Memory.layer({}, Streamsy.group(Numbers, Tripled))),
 );
 ```
