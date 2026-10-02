@@ -1,4 +1,4 @@
-export { CommitBoundary, type CommitBoundaryApi } from "./boundary.ts";
+export { CommitBoundary, clientLayer, type CommitBoundaryApi } from "./boundary.ts";
 export {
   layer,
   layerProtocol,
