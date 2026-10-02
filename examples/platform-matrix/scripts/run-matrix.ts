@@ -7,15 +7,27 @@
  * A backend that an entry does not mount is a skip. Any failed cell, or an
  * entry that does not start, exits non-zero.
  *
+ * When `STREAMSY_PG_URL` or `STREAMSY_MYSQL_URL` is set, the runner checks
+ * that the database answers before any entry starts, and fails the run when it
+ * does not. Each runtime then gets its own fresh database on that server,
+ * named `streamsy_matrix_<runtime>_<run id>`. The runner drops it when the
+ * runtime's cells end, also on failure and Ctrl-C. Logs, the table and
+ * `result.json` show database URLs with the password redacted.
+ *
  * env: MATRIX_BASE_PORT (default 4101; Bun, Node and Deno take three ports
- * from it), MATRIX_OUT (default `<package>/.matrix`).
+ * from it), MATRIX_OUT (default `<package>/.matrix`), STREAMSY_PG_URL,
+ * STREAMSY_MYSQL_URL.
  */
 import { stripVTControlCharacters } from "node:util";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
+import { MysqlClient } from "@effect/sql-mysql2";
+import { PgClient } from "@effect/sql-pg";
+import * as Storage from "@streamsy/storage";
 import {
   Cause,
   Config,
   Console,
+  Context,
   DateTime,
   Effect,
   Exit,
@@ -23,12 +35,16 @@ import {
   Layer,
   Option,
   Path,
+  Redacted,
   Schedule,
   Schema,
+  type Scope,
   Stream,
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { Reactivity } from "effect/unstable/reactivity";
+import { SqlClient, type SqlError } from "effect/unstable/sql";
 
 /** The backends of the plan, in table order. */
 const BACKENDS = ["memory", "sqlite", "pg", "mysql"] as const;
@@ -52,6 +68,8 @@ interface Cell {
   readonly backend: string;
   readonly status: Status;
   readonly baseUrl?: string;
+  /** The fresh database of a pg or mysql cell, with the password redacted. */
+  readonly database?: string | undefined;
   readonly reason?: string;
   /** The suite counts, or null when the output has no vitest summary. */
   readonly conformance?: Check & { readonly counts: Counts | null };
@@ -71,6 +89,72 @@ const Health = Schema.Struct({
   unmounted: Schema.Record(Schema.String, Schema.String),
 });
 
+/** A SQL server backend of the matrix, and the env variable with its base URL. */
+interface Dialect {
+  readonly backend: "pg" | "mysql";
+  readonly variable: string;
+  readonly client: (
+    url: Redacted.Redacted,
+  ) => Effect.Effect<SqlClient.SqlClient, SqlError.SqlError, Scope.Scope | Reactivity.Reactivity>;
+  readonly dropDatabase: (name: string) => string;
+}
+
+const DIALECTS: ReadonlyArray<Dialect> = [
+  {
+    backend: "pg",
+    variable: "STREAMSY_PG_URL",
+    client: (url) => PgClient.make({ url, maxConnections: 1 }),
+    // FORCE ends any session that an entry left open.
+    dropDatabase: (name) => `DROP DATABASE IF EXISTS ${name} WITH (FORCE)`,
+  },
+  {
+    backend: "mysql",
+    variable: "STREAMSY_MYSQL_URL",
+    client: (url) => MysqlClient.make({ url, maxConnections: 1 }),
+    dropDatabase: (name) => `DROP DATABASE IF EXISTS ${name}`,
+  },
+];
+
+/** A dialect whose URL is set, with an open admin connection to its base database. */
+interface Server {
+  readonly dialect: Dialect;
+  readonly url: Redacted.Redacted;
+  readonly admin: SqlClient.SqlClient;
+}
+
+/** A database made for one runtime. `url` holds the password; `shown` does not. */
+interface Database {
+  readonly dialect: Dialect;
+  readonly url: string;
+  readonly shown: string;
+}
+
+/** A URL with its password replaced by `***`, for logs, the table and the JSON. */
+const redactUrl = (url: string): string => {
+  if (!URL.canParse(url)) return "<not a URL>";
+  const parsed = new URL(url);
+  if (parsed.password !== "") parsed.password = "***";
+  return parsed.toString();
+};
+
+/** The same server URL with another database name as its path. */
+const withDatabase = (url: string, name: string): string => {
+  const parsed = new URL(url);
+  parsed.pathname = `/${name}`;
+  return parsed.toString();
+};
+
+/** The SQL message and the driver message, for example `...: connect ECONNREFUSED`. */
+const errorMessage = (error: SqlError.SqlError): string => {
+  const driver = error.cause.cause;
+  const detail = driver instanceof Error && driver.message !== "" ? `: ${driver.message}` : "";
+  return `${error.message}${detail}`;
+};
+
+class DatabaseError extends Schema.TaggedError<DatabaseError>()("DatabaseError", {
+  message: Schema.String,
+}) {}
+
 class EntryStartError extends Schema.TaggedError<EntryStartError>()("EntryStartError", {
   message: Schema.String,
 }) {}
@@ -78,6 +162,8 @@ class EntryStartError extends Schema.TaggedError<EntryStartError>()("EntryStartE
 const MatrixConfig = Config.all({
   basePort: Config.Port("MATRIX_BASE_PORT").pipe(Config.withDefault(4101)),
   out: Config.String("MATRIX_OUT").pipe(Config.option),
+  pg: Config.Redacted("STREAMSY_PG_URL").pipe(Config.option),
+  mysql: Config.Redacted("STREAMSY_MYSQL_URL").pipe(Config.option),
 });
 
 const which = (binary: string) => Option.fromNullishOr(Bun.which(binary));
@@ -141,6 +227,75 @@ const program = Effect.gen(function* () {
   );
   yield* fs.makeDirectory(outDir, { recursive: true });
   yield* Console.log(`platform matrix: writing results to ${outDir}`);
+  // A database name part from the result folder name, for example `20261002t104535346z`.
+  const runId = stamp.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  /**
+   * Opens an admin connection to a set URL and checks that the server answers
+   * (plan 3.2 step 1). The connection stays open for the run, to make and drop
+   * the per-runtime databases.
+   */
+  const connect = (dialect: Dialect, url: Redacted.Redacted) =>
+    Effect.gen(function* () {
+      const shown = redactUrl(Redacted.value(url));
+      const admin = yield* Layer.build(Storage.clientLayer(dialect.client(url))).pipe(
+        Effect.map(Context.get(SqlClient.SqlClient)),
+        Effect.tap((sql) => sql.unsafe("SELECT 1")),
+        Effect.mapError(
+          (error) =>
+            new DatabaseError({
+              message: `${dialect.variable} is set, but ${shown} does not answer: ${errorMessage(error)}`,
+            }),
+        ),
+        Effect.timeoutOrElse({
+          duration: "15 seconds",
+          orElse: () =>
+            Effect.fail(
+              new DatabaseError({
+                message: `${dialect.variable} is set, but ${shown} did not answer in 15 seconds`,
+              }),
+            ),
+        }),
+      );
+      yield* Console.log(`${dialect.backend}: ${shown} answers`);
+      return { dialect, url, admin } satisfies Server;
+    });
+
+  const servers = yield* Effect.forEach(DIALECTS, (dialect) =>
+    Option.match(config[dialect.backend], {
+      onNone: () => Effect.succeed(Option.none<Server>()),
+      onSome: (url) => Effect.map(connect(dialect, url), Option.some),
+    }),
+  ).pipe(Effect.map((found) => found.flatMap(Option.toArray)));
+
+  /** Makes a fresh database for one runtime, and drops it when the runtime's scope closes. */
+  const freshDatabase = (server: Server, runtime: Runtime) =>
+    Effect.gen(function* () {
+      const name = `streamsy_matrix_${runtime.name}_${runId}`;
+      const url = withDatabase(Redacted.value(server.url), name);
+      const shown = redactUrl(url);
+      yield* Effect.acquireRelease(
+        server.admin.unsafe(`CREATE DATABASE ${name}`).pipe(
+          Effect.mapError(
+            (error) =>
+              new DatabaseError({
+                message: `could not create ${shown}: ${errorMessage(error)}`,
+              }),
+          ),
+        ),
+        () =>
+          server.admin.unsafe(server.dialect.dropDatabase(name)).pipe(
+            Effect.tap(() => Console.log(`  ${server.dialect.backend}: dropped ${shown}`)),
+            Effect.catchCause((cause) =>
+              Console.error(
+                `  ${server.dialect.backend}: could not drop ${shown}\n${Cause.pretty(cause)}`,
+              ),
+            ),
+          ),
+      );
+      yield* Console.log(`  ${server.dialect.backend}: created ${shown}`);
+      return { dialect: server.dialect, url, shown } satisfies Database;
+    });
 
   /** Runs a command to its end and writes its combined output to `log`. */
   const run = (
@@ -166,7 +321,11 @@ const program = Effect.gen(function* () {
     );
 
   /** Starts an entry in the run scope and waits until `/healthz` names its runtime. */
-  const start = (runtime: Runtime, command: ReadonlyArray<string>) =>
+  const start = (
+    runtime: Runtime,
+    command: ReadonlyArray<string>,
+    databases: ReadonlyArray<Database>,
+  ) =>
     Effect.gen(function* () {
       const [executable = "", ...args] = command;
       const handle = yield* spawner.spawn(
@@ -177,6 +336,10 @@ const program = Effect.gen(function* () {
             SQLITE_PATH: path.join(outDir, `${runtime.name}.sqlite`),
             // The protocol default is 30 s, which makes the suite slow.
             LONG_POLL_TIMEOUT_MS: "1500",
+            // Only this runtime's databases. An unset URL stays unset, so its cells skip.
+            ...Object.fromEntries(
+              databases.map((database) => [database.dialect.variable, database.url]),
+            ),
           },
           extendEnv: true,
           forceKillAfter: "10 seconds",
@@ -193,6 +356,9 @@ const program = Effect.gen(function* () {
       const url = `http://127.0.0.1:${runtime.port}`;
       const healthy = HttpClient.get(`${url}/healthz`).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(Health)),
+        // Node binds the port before the routes serve. A request in that gap
+        // is accepted and never answered, so each attempt has its own timeout.
+        Effect.timeout("2 seconds"),
         Effect.filterOrFail(
           (health) => health.runtime === runtime.name,
           (health) =>
@@ -233,7 +399,7 @@ const program = Effect.gen(function* () {
       })),
     );
 
-  const runCell = (runtime: Runtime, url: string, backend: string) =>
+  const runCell = (runtime: Runtime, url: string, backend: string, database?: Database) =>
     Effect.gen(function* () {
       const baseUrl = `${url}/${backend}`;
       const name = `${runtime.name}-${backend}`;
@@ -256,6 +422,7 @@ const program = Effect.gen(function* () {
         backend,
         status,
         baseUrl,
+        database: database?.shown,
         conformance: {
           status: conformance.status,
           exitCode: conformance.exitCode,
@@ -278,7 +445,11 @@ const program = Effect.gen(function* () {
         Effect.scoped(
           Effect.gen(function* () {
             yield* Console.log(`${runtime.name}: starting ${command.join(" ")}`);
-            const started = yield* Effect.exit(start(runtime, command));
+            // Made before the entry starts, so the entry stops before they drop.
+            const databases = yield* Effect.forEach(servers, (server) =>
+              freshDatabase(server, runtime),
+            );
+            const started = yield* Effect.exit(start(runtime, command, databases));
             if (Exit.isFailure(started)) {
               const reason = `${runtime.name} entry did not start; see ${runtime.name}.server.log`;
               yield* Console.error(`${reason}\n${Cause.pretty(started.cause)}`);
@@ -287,7 +458,12 @@ const program = Effect.gen(function* () {
             const { url, health } = started.value;
             return yield* Effect.forEach(BACKENDS, (backend) =>
               health.backends.includes(backend)
-                ? runCell(runtime, url, backend)
+                ? runCell(
+                    runtime,
+                    url,
+                    backend,
+                    databases.find((database) => database.dialect.backend === backend),
+                  )
                 : Effect.succeed(
                     skip(
                       runtime,
@@ -307,6 +483,9 @@ const program = Effect.gen(function* () {
   const result = {
     startedAt: stamp,
     backends: BACKENDS,
+    databases: Object.fromEntries(
+      servers.map((server) => [server.dialect.backend, redactUrl(Redacted.value(server.url))]),
+    ),
     cells,
     ok: cells.every((cell) => cell.status !== "fail"),
   };
@@ -358,6 +537,9 @@ const table = (cells: ReadonlyArray<Cell>): string => {
   const notes = cells
     .filter((cell) => cell.reason !== undefined)
     .map((cell) => `- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`);
+  const databases = cells
+    .filter((cell) => cell.database !== undefined)
+    .map((cell) => `- ${cell.runtime} ${cell.backend}: database ${cell.database}`);
   return [
     line(header),
     line(widths.map((width) => "-".repeat(width))),
@@ -365,10 +547,13 @@ const table = (cells: ReadonlyArray<Cell>): string => {
     "",
     "Counts are the official suite. Smoke is the memory-server HTTP smoke.",
     ...notes,
+    ...databases,
   ].join("\n");
 };
 
 program.pipe(
+  // The admin connections and the run's databases live in this scope.
+  Effect.scoped,
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.
   Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)),
   BunRuntime.runMain,
