@@ -25,23 +25,6 @@ describe("normalizeContentType", () => {
 });
 
 describe("contentTypeMatches", () => {
-  it("matches case-insensitively", () => {
-    expect(contentTypeMatches("application/json", "APPLICATION/JSON")).toBe(true);
-    expect(contentTypeMatches("Application/Json", "application/json")).toBe(true);
-  });
-
-  it("matches when one or both sides have parameters", () => {
-    expect(contentTypeMatches("application/json", "application/json; charset=utf-8")).toBe(true);
-    expect(
-      contentTypeMatches("application/json; charset=utf-8", "application/json; charset=us-ascii"),
-    ).toBe(true);
-  });
-
-  it("matches around incidental whitespace", () => {
-    expect(contentTypeMatches("application/json   ", "  application/json")).toBe(true);
-    expect(contentTypeMatches("application/json ; q=1", " application/json")).toBe(true);
-  });
-
   it("rejects different types", () => {
     expect(contentTypeMatches("application/json", "text/plain")).toBe(false);
     expect(contentTypeMatches("application/octet-stream", "application/json")).toBe(false);

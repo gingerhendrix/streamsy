@@ -11,18 +11,15 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 describe("frameMessages — non-JSON passthrough", () => {
-  it("returns the original bytes as a single message for application/octet-stream", () => {
-    const data = new Uint8Array([0x00, 0x01, 0x02, 0xff]);
-    const result = frameMessages(data, "application/octet-stream");
-    expect(result).toHaveLength(1);
-    expect(result[0]).toBe(data);
-  });
-
-  it("returns the original bytes as a single message for text/plain", () => {
-    const data = enc.encode("hello world");
-    const result = frameMessages(data, "text/plain");
-    expect(result).toHaveLength(1);
-    expect(result[0]).toBe(data);
+  it("returns the original bytes as a single message for octet-stream and text/plain", () => {
+    for (const [data, contentType] of [
+      [new Uint8Array([0x00, 0x01, 0x02, 0xff]), "application/octet-stream"],
+      [enc.encode("hello world"), "text/plain"],
+    ] as const) {
+      const result = frameMessages(data, contentType);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(data);
+    }
   });
 
   it("does not parse content types that merely contain 'json' but do not start with application/json", () => {
@@ -41,18 +38,12 @@ describe("frameMessages — JSON object input", () => {
     expect(dec.decode(result[0])).toBe('{"a":1,"b":2}');
   });
 
-  it("re-encodes JSON primitives (string) as a single message", () => {
-    const data = enc.encode('"hello"');
-    const result = frameMessages(data, "application/json");
-    expect(result).toHaveLength(1);
-    expect(dec.decode(result[0])).toBe('"hello"');
-  });
-
-  it("re-encodes JSON primitives (number) as a single message", () => {
-    const data = enc.encode("42");
-    const result = frameMessages(data, "application/json");
-    expect(result).toHaveLength(1);
-    expect(dec.decode(result[0])).toBe("42");
+  it("re-encodes a JSON string or number as a single message", () => {
+    for (const text of ['"hello"', "42"]) {
+      const result = frameMessages(enc.encode(text), "application/json");
+      expect(result).toHaveLength(1);
+      expect(dec.decode(result[0])).toBe(text);
+    }
   });
 });
 

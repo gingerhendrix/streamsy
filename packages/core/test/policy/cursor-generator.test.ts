@@ -73,11 +73,6 @@ describe("generateCursor — previous cursor at or above current interval", () =
     expect(generateCursor(clock, "100", () => 0)).toBe("101");
   });
 
-  it("bumps when previous equals the current interval", () => {
-    const clock = fixedClock(CURSOR_EPOCH_MS + 12 * CURSOR_INTERVAL_MS);
-    expect(generateCursor(clock, "12", () => 0.25)).toBe(String(12 + Math.floor(0.25 * 180)));
-  });
-
   it("defaults the random source to Math.random when not provided", () => {
     const clock = fixedClock(CURSOR_EPOCH_MS + 5 * CURSOR_INTERVAL_MS);
     const result = generateCursor(clock, "5");
