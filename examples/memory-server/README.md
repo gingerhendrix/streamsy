@@ -110,6 +110,12 @@ long-poll, and SSE flows against a child process. It then stops the server with
 a parked long poll, checks the `204` drain reply, exit code 0 and empty stderr,
 restarts the server, and confirms the earlier stream returns `404 Not Found`.
 
+With `BASE_URL` set, the smoke runs the create, append, read, `ETag`, long-poll
+and SSE checks against that running server and does not spawn one. The base URL
+may include a path prefix. The loopback, drain and restart checks need a server
+of their own, so they run only without `BASE_URL`. The platform matrix uses
+this mode.
+
 ## Limits
 
 The store belongs to one server process. A restart starts with a fresh store, so

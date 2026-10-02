@@ -1,6 +1,18 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Clock, Console, Crypto, Effect, Fiber, Layer, Option, Path, Schema, Stream } from "effect";
+import {
+  Clock,
+  Config,
+  Console,
+  Crypto,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Stream,
+} from "effect";
 import {
   FetchHttpClient,
   Headers,
@@ -39,21 +51,8 @@ const readSseUntilControl = (response: HttpClientResponse.HttpClientResponse) =>
     }),
   );
 
-const smoke = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const cwd = path.resolve(import.meta.dir, "..");
-  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4}`;
-
-  // The protocol answers 400 at the root once the routes are mounted.
-  const serverOptions = { cwd, entry: "src/index.ts", isReady: (status: number) => status === 400 };
-  const server = yield* spawnServer(serverOptions);
-  const streamUrl = `${server.url}/${streamId}`;
-
-  for (const host of ["127.0.0.1", "[::1]"]) {
-    const response = yield* HttpClient.get(`http://${host}:${server.port}/`);
-    yield* check(response.status === 400, `${host} should reach the protocol listener`);
-  }
-
+/** The protocol checks against one stream URL. Returns the tail after the second append. */
+const protocolChecks = Effect.fn("protocolChecks")(function* (streamUrl: string) {
   const createResponse = yield* HttpClient.put(streamUrl, {
     headers: { "content-type": "application/json" },
   });
@@ -123,6 +122,29 @@ const smoke = Effect.gen(function* () {
     "SSE control should include the current next offset",
   );
   yield* check(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
+  return secondOffset;
+});
+
+/**
+ * Spawns `src/index.ts` and runs the protocol checks, plus the checks that
+ * need a server of its own: both loopback addresses, the drain on stop, and a
+ * fresh store after a restart.
+ */
+const spawned = Effect.fn("spawned")(function* (streamId: string) {
+  const path = yield* Path.Path;
+  const cwd = path.resolve(import.meta.dir, "..");
+
+  // The protocol answers 400 at the root once the routes are mounted.
+  const serverOptions = { cwd, entry: "src/index.ts", isReady: (status: number) => status === 400 };
+  const server = yield* spawnServer(serverOptions);
+  const streamUrl = `${server.url}/${streamId}`;
+
+  for (const host of ["127.0.0.1", "[::1]"]) {
+    const response = yield* HttpClient.get(`http://${host}:${server.port}/`);
+    yield* check(response.status === 400, `${host} should reach the protocol listener`);
+  }
+
+  const secondOffset = yield* protocolChecks(streamUrl);
 
   const parked = yield* Effect.forkScoped(HttpClient.get(`${streamUrl}?offset=now&live=long-poll`));
   yield* Effect.sleep("250 millis");
@@ -152,6 +174,22 @@ const smoke = Effect.gen(function* () {
   yield* Console.log(
     `memory-server HTTP smoke passed for ${streamId}, including fresh-store restart`,
   );
+});
+
+/**
+ * With `BASE_URL` set, the smoke runs the protocol checks against that running
+ * server and does not spawn one. The base URL may hold a path prefix.
+ */
+const smoke = Effect.gen(function* () {
+  const baseUrl = yield* Config.String("BASE_URL").pipe(Config.option);
+  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4}`;
+  yield* Option.match(baseUrl, {
+    onNone: () => spawned(streamId),
+    onSome: (url) =>
+      protocolChecks(`${url.replace(/\/$/, "")}/${streamId}`).pipe(
+        Effect.andThen(Console.log(`memory-server HTTP smoke passed for ${url}/${streamId}`)),
+      ),
+  });
 });
 
 smoke.pipe(
