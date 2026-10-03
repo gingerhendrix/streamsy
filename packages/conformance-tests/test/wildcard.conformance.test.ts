@@ -3,7 +3,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { Streamsy, Http, Memory } from "@streamsy/core";
+import { Streamsy, Http, MemoryStorage } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
 
 describe("Streamsy.Wildcard memory Bun host", () => {
@@ -13,7 +13,9 @@ describe("Streamsy.Wildcard memory Bun host", () => {
       disableLogger: true,
       disableListenLog: true,
     }).pipe(
-      Layer.provide(Memory.layer(Streamsy.group(Streamsy.Wildcard), { longPollTimeoutMs: 1500 })),
+      Layer.provide(
+        MemoryStorage.layer(Streamsy.group(Streamsy.Wildcard), { longPollTimeoutMs: 1500 }),
+      ),
       Layer.provideMerge(listener({ port: 0 })),
     ),
   );

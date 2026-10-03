@@ -2,7 +2,8 @@
 import { expect, it } from "bun:test";
 import { Effect, Fiber, Layer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { routes as protocolRoutes, Streams } from "../../src/protocol/index.ts";
+import { MemoryStorage } from "../../src/index.ts";
+import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 import {
   ShutdownSignal,
   makeShutdownSignal,
@@ -16,7 +17,7 @@ const drainableEdge = () => {
   const signal = Effect.runSync(makeShutdownSignal);
   const edge = HttpRouter.toWebHandler(
     protocolRoutes({}).pipe(
-      Layer.provideMerge(Streams.layerMemory({ longPollTimeoutMs: 30_000 })),
+      Layer.provideMerge(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })),
       Layer.provideMerge(Layer.succeed(ShutdownSignal, signal)),
     ),
     { disableLogger: true },

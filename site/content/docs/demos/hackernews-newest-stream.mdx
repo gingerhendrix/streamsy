@@ -87,16 +87,20 @@ export const createStoriesLayer = Layer.effectDiscard(
 
 const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
   databasePath === "memory"
-    ? Memory.layer(streams, options)
+    ? MemoryStorage.layer(streams, options)
     : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
+type HostLayer = Layer.Layer<Streamsy.Host<typeof streams> | CheckpointStore, StorageFault>;
+
 /** The checkpoints join the owner of the stream: one SQLite file, or memory. */
-export const host = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
-  CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
+export const host = (
+  databasePath: string,
+  options: { readonly readLimit?: number } = {},
+): HostLayer => CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 ```
 
-With `HN_DB=memory`, `Memory.layer(streams, options)` takes the place of the
-SQLite file. The host reads `HN_DB` through
+With `HN_DB=memory`, `MemoryStorage.layer(streams, options)` takes the place of the
+SQLite file. `Streamsy.Host<typeof streams>` types both branches. The host reads `HN_DB` through
 `Config` when the layer starts.
 
 See [Declare streams](/docs/streams/declare) and [Layers and storage](/docs/hosting).

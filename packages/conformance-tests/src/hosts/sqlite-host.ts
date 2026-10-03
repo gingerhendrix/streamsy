@@ -6,7 +6,7 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
-import * as SqlStorage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 import { Config, Effect, Layer, Option } from "effect";
 import { HttpServer } from "effect/unstable/http";
 

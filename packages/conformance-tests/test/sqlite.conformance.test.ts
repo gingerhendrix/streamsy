@@ -3,7 +3,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect } from "effect";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
-import * as SqlStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 
 let host: TestHost | undefined;
 describe("Effect SQLite Bun host", () => {
@@ -13,7 +13,7 @@ describe("Effect SQLite Bun host", () => {
     const filename = `${scratch}/official-sqlite-conformance-${process.pid}-${crypto.randomUUID()}.sqlite`;
     host = await Effect.runPromise(
       testHost({
-        layer: SqlStorage.layerProtocol({
+        layer: BunStorage.layerProtocol({
           client: { filename },
           longPollTimeoutMs: 1_500,
         }),

@@ -3,14 +3,14 @@ import { expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { Commit, Projection } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 import * as Family from "./support/families.ts";
 import { readAll } from "./support/scenarios.ts";
 
 const input = Family.json("step-input", { schema: Schema.Number });
 const output = Family.json("step-output", { schema: Schema.Number });
 const other = Family.json("step-other", { schema: Schema.Number });
-const host = Family.withFamilies(Memory.layerMemory());
+const host = Family.withFamilies(memoryHost());
 const outputs = {
   output: output,
   other: other,

@@ -211,13 +211,13 @@ Use URL-safe stream segments. Serve decodes parameters, and the protocol routes 
 ```ts
 import { Layer } from "effect";
 import { BunRuntime } from "@effect/platform-bun";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { App, game } from "./app.ts";
 
 const Server = Serve.layer(App, { drainTimeout: "2 seconds" }).pipe(
-  Layer.provide(Memory.layer(game)),
+  Layer.provide(MemoryStorage.layer(game)),
   Layer.provide(listener({ port: 3000 })),
 );
 

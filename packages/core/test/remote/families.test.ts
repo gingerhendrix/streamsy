@@ -2,9 +2,9 @@
 import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
-import { Http, Memory, Streamsy } from "@streamsy/core";
+import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
-import * as Fetch from "@streamsy/core/fetch";
+import { RemoteStreams } from "@streamsy/core/remote";
 
 class Notes extends Streamsy.json<Notes>()("FetchFamilies/Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -21,19 +21,19 @@ const program = Effect.gen(function* () {
   return batches.flatMap((batch) => batch.items);
 });
 
-it("one application program runs unchanged on memory and Fetch streams", async () => {
-  const local = await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(group))));
+it("one application program runs unchanged on memory and remote streams", async () => {
+  const local = await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(group))));
   const edge = HttpRouter.toWebHandler(
     Http.routes(group, { prefix: "/streams", access: "full" }).pipe(
-      Layer.provideMerge(Memory.layer(group)),
+      Layer.provideMerge(MemoryStorage.layer(group)),
     ),
     { disableLogger: true },
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
     for (const host of [
-      Fetch.layer(group, { baseUrl: `${server.url.href}streams` }),
-      Fetch.layer(Streamsy.group(Notes), { baseUrl: `${server.url.href}streams` }),
+      RemoteStreams.layer(group, { baseUrl: `${server.url.href}streams` }),
+      RemoteStreams.layer(Streamsy.group(Notes), { baseUrl: `${server.url.href}streams` }),
     ]) {
       const remote = host.pipe(Layer.provide(FetchHttpClient.layer));
       const inspected = Effect.gen(function* () {

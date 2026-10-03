@@ -2,7 +2,7 @@
 
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
 protocol. Typed stream declarations, stream services, an in-process memory Layer, an
-HTTP app, and a fetch client for remote hosts. Version 0.4.0 requires
+HTTP app, and a client for remote hosts. Version 0.4.0 requires
 `effect@4.0.0-rc.115`.
 
 ```sh
@@ -11,7 +11,7 @@ bun add @streamsy/core effect
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { Memory, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 
 class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
   params: {},
@@ -23,7 +23,7 @@ const program = Effect.gen(function* () {
   yield* events.append({}, ["hello"]);
   return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer(Streamsy.group(Events)))));
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));
 ```
 
 Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/examples/readme.ts).
@@ -57,13 +57,13 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 
 ## Entries
 
-| Entry                     | Contents                                                                           |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| `@streamsy/core`          | Streamsy, Memory, StreamAddress, DurableState, Producer, storage contracts, errors |
-| `@streamsy/core/fetch`    | `Fetch.layer(streams, { baseUrl })`: the same stream services over HTTP            |
-| `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                      |
-| `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, StreamRoute, and raw routes       |
-| `@streamsy/core/testing`  | Contract tests and fault injection for backends                                    |
+| Entry                     | Contents                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `@streamsy/core`          | Streamsy, MemoryStorage, StreamAddress, DurableState, Producer, storage contracts, errors |
+| `@streamsy/core/remote`   | `RemoteStreams.layer(streams, { baseUrl })`: the same stream services over HTTP           |
+| `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                             |
+| `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, StreamRoute, and raw routes              |
+| `@streamsy/core/testing`  | Contract tests and fault injection for backends                                           |
 
 ## Storage and hosts
 
@@ -80,9 +80,9 @@ provides output routes and host glue.
 Browsers use the official `@durable-streams/client` and
 `@durable-streams/state` packages directly against any Streamsy host.
 
-`Memory.layer(streams, { readLimit: 1000 })` sets the server catch-up page size.
+`MemoryStorage.layer(streams, { readLimit: 1000 })` sets the server catch-up page size.
 Protocol adapters can use `Protocol.layer({ readLimit })` from `@streamsy/core/protocol`. The default is
-1000 messages; `readNext` returns the whole available tail. Fetch clients send
+1000 messages; `readNext` returns the whole available tail. Remote clients send
 only an offset and accept the remote server’s page size. Both direct read
 methods reject malformed offsets with `InvalidReadRequest`; accepted offsets
 are canonical tokens, `-1`, and `now` (or an omitted catch-up offset).
@@ -101,7 +101,7 @@ deadline. Each connection draws its own deadline from 90 to 110 percent of
 this value, so connections opened together do not all close together. Each SSE
 batch goes out as one chunk, so the body ends only after a whole batch and its
 control event. Host-forced interruption and client cancellation remain owned by
-the host. Read results include `contentType`; a fetch long poll returning 204
+the host. Read results include `contentType`; a remote long poll returning 204
 without Content-Type resolves it with HEAD.
 
 ## Row changes
@@ -127,7 +127,7 @@ Durable State wire events.
 - [Declare streams](https://streamsy.dev/docs/streams/declare)
 - [Layers and storage](https://streamsy.dev/docs/hosting)
 - [Protocol routes](https://streamsy.dev/docs/http/routes)
-- [Fetch client](https://streamsy.dev/docs/http/fetch)
+- [Remote client](https://streamsy.dev/docs/http/remote)
 - [Write a storage adapter](https://streamsy.dev/docs/hosting/storage-adapter)
 
 Source: https://github.com/gingerhendrix/streamsy

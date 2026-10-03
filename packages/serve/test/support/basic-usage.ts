@@ -1,5 +1,5 @@
 import { Effect, Schema, Stream } from "effect";
-import { StreamAddress } from "@streamsy/core";
+import { StreamAddress, MemoryStorage } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 
 const events = StreamAddress.json("events", {
@@ -18,4 +18,4 @@ const program = Effect.gen(function* () {
   );
   return { batches, first };
 });
-await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol())));

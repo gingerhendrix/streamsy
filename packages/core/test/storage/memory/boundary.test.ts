@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own their host Layers, including the deliberate foreign-owner case. */
 import { expect, test } from "bun:test";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
+import { MemoryStorage } from "../../../src/index.ts";
 import * as Streams from "../../../src/toolkit/streams.ts";
 import * as StreamAddress from "../../../src/toolkit/address.ts";
 import { StreamId } from "../../../src/schema/index.ts";
@@ -86,7 +87,11 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
           yield* boundary.withTransaction(Streams.append(sink, ["later"]));
           yield* Fiber.join(wake);
         }
-      }).pipe(Effect.provide(Streams.layerMemory()), Effect.scoped, Effect.timeout("5 seconds")),
+      }).pipe(
+        Effect.provide(MemoryStorage.layerProtocol()),
+        Effect.scoped,
+        Effect.timeout("5 seconds"),
+      ),
     ));
 }
 
@@ -101,12 +106,16 @@ test("memory owner rejects inherited child-fiber use and separate owners", () =>
           expect(Exit.isFailure(yield* Fiber.await(child))).toBe(true);
           const foreign = yield* Effect.gen(function* () {
             return yield* (yield* OwnerRecords).write("state", "foreign");
-          }).pipe(Effect.provide(Streams.layerMemory()), Effect.exit);
+          }).pipe(Effect.provide(MemoryStorage.layerProtocol()), Effect.exit);
           expect(Exit.isFailure(foreign)).toBe(true);
         }),
       );
       expect(Option.isNone(yield* records.read("state"))).toBe(true);
-    }).pipe(Effect.provide(Streams.layerMemory()), Effect.scoped, Effect.timeout("5 seconds")),
+    }).pipe(
+      Effect.provide(MemoryStorage.layerProtocol()),
+      Effect.scoped,
+      Effect.timeout("5 seconds"),
+    ),
   ));
 
 test("memory outer owners serialize without losing stream output or records", () =>
@@ -147,5 +156,9 @@ test("memory outer owners serialize without losing stream output or records", ()
       expect(Option.getOrThrow(yield* records.read("state"))).toBe("second");
       const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
       expect(batches.flatMap((batch) => batch.items)).toEqual(["first", "second"]);
-    }).pipe(Effect.provide(Streams.layerMemory()), Effect.scoped, Effect.timeout("5 seconds")),
+    }).pipe(
+      Effect.provide(MemoryStorage.layerProtocol()),
+      Effect.scoped,
+      Effect.timeout("5 seconds"),
+    ),
   ));

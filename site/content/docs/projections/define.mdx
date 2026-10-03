@@ -170,12 +170,12 @@ One Commit controls one projection. To combine SQL writes and an independently c
 
 ```ts
 import { Effect, Layer } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
 const program = Projection.run(orderTotalsProjection, { limit: 10 });
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));
@@ -264,11 +264,11 @@ const hand = Effect.gen(function* () {
 await Effect.runPromise(hand.pipe(Effect.provide(host)));
 ```
 
-| Trigger  | Needs                                                                                           |
-| -------- | ----------------------------------------------------------------------------------------------- |
-| `watch`  | The `Streamsy.ChangeFeed` key of each input. Storage Layers give them. The fetch Layer does not |
-| `follow` | Any stream Layer, including fetch                                                               |
-| `run`    | Any stream Layer                                                                                |
+| Trigger  | Needs                                                                                            |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| `watch`  | The `Streamsy.ChangeFeed` key of each input. Storage Layers give them. The remote Layer does not |
+| `follow` | Any stream Layer, including remote                                                               |
+| `run`    | Any stream Layer                                                                                 |
 
 One process runs one runner for each projection key at a time. A second process is detected by the checkpoint token.
 

@@ -4,14 +4,15 @@ import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 import { expect, it } from "bun:test";
 import { Effect, Layer } from "effect";
 import { StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
-import { Streams, Protocol, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
+import { MemoryStorage } from "../../src/index.ts";
+import { Protocol, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { faultyStorage } from "../../src/testing/fault-injection.ts";
 import { HttpRouter } from "effect/unstable/http";
 import { read } from "../../src/http/read.ts";
 
 it("rejects malformed cursor and producer tuple fields at ingress", async () => {
   const edge = HttpRouter.toWebHandler(
-    protocolRoutes({}).pipe(Layer.provideMerge(Streams.layerMemory())),
+    protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
   try {
@@ -58,7 +59,7 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
 
 it("reads the unread body to its end when an append is rejected at ingress", async () => {
   const edge = HttpRouter.toWebHandler(
-    protocolRoutes({}).pipe(Layer.provideMerge(Streams.layerMemory())),
+    protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
   try {
@@ -162,7 +163,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
     }),
   ));
 
-const inspectedLayer = Streams.layerMemory();
+const inspectedLayer = MemoryStorage.layerProtocol();
 
 it("preserves close-only sequence lowering and unpersisted fresh tuple on an already closed stream", () =>
   Effect.runPromise(
@@ -233,13 +234,13 @@ it("caps catch-up pages while live reads return the entire available burst", () 
       return undefined;
     }).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test owns the memory runtime.
-      Effect.provide(Streams.layerMemory({ readLimit: 1 })),
+      Effect.provide(MemoryStorage.layerProtocol({ readLimit: 1 })),
     ),
   ));
 
 it("HTTP catch-up omits up-to-date until the server page reaches the tail", async () => {
   const edge = HttpRouter.toWebHandler(
-    protocolRoutes({}).pipe(Layer.provideMerge(Streams.layerMemory({ readLimit: 1 }))),
+    protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol({ readLimit: 1 }))),
     { disableLogger: true },
   );
   try {
@@ -283,13 +284,13 @@ it("the default catch-up page holds 1000 messages", () =>
       expect(last.upToDate).toBe(true);
     }).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test owns the memory runtime.
-      Effect.provide(Streams.layerMemory()),
+      Effect.provide(MemoryStorage.layerProtocol()),
     ),
   ));
 
 it("SSE closes its body normally at the configured deadline", async () => {
   const edge = HttpRouter.toWebHandler(
-    protocolRoutes({ sseDeadlineMs: 20 }).pipe(Layer.provideMerge(Streams.layerMemory())),
+    protocolRoutes({ sseDeadlineMs: 20 }).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
   try {
@@ -322,7 +323,7 @@ it("GET, POST and DELETE use their protocol call without extra HEAD requests", a
         },
       });
     }),
-  ).pipe(Layer.provideMerge(Streams.layerMemory()));
+  ).pipe(Layer.provideMerge(MemoryStorage.layerProtocol()));
   const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(readers)), {
     disableLogger: true,
   });

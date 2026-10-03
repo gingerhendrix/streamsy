@@ -95,7 +95,7 @@ The stream reads and writes change events as a union discriminated by `type`. To
 
 ## Groups
 
-`Streamsy.group(...streams)` lists the streams that one host keeps and serves. Storage Layers, `Http.routes`, and `Fetch.layer` take a group.
+`Streamsy.group(...streams)` lists the streams that one host keeps and serves. Storage Layers, `Http.routes`, and `RemoteStreams.layer` take a group.
 
 ```ts
 import { Streamsy } from "@streamsy/core";
@@ -148,7 +148,7 @@ const tolerant = Effect.flatMap(Notes, (notes) =>
 | Fault            | Source                |
 | ---------------- | --------------------- |
 | `StorageFault`   | A local store         |
-| `TransportFault` | The fetch Layer       |
+| `TransportFault` | The remote Layer      |
 | `EncodeFault`    | The codec, on a write |
 | `DecodeFault`    | The codec, on a read  |
 

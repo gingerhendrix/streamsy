@@ -2,7 +2,7 @@ import { CheckpointStore, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Layer, ManagedRuntime } from "effect";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { composition } from "./scenarios.ts";
 interface Env {
   readonly PROJECTION: {

@@ -7,8 +7,8 @@ import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
-import * as BunStorage from "@streamsy/storage/bun";
+import { memoryHost } from "./support/memory-host.ts";
+import { BunStorage } from "@streamsy/storage/bun";
 import { readAll } from "./support/scenarios.ts";
 
 const hosts: ReadonlyArray<
@@ -22,7 +22,7 @@ const hosts: ReadonlyArray<
     >,
   ]
 > = [
-  ["memory", Memory.layerMemory()],
+  ["memory", memoryHost()],
   [
     "SQLite",
     Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(

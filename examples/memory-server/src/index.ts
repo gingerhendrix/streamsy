@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Http, Memory, Streamsy } from "@streamsy/core";
+import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { Config, Effect, Layer } from "effect";
@@ -14,6 +14,6 @@ const Listener = Layer.unwrap(
 
 const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
   disableLogger: true,
-}).pipe(Layer.provide(Memory.layer(streams)), Layer.provide(Listener));
+}).pipe(Layer.provide(MemoryStorage.layer(streams)), Layer.provide(Listener));
 
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });

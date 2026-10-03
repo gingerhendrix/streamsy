@@ -18,7 +18,7 @@ import {
 } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Streams } from "@streamsy/core/protocol";
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { composition, initialize, input, inspect, positives } from "./support/scenarios.ts";
 
@@ -169,7 +169,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       import * as FamilyFixture from "./test/support/families.ts";
       import { Layer, ManagedRuntime, Option } from "effect";
       import { Streams } from "@streamsy/core/protocol";
-      import * as BunStorage from "@streamsy/storage/bun";
+      import { BunStorage } from "@streamsy/storage/bun";
       import { CheckpointStore, Projection, Transaction } from "./src/index.ts";
       import { input, inspect, positives } from "./test/support/scenarios.ts";
       const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(

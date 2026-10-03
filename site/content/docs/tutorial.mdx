@@ -96,24 +96,24 @@ See [How projections work](/docs/projections).
 
 ```ts
 import { Effect } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
-await Effect.runPromise(write.pipe(Effect.provide(Memory.layer(shop))));
+await Effect.runPromise(write.pipe(Effect.provide(MemoryStorage.layer(shop))));
 ```
 
 A projection also needs `CheckpointStore`. Merge its Layer over the same storage:
 
 ```ts
 import { Effect, Layer } from "effect";
-import { Memory } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
 import { catchUp } from "./projection.ts";
 import { write } from "./write.ts";
 import { shop } from "./streams.ts";
 
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(Memory.layer(shop)));
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
 
 await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)));
 ```
@@ -121,7 +121,7 @@ await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)
 Use SQLite when the data must survive a restart:
 
 ```ts
-import * as BunStorage from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { shop } from "./streams.ts";
 
 export const storage = BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } });
@@ -168,10 +168,10 @@ See [Cloudflare](/docs/hosting/cloudflare).
 ```ts
 import { Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import * as Fetch from "@streamsy/core/fetch";
+import { RemoteStreams } from "@streamsy/core/remote";
 import { shop } from "./streams.ts";
 
-export const remote = Fetch.layer(shop, {
+export const remote = RemoteStreams.layer(shop, {
   baseUrl: "https://streamsy-app.example.workers.dev/streams",
   capabilities: { expectedOffset: true, producer: true },
 }).pipe(Layer.provide(FetchHttpClient.layer));
@@ -179,4 +179,4 @@ export const remote = Fetch.layer(shop, {
 
 `remote` gives the same stream services, so `watch` runs over it with no change.
 
-See [Fetch client](/docs/http/fetch).
+See [Remote client](/docs/http/remote).

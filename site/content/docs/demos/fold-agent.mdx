@@ -30,14 +30,14 @@ bun run --cwd examples/fold-agent inspect <stream-id>
 
 Each number in the diagram is also a section number below.
 
-| Step | What happens                                         | Streamsy feature                   | File                                      |
-| ---- | ---------------------------------------------------- | ---------------------------------- | ----------------------------------------- |
-| 1    | One stream for each session holds the Fold log       | `Streamsy.json`                    | `src/session-log.ts`                      |
-| 2    | The same code opens a memory or a SQLite store       | `Memory.layer`, `BunStorage.layer` | `src/storage.ts`                          |
-| 3    | Fold writes its log through the Streamsy adapter     | Fold `eventLogSource`              | `src/cli.ts`, `src/streamsy-event-log.ts` |
-| 4    | A writer reads the log and keeps its tail offset     | `read`                             | `src/streamsy-event-log.ts`               |
-| 5    | Each append names that tail                          | `append` with `expectedOffset`     | `src/streamsy-event-log.ts`               |
-| 6    | A second process moves the tail and fences the first | `OffsetMismatch`                   | `test/sqlite-restart.test.ts`             |
+| Step | What happens                                         | Streamsy feature                          | File                                      |
+| ---- | ---------------------------------------------------- | ----------------------------------------- | ----------------------------------------- |
+| 1    | One stream for each session holds the Fold log       | `Streamsy.json`                           | `src/session-log.ts`                      |
+| 2    | The same code opens a memory or a SQLite store       | `MemoryStorage.layer`, `BunStorage.layer` | `src/storage.ts`                          |
+| 3    | Fold writes its log through the Streamsy adapter     | Fold `eventLogSource`                     | `src/cli.ts`, `src/streamsy-event-log.ts` |
+| 4    | A writer reads the log and keeps its tail offset     | `read`                                    | `src/streamsy-event-log.ts`               |
+| 5    | Each append names that tail                          | `append` with `expectedOffset`            | `src/streamsy-event-log.ts`               |
+| 6    | A second process moves the tail and fences the first | `OffsetMismatch`                          | `test/sqlite-restart.test.ts`             |
 
 The code below is from the demo. Lines marked `// ...` are left out.
 

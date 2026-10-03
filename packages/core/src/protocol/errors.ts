@@ -74,7 +74,7 @@ export type ReadNextError = ReadError | NotSupported;
 export type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
 /**
  * Append rejections that any call can get, whatever its options. The memory and
- * storage hosts never answer `NotSupported`; the fetch client does when the server
+ * storage hosts never answer `NotSupported`; the remote client does when the server
  * or its own capabilities refuse a feature.
  */
 export type AppendBaseError =

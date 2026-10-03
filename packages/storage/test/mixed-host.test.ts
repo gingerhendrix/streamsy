@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web host boundary. */
 import { expect, test } from "bun:test";
 import { Layer, Schema } from "effect";
-import { Http, Memory, Streamsy } from "@streamsy/core";
-import * as BunStorage from "@streamsy/storage/bun";
+import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
+import { BunStorage } from "@streamsy/storage/bun";
 import { HttpRouter } from "effect/unstable/http";
 
 class MemoryFamily extends Streamsy.json<MemoryFamily>()("MixedHost/Memory", "memory/:name", {
@@ -16,7 +16,7 @@ class SqliteFamily extends Streamsy.json<SqliteFamily>()("MixedHost/Sqlite", "sq
 
 const streams = Streamsy.group(MemoryFamily, SqliteFamily);
 const hostLayer = Layer.merge(
-  Memory.layer(Streamsy.group(MemoryFamily)),
+  MemoryStorage.layer(Streamsy.group(MemoryFamily)),
   BunStorage.layer(Streamsy.group(SqliteFamily), { client: { filename: ":memory:" } }),
 );
 

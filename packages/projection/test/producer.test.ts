@@ -1,6 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
@@ -34,7 +34,7 @@ class Out extends Streamsy.json<Out>()("outputs-pass.test/Out", "out/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
-const inputGraph = Streams.layerMemory();
+const inputGraph = MemoryStorage.layerProtocol();
 class PagedReader extends Context.Service<PagedReader, Reader<StreamsFault>>()(
   "test/PagedReader",
 ) {}

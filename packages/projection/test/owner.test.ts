@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
-import * as Memory from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 
 class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
   params: {},
@@ -20,9 +20,9 @@ class Foreign extends Streamsy.json<Foreign>()("owner/Foreign", "owner/foreign/:
   schema: Schema.Finite,
 }) {}
 const params = { id: "a" };
-const local = Memory.layerMemory();
+const local = memoryHost();
 const sqlite = layerSqlite();
-const foreign = Memory.layerMemory();
+const foreign = memoryHost();
 const host = Layer.merge(
   Protocol.bind(local, Streamsy.group(Input, Local)),
   Protocol.bind(foreign, Streamsy.group(Foreign)),

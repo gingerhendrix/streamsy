@@ -33,7 +33,7 @@ import {
 } from "../../serve/test/support/scoped-host.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError } from "effect/unstable/sql/SqlError";
-import { layerProtocol } from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";
 import { layerWithTestProbe } from "../src/storage.ts";
 
@@ -159,7 +159,7 @@ const buildPublicLayer = (filename: string, disableWAL = false) =>
   Effect.runPromiseExit(
     Effect.scoped(
       Layer.build(
-        layerProtocol({
+        BunStorage.layerProtocol({
           client: { filename, disableWAL },
           transactionRetryAttempts: 16,
           transactionRetryDelayMs: 25,

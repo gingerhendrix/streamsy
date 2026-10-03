@@ -839,24 +839,22 @@ export const layerWithDurableObjectTransactions = (options: SqlStorageOptions) =
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>
   makeLayer(options, probe);
 
+/** Options for `layer` and `layerProtocol`. */
+export interface Options extends SqlStorageOptions, Protocol.ProtocolOptions {}
+
 /** Protocol over SQL storage. */
-export const layerProtocol = (options: SqlStorageOptions & Protocol.ProtocolOptions = {}) =>
+export const layerProtocol = (options: Options = {}) =>
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   group: Streamsy.Group<Keys>,
-  options?: SqlStorageOptions & Protocol.ProtocolOptions,
+  options?: Options,
 ): Layer.Layer<
-  | Layer.Success<ReturnType<typeof storageLayer>>
-  | Streamsy.Services<Streamsy.Group<Keys>>
-  | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
+  Layer.Success<ReturnType<typeof storageLayer>> | Streamsy.Host<Streamsy.Group<Keys>>,
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(
-  group: Streamsy.Group,
-  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
-) {
+export function layer(group: Streamsy.Group, options: Options = {}) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));

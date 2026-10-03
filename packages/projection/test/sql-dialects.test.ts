@@ -9,7 +9,7 @@ import { Array, Context, Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Storage, StreamId } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import * as StreamsyStorage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
 import {
   CheckpointStore,
@@ -55,7 +55,7 @@ const onFreshDatabase = <A, E>(
 /** Checkpoints on the storage owner, over one pool. */
 const checkpoints = (dialect: SqlDialect, url: string) =>
   CheckpointStore.layer.pipe(
-    Layer.provideMerge(StreamsyStorage.layerProtocol()),
+    Layer.provideMerge(SqlStorage.layerProtocol()),
     Layer.provideMerge(dialectClient(dialect, url)),
   );
 
@@ -64,7 +64,7 @@ const host = (dialect: SqlDialect, url: string) =>
   Layer.build(
     FamilyFixture.withFamilies(
       Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-        Layer.provideMerge(StreamsyStorage.layerProtocol()),
+        Layer.provideMerge(SqlStorage.layerProtocol()),
         Layer.provideMerge(dialectClient(dialect, url)),
       ),
     ),

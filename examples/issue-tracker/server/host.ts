@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@streamsy/projection";
-import * as Storage from "@streamsy/storage";
-import * as BunStorage from "@streamsy/storage/bun";
+import { SqlStorage } from "@streamsy/storage";
+import { BunStorage } from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { Reactivity } from "effect/unstable/reactivity";
 import { SqlClient } from "effect/unstable/sql";
@@ -15,7 +15,7 @@ export const streams = Streamsy.group(...Object.values(routes), ...outputStreams
 /** Root Streamsy storage for `streams` over a SQL client: Postgres, MySQL or SQLite. */
 export const sqlStorage = <E>(
   makeClient: Effect.Effect<SqlClient.SqlClient, E, Scope.Scope | Reactivity.Reactivity>,
-) => Storage.layer(streams).pipe(Layer.provideMerge(Storage.clientLayer(makeClient)));
+) => SqlStorage.layer(streams).pipe(Layer.provideMerge(SqlStorage.clientLayer(makeClient)));
 
 /** The storage services the host needs, as `sqlStorage` and `sqliteStorage` give them. */
 export type HostStorage = Layer.Success<ReturnType<typeof sqlStorage>>;

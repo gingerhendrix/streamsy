@@ -1,8 +1,8 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
 import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
-import { Storage } from "@streamsy/core";
-import { Protocol, Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { Storage, MemoryStorage } from "@streamsy/core";
+import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { memoryLayer, parkableLayer } from "./support/parkable.ts";
 import { testHost, type TestHostOptions } from "./support/scoped-host.ts";
 
@@ -82,7 +82,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
             ),
         });
       }),
-    ).pipe(Layer.provide(Streams.layerMemory()));
+    ).pipe(Layer.provide(MemoryStorage.layerProtocol()));
     const observedProtocol = Layer.effectContext(
       Effect.gen(function* () {
         const reader = yield* StreamsReader;
@@ -209,7 +209,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       await Effect.runPromise(host.stop);
       expect(ownerClosed).toBe(true);
       const rebound = await Effect.runPromise(
-        testHost({ layer: Streams.layerMemory(), port: host.port }),
+        testHost({ layer: MemoryStorage.layerProtocol(), port: host.port }),
       );
       try {
         expect(rebound.port).toBe(host.port);

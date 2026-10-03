@@ -7,8 +7,8 @@ import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
-import * as Memory from "./support/memory.ts";
-import * as BunStorage from "@streamsy/storage/bun";
+import { memoryHost } from "./support/memory-host.ts";
+import { BunStorage } from "@streamsy/storage/bun";
 
 const hosts: ReadonlyArray<
   readonly [
@@ -21,7 +21,7 @@ const hosts: ReadonlyArray<
     >,
   ]
 > = [
-  ["memory", Memory.layerMemory()],
+  ["memory", memoryHost()],
   [
     "SQLite",
     Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
@@ -173,5 +173,5 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
       yield* Deferred.succeed(secondRelease, undefined);
       expect((yield* Fiber.join(second)).items).toBe(1);
       expect((yield* Fiber.join(third)).items).toBe(0);
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory()))),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost()))),
   ));

@@ -2,7 +2,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
 import { Streamsy, Http } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
-import { layer } from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import {
   COMPATIBILITY_DATE,
   COMPATIBILITY_FLAGS,
@@ -20,7 +20,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
       Host.objectHandlers({
         app: Http.routes(streams, { prefix: "/streams", access: "full" }),
         layer: Layer.mergeAll(
-          layer(streams, {
+          DurableObjectStorage.layer(streams, {
             client: { storage: state.raw.storage },
             longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
           }),

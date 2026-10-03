@@ -13,7 +13,7 @@ import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import * as Storage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 import { Config, Context, Effect, Layer, Option, Random, Redacted, type Scope } from "effect";
 import type { Reactivity } from "effect/unstable/reactivity";
 import { SqlClient, type SqlError } from "effect/unstable/sql";
@@ -63,7 +63,7 @@ const freshDatabase = (dialect: ServerDialect, baseUrl: string) =>
   Effect.gen(function* () {
     const name = `streamsy_tracker_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
     const admin = Context.get(
-      yield* Layer.build(Storage.clientLayer(dialect.client(baseUrl))),
+      yield* Layer.build(SqlStorage.clientLayer(dialect.client(baseUrl))),
       SqlClient.SqlClient,
     );
     yield* Effect.acquireRelease(admin.unsafe(`CREATE DATABASE ${name}`), () =>

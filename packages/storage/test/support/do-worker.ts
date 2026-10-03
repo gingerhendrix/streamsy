@@ -4,7 +4,7 @@ import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Effect, Layer, ManagedRuntime, Option } from "effect";
 import { Storage, StreamId, ZERO_OFFSET } from "@streamsy/core";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../../src/boundary.ts";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import {
   finishOwnerCleanupProof,
@@ -74,7 +74,7 @@ export class StorageObject {
     await repairRuntime.dispose();
 
     const entryRuntime = ManagedRuntime.make(
-      layerProtocol({ client: { storage: this.#ctx.storage } }),
+      DurableObjectStorage.layerProtocol({ client: { storage: this.#ctx.storage } }),
     );
     const entry = await entryRuntime.runPromise(
       Effect.gen(function* () {

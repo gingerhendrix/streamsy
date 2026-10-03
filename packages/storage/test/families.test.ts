@@ -8,9 +8,9 @@ import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
-import * as BunStorage from "@streamsy/storage/bun";
-import * as SqlStorage from "@streamsy/storage";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { BunStorage } from "@streamsy/storage/bun";
+import { SqlStorage } from "@streamsy/storage";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 
 class Notes extends Streamsy.json<Notes>()("StorageFamilies/Notes", "notes", {
   params: {},
@@ -73,7 +73,7 @@ const sqlErrors: Equal<Layer.Error<typeof rawSql>, StorageFault> = true;
 const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Streamsy.ChangeFeed(Notes)).pipe(
   Effect.provide(bun),
 );
-function exactDurable(options: DurableObjectStorage.DurableObjectStorageOptions) {
+function exactDurable(options: DurableObjectStorage.Options) {
   const host = DurableObjectStorage.layer(group, options);
   const outputs: Equal<
     Layer.Success<typeof host>,

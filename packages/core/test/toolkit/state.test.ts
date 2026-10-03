@@ -2,6 +2,7 @@ import { expect, it } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
 import * as DurableState from "../../src/toolkit/durable-state.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";
+import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 
 const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
@@ -42,7 +43,7 @@ it("state changes round trip with Durable State wire fields and source headers",
         '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","offset":"source:4","txid":"source:4:0"}}',
         '{"type":"story","key":"8","old_value":{"id":8,"title":"second"},"headers":{"operation":"delete","offset":"source:4","txid":"source:4:1"}}',
       ]);
-    }).pipe(Effect.provide(Streams.layerMemory())),
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
   ));
 
 it("encodes the row with the collection codec and a string key", () => {
@@ -189,7 +190,7 @@ it("writes and reads several collections through one state address", () =>
         item.type === "project" && "value" in item ? [item.value.name] : [],
       );
       expect(names).toEqual(["Streamsy"]);
-    }).pipe(Effect.provide(Streams.layerMemory())),
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
   ));
 
 it("fails to decode an event whose type is not a declared collection", () =>

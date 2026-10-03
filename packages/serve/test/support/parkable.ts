@@ -1,5 +1,6 @@
 import { Context, Deferred, Effect, Exit, Layer } from "effect";
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { MemoryStorage } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 
 /**
  * A protocol Layer over memory storage that records a parked long-poll read and
@@ -29,6 +30,6 @@ export const parkableLayer = (
         ),
       );
     }),
-  ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })));
+  ).pipe(Layer.provide(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })));
 
-export const memoryLayer = Streams.layerMemory({ longPollTimeoutMs: 30_000 });
+export const memoryLayer = MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 });

@@ -4,7 +4,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { MysqlClient } from "@effect/sql-mysql2";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect, Exit, Layer, Redacted, Scope } from "effect";
-import * as Storage from "@streamsy/storage";
+import { SqlStorage } from "@streamsy/storage";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 import { freshDatabase, sqlDialects } from "../../storage/test/dialects/support.ts";
 
@@ -22,8 +22,10 @@ describe.skipIf(url === undefined)("Effect SQL Bun host on MySQL", () => {
     );
     host = await Effect.runPromise(
       testHost({
-        layer: Storage.layerProtocol({ longPollTimeoutMs: 1_500 }).pipe(
-          Layer.provideMerge(Storage.clientLayer(MysqlClient.make({ url: Redacted.make(fresh) }))),
+        layer: SqlStorage.layerProtocol({ longPollTimeoutMs: 1_500 }).pipe(
+          Layer.provideMerge(
+            SqlStorage.clientLayer(MysqlClient.make({ url: Redacted.make(fresh) })),
+          ),
         ),
         port: 0,
       }),

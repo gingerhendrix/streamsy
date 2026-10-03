@@ -3,12 +3,11 @@ import { describe, expect, it } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Schema, Scope } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { ShutdownSignal } from "@streamsy/core/http";
 import {
   Protocol,
   routes as protocolRoutes,
-  Streams,
   StreamsReader,
   StreamsWriter,
 } from "@streamsy/core/protocol";
@@ -131,7 +130,7 @@ it("a client abort of a long poll on a Serve.mount route interrupts the read", (
             ),
           );
         }),
-      ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })));
+      ).pipe(Layer.provide(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })));
       class Events extends Streamsy.json<Events>()(
         "serve/serve-layer.test/Events",
         "events/:seat",

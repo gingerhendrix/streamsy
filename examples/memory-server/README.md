@@ -88,7 +88,7 @@ values are opaque: copy the value returned by the server.
 ## How it works
 
 `Serve.layer(Http.routes(streams, { access: "full" }))` runs with one
-`Memory.layer(streams)` and a Bun listener, launched with
+`MemoryStorage.layer(streams)` and a Bun listener, launched with
 `BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown })`. `PORT` is read with `Config`. The
 60-second idle timeout allows a 30-second protocol long poll to complete.
 

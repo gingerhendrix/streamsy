@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { Effect, Schedule, Schema } from "effect";
-import { OffsetMismatch, StreamId, Streamsy } from "@streamsy/core";
-import { Protocol, Streams } from "@streamsy/core/protocol";
+import { OffsetMismatch, StreamId, Streamsy, MemoryStorage } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 
 class Numbers extends Streamsy.json<Numbers>()("decide/Numbers", "decide/numbers", {
@@ -13,7 +13,7 @@ class Words extends Streamsy.json<Words>()("decide/Words", "decide/words", {
   params: {},
   schema: Schema.String,
 }) {}
-const host = Protocol.bind(Streams.layerMemory(), Streamsy.group(Numbers, Words));
+const host = Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Numbers, Words));
 const run = <A, E>(effect: Effect.Effect<A, E, Numbers | Words | CheckpointStore>) =>
   Effect.runPromise(effect.pipe(Effect.provide(host), Effect.provide(CheckpointStore.layerMemory)));
 

@@ -25,7 +25,7 @@ export interface TemplateGrammar<Template extends string = string> {
   readonly names: ReadonlyArray<string>;
 }
 
-/** Ids are canonical relative paths, the same rule the fetch Layer enforces. */
+/** Ids are canonical relative paths, the same rule the remote Layer enforces. */
 export function isCanonicalIdSegment(value: string): boolean {
   if (value.length === 0 || value === "." || value === "..") return false;
   return !/[%?#/\\]/.test(value);

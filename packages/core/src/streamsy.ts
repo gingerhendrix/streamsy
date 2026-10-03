@@ -16,5 +16,6 @@ export {
   type Any,
   type Group,
   type Services,
+  type Host,
   type ChangeFeedApi,
 } from "./toolkit/streamsy.ts";

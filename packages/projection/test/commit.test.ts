@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Context, Effect, Option, Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Protocol, Streams } from "@streamsy/core/protocol";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import {
   CheckpointRecord,
   Commit,
@@ -131,7 +131,7 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
       });
     }).pipe(
       Effect.provideService(Bucket, api),
-      Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Input))),
+      Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input))),
     ),
   );
 });

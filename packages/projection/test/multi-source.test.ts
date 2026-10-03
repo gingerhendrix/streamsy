@@ -11,7 +11,7 @@ import {
   type Entry,
   type Unit,
 } from "@streamsy/projection";
-import { layerMemory } from "./support/memory.ts";
+import { memoryHost } from "./support/memory-host.ts";
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
@@ -26,7 +26,7 @@ const run = <A, E>(
   readLimit = 1000,
 ) =>
   Effect.runPromise(
-    body.pipe(Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit })))),
+    body.pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost({ readLimit })))),
   );
 const setup = Effect.gen(function* () {
   yield* Streams.create(a);

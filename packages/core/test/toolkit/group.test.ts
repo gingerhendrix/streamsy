@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns test execution. */
 import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema } from "effect";
-import { Streamsy, Memory, Storage } from "../../src/index.ts";
+import { Streamsy, MemoryStorage, Storage } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 
 class Notes extends Streamsy.json<Notes>()("Group/Notes", "notes/:user", {
@@ -36,7 +36,10 @@ it("groups freeze their ordered declarations and reject duplicates and misplaced
 });
 
 it("memory streams expose feeds and storage but no generic protocol keys", async () => {
-  for (const host of [Memory.layer(group), Memory.layer(Streamsy.group(Notes, Counts))]) {
+  for (const host of [
+    MemoryStorage.layer(group),
+    MemoryStorage.layer(Streamsy.group(Notes, Counts)),
+  ]) {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import * as SqlClientTag from "effect/unstable/sql/SqlClient";
-import { layerProtocol } from "@streamsy/storage/bun";
+import { BunStorage } from "@streamsy/storage/bun";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { migrate } from "../src/migrations.ts";
 import {
@@ -24,7 +24,7 @@ const acquire = (path: string) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
     const context = yield* Layer.build(
-      layerProtocol({ client: { filename: path, busyTimeout: "50 millis" } }),
+      BunStorage.layerProtocol({ client: { filename: path, busyTimeout: "50 millis" } }),
     ).pipe(Scope.provide(scope));
     return { scope, storage: Context.get(context, Storage) };
   });
@@ -52,9 +52,9 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
     const missing = filename(label);
     expect(await Bun.file(missing).exists()).toBe(false);
     const exit = await Effect.runPromise(
-      Effect.scoped(Layer.build(layerProtocol({ client: { filename: missing, ...options } }))).pipe(
-        Effect.exit,
-      ),
+      Effect.scoped(
+        Layer.build(BunStorage.layerProtocol({ client: { filename: missing, ...options } })),
+      ).pipe(Effect.exit),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isSuccess(exit)) throw new Error("Expected missing-file acquisition to fail");
@@ -79,7 +79,7 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   const before = new Uint8Array(await Bun.file(readonly).arrayBuffer());
   const readonlyExit = await Effect.runPromise(
     Effect.scoped(
-      Layer.build(layerProtocol({ client: { filename: readonly, readonly: true } })),
+      Layer.build(BunStorage.layerProtocol({ client: { filename: readonly, readonly: true } })),
     ).pipe(Effect.exit),
   );
   expect(Exit.isSuccess(readonlyExit)).toBe(true);

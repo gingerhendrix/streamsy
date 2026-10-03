@@ -9,7 +9,7 @@ A Worker router sends each protocol path to one Durable Object. The object owns 
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { Http, Streamsy } from "@streamsy/core";
 import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Events } from "./streams.ts";
 
 const game = Streamsy.group(Events);
@@ -33,7 +33,7 @@ The second type parameter of `StreamsyObject.make` is the services that the app 
 ## Storage
 
 ```ts
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { shop } from "./streams.ts";
 
 const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storage } });
@@ -87,7 +87,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
 import { Streamsy, Http } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 
@@ -119,7 +119,7 @@ The Worker gets the `Streams` namespace during construction. Its fetch uses `Hos
 
 The pinned Alchemy version is `2.0.0-beta.79`.
 
-A remote client uses [`Fetch.layer`](/docs/http/fetch) with the Worker protocol prefix as `baseUrl`.
+A remote client uses [`RemoteStreams.layer`](/docs/http/remote) with the Worker protocol prefix as `baseUrl`.
 
 ## Projection services
 

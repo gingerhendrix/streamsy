@@ -14,7 +14,7 @@
     "build:worker": "bun run scripts/build-worker.ts",
     "measure:bundle": "bun run build:worker && cat dist/bundle-report.json",
     "check:browser": "bun scripts/check-browser.ts",
-    "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run test/fetch.conformance.test.ts",
+    "test:remote": "bun ./node_modules/vitest/vitest.mjs --run test/remote.conformance.test.ts",
     "test:memory:wildcard": "bun ./node_modules/vitest/vitest.mjs --run test/wildcard.conformance.test.ts",
     "test:pg": "bun ./node_modules/vitest/vitest.mjs --run test/postgres.conformance.test.ts",
     "test:mysql": "bun ./node_modules/vitest/vitest.mjs --run test/mysql.conformance.test.ts"

@@ -32,7 +32,7 @@
     "format": "oxfmt . --write",
     "format:check": "oxfmt . --check",
     "test": "bun run test:unit",
-    "test:conformance": "bun run test:conformance:memory && bun run test:conformance:sqlite && bun run test:conformance:workerd && bun run test:conformance:fetch && bun run --cwd packages/conformance-tests test:memory:wildcard",
+    "test:conformance": "bun run test:conformance:memory && bun run test:conformance:sqlite && bun run test:conformance:workerd && bun run test:conformance:remote && bun run --cwd packages/conformance-tests test:memory:wildcard",
     "test:unit": "bun scripts/test-unit.ts",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker smoke:http",
@@ -53,8 +53,8 @@
     "pack:dry-run": "for dir in packages/core packages/storage packages/projection packages/serve; do (cd \"$dir\" && bun pm pack --dry-run) || exit; done",
     "site:validate": "env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:terms && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:excerpts && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:demos && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:snippets && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site build && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:og && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:links",
     "check:browser": "bun run --cwd packages/conformance-tests check:browser",
-    "test:client": "bun test packages/core/test/fetch",
-    "test:conformance:fetch": "bun run --cwd packages/conformance-tests test:fetch"
+    "test:client": "bun test packages/core/test/remote",
+    "test:conformance:remote": "bun run --cwd packages/conformance-tests test:remote"
   },
   "devDependencies": {
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
