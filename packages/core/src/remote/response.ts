@@ -70,7 +70,13 @@ export const head = (
     const expiresAt = Wire.header(response, "stream-expires-at");
     if (expiresAt !== undefined && Option.isNone(DateTime.make(expiresAt)))
       return yield* Effect.fail(
-        Wire.failure(operation, "response", `Invalid stream-expires-at header: ${expiresAt}`),
+        Wire.failure(
+          operation,
+          "response",
+          `Invalid stream-expires-at header: ${expiresAt}`,
+          undefined,
+          response.status,
+        ),
       );
     const closed = yield* Wire.closedHeader(operation, response);
     return { contentType, nextOffset, ttlSeconds, expiresAt, closed };
@@ -143,6 +149,8 @@ export const append = (
             operation,
             "response",
             "Duplicate acknowledgement is missing producer state",
+            undefined,
+            response.status,
           ),
         );
       return AppendResult.Duplicate({ offset, producerEpoch, producerSeq, closed });
@@ -158,7 +166,13 @@ export const append = (
       );
       if (currentEpoch === undefined)
         return yield* Effect.fail(
-          Wire.failure(operation, "response", "Stale epoch response is missing producer-epoch"),
+          Wire.failure(
+            operation,
+            "response",
+            "Stale epoch response is missing producer-epoch",
+            undefined,
+            response.status,
+          ),
         );
       return yield* new StaleEpoch({ id: context.id, currentEpoch });
     }

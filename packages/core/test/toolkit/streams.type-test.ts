@@ -6,7 +6,6 @@ import { Streamsy } from "../../src/index.ts";
 import type {
   AppendBaseError,
   AppendErrorFor,
-  InvalidEpochSeq,
   OffsetMismatch,
   ProducerGap,
   ReadError,
@@ -19,7 +18,7 @@ import type { DecodeFault, EncodeFault, StreamsFault } from "../../src/fault.ts"
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type ErrorOf<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never;
-type ProducerError = StaleEpoch | ProducerGap | InvalidEpochSeq;
+type ProducerError = StaleEpoch | ProducerGap;
 /** What every append can fail with. */
 type Base = AppendBaseError | StreamsFault | EncodeFault;
 

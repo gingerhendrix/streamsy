@@ -98,11 +98,6 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
           "invalid-record",
           `Sequence ${error.receivedSeq} of ${output.id} does not follow ${error.expectedSeq}`,
         ),
-      InvalidEpochSeq: () =>
-        pin(
-          "invalid-record",
-          `Epoch ${position.producerEpoch} of ${output.id} must start at seq 0`,
-        ),
       NotSupported: (error) =>
         pin("unsupported-composition", `${output.id} does not support ${error.feature}`),
       StorageFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
@@ -112,7 +107,6 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
       StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
       AppendConflict: () => pin("invalid-output", `Output ${output.id} refused the append`),
       StreamBusy: () => pin("invalid-output", `Output ${output.id} is busy`),
-      InvalidAppendRequest: (error) => pin("invalid-output", error.message),
     }),
   );
 });

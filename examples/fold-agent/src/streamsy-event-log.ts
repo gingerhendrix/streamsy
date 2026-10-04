@@ -14,8 +14,15 @@ import {
   type LogEntryInput,
   type SessionId,
 } from "@humanlayer/fold-core";
-import { DecodeFault, StreamGone, StreamNotFound } from "@streamsy/core";
-import { Context, Effect, Layer, Predicate, Schema, Semaphore, Stream } from "effect";
+import {
+  CreateResult,
+  isStreamsFault,
+  type ReadFailure,
+  type FollowFailure,
+  type AppendFailure,
+  type CreateFailure,
+} from "@streamsy/core";
+import { Context, Effect, Layer, Match, Schema, Semaphore, Stream } from "effect";
 import {
   Sessions,
   corrupt,
@@ -31,23 +38,44 @@ export interface StreamsyEventLogOptions {
   readonly session: SessionId;
   readonly mode: StreamsyEventLogMode;
 }
-const toFoldError = (error: { readonly _tag: string; readonly message?: string }) => {
-  if (
-    Schema.is(EventLogCorruptEntryError)(error) ||
-    Schema.is(EventLogUnavailableError)(error) ||
-    Schema.is(EventLogInvalidEntryError)(error) ||
-    Schema.is(EventLogUnsupportedVersionError)(error)
-  )
-    return error;
-  if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
-  if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
-  if (Schema.is(DecodeFault)(error)) return corrupt(error.message);
-  return unavailable(
-    error.message || error._tag,
-    "retryable" in error && error.retryable === true,
-    error,
-  );
-};
+type LogFailure =
+  | ReadFailure
+  | FollowFailure
+  | AppendFailure<{ expectedOffset: string }>
+  | CreateFailure
+  | Schema.SchemaError;
+const toUnavailable = (error: LogFailure) =>
+  unavailable(error.message, isStreamsFault(error) && error.retryable, error);
+const toFoldError = (
+  error:
+    | LogFailure
+    | EventLogCorruptEntryError
+    | EventLogUnavailableError
+    | EventLogInvalidEntryError
+    | EventLogUnsupportedVersionError,
+) =>
+  Match.valueTags(error, {
+    EventLogCorruptEntryError: (error) => error,
+    EventLogUnavailableError: (error) => error,
+    EventLogInvalidEntryError: (error) => error,
+    EventLogUnsupportedVersionError: (error) => error,
+    StreamNotFound: (error) => unavailable(`Stream ${error.id}: not-found`),
+    StreamGone: (error) => unavailable(`Stream ${error.id}: gone`),
+    DecodeFault: (error) => corrupt(error.message),
+    TransportFault: toUnavailable,
+    StorageFault: toUnavailable,
+    EncodeFault: toUnavailable,
+    InvalidReadRequest: toUnavailable,
+    NotSupported: toUnavailable,
+    StreamClosed: toUnavailable,
+    StreamBusy: toUnavailable,
+    AppendConflict: toUnavailable,
+    OffsetMismatch: toUnavailable,
+    CreateConflict: toUnavailable,
+    ForkSourceNotFound: toUnavailable,
+    InvalidForkRequest: toUnavailable,
+    SchemaError: toUnavailable,
+  });
 
 /** Export the typed constructor for tests, avoiding casts through Fold's unknown-error descriptor. */
 export const makeEventLog = (options: StreamsyEventLogOptions) =>
@@ -57,10 +85,8 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
-      if (Predicate.isTagged(result, "Exists"))
-        return yield* unavailable(
-          `Stream ${Sessions.address(params).id} already exists or is unavailable: ${result._tag}`,
-        );
+      if (CreateResult.$is("Exists")(result))
+        return yield* unavailable(`Stream ${Sessions.address(params).id} already exists`);
     }
     const history = yield* readHistory(params);
     const decoded = yield* decodeLog(history.items);

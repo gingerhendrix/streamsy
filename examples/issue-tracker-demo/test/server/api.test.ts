@@ -1,10 +1,10 @@
 import { BunCrypto, BunHttpServer } from "@effect/platform-bun";
-import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy, StorageFault } from "@streamsy/core";
 import { afterAll, describe, expect, test } from "bun:test";
-import { Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
-import { IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
+import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import { Workspaces } from "../../server/streams.ts";
 
 // The same API layers as the server, served in process over a memory store.
@@ -133,3 +133,93 @@ describe("successful writes", () => {
     expect(body.id).toMatch(/^[a-z0-9]{10}$/);
   });
 });
+
+test("an operational failure is logged and answered as 500", () =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fault = new StorageFault({
+          operation: "read",
+          message: "store busy",
+          retryable: true,
+        });
+        const failingTracker = Layer.effect(
+          IssueTracker,
+          Effect.map(IssueTracker, (tracker) => ({
+            ...tracker,
+            mutate: () => Effect.fail(fault),
+          })),
+        ).pipe(
+          Layer.provide(IssueTrackerLive),
+          Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+        );
+        const failing = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            HttpRouter.toWebHandler(
+              ApiLive.pipe(
+                Layer.provide(failingTracker),
+                Layer.provide(BunHttpServer.layerHttpServices),
+              ),
+              { disableLogger: true },
+            ),
+          ),
+          (server) => Effect.promise(() => server.dispose()),
+        );
+        const response = yield* Effect.promise(() =>
+          failing.handler(
+            new Request("http://localhost/api/w/main/projects", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            }),
+          ),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.promise(() => response.json())).toMatchObject({
+          error: "Internal server error",
+        });
+      }),
+    ),
+  ));
+
+test("a typed workspace create failure answers 500", () =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fault = new StorageFault({
+          operation: "create",
+          message: "store busy",
+          retryable: true,
+        });
+        const failingTracker = Layer.effect(
+          IssueTracker,
+          Effect.map(IssueTracker, (tracker) => ({
+            ...tracker,
+            create: Effect.fail(fault),
+          })),
+        ).pipe(
+          Layer.provide(IssueTrackerLive),
+          Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+        );
+        const failing = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            HttpRouter.toWebHandler(
+              ApiLive.pipe(
+                Layer.provide(failingTracker),
+                Layer.provide(BunHttpServer.layerHttpServices),
+              ),
+              { disableLogger: true },
+            ),
+          ),
+          (server) => Effect.promise(() => server.dispose()),
+        );
+        const response = yield* Effect.promise(() =>
+          failing.handler(new Request("http://localhost/api/workspaces", { method: "POST" })),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.promise(() => response.json())).toMatchObject({
+          error: "Internal server error",
+        });
+      }),
+    ),
+  ));

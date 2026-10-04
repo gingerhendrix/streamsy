@@ -102,7 +102,7 @@ const create = Effect.gen(function* () {
   const starter = yield* stamp("proj");
   yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
   return workspaceId;
-}).pipe(Effect.orDie, Effect.withSpan("IssueTracker.create"));
+}).pipe(Effect.withSpan("IssueTracker.create"));
 ```
 
 See [Layers and storage](/docs/hosting).
@@ -147,11 +147,11 @@ If the API call fails, the action fails and TanStack DB removes the local row.
 
 ## 4. Decode the request in `HttpApi`
 
-The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and three error schemas.
+The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and four error schemas.
 
 ```ts title="shared/api.ts"
 const inWorkspace = { ws: WorkspaceId };
-const writeErrors = [BadRequest, NotFound, Conflict];
+const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
 // ...
 export class IssuesApi extends HttpApiGroup.make("issues").add(
   HttpApiEndpoint.post("create", "/w/:ws/issues", {
@@ -207,7 +207,7 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, createIssue(payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, Effect.mapError(toApiError)),
+        }, apiErrors),
       )
       .handle(
         "update",
@@ -215,23 +215,39 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, updateIssue(params.id, payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, Effect.mapError(toApiError)),
+        }, apiErrors),
       );
   }),
 );
 ```
 
-`toApiError` maps each typed failure from the domain to an HTTP error from the API declaration.
+`apiErrors` maps each typed failure from the domain to an HTTP error from the API declaration.
 
 ```ts title="server/routes/errors.ts"
-export function toApiError(error: DomainError): BadRequest | NotFound | Conflict {
-  return Match.valueTags(error, {
-    WorkspaceNotFound: () => new NotFound({ error: "Unknown workspace" }),
-    IssueNotFound: () => new NotFound({ error: "Issue not found" }),
-    UnknownReference: ({ field }) => new BadRequest({ error: `Unknown ${field}` }),
-    WriteConflict: () => new Conflict({ error: "Concurrent updates, please retry" }),
-  });
-}
+export const apiErrors = <A, R>(handler: Effect.Effect<A, StoreError | DomainError, R>) =>
+  handler.pipe(
+    Effect.catch((error) =>
+      Match.value(error).pipe(
+        Match.tag("WorkspaceNotFound", () =>
+          Effect.fail(new NotFound({ error: "Unknown workspace" })),
+        ),
+        Match.tag("IssueNotFound", () => Effect.fail(new NotFound({ error: "Issue not found" }))),
+        Match.tag("UnknownReference", ({ field }) =>
+          Effect.fail(new BadRequest({ error: `Unknown ${field}` })),
+        ),
+        Match.tag("WriteConflict", () =>
+          Effect.fail(new Conflict({ error: "Concurrent updates, please retry" })),
+        ),
+        Match.orElse((cause) =>
+          Effect.logError(cause).pipe(
+            Effect.andThen(
+              Effect.fail(new InternalServerError({ error: "Internal server error" })),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 ```
 
 ## 5. Read, fold, append
@@ -264,7 +280,7 @@ const view = (state: MaterializedState): WorkspaceState => ({
 });
 ```
 
-`mutate` is the read, decide, append recipe in one `workspaces.decide` call. `decide` folds the stream and passes the state and the offset it read up to. The validation step runs on that state. The change is stamped with that offset, and the append uses the same offset as `expectedOffset`. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. `decide` then folds the new events onto the state and validates again. So each change is checked against the state at the exact position where it lands. A domain failure appends nothing. After three retries the service fails with `WriteConflict`, and the API answers 409. A missing stream becomes `WorkspaceNotFound`. Any other store failure is a defect.
+`mutate` is the read, decide, append recipe in one `workspaces.decide` call. `decide` folds the stream and passes the state and the offset it read up to. The validation step runs on that state. The change is stamped with that offset, and the append uses the same offset as `expectedOffset`. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. `decide` then folds the new events onto the state and validates again. So each change is checked against the state at the exact position where it lands. A domain failure appends nothing. After three retries the service fails with `WriteConflict`, and the API answers 409. A missing stream becomes `WorkspaceNotFound`. Other store failures stay typed, and the API answers 500.
 
 ```ts title="server/issue-tracker.ts"
 const mutate = <A, E>(
@@ -290,10 +306,10 @@ const mutate = <A, E>(
       },
     )
     .pipe(
+      Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
       Effect.catchTag(
-        "OffsetMismatch",
-        () => Effect.fail(new WriteConflict({ workspaceId })),
-        notFoundOrDie(workspaceId),
+        ["StreamNotFound", "StreamGone"],
+        () => new WorkspaceNotFound({ workspaceId }),
       ),
       Effect.flatMap(({ value: answer, offset }) =>
         Effect.map(Effect.fromResult(answer), ({ value }) => ({ value, awaitOffset: offset })),
@@ -429,7 +445,7 @@ const commentsQuery = useLiveQuery((q) => q.from({ comments: db.collections.comm
 - Every write reads and folds the whole workspace. This is fine for a demo workspace. It does not suit a long history.
 - There is no snapshot. A new page load replays every change in the workspace.
 - The retry has no delay. Many writers on one workspace can use all three retries and get a 409.
-- A storage failure other than a moved tail is a defect, and the API answers 500.
+- A storage failure other than a moved tail stays typed, and the API answers 500.
 - The memory store lasts for one server process. Use `ISSUE_TRACKER_DB` to keep workspaces.
 - A workspace link is a random id. It is not access control. Anyone with the link can read and write the workspace.
 - The demo has no hosted deployment.

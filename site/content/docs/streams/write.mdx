@@ -123,7 +123,7 @@ const reserve = (sku: string) =>
 
 `fold` returns the folded state and the tail it read up to. That tail is the `expectedOffset`. A competing writer moves the tail, so the append fails and the retry reads again. To give one writer ownership of a stream, use a producer epoch.
 
-The append's error type follows its options. Only an append with `expectedOffset` can fail with `OffsetMismatch`, and only an append with `producer` can fail with `StaleEpoch`, `ProducerGap` or `InvalidEpochSeq`. An append needs at least one item, unless it sets `close: true`.
+The append's `AppendFailure<O>` type follows its options. Only an append with `expectedOffset` can fail with `OffsetMismatch`, and only an append with `producer` can fail with `StaleEpoch` or `ProducerGap`. An append needs at least one item, unless it sets `close: true`.
 
 `expectedOffset` is a Streamsy extension to the protocol. See [Extensions](/docs/http/routes#extensions).
 
@@ -170,6 +170,10 @@ On a Durable State stream, pass the offset to `DurableState.changes`, so each ch
 To project a stream into state and then append, see [Read, decide, append](/docs/projections/state#read-decide-append).
 
 ## Errors
+
+`AppendFailure<O>` includes protocol rejections, `StreamsFault`, and `EncodeFault`. `create` and `fork` use `CreateFailure`; `remove` uses `RemoveFailure`. Import these types from `@streamsy/core`.
+
+Caller bugs are defects in toolkit `append`: `InvalidAppendRequest`, `InvalidEpochSeq`, and rejections ruled out by its options. An empty encoded bytes item dies with a `RangeError` before the write. The protocol writer and HTTP edge keep all append rejections typed.
 
 | Error            | When                                                             |
 | ---------------- | ---------------------------------------------------------------- |

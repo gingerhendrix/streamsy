@@ -1,6 +1,7 @@
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
-import { Array, Effect, Predicate, Option } from "effect";
+import { Array, Effect, Option } from "effect";
+import { isStreamsFault } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
@@ -118,11 +119,7 @@ export const producer = pin(
                 (cause) =>
                   new ProjectionFault({
                     phase: "pin",
-                    reason:
-                      Predicate.isTagged(cause, "StorageFault") ||
-                      Predicate.isTagged(cause, "TransportFault")
-                        ? "storage-failure"
-                        : "invalid-output",
+                    reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
                     message: `Cannot prepare output ${output.address.id}`,
                     cause,
                   }),

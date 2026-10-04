@@ -147,7 +147,7 @@ for (const exhaust of [false, true]) {
         expect(stats.polling).toBe(false);
         expect(stats.lastPollCompletedAt).toBeDefined();
         if (exhaust) {
-          expect(stats.lastPollError).toContain("OffsetMismatch");
+          expect(stats.lastPollError).toContain("not at the expected");
           expect(await h.read()).toHaveLength(4);
         } else {
           expect(stats.lastPollError).toBeUndefined();

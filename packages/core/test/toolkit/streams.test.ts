@@ -5,6 +5,8 @@ import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import {
+  InvalidAppendRequest,
+  InvalidEpochSeq,
   OffsetMismatch,
   StaleEpoch,
   StreamClosed,
@@ -113,7 +115,9 @@ it("collect fails with the read error of a missing stream", () =>
 
 const unused = () => Effect.die(new Error("unused"));
 /** A writer whose append always fails with one rejection. */
-const rejecting = (error: OffsetMismatch | StaleEpoch | StreamClosed) => {
+const rejecting = (
+  error: OffsetMismatch | StaleEpoch | StreamClosed | InvalidAppendRequest | InvalidEpochSeq,
+) => {
   const writer: Writer<StreamsFault> = {
     create: unused,
     fork: unused,
@@ -130,7 +134,7 @@ const producer = { producerId: "p", producerEpoch: 1, producerSeq: 0 };
 /** Run one append against a writer that answers with `error`. */
 const answer = <A, E>(
   program: Effect.Effect<A, E, StreamsWriter>,
-  error: OffsetMismatch | StaleEpoch | StreamClosed,
+  error: OffsetMismatch | StaleEpoch | StreamClosed | InvalidAppendRequest | InvalidEpochSeq,
 ) => program.pipe(Effect.provide(rejecting(error)));
 
 it("append keeps a rejection that its options make possible", () =>
@@ -357,5 +361,52 @@ it("decide does not retry an OffsetMismatch that its own decide raises", () =>
       expect(failure).toBe(own);
       expect(decisions).toBe(1);
       expect(appends.count).toBe(0);
+    }),
+  ));
+
+for (const error of [
+  new InvalidAppendRequest({ id, message: "malformed request" }),
+  new InvalidEpochSeq({ id }),
+]) {
+  it(`append dies on a host answer of ${error.name}, even with producer options`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        for (const options of [{}, { producer }] as const) {
+          const exit = yield* Effect.exit(
+            answer(Streams.append(address, [{ n: 1 }], options), error),
+          );
+          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
+        }
+      }),
+    ));
+}
+
+it("append rejects each empty encoded bytes item before any write", () =>
+  run(
+    Effect.gen(function* () {
+      const bytes = StreamAddress.bytes("bytes");
+      yield* Streams.create(bytes);
+      const { appends, counted } = yield* countingAppends;
+      const empty = new Uint8Array();
+      const nonempty = new Uint8Array([1]);
+      for (const items of [[empty], [nonempty, empty], [empty, nonempty]] as const) {
+        for (const options of [{}, { close: true }] as const) {
+          const exit = yield* Streams.append(bytes, items, options).pipe(
+            Effect.provideService(StreamsWriter, counted),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+          const defect = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+          expect(defect).toBeInstanceOf(RangeError);
+          expect(defect).toMatchObject({ message: "Cannot append an empty bytes item to bytes" });
+        }
+      }
+      expect(appends.count).toBe(0);
+      // A close-only append has no encoded item and remains valid.
+      yield* Streams.append(bytes, [], { close: true }).pipe(
+        Effect.provideService(StreamsWriter, counted),
+      );
+      expect(appends.count).toBe(1);
     }),
   ));

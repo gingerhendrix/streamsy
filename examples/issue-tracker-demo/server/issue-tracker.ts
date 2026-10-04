@@ -1,6 +1,23 @@
 import { MaterializedState } from "@durable-streams/state";
-import { ZERO_OFFSET } from "@streamsy/core";
-import { Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from "effect";
+import {
+  ZERO_OFFSET,
+  type ReadFailure,
+  type AppendFailure,
+  type CreateFailure,
+  type StreamNotFound,
+  type StreamGone,
+  type OffsetMismatch,
+} from "@streamsy/core";
+import {
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Result,
+  Schema,
+  type PlatformError,
+} from "effect";
 import type { Issue, Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
 import {
@@ -45,16 +62,39 @@ export class IssueTracker extends Context.Service<
   IssueTracker,
   {
     /** Fold one workspace from its durable stream. */
-    readonly materialize: (workspaceId: string) => Effect.Effect<Materialized, WorkspaceNotFound>;
+    readonly materialize: (
+      workspaceId: string,
+    ) => Effect.Effect<
+      Materialized,
+      WorkspaceNotFound | Exclude<ReadFailure, StreamNotFound | StreamGone>
+    >;
     /** Read, decide, append with `Workspaces.decide`; a lost race is retried three times. */
     readonly mutate: <A, E>(
       workspaceId: string,
       attempt: (state: WorkspaceState) => Effect.Effect<Mutation<A>, E>,
-    ) => Effect.Effect<Appended<A>, E | WorkspaceNotFound | WriteConflict>;
+    ) => Effect.Effect<
+      Appended<A>,
+      | E
+      | WorkspaceNotFound
+      | WriteConflict
+      | Exclude<
+          ReadFailure | AppendFailure<{ expectedOffset: string }>,
+          StreamNotFound | StreamGone | OffsetMismatch
+        >
+    >;
     /** Create a shared workspace with a starter project and return its id. */
-    readonly create: Effect.Effect<string>;
+    readonly create: Effect.Effect<
+      string,
+      CreateFailure | AppendFailure<{ expectedOffset: string }> | PlatformError.PlatformError
+    >;
     /** Ensure and seed the known demo workspace. */
-    readonly seed: Effect.Effect<void>;
+    readonly seed: Effect.Effect<
+      void,
+      | CreateFailure
+      | AppendFailure<{ expectedOffset: string }>
+      | Exclude<ReadFailure, StreamNotFound | StreamGone>
+      | WorkspaceNotFound
+    >;
     /** Choose the id, time and txid for one write. */
     readonly stamp: (prefix: string, txid?: string) => Effect.Effect<Stamp>;
   }
@@ -89,16 +129,15 @@ export const IssueTrackerLive = Layer.effect(
         expectedOffset: head,
       });
 
-    // A missing workspace is typed; any other store failure is a defect.
-    const notFoundOrDie = (workspaceId: string) => (error: { readonly _tag: string }) =>
-      Predicate.isTagged(error, "StreamNotFound") || Predicate.isTagged(error, "StreamGone")
-        ? Effect.fail(new WorkspaceNotFound({ workspaceId }))
-        : Effect.die(error);
-
     const materialize = Effect.fn("IssueTracker.materialize")(function* (workspaceId: string) {
       const { state, offset } = yield* workspaces
         .fold({ workspaceId }, () => new MaterializedState(), fold)
-        .pipe(Effect.catch(notFoundOrDie(workspaceId)));
+        .pipe(
+          Effect.catchTag(
+            ["StreamNotFound", "StreamGone"],
+            () => new WorkspaceNotFound({ workspaceId }),
+          ),
+        );
       return { state: view(state), headOffset: offset };
     });
 
@@ -125,10 +164,10 @@ export const IssueTrackerLive = Layer.effect(
           },
         )
         .pipe(
+          Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
           Effect.catchTag(
-            "OffsetMismatch",
-            () => Effect.fail(new WriteConflict({ workspaceId })),
-            notFoundOrDie(workspaceId),
+            ["StreamNotFound", "StreamGone"],
+            () => new WorkspaceNotFound({ workspaceId }),
           ),
           Effect.flatMap(({ value: answer, offset }) =>
             Effect.map(Effect.fromResult(answer), ({ value }) => ({ value, awaitOffset: offset })),
@@ -143,7 +182,7 @@ export const IssueTrackerLive = Layer.effect(
       const starter = yield* stamp("proj");
       yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
       return workspaceId;
-    }).pipe(Effect.orDie, Effect.withSpan("IssueTracker.create"));
+    }).pipe(Effect.withSpan("IssueTracker.create"));
 
     const seed = Effect.gen(function* () {
       yield* workspaces.create({ workspaceId: mainWorkspaceId });
@@ -153,7 +192,7 @@ export const IssueTrackerLive = Layer.effect(
       for (const change of mainWorkspaceSeed(yield* stamp("seed"))) {
         head = (yield* append(mainWorkspaceId, change, head)).offset;
       }
-    }).pipe(Effect.orDie, Effect.withSpan("IssueTracker.seed"));
+    }).pipe(Effect.withSpan("IssueTracker.seed"));
 
     return IssueTracker.of({ materialize, mutate, create, seed, stamp });
   }),

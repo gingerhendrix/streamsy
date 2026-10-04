@@ -21,7 +21,7 @@
  *    offset *is* the projection's notion of time.
  */
 
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import type {
   AttackRecord,
   ContinentBonus,
@@ -199,8 +199,8 @@ export interface ProjectionState {
 }
 
 /**
- * Thrown by the pure reducer when canonical history contradicts itself, mirroring
- * the aggregate's `AggregateIntegrityError`. The `board` fold moves it to the typed
+ * Returned by the pure reducer when canonical history contradicts itself, mirroring
+ * the aggregate's `AggregateIntegrityError`. The `board` fold uses it in the typed
  * error channel, so `Projection.run` fails with it and the checkpoint stays at the
  * previous cut: a corrupt stream must not fold into a plausible-looking board.
  */
@@ -227,10 +227,14 @@ function findPlayer(state: ProjectionState, id: string): ProjectedPlayer | undef
   return state.players.find((p) => p.id === id);
 }
 
-function findTerritory(state: ProjectionState, id: string): ProjectedTerritory {
+function findTerritory(
+  state: ProjectionState,
+  id: string,
+): Result.Result<ProjectedTerritory, ProjectionIntegrityError> {
   const territory = state.territories.find((t) => t.id === id);
-  if (!territory) throw new ProjectionIntegrityError({ message: `unknown territory ${id}` });
-  return territory;
+  if (!territory)
+    return Result.fail(new ProjectionIntegrityError({ message: `unknown territory ${id}` }));
+  return Result.succeed(territory);
 }
 
 /** Recompute the roster totals and continent controllers after any ownership change. */
@@ -290,203 +294,216 @@ function turnIdOf(round: number, playerId: string): string {
   return `round-${round}:${playerId}`;
 }
 
-function requirePendingCombat(state: ProjectionState, attackId: string): ProjectedCombat {
+function requirePendingCombat(
+  state: ProjectionState,
+  attackId: string,
+): Result.Result<ProjectedCombat, ProjectionIntegrityError> {
   const combat = state.combat;
   if (!combat || combat.attackId !== attackId || combat.status !== "awaiting-defense") {
-    throw new ProjectionIntegrityError({
-      message: `AttackResolved ${attackId} does not match a pending declaration`,
-    });
+    return Result.fail(
+      new ProjectionIntegrityError({
+        message: `AttackResolved ${attackId} does not match a pending declaration`,
+      }),
+    );
   }
-  return combat;
+  return Result.succeed(combat);
 }
 
-function applyEvent(state: ProjectionState, event: GameEvent): void {
-  switch (event.type) {
-    case "GameCreated": {
-      state.game.id = event.gameId;
-      state.game.hostPlayerId = event.hostPlayerId;
-      state.game.mapVersion = event.mapVersion;
-      state.game.generatorVersion = event.generatorVersion;
-      state.game.mapSeed = event.mapSeed;
-      state.players.push({
-        id: event.hostPlayerId,
-        name: event.hostName,
-        color: event.hostColor,
-        controller: event.hostController,
-        eliminated: false,
-        territoryCount: 0,
-        armyCount: 0,
-      });
-      break;
-    }
-    case "PlayerJoined": {
-      state.players.push({
-        id: event.playerId,
-        name: event.name,
-        color: event.color,
-        controller: event.controller,
-        eliminated: false,
-        territoryCount: 0,
-        armyCount: 0,
-      });
-      break;
-    }
-    case "PlayerControllerChanged": {
-      const player = state.players.find((candidate) => candidate.id === event.playerId);
-      if (player) player.controller = event.controller;
-      break;
-    }
-    case "PlayerRenamed": {
-      const player = state.players.find((candidate) => candidate.id === event.playerId);
-      if (player) player.name = event.name;
-      break;
-    }
-    case "PlayerLeft": {
-      // Drop the seat from `players`. The move feed keeps its name (see `moveDetail`).
-      state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
-      break;
-    }
-    case "GameStarted": {
-      state.game.status = "playing";
-      state.game.round = event.round;
-      insertMapRows(state, event.map);
-      const armiesById = new Map(event.initialTerritories.map((t) => [t.territoryId, t]));
-      for (const territory of state.territories) {
-        const initial = armiesById.get(territory.id);
-        if (!initial) {
-          throw new ProjectionIntegrityError({
-            message: `GameStarted omits territory ${territory.id}`,
-          });
-        }
-        territory.ownerId = initial.ownerId;
-        territory.armies = initial.armies;
+function applyEvent(
+  state: ProjectionState,
+  event: GameEvent,
+): Result.Result<void, ProjectionIntegrityError> {
+  return Result.gen(function* () {
+    switch (event.type) {
+      case "GameCreated": {
+        state.game.id = event.gameId;
+        state.game.hostPlayerId = event.hostPlayerId;
+        state.game.mapVersion = event.mapVersion;
+        state.game.generatorVersion = event.generatorVersion;
+        state.game.mapSeed = event.mapSeed;
+        state.players.push({
+          id: event.hostPlayerId,
+          name: event.hostName,
+          color: event.hostColor,
+          controller: event.hostController,
+          eliminated: false,
+          territoryCount: 0,
+          armyCount: 0,
+        });
+        break;
       }
-      refreshDerivedTotals(state);
-      const first = event.turnOrder[0]!;
-      beginTurn(state, first, turnIdOf(event.round, first));
-      break;
-    }
-    case "ArmiesReinforced": {
-      findTerritory(state, event.territoryId).armies += event.armies;
-      if (state.turn) {
-        state.turn.reinforcement.remaining -= event.armies;
-        state.turn.reinforcementsPlaced += event.armies;
-        if (state.turn.reinforcement.remaining <= 0) {
-          state.game.phase = "attack";
-          state.turn.phase = "attack";
-        }
+      case "PlayerJoined": {
+        state.players.push({
+          id: event.playerId,
+          name: event.name,
+          color: event.color,
+          controller: event.controller,
+          eliminated: false,
+          territoryCount: 0,
+          armyCount: 0,
+        });
+        break;
       }
-      refreshDerivedTotals(state);
-      break;
-    }
-    case "AttackDeclared": {
-      state.combat = {
-        id: COMBAT_ROW_KEY,
-        attackId: event.attackId,
-        turnId: event.turnId,
-        status: "awaiting-defense",
-        attackerId: event.attackerId,
-        defenderId: event.defenderId,
-        from: event.from,
-        to: event.to,
-        attackerDice: event.attackerDice,
-        attackerRolls: event.attackerRolls.slice(),
-        defenderDice: event.defenderDice,
-        declaredAt: event.declaredAt,
-        defenseDeadlineAt: event.defenseDeadlineAt,
-      };
-      if (state.turn) state.turn.attacksDeclared += 1;
-      break;
-    }
-    case "AttackResolved": {
-      const combat = requirePendingCombat(state, event.attackId);
-      assertResolutionMatches(combat, event);
-
-      const from = findTerritory(state, event.from);
-      const to = findTerritory(state, event.to);
-      from.armies -= event.attackerLosses;
-      to.armies -= event.defenderLosses;
-      refreshDerivedTotals(state);
-
-      if (state.turn) {
-        state.turn.throwsResolved += 1;
-        state.turn.latestDice = {
+      case "PlayerControllerChanged": {
+        const player = state.players.find((candidate) => candidate.id === event.playerId);
+        if (player) player.controller = event.controller;
+        break;
+      }
+      case "PlayerRenamed": {
+        const player = state.players.find((candidate) => candidate.id === event.playerId);
+        if (player) player.name = event.name;
+        break;
+      }
+      case "PlayerLeft": {
+        // Drop the seat from `players`. The move feed keeps its name (see `moveDetail`).
+        state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
+        break;
+      }
+      case "GameStarted": {
+        state.game.status = "playing";
+        state.game.round = event.round;
+        insertMapRows(state, event.map);
+        const armiesById = new Map(event.initialTerritories.map((t) => [t.territoryId, t]));
+        for (const territory of state.territories) {
+          const initial = armiesById.get(territory.id);
+          if (!initial) {
+            return yield* Result.fail(
+              new ProjectionIntegrityError({
+                message: `GameStarted omits territory ${territory.id}`,
+              }),
+            );
+          }
+          territory.ownerId = initial.ownerId;
+          territory.armies = initial.armies;
+        }
+        refreshDerivedTotals(state);
+        const first = event.turnOrder[0]!;
+        beginTurn(state, first, turnIdOf(event.round, first));
+        break;
+      }
+      case "ArmiesReinforced": {
+        (yield* findTerritory(state, event.territoryId)).armies += event.armies;
+        if (state.turn) {
+          state.turn.reinforcement.remaining -= event.armies;
+          state.turn.reinforcementsPlaced += event.armies;
+          if (state.turn.reinforcement.remaining <= 0) {
+            state.game.phase = "attack";
+            state.turn.phase = "attack";
+          }
+        }
+        refreshDerivedTotals(state);
+        break;
+      }
+      case "AttackDeclared": {
+        state.combat = {
+          id: COMBAT_ROW_KEY,
           attackId: event.attackId,
+          turnId: event.turnId,
+          status: "awaiting-defense",
+          attackerId: event.attackerId,
+          defenderId: event.defenderId,
           from: event.from,
           to: event.to,
+          attackerDice: event.attackerDice,
           attackerRolls: event.attackerRolls.slice(),
+          defenderDice: event.defenderDice,
+          declaredAt: event.declaredAt,
+          defenseDeadlineAt: event.defenseDeadlineAt,
+        };
+        if (state.turn) state.turn.attacksDeclared += 1;
+        break;
+      }
+      case "AttackResolved": {
+        const combat = yield* requirePendingCombat(state, event.attackId);
+        yield* assertResolutionMatches(combat, event);
+
+        const from = yield* findTerritory(state, event.from);
+        const to = yield* findTerritory(state, event.to);
+        from.armies -= event.attackerLosses;
+        to.armies -= event.defenderLosses;
+        refreshDerivedTotals(state);
+
+        if (state.turn) {
+          state.turn.throwsResolved += 1;
+          state.turn.latestDice = {
+            attackId: event.attackId,
+            from: event.from,
+            to: event.to,
+            attackerRolls: event.attackerRolls.slice(),
+            defenderRolls: event.defenderRolls.slice(),
+            attackerLosses: event.attackerLosses,
+            defenderLosses: event.defenderLosses,
+            territoryCaptured: event.territoryCaptured,
+            resolutionSource: event.resolutionSource,
+          };
+        }
+
+        if (!event.territoryCaptured) {
+          state.combat = null;
+          break;
+        }
+        state.combat = {
+          ...combat,
+          status: "awaiting-occupation",
           defenderRolls: event.defenderRolls.slice(),
           attackerLosses: event.attackerLosses,
           defenderLosses: event.defenderLosses,
-          territoryCaptured: event.territoryCaptured,
+          territoryCaptured: true,
           resolutionSource: event.resolutionSource,
+          // A capture wins every pair it needed, so the attacker took no losses and
+          // the declared dice count is always a legal minimum garrison.
+          minArmies: combat.attackerDice,
+          maxArmies: from.armies - 1,
         };
+        break;
       }
-
-      if (!event.territoryCaptured) {
+      case "TerritoryOccupied": {
+        const from = yield* findTerritory(state, event.from);
+        const to = yield* findTerritory(state, event.to);
+        from.armies -= event.armies;
+        to.ownerId = event.playerId;
+        to.armies = event.armies;
+        refreshDerivedTotals(state);
+        if (state.turn) state.turn.captures += 1;
+        // The canonical projection clears combat immediately; a client may keep the
+        // last resolved throw locally for its reveal animation.
         state.combat = null;
         break;
       }
-      state.combat = {
-        ...combat,
-        status: "awaiting-occupation",
-        defenderRolls: event.defenderRolls.slice(),
-        attackerLosses: event.attackerLosses,
-        defenderLosses: event.defenderLosses,
-        territoryCaptured: true,
-        resolutionSource: event.resolutionSource,
-        // A capture wins every pair it needed, so the attacker took no losses and
-        // the declared dice count is always a legal minimum garrison.
-        minArmies: combat.attackerDice,
-        maxArmies: from.armies - 1,
-      };
-      break;
-    }
-    case "TerritoryOccupied": {
-      const from = findTerritory(state, event.from);
-      const to = findTerritory(state, event.to);
-      from.armies -= event.armies;
-      to.ownerId = event.playerId;
-      to.armies = event.armies;
-      refreshDerivedTotals(state);
-      if (state.turn) state.turn.captures += 1;
-      // The canonical projection clears combat immediately; a client may keep the
-      // last resolved throw locally for its reveal animation.
-      state.combat = null;
-      break;
-    }
-    case "ArmiesFortified": {
-      findTerritory(state, event.from).armies -= event.armies;
-      findTerritory(state, event.to).armies += event.armies;
-      state.game.phase = "fortify";
-      if (state.turn) state.turn.phase = "fortify";
-      refreshDerivedTotals(state);
-      break;
-    }
-    case "PlayerEliminated": {
-      const eliminated = findPlayer(state, event.playerId);
-      if (eliminated) eliminated.eliminated = true;
-      if (state.turn) state.turn.eliminations += 1;
-      break;
-    }
-    case "TurnEnded": {
-      state.game.round = event.round;
-      beginTurn(state, event.nextPlayerId, turnIdOf(event.round, event.nextPlayerId));
-      break;
-    }
-    case "GameWon": {
-      state.game.status = "finished";
-      state.game.winnerId = event.playerId;
-      delete state.game.activePlayerId;
-      delete state.game.phase;
-      state.combat = null;
-      if (state.turn) {
-        delete state.turn.phase;
-        state.turn.reinforcement = { base: 0, continents: [], total: 0, remaining: 0 };
+      case "ArmiesFortified": {
+        (yield* findTerritory(state, event.from)).armies -= event.armies;
+        (yield* findTerritory(state, event.to)).armies += event.armies;
+        state.game.phase = "fortify";
+        if (state.turn) state.turn.phase = "fortify";
+        refreshDerivedTotals(state);
+        break;
       }
-      break;
+      case "PlayerEliminated": {
+        const eliminated = findPlayer(state, event.playerId);
+        if (eliminated) eliminated.eliminated = true;
+        if (state.turn) state.turn.eliminations += 1;
+        break;
+      }
+      case "TurnEnded": {
+        state.game.round = event.round;
+        beginTurn(state, event.nextPlayerId, turnIdOf(event.round, event.nextPlayerId));
+        break;
+      }
+      case "GameWon": {
+        state.game.status = "finished";
+        state.game.winnerId = event.playerId;
+        delete state.game.activePlayerId;
+        delete state.game.phase;
+        state.combat = null;
+        if (state.turn) {
+          delete state.turn.phase;
+          state.turn.reinforcement = { base: 0, continents: [], total: 0, remaining: 0 };
+        }
+        break;
+      }
     }
-  }
+    return undefined;
+  });
 }
 
 /**
@@ -496,7 +513,7 @@ function applyEvent(state: ProjectionState, event: GameEvent): void {
 function assertResolutionMatches(
   combat: ProjectedCombat,
   event: Extract<GameEvent, { type: "AttackResolved" }>,
-): void {
+): Result.Result<void, ProjectionIntegrityError> {
   const sameRolls =
     combat.attackerRolls.length === event.attackerRolls.length &&
     combat.attackerRolls.every((roll, i) => roll === event.attackerRolls[i]);
@@ -512,10 +529,13 @@ function assertResolutionMatches(
     attackerLosses !== event.attackerLosses ||
     defenderLosses !== event.defenderLosses
   ) {
-    throw new ProjectionIntegrityError({
-      message: `AttackResolved ${event.attackId} contradicts its declaration`,
-    });
+    return Result.fail(
+      new ProjectionIntegrityError({
+        message: `AttackResolved ${event.attackId} contradicts its declaration`,
+      }),
+    );
   }
+  return Result.succeed(undefined);
 }
 
 /** Static map rows, taken verbatim from the canonical `GameStarted` snapshot. */
@@ -632,25 +652,27 @@ export function projectEvent(
   event: GameEvent,
   sourceOffset: string,
   ordinal: number,
-): ProjectionState {
-  const state = structuredClone(previous);
-  applyEvent(state, event);
+): Result.Result<ProjectionState, ProjectionIntegrityError> {
+  return Result.gen(function* () {
+    const state = structuredClone(previous);
+    yield* applyEvent(state, event);
 
-  const playerId = movePlayerId(event);
-  const move: ProjectedMove = {
-    id: moveId(ordinal),
-    commandId: event.commandId,
-    kind: event.type,
-    sourceOffset,
-    ...moveDetail(event, previous),
-  };
-  if (playerId !== undefined) move.playerId = playerId;
-  state.moves.push(move);
-  if (state.moves.length > MOVE_FEED_LIMIT) {
-    state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);
-  }
-  state.sourceThroughOffset = sourceOffset;
-  return state;
+    const playerId = movePlayerId(event);
+    const move: ProjectedMove = {
+      id: moveId(ordinal),
+      commandId: event.commandId,
+      kind: event.type,
+      sourceOffset,
+      ...moveDetail(event, previous),
+    };
+    if (playerId !== undefined) move.playerId = playerId;
+    state.moves.push(move);
+    if (state.moves.length > MOVE_FEED_LIMIT) {
+      state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);
+    }
+    state.sourceThroughOffset = sourceOffset;
+    return state;
+  });
 }
 
 /** Lexicographically ordered move key, so ids sort in canonical event order. */
@@ -658,12 +680,16 @@ export function moveId(ordinal: number): string {
   return String(ordinal).padStart(16, "0");
 }
 
-export function projectEvents(events: readonly GameEvent[]): ProjectionState {
-  let state = initialProjection();
-  for (let index = 0; index < events.length; index += 1) {
-    state = projectEvent(state, events[index]!, String(index), index);
-  }
-  return state;
+export function projectEvents(
+  events: readonly GameEvent[],
+): Result.Result<ProjectionState, ProjectionIntegrityError> {
+  return Result.gen(function* () {
+    let state = initialProjection();
+    for (let index = 0; index < events.length; index += 1) {
+      state = yield* projectEvent(state, events[index]!, String(index), index);
+    }
+    return state;
+  });
 }
 
 // ---------------------------------------------------------------------------
