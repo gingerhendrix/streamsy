@@ -1,5 +1,5 @@
 import { BunCrypto } from "@effect/platform-bun";
-import { MemoryStorage, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Layer, Ref, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
@@ -168,3 +168,23 @@ test("a domain failure is answered at once, not retried", async () => {
   expect(failure).toMatchObject({ _tag: "UnknownReference", field: "projectId" });
   expect(attempts).toBe(1);
 });
+
+test("materialize and mutate preserve operational failures in the error channel", () =>
+  runWithStore(
+    Effect.gen(function* () {
+      const workspaces = yield* Workspaces;
+      const fault = new StorageFault({ operation: "read", message: "store busy", retryable: true });
+      const tracker = yield* IssueTracker.pipe(
+        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+        Effect.provideService(Workspaces, {
+          ...workspaces,
+          fold: () => Effect.fail(fault),
+          decide: () => Effect.fail(fault),
+        }),
+      );
+      expect(yield* Effect.flip(tracker.materialize(workspaceId))).toBe(fault);
+      expect(
+        yield* Effect.flip(tracker.mutate(workspaceId, () => Effect.die("must not decide"))),
+      ).toBe(fault);
+    }),
+  ));

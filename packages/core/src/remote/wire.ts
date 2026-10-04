@@ -24,7 +24,11 @@ export const failure = (
   reason: FaultReason,
   message: string,
   cause?: unknown,
-): TransportFault => new TransportFault({ operation, reason, message, cause });
+  status?: number,
+): TransportFault =>
+  status === undefined
+    ? new TransportFault({ operation, reason, message, cause })
+    : new TransportFault({ operation, reason, message, cause, status });
 
 export const header = (response: HttpResponse, name: string): string | undefined =>
   response.headers[name];
@@ -37,7 +41,15 @@ export const closedHeader = (
   const value = header(response, "stream-closed");
   if (value === undefined || value === "true" || value === "false")
     return Effect.succeed(value === "true");
-  return Effect.fail(failure(operation, "response", `Invalid stream-closed header: ${value}`));
+  return Effect.fail(
+    failure(
+      operation,
+      "response",
+      `Invalid stream-closed header: ${value}`,
+      undefined,
+      response.status,
+    ),
+  );
 };
 
 export const upToDate = (response: HttpResponse): boolean =>
@@ -54,7 +66,13 @@ export const optionalOffset = (
   if (value === undefined) return Effect.succeed(undefined);
   if (!OFFSET.test(value))
     return Effect.fail(
-      failure(operation, "response", `Invalid stream-next-offset header: ${value}`),
+      failure(
+        operation,
+        "response",
+        `Invalid stream-next-offset header: ${value}`,
+        undefined,
+        response.status,
+      ),
     );
   return Effect.succeed(value);
 };
@@ -66,7 +84,15 @@ export const offset = (
   optionalOffset(operation, response).pipe(
     Effect.flatMap((value) =>
       value === undefined
-        ? Effect.fail(failure(operation, "response", "Missing stream-next-offset header"))
+        ? Effect.fail(
+            failure(
+              operation,
+              "response",
+              "Missing stream-next-offset header",
+              undefined,
+              response.status,
+            ),
+          )
         : Effect.succeed(value),
     ),
   );
@@ -77,9 +103,19 @@ export const contentType = (
 ): Effect.Effect<string, TransportFault> => {
   const value = header(response, "content-type");
   if (value === undefined)
-    return Effect.fail(failure(operation, "response", "Missing content-type header"));
+    return Effect.fail(
+      failure(operation, "response", "Missing content-type header", undefined, response.status),
+    );
   if (!CONTENT_TYPE.test(value))
-    return Effect.fail(failure(operation, "response", `Invalid content-type header: ${value}`));
+    return Effect.fail(
+      failure(
+        operation,
+        "response",
+        `Invalid content-type header: ${value}`,
+        undefined,
+        response.status,
+      ),
+    );
   return Effect.succeed(value);
 };
 
@@ -109,7 +145,9 @@ export const body = (
       }
       return bytes;
     }),
-    Effect.mapError((cause) => failure(operation, "decode", "Cannot read response body", cause)),
+    Effect.mapError((cause) =>
+      failure(operation, "decode", "Cannot read response body", cause, response.status),
+    ),
   );
 
 export const text = (operation: string, bytes: Uint8Array): Effect.Effect<string, TransportFault> =>
@@ -135,6 +173,8 @@ export const unexpectedWith = (
     operation,
     "response",
     trimmed === "" ? `Unexpected HTTP ${status}` : `Unexpected HTTP ${status}: ${trimmed}`,
+    undefined,
+    status,
   );
 };
 

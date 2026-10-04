@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import { BoardState } from "../../src/board/fold.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import { fullGame, longGame } from "../fixtures.ts";
@@ -21,7 +21,7 @@ describe("Hex Domination board projection reducer", () => {
     it(`agrees with the aggregate at every prefix: ${name}`, () => {
       let board = initialProjection("game");
       for (const [index, event] of events.entries()) {
-        board = projectEvent(board, event, String(index), index);
+        board = Result.getOrThrow(projectEvent(board, event, String(index), index));
         expect(
           boardsEqual(
             projectionBoardView(board),
@@ -67,7 +67,7 @@ describe("Hex Domination board projection reducer", () => {
     let declarations = 0;
     let captures = 0;
     for (const [index, event] of fullGame.entries()) {
-      board = projectEvent(board, event, String(index), index);
+      board = Result.getOrThrow(projectEvent(board, event, String(index), index));
       if (event.type === "AttackDeclared") {
         declarations += 1;
         expect(board.turn?.attacksDeclared).toBe(declarations);
@@ -106,7 +106,7 @@ describe("Hex Domination board projection reducer", () => {
     let resets = 0;
     for (const [index, event] of longGame.entries()) {
       const previous = board.turn;
-      board = projectEvent(board, event, String(index), index);
+      board = Result.getOrThrow(projectEvent(board, event, String(index), index));
       const turn = board.turn;
       if (!turn) continue;
       expect(turn.reinforcement.total).toBe(
@@ -132,7 +132,7 @@ describe("Hex Domination board projection reducer", () => {
 
   it("gives each event of a multi-event command a distinct move key", () => {
     const board = fullGame.reduce(
-      (state, event, index) => projectEvent(state, event, "one-boundary", index),
+      (state, event, index) => Result.getOrThrow(projectEvent(state, event, "one-boundary", index)),
       initialProjection("game"),
     );
     expect(board.moves.map((move) => move.id)).toEqual(fullGame.map((_, i) => moveId(i)));

@@ -10,7 +10,7 @@ import { run, type Progress } from "./run.ts";
 export interface FollowOptions extends RunOptions {
   /** Upper bound on one wake wait; default 1000. */
   readonly repairIntervalMs?: number;
-  /** Override the forever, capped exponential storage-failure retry. */
+  /** Override the forever, capped exponential retry for retryable storage failures. */
   readonly retry?: Schedule.Schedule<unknown, unknown>;
 }
 
@@ -120,10 +120,10 @@ export const follow = Effect.fn("Projection.follow")(function* <
   );
   return yield* cycle.pipe(
     Effect.retry({
-      while: (fault) => fault instanceof ProjectionFault && fault.reason === "storage-failure",
+      while: (fault) => fault instanceof ProjectionFault && fault.retryable,
       schedule: (options.retry ?? (yield* ProjectionRetry)).pipe(
         Schedule.tap(({ input }) =>
-          input instanceof ProjectionFault && input.reason === "storage-failure"
+          input instanceof ProjectionFault && input.retryable
             ? Effect.logWarning("Projection.follow retry", input)
             : Effect.void,
         ),

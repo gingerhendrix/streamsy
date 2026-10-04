@@ -1,10 +1,10 @@
 import { BunCrypto, BunHttpServer } from "@effect/platform-bun";
-import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Streamsy, StorageFault } from "@streamsy/core";
 import { afterAll, describe, expect, test } from "bun:test";
-import { Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
-import { IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
+import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import { Workspaces } from "../../server/streams.ts";
 
 // The same API layers as the server, served in process over a memory store.
@@ -132,4 +132,35 @@ describe("successful writes", () => {
     expect(status).toBe(201);
     expect(body.id).toMatch(/^[a-z0-9]{10}$/);
   });
+});
+
+test("an operational failure is logged and answered as 500", async () => {
+  const fault = new StorageFault({ operation: "read", message: "store busy", retryable: true });
+  const failingTracker = Layer.effect(
+    IssueTracker,
+    Effect.map(IssueTracker, (tracker) => ({
+      ...tracker,
+      mutate: () => Effect.fail(fault),
+    })),
+  ).pipe(
+    Layer.provide(IssueTrackerLive),
+    Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+  );
+  const failing = HttpRouter.toWebHandler(
+    ApiLive.pipe(Layer.provide(failingTracker), Layer.provide(BunHttpServer.layerHttpServices)),
+    { disableLogger: true },
+  );
+  try {
+    const response = await failing.handler(
+      new Request("http://localhost/api/w/main/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ error: "Internal server error" });
+  } finally {
+    await failing.dispose();
+  }
 });

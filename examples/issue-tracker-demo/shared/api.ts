@@ -11,6 +11,7 @@ import {
   CommentInput,
   CommentWritten,
   Conflict,
+  InternalServerError,
   IssueInput,
   IssueWritten,
   NotFound,
@@ -27,7 +28,7 @@ export class RequestErrors extends HttpApiMiddleware.Service<RequestErrors>()(
 ) {}
 
 const inWorkspace = { ws: WorkspaceId };
-const writeErrors = [BadRequest, NotFound, Conflict];
+const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
 
 export class WorkspacesApi extends HttpApiGroup.make("workspaces").add(
   HttpApiEndpoint.post("create", "/workspaces", {

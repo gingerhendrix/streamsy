@@ -15,7 +15,7 @@ import {
   type Scope,
 } from "effect";
 import { TestClock } from "effect/testing";
-import { TransportFault, type StreamsFault } from "@streamsy/core";
+import { StorageFault, TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
@@ -292,6 +292,7 @@ for (const point of ["read", "append"] as const) {
         let failures = 0;
         const lost = new TransportFault({
           reason: "response",
+          status: 503,
           operation: point,
           message: "lost reply",
         });
@@ -485,6 +486,33 @@ for (const explicit of [false, true]) {
         // run stays single-shot: one read, no retry.
         yield* Projection.run(positives).pipe(FamilyFixture.provideReader(broken), Effect.result);
         expect(attempts).toBe(explicit ? 4 : 2);
+      }),
+    ));
+}
+
+for (const cause of [
+  new StorageFault({ operation: "read", message: "store closed", retryable: false }),
+  new TransportFault({ operation: "read", reason: "configuration", message: "bad URL" }),
+]) {
+  test(`follow stops on a storage failure with a non-retryable ${cause.name} cause`, () =>
+    run(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        let reads = 0;
+        const fiber = yield* withReader(
+          Projection.follow(positives, { retry: Schedule.recurs(3) }),
+          () => ({
+            read: () =>
+              Effect.suspend(() => {
+                reads += 1;
+                return Effect.fail(cause);
+              }),
+          }),
+        );
+        const failure = yield* Effect.flip(Fiber.join(fiber));
+        expect(failure).toBeInstanceOf(ProjectionFault);
+        expect(failure).toMatchObject({ reason: "storage-failure", cause, retryable: false });
+        expect(reads).toBe(1);
       }),
     ));
 }

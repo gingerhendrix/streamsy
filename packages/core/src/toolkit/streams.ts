@@ -1,7 +1,7 @@
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import type { LazyArg } from "effect/Function";
 import { Duration, Effect, Option, Predicate, Result, Schedule, Schema, Stream } from "effect";
-import { DecodeFault, EncodeFault, type StreamsFault } from "../fault.ts";
+import { DecodeFault, EncodeFault, isRetryableFault, type StreamsFault } from "../fault.ts";
 import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import type { AppendError, AppendErrorFor, OffsetMismatch } from "../protocol/errors.ts";
@@ -283,7 +283,7 @@ const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
 });
 export interface FollowOptions extends ReadOptions {
   /**
-   * Schedule for retrying a failed read after a `TransportFault` or `StorageFault`.
+   * Schedule for retrying a failed read after a retryable `TransportFault` or `StorageFault`.
    * Default: exponential from 200 ms, jittered, capped at 30 s, forever. Other
    * failures end the stream at once.
    */
@@ -300,8 +300,6 @@ const defaultFollowRetry = Schedule.exponential("200 millis").pipe(
   // Jitter ranges up to 1.2; clamp again so actual waits never exceed 30 s.
   capAt30Seconds,
 );
-const isStreamsFault = (error: { readonly _tag: string }) =>
-  Predicate.isTagged(error, "TransportFault") || Predicate.isTagged(error, "StorageFault");
 
 interface FollowState {
   readonly offset: string | undefined;
@@ -311,7 +309,7 @@ interface FollowState {
 }
 /**
  * Catch up, then wait one readNext at a time, filtering empty open batches.
- * A read that fails with a transport or storage fault is retried from the same
+ * A read that fails with a retryable transport or storage fault is retried from the same
  * offset, so a restart or network drop yields each item once.
  */
 export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: FollowOptions = {}) {
@@ -319,9 +317,9 @@ export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: Fo
   const retrying = <T, E extends { readonly _tag: string }, R>(read: Effect.Effect<T, E, R>) =>
     read.pipe(
       Effect.tapError((error) =>
-        isStreamsFault(error) ? Effect.logWarning("Streams.follow retry", error) : Effect.void,
+        isRetryableFault(error) ? Effect.logWarning("Streams.follow retry", error) : Effect.void,
       ),
-      Effect.retry({ while: isStreamsFault, schedule: retry }),
+      Effect.retry({ while: isRetryableFault, schedule: retry }),
     );
   return Stream.unwrap(
     Effect.gen(function* () {

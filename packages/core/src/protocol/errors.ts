@@ -4,34 +4,66 @@ import { StreamId } from "../schema/index.ts";
 /** Protocol rejections. Optional create reasons reflect the public HTTP wire's loss of detail. */
 export class StreamNotFound extends Schema.TaggedError<StreamNotFound>()("StreamNotFound", {
   id: StreamId,
-}) {}
-export class StreamGone extends Schema.TaggedError<StreamGone>()("StreamGone", { id: StreamId }) {}
+}) {
+  override get message(): string {
+    return `Stream ${this.id} was not found`;
+  }
+}
+export class StreamGone extends Schema.TaggedError<StreamGone>()("StreamGone", { id: StreamId }) {
+  override get message(): string {
+    return `Stream ${this.id} was deleted`;
+  }
+}
 export class StreamClosed extends Schema.TaggedError<StreamClosed>()("StreamClosed", {
   id: StreamId,
   offset: Schema.String,
-}) {}
+}) {
+  override get message(): string {
+    return `Stream ${this.id} is closed at ${this.offset}`;
+  }
+}
 export class OffsetMismatch extends Schema.TaggedError<OffsetMismatch>()("OffsetMismatch", {
   id: StreamId,
   expected: Schema.String,
   actual: Schema.String,
-}) {}
+}) {
+  override get message(): string {
+    return `Stream ${this.id} is at ${this.actual}, not at the expected ${this.expected}`;
+  }
+}
 export class AppendConflict extends Schema.TaggedError<AppendConflict>()("AppendConflict", {
   id: StreamId,
   message: Schema.String,
 }) {}
-export class StreamBusy extends Schema.TaggedError<StreamBusy>()("StreamBusy", { id: StreamId }) {}
+export class StreamBusy extends Schema.TaggedError<StreamBusy>()("StreamBusy", { id: StreamId }) {
+  override get message(): string {
+    return `Stream ${this.id} is busy; try again`;
+  }
+}
 export class StaleEpoch extends Schema.TaggedError<StaleEpoch>()("StaleEpoch", {
   id: StreamId,
   currentEpoch: Schema.Finite,
-}) {}
+}) {
+  override get message(): string {
+    return `Producer epoch is stale on ${this.id}; the current epoch is ${this.currentEpoch}`;
+  }
+}
 export class ProducerGap extends Schema.TaggedError<ProducerGap>()("ProducerGap", {
   id: StreamId,
   expectedSeq: Schema.Finite,
   receivedSeq: Schema.Finite,
-}) {}
+}) {
+  override get message(): string {
+    return `Producer sequence gap on ${this.id}: expected ${this.expectedSeq}, received ${this.receivedSeq}`;
+  }
+}
 export class InvalidEpochSeq extends Schema.TaggedError<InvalidEpochSeq>()("InvalidEpochSeq", {
   id: StreamId,
-}) {}
+}) {
+  override get message(): string {
+    return `Invalid producer epoch or sequence on ${this.id}`;
+  }
+}
 export class InvalidAppendRequest extends Schema.TaggedError<InvalidAppendRequest>()(
   "InvalidAppendRequest",
   { id: StreamId, message: Schema.String },
@@ -51,7 +83,11 @@ export class CreateConflict extends Schema.TaggedError<CreateConflict>()("Create
 export class ForkSourceNotFound extends Schema.TaggedError<ForkSourceNotFound>()(
   "ForkSourceNotFound",
   { id: StreamId, source: StreamId },
-) {}
+) {
+  override get message(): string {
+    return `Fork source ${this.source} of ${this.id} was not found`;
+  }
+}
 export class InvalidForkRequest extends Schema.TaggedError<InvalidForkRequest>()(
   "InvalidForkRequest",
   { id: StreamId, message: Schema.String },
@@ -59,7 +95,11 @@ export class InvalidForkRequest extends Schema.TaggedError<InvalidForkRequest>()
 export class NotSupported extends Schema.TaggedError<NotSupported>()("NotSupported", {
   id: StreamId,
   feature: Schema.String,
-}) {}
+}) {
+  override get message(): string {
+    return `Stream ${this.id} does not support ${this.feature}`;
+  }
+}
 export type CreateConflictReason = NonNullable<CreateConflict["reason"]>;
 export type HeadError = StreamNotFound | StreamGone;
 export class InvalidReadRequest extends Schema.TaggedError<InvalidReadRequest>()(

@@ -54,3 +54,9 @@ export class Conflict extends Schema.TaggedError<Conflict>()(
   { error: Schema.String },
   { httpApiStatus: 409 },
 ) {}
+
+export class InternalServerError extends Schema.TaggedError<InternalServerError>()(
+  "InternalServerError",
+  { error: Schema.String },
+  { httpApiStatus: 500 },
+) {}

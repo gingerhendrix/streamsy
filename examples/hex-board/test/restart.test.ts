@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Result } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
@@ -82,7 +82,8 @@ const advance = (
     expect((yield* Projection.run(board)).items).toBe(events.length - cut);
     const after = yield* read;
     const pure = events.reduce(
-      (state, event, index) => stepBoard(state, event, index < cut ? before.tail : after.tail),
+      (state, event, index) =>
+        Result.getOrThrow(stepBoard(state, event, index < cut ? before.tail : after.tail)),
       initialBoard({ gameId: "game" }),
     );
     expect(after.state).toEqual(pure);

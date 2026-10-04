@@ -1,7 +1,7 @@
 import { Deferred, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect";
 import type { CheckpointStore } from "@streamsy/projection";
 import type { HackerNewsStories } from "../stories.ts";
-import { errorMessage, nowIso } from "../util.ts";
+import { nowIso } from "../util.ts";
 import {
   HackerNewsApi,
   initialCounters,
@@ -72,7 +72,7 @@ export function makeNewestStoriesPoller(
           patchCounters({
             lastPollError: Predicate.isTagged(failure, "NewestStoriesPoller.PollFailure")
               ? failure.reason
-              : `${failure._tag}: ${errorMessage(failure)}`,
+              : failure.message,
           }).pipe(Effect.andThen(Effect.logError("HN poll failed", failure))),
         ),
         Effect.ensuring(

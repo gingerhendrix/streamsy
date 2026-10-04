@@ -232,7 +232,7 @@ it("follow echoes the cursor from each live read on the next live read", () =>
   ));
 
 const lost = (operation: string) =>
-  new TransportFault({ operation, reason: "response", message: "lost reply" });
+  new TransportFault({ operation, reason: "request", message: "lost reply" });
 
 for (const point of ["read", "readNext"] as const) {
   it(`follow retries a TransportFault on ${point} from the same offset`, () =>
@@ -448,3 +448,31 @@ it("an append without items fails the same way as an empty body on the wire", ()
       });
     }),
   ));
+
+for (const point of ["read", "readNext"] as const) {
+  it(`follow stops with a typed configuration fault on ${point}`, () =>
+    check(
+      Effect.gen(function* () {
+        yield* Streams.create(address);
+        const reader = yield* StreamsReader;
+        let calls = 0;
+        const fault = new TransportFault({
+          operation: point,
+          reason: "configuration",
+          message: "bad URL",
+        });
+        const fail = () =>
+          Effect.suspend(() => {
+            calls += 1;
+            return Effect.fail(fault);
+          });
+        const failure = yield* Streams.follow(address, { retry: Schedule.recurs(3) }).pipe(
+          Stream.runCollect,
+          Effect.provideService(StreamsReader, { ...reader, [point]: fail }),
+          Effect.flip,
+        );
+        expect(failure).toBe(fault);
+        expect(calls).toBe(1);
+      }),
+    ));
+}

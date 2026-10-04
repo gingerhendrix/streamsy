@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { GameEvent } from "../domain/events.ts";
@@ -17,10 +17,15 @@ export const initialBoard = ({ gameId }: { readonly gameId: string }): BoardStat
   board: initialProjection(gameId),
 });
 
-export const stepBoard = (state: BoardState, event: GameEvent, through: string): BoardState => ({
-  ordinal: state.ordinal + 1,
-  board: projectEvent(state.board, event, through, state.ordinal),
-});
+export const stepBoard = (
+  state: BoardState,
+  event: GameEvent,
+  through: string,
+): Result.Result<BoardState, ProjectionIntegrityError> =>
+  Result.map(projectEvent(state.board, event, through, state.ordinal), (board) => ({
+    ordinal: state.ordinal + 1,
+    board,
+  }));
 
 export class GameEvents extends Streamsy.json<GameEvents>()(
   "HexBoard/GameEvents",
@@ -34,9 +39,5 @@ export const board = Projection.fold({
   inputs: { input: GameEvents },
   state: { schema: BoardState, initial: initialBoard },
   fold: (state, { item }, unit) =>
-    Effect.sync(() => stepBoard(state, item, unit.ranges.input.nextOffset)).pipe(
-      Effect.catchDefect((defect) =>
-        Schema.is(ProjectionIntegrityError)(defect) ? Effect.fail(defect) : Effect.die(defect),
-      ),
-    ),
+    Effect.fromResult(stepBoard(state, item, unit.ranges.input.nextOffset)),
 });

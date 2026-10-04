@@ -14,7 +14,9 @@ export {
 export {
   StorageFault,
   TransportFault,
-  type StreamsFault,
+  StreamsFault,
+  isStreamsFault,
+  isRetryableFault,
   EncodeFault,
   DecodeFault,
 } from "./fault.ts";
@@ -28,14 +30,8 @@ export type {
   ReadOptions,
   ReadNextOptions,
 } from "./protocol/options.ts";
-export type {
-  ReadMessage,
-  CreateResult,
-  AppendResult,
-  ReadResult,
-  ReadNextResult,
-  HeadResult,
-} from "./protocol/results.ts";
+export type { ReadMessage, ReadResult, ReadNextResult, HeadResult } from "./protocol/results.ts";
+export { CreateResult, AppendResult } from "./protocol/results.ts";
 export * from "./protocol/errors.ts";
 export * as StreamAddress from "./toolkit/address.ts";
 export * as DurableState from "./toolkit/durable-state.ts";

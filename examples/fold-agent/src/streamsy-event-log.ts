@@ -14,8 +14,14 @@ import {
   type LogEntryInput,
   type SessionId,
 } from "@humanlayer/fold-core";
-import { DecodeFault, StreamGone, StreamNotFound } from "@streamsy/core";
-import { Context, Effect, Layer, Predicate, Schema, Semaphore, Stream } from "effect";
+import {
+  CreateResult,
+  DecodeFault,
+  isStreamsFault,
+  StreamGone,
+  StreamNotFound,
+} from "@streamsy/core";
+import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import {
   Sessions,
   corrupt,
@@ -31,7 +37,7 @@ export interface StreamsyEventLogOptions {
   readonly session: SessionId;
   readonly mode: StreamsyEventLogMode;
 }
-const toFoldError = (error: { readonly _tag: string; readonly message?: string }) => {
+const toFoldError = (error: { readonly _tag: string; readonly message: string }) => {
   if (
     Schema.is(EventLogCorruptEntryError)(error) ||
     Schema.is(EventLogUnavailableError)(error) ||
@@ -42,11 +48,7 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
   if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
   if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
   if (Schema.is(DecodeFault)(error)) return corrupt(error.message);
-  return unavailable(
-    error.message || error._tag,
-    "retryable" in error && error.retryable === true,
-    error,
-  );
+  return unavailable(error.message, isStreamsFault(error) && error.retryable, error);
 };
 
 /** Export the typed constructor for tests, avoiding casts through Fold's unknown-error descriptor. */
@@ -57,10 +59,8 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
-      if (Predicate.isTagged(result, "Exists"))
-        return yield* unavailable(
-          `Stream ${Sessions.address(params).id} already exists or is unavailable: ${result._tag}`,
-        );
+      if (CreateResult.$is("Exists")(result))
+        return yield* unavailable(`Stream ${Sessions.address(params).id} already exists`);
     }
     const history = yield* readHistory(params);
     const decoded = yield* decodeLog(history.items);
