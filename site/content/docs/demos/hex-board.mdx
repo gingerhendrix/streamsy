@@ -88,7 +88,7 @@ export const board = Projection.fold({
 
 `unit.ranges.input` is always present here. The projection has one input, and an empty read never reaches the handler. Every event in a unit gets the same source offset, the end of the unit. Each move gets its own ordinal, and the ordinal is part of the state, so move ids stay unique after a restart.
 
-The pure reducer throws `ProjectionIntegrityError` when the events contradict each other. The fold moves that error to the typed error channel, so `Projection.run` fails with it.
+The pure reducer returns a `Result` with `ProjectionIntegrityError` when the events contradict each other. The fold uses `Effect.fromResult` to move that error to the typed error channel, so `Projection.run` fails with it.
 
 See [State and checkpoints](/docs/projections/state).
 

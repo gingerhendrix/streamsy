@@ -147,7 +147,7 @@ If the API call fails, the action fails and TanStack DB removes the local row.
 
 ## 4. Decode the request in `HttpApi`
 
-The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and three error schemas.
+The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and four error schemas.
 
 ```ts title="shared/api.ts"
 const inWorkspace = { ws: WorkspaceId };
@@ -280,7 +280,7 @@ const view = (state: MaterializedState): WorkspaceState => ({
 });
 ```
 
-`mutate` is the read, decide, append recipe in one `workspaces.decide` call. `decide` folds the stream and passes the state and the offset it read up to. The validation step runs on that state. The change is stamped with that offset, and the append uses the same offset as `expectedOffset`. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. `decide` then folds the new events onto the state and validates again. So each change is checked against the state at the exact position where it lands. A domain failure appends nothing. After three retries the service fails with `WriteConflict`, and the API answers 409. A missing stream becomes `WorkspaceNotFound`. Any other store failure is a defect.
+`mutate` is the read, decide, append recipe in one `workspaces.decide` call. `decide` folds the stream and passes the state and the offset it read up to. The validation step runs on that state. The change is stamped with that offset, and the append uses the same offset as `expectedOffset`. If another request appended first, the tail has moved. The append then writes nothing and fails with `OffsetMismatch`. `decide` then folds the new events onto the state and validates again. So each change is checked against the state at the exact position where it lands. A domain failure appends nothing. After three retries the service fails with `WriteConflict`, and the API answers 409. A missing stream becomes `WorkspaceNotFound`. Other store failures stay typed, and the API answers 500.
 
 ```ts title="server/issue-tracker.ts"
 const mutate = <A, E>(
@@ -445,7 +445,7 @@ const commentsQuery = useLiveQuery((q) => q.from({ comments: db.collections.comm
 - Every write reads and folds the whole workspace. This is fine for a demo workspace. It does not suit a long history.
 - There is no snapshot. A new page load replays every change in the workspace.
 - The retry has no delay. Many writers on one workspace can use all three retries and get a 409.
-- A storage failure other than a moved tail is a defect, and the API answers 500.
+- A storage failure other than a moved tail stays typed, and the API answers 500.
 - The memory store lasts for one server process. Use `ISSUE_TRACKER_DB` to keep workspaces.
 - A workspace link is a random id. It is not access control. Anyone with the link can read and write the workspace.
 - The demo has no hosted deployment.
