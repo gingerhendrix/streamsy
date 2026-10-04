@@ -171,22 +171,27 @@ test("a domain failure is answered at once, not retried", async () => {
 
 test("materialize and mutate preserve operational failures in the error channel", () =>
   runWithStore(
-    Effect.gen(function* () {
-      const workspaces = yield* Workspaces;
-      const fault = new StorageFault({ operation: "read", message: "store busy", retryable: true });
-      const tracker = yield* IssueTracker.pipe(
-        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
-        Effect.provideService(Workspaces, {
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspaces = yield* Workspaces;
+        const fault = new StorageFault({
+          operation: "read",
+          message: "store busy",
+          retryable: true,
+        });
+        const failing = Layer.succeed(Workspaces, {
           ...workspaces,
           fold: () => Effect.fail(fault),
           decide: () => Effect.fail(fault),
-        }),
-      );
-      expect(yield* Effect.flip(tracker.materialize(workspaceId))).toBe(fault);
-      expect(
-        yield* Effect.flip(tracker.mutate(workspaceId, () => Effect.die("must not decide"))),
-      ).toBe(fault);
-    }),
+        });
+        const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
+        const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
+        expect(yield* Effect.flip(tracker.materialize(workspaceId))).toBe(fault);
+        expect(
+          yield* Effect.flip(tracker.mutate(workspaceId, () => Effect.die("must not decide"))),
+        ).toBe(fault);
+      }),
+    ),
   ));
 
 test("create and the seed layer expose typed storage failures", () =>

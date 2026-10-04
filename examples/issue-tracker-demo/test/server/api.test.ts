@@ -134,36 +134,53 @@ describe("successful writes", () => {
   });
 });
 
-test("an operational failure is logged and answered as 500", async () => {
-  const fault = new StorageFault({ operation: "read", message: "store busy", retryable: true });
-  const failingTracker = Layer.effect(
-    IssueTracker,
-    Effect.map(IssueTracker, (tracker) => ({
-      ...tracker,
-      mutate: () => Effect.fail(fault),
-    })),
-  ).pipe(
-    Layer.provide(IssueTrackerLive),
-    Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
-  );
-  const failing = HttpRouter.toWebHandler(
-    ApiLive.pipe(Layer.provide(failingTracker), Layer.provide(BunHttpServer.layerHttpServices)),
-    { disableLogger: true },
-  );
-  try {
-    const response = await failing.handler(
-      new Request("http://localhost/api/w/main/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
+test("an operational failure is logged and answered as 500", () =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fault = new StorageFault({
+          operation: "read",
+          message: "store busy",
+          retryable: true,
+        });
+        const failingTracker = Layer.effect(
+          IssueTracker,
+          Effect.map(IssueTracker, (tracker) => ({
+            ...tracker,
+            mutate: () => Effect.fail(fault),
+          })),
+        ).pipe(
+          Layer.provide(IssueTrackerLive),
+          Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+        );
+        const failing = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            HttpRouter.toWebHandler(
+              ApiLive.pipe(
+                Layer.provide(failingTracker),
+                Layer.provide(BunHttpServer.layerHttpServices),
+              ),
+              { disableLogger: true },
+            ),
+          ),
+          (server) => Effect.promise(() => server.dispose()),
+        );
+        const response = yield* Effect.promise(() =>
+          failing.handler(
+            new Request("http://localhost/api/w/main/projects", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            }),
+          ),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.promise(() => response.json())).toMatchObject({
+          error: "Internal server error",
+        });
       }),
-    );
-    expect(response.status).toBe(500);
-    expect(await response.json()).toMatchObject({ error: "Internal server error" });
-  } finally {
-    await failing.dispose();
-  }
-});
+    ),
+  ));
 
 test("a typed workspace create failure answers 500", () =>
   Effect.runPromise(
