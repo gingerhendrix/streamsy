@@ -267,12 +267,16 @@ Read the board from the start:
 curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
 ```
 
-`server/index.ts` reads the settings with `Config` and launches the server under `BunRuntime.runMain`. On SIGINT or SIGTERM, `Serve.layer` ends live reads before the listener and storage close, and `Serve.teardown` exits 0.
+`server/index.ts` reads the settings with `Config`, builds the storage Layer for the configured database and launches the server under `BunRuntime.runMain`. On SIGINT or SIGTERM, `Serve.layer` ends live reads before the listener and storage close, and `Serve.teardown` exits 0.
 
 ```ts title="server/index.ts"
-    return Serve.layer(app(workspaces), { disableLogger: true }).pipe(
-      Layer.provide(applicationLayer(databasePath, workspaces)),
-      Layer.provideMerge(listener({ port })),
+const Server = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const host = applicationLayer(yield* storage(yield* storageChoice(config)), config.workspaces);
+    return Serve.layer(app(config.workspaces), { disableLogger: true }).pipe(
+      Layer.provide(host),
+      Layer.provideMerge(listener({ port: config.port })),
     );
   }),
 ).pipe(Layer.provide(BunServices.layer));

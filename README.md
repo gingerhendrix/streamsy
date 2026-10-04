@@ -8,12 +8,12 @@ Documentation: [streamsy.dev](https://streamsy.dev)
 
 ## Packages
 
-| Package                                                 | What it gives you                                                          |
-| ------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, `Streams` API, memory Layer, HTTP app, remote client |
-| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                 |
-| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs         |
-| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, action delivery               |
+| Package                                                 | What it gives you                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, stream services, memory Layer, HTTP app, remote client |
+| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                   |
+| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
+| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, action delivery                 |
 
 All packages are version `0.4.0` and require `effect@4.0.0-rc.115`.
 
@@ -25,17 +25,19 @@ bun add @streamsy/core effect
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamAddress, MemoryStorage } from "@streamsy/core";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 
-const events = StreamAddress.json("events", { schema: Schema.String });
+class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
+  params: {},
+  schema: Schema.String,
+}) {}
 const program = Effect.gen(function* () {
-  yield* Streams.create(events);
-
-  yield* Streams.append(events, ["hello"]);
-
-  return yield* Streams.read(events).pipe(Stream.runCollect);
+  const events = yield* Events;
+  yield* events.create({});
+  yield* events.append({}, ["hello"]);
+  return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol())));
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));
 ```
 
 Read the [tutorial](https://streamsy.dev/docs/tutorial) for the path
