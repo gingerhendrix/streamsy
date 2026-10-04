@@ -37,5 +37,18 @@ export * as StreamAddress from "./toolkit/address.ts";
 export * as DurableState from "./toolkit/durable-state.ts";
 export * as Producer from "./toolkit/producer.ts";
 export * as Http from "./http/index.ts";
-export type { Batch, Folded, Collected, Decision, Decided, DecideSpec } from "./toolkit/streams.ts";
+export type {
+  Batch,
+  Folded,
+  Collected,
+  Decision,
+  Decided,
+  DecideSpec,
+  ReadFailure,
+  FollowFailure,
+  AppendFailure,
+  CreateFailure,
+  HeadFailure,
+  RemoveFailure,
+} from "./toolkit/streams.ts";
 export * as Streamsy from "./streamsy.ts";

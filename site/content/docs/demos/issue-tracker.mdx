@@ -102,7 +102,7 @@ const create = Effect.gen(function* () {
   const starter = yield* stamp("proj");
   yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
   return workspaceId;
-}).pipe(Effect.orDie, Effect.withSpan("IssueTracker.create"));
+}).pipe(Effect.withSpan("IssueTracker.create"));
 ```
 
 See [Layers and storage](/docs/hosting).
@@ -151,7 +151,7 @@ The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each
 
 ```ts title="shared/api.ts"
 const inWorkspace = { ws: WorkspaceId };
-const writeErrors = [BadRequest, NotFound, Conflict];
+const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
 // ...
 export class IssuesApi extends HttpApiGroup.make("issues").add(
   HttpApiEndpoint.post("create", "/w/:ws/issues", {
@@ -207,7 +207,7 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, createIssue(payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, Effect.mapError(toApiError)),
+        }, apiErrors),
       )
       .handle(
         "update",
@@ -215,23 +215,39 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, updateIssue(params.id, payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, Effect.mapError(toApiError)),
+        }, apiErrors),
       );
   }),
 );
 ```
 
-`toApiError` maps each typed failure from the domain to an HTTP error from the API declaration.
+`apiErrors` maps each typed failure from the domain to an HTTP error from the API declaration.
 
 ```ts title="server/routes/errors.ts"
-export function toApiError(error: DomainError): BadRequest | NotFound | Conflict {
-  return Match.valueTags(error, {
-    WorkspaceNotFound: () => new NotFound({ error: "Unknown workspace" }),
-    IssueNotFound: () => new NotFound({ error: "Issue not found" }),
-    UnknownReference: ({ field }) => new BadRequest({ error: `Unknown ${field}` }),
-    WriteConflict: () => new Conflict({ error: "Concurrent updates, please retry" }),
-  });
-}
+export const apiErrors = <A, R>(handler: Effect.Effect<A, StoreError | DomainError, R>) =>
+  handler.pipe(
+    Effect.catch((error) =>
+      Match.value(error).pipe(
+        Match.tag("WorkspaceNotFound", () =>
+          Effect.fail(new NotFound({ error: "Unknown workspace" })),
+        ),
+        Match.tag("IssueNotFound", () => Effect.fail(new NotFound({ error: "Issue not found" }))),
+        Match.tag("UnknownReference", ({ field }) =>
+          Effect.fail(new BadRequest({ error: `Unknown ${field}` })),
+        ),
+        Match.tag("WriteConflict", () =>
+          Effect.fail(new Conflict({ error: "Concurrent updates, please retry" })),
+        ),
+        Match.orElse((cause) =>
+          Effect.logError(cause).pipe(
+            Effect.andThen(
+              Effect.fail(new InternalServerError({ error: "Internal server error" })),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 ```
 
 ## 5. Read, fold, append
@@ -290,10 +306,10 @@ const mutate = <A, E>(
       },
     )
     .pipe(
+      Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
       Effect.catchTag(
-        "OffsetMismatch",
-        () => Effect.fail(new WriteConflict({ workspaceId })),
-        notFoundOrDie(workspaceId),
+        ["StreamNotFound", "StreamGone"],
+        () => new WorkspaceNotFound({ workspaceId }),
       ),
       Effect.flatMap(({ value: answer, offset }) =>
         Effect.map(Effect.fromResult(answer), ({ value }) => ({ value, awaitOffset: offset })),

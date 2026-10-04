@@ -117,6 +117,10 @@ A fold over `follow` completes when the stream closes.
 
 ## Errors
 
+`read`, `fold`, and `collect` use `ReadFailure`. `follow` uses `FollowFailure`, which also includes `NotSupported`. `head` uses `HeadFailure`. Import these types from `@streamsy/core`.
+
+`follow` retries only a `StreamsFault` with `retryable: true`, from the same offset. A failed transport request, HTTP 429, or HTTP 5xx is retryable. Other failures end the stream. The default retry is exponential from 200 ms, jittered and capped at 30 s; `retry` sets another schedule.
+
 | Error            | When                               |
 | ---------------- | ---------------------------------- |
 | `StreamNotFound` | The stream does not exist          |

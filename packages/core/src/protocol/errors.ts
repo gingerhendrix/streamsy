@@ -123,10 +123,10 @@ export type AppendBaseError =
   | StreamClosed
   | StreamBusy
   | AppendConflict
-  | InvalidAppendRequest
   | NotSupported;
 export type AppendError =
   | AppendBaseError
+  | InvalidAppendRequest
   | OffsetMismatch
   | StaleEpoch
   | ProducerGap
@@ -139,7 +139,7 @@ export type AppendError =
 export type AppendErrorFor<O> =
   | AppendBaseError
   | (true extends MaySet<O, "expectedOffset"> ? OffsetMismatch : never)
-  | (true extends MaySet<O, "producer"> ? StaleEpoch | ProducerGap | InvalidEpochSeq : never);
+  | (true extends MaySet<O, "producer"> ? StaleEpoch | ProducerGap : never);
 /** Whether options `O` may hold a value for `K`. A union holds it if any member may. */
 type MaySet<O, K extends PropertyKey> = O extends unknown
   ? K extends keyof O

@@ -432,12 +432,14 @@ it("JSON empty close can be retried without a closed conflict", () =>
     }),
   ));
 
-it("an append without items fails the same way as an empty body on the wire", () =>
+it("an append without items dies on the malformed append rejection", () =>
   check(
     Effect.gen(function* () {
       yield* Streams.create(address);
       // @ts-expect-error an append needs items unless it closes
-      expect(yield* Effect.flip(Streams.append(address, []))).toMatchObject({
+      const exit = yield* Effect.exit(Streams.append(address, []));
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
         _tag: "InvalidAppendRequest",
         id: address.id,
         message: "Empty append",

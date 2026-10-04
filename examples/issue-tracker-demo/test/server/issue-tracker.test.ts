@@ -1,8 +1,8 @@
 import { BunCrypto } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Layer, Ref, Stream } from "effect";
-import { IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
+import { Context, Deferred, Effect, Layer, Ref, Stream } from "effect";
+import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import { createIssue, issueUpsert, projectUpsert, type Stamp } from "../../server/state.ts";
 import { workspaceEvents, Workspaces, type WorkspaceChange } from "../../server/streams.ts";
 import type { Issue, Project } from "../../shared/state-schema.ts";
@@ -187,4 +187,27 @@ test("materialize and mutate preserve operational failures in the error channel"
         yield* Effect.flip(tracker.mutate(workspaceId, () => Effect.die("must not decide"))),
       ).toBe(fault);
     }),
+  ));
+
+test("create and the seed layer expose typed storage failures", () =>
+  runWithStore(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspaces = yield* Workspaces;
+        const fault = new StorageFault({
+          operation: "create",
+          message: "store busy",
+          retryable: true,
+        });
+        const failing = Layer.succeed(Workspaces, {
+          ...workspaces,
+          create: () => Effect.fail(fault),
+        });
+        const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
+        const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
+        expect(yield* Effect.flip(tracker.create)).toBe(fault);
+        const seed = SeedLive.pipe(Layer.provide(trackerLayer));
+        expect(yield* Layer.build(seed).pipe(Effect.flip)).toBe(fault);
+      }),
+    ),
   ));

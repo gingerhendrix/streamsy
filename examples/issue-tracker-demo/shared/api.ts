@@ -33,6 +33,7 @@ const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
 export class WorkspacesApi extends HttpApiGroup.make("workspaces").add(
   HttpApiEndpoint.post("create", "/workspaces", {
     success: WorkspaceCreated.pipe(HttpApiSchema.status(201)),
+    error: [BadRequest, NotFound, Conflict, InternalServerError],
   }),
 ) {}
 

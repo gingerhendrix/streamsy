@@ -4,15 +4,45 @@ import { Duration, Effect, Option, Predicate, Result, Schedule, Schema, Stream }
 import { DecodeFault, EncodeFault, isRetryableFault, type StreamsFault } from "../fault.ts";
 import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
-import type { AppendError, AppendErrorFor, OffsetMismatch } from "../protocol/errors.ts";
+import type {
+  AppendError,
+  AppendErrorFor,
+  OffsetMismatch,
+  StreamNotFound,
+  StreamGone,
+  InvalidReadRequest,
+  NotSupported,
+  CreateError,
+  HeadError,
+  RemoveError,
+} from "../protocol/errors.ts";
 import type {
   AppendCallOptions,
   CreateOptions,
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import type { AppendResult, ReadResult, ReadNextResult } from "../protocol/results.ts";
+import type {
+  AppendResult,
+  CreateResult,
+  HeadResult,
+  ReadResult,
+  ReadNextResult,
+} from "../protocol/results.ts";
 import type { StreamAddress } from "./address.ts";
+
+/** Full toolkit failures, including protocol rejections and infrastructure faults. */
+export type ReadFailure =
+  | StreamNotFound
+  | StreamGone
+  | InvalidReadRequest
+  | StreamsFault
+  | DecodeFault;
+export type FollowFailure = ReadFailure | NotSupported;
+export type AppendFailure<O = AppendCallOptions> = AppendErrorFor<O> | StreamsFault | EncodeFault;
+export type CreateFailure = CreateError | StreamsFault;
+export type HeadFailure = HeadError | StreamsFault;
+export type RemoveFailure = RemoveError | StreamsFault;
 
 export interface Batch<A> {
   readonly items: ReadonlyArray<A>;
@@ -24,7 +54,7 @@ export interface Batch<A> {
 export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
   options: Omit<CreateOptions, "contentType"> = {},
-) {
+): Effect.fn.Return<CreateResult, CreateFailure, StreamsWriter> {
   return yield* (yield* StreamsWriter).create(address.id, {
     ...options,
     contentType: address.contentType,
@@ -32,20 +62,20 @@ export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
 });
 /**
  * The items one append takes. An append carries at least one item, unless it
- * closes the stream: an empty append always fails with `InvalidAppendRequest`.
+ * closes the stream. Caller-bug rejections from a host are defects.
  */
 export type AppendItems<A, O> = O extends { readonly close: true }
   ? ReadonlyArray<A>
   : NonEmptyReadonlyArray<A>;
 /** Whether these options can lead to this rejection. Any other rejection is a host bug. */
 const possibleFor = (options: AppendCallOptions, error: AppendError | StreamsFault): boolean =>
-  Predicate.isTagged(error, "OffsetMismatch")
-    ? options.expectedOffset !== undefined
-    : Predicate.isTagged(error, "StaleEpoch") ||
-        Predicate.isTagged(error, "ProducerGap") ||
-        Predicate.isTagged(error, "InvalidEpochSeq")
-      ? options.producer !== undefined
-      : true;
+  Predicate.isTagged(error, "InvalidAppendRequest") || Predicate.isTagged(error, "InvalidEpochSeq")
+    ? false
+    : Predicate.isTagged(error, "OffsetMismatch")
+      ? options.expectedOffset !== undefined
+      : Predicate.isTagged(error, "StaleEpoch") || Predicate.isTagged(error, "ProducerGap")
+        ? options.producer !== undefined
+        : true;
 /**
  * Append items to one stream. The error type lists only the rejections that the
  * options make possible; a host that answers another one dies.
@@ -59,11 +89,7 @@ export const append = Effect.fn("Streams.append")(function* <
   address: StreamAddress<A, RD, RE>,
   items: AppendItems<A, O>,
   options?: O,
-): Effect.fn.Return<
-  AppendResult,
-  AppendErrorFor<O> | StreamsFault | EncodeFault,
-  StreamsWriter | RE
-> {
+): Effect.fn.Return<AppendResult, AppendFailure<O>, StreamsWriter | RE> {
   const callOptions: AppendCallOptions = options ?? {};
   const list: ReadonlyArray<A> = items;
   const encoded = yield* Effect.forEach(list, (item) =>
@@ -73,6 +99,12 @@ export const append = Effect.fn("Streams.append")(function* <
       ),
     ),
   );
+  for (const item of encoded) {
+    if (Predicate.isUint8Array(item) && item.byteLength === 0)
+      return yield* Effect.die(
+        new RangeError(`Cannot append an empty bytes item to ${address.id}`),
+      );
+  }
   const data =
     list.length === 0 && callOptions.close
       ? // A close-only append is the protocol's empty body. An empty JSON array is
@@ -123,7 +155,10 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
     closed: result.closed === true,
   } satisfies Batch<A>;
 });
-export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: ReadOptions = {}) {
+export function read<A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+  options: ReadOptions = {},
+): Stream.Stream<Batch<A>, ReadFailure, StreamsReader | RD> {
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
@@ -158,7 +193,7 @@ export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
   initial: LazyArg<S>,
   f: (state: S, item: A) => S,
   options: ReadOptions = {},
-) {
+): Effect.fn.Return<Folded<S>, ReadFailure, StreamsReader | RD> {
   return yield* read(address, options).pipe(
     Stream.runFold(
       // The first page always replaces this offset, so it never reaches the caller.
@@ -175,7 +210,7 @@ export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
 export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
   options: ReadOptions = {},
-) {
+): Effect.fn.Return<Collected<A>, ReadFailure, StreamsReader | RD> {
   const { state, offset } = yield* fold(
     address,
     (): Array<A> => [],
@@ -229,7 +264,11 @@ const defaultDecideRetry = Schedule.recurs(3);
 export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E, R>(
   address: StreamAddress<A, RD, RE>,
   spec: DecideSpec<A, S, B, E, R>,
-) {
+): Effect.fn.Return<
+  Decided<B>,
+  ReadFailure | AppendFailure<{ expectedOffset: string }> | E,
+  StreamsReader | StreamsWriter | RD | RE | R
+> {
   let folded: Folded<S> | undefined;
   const attempt = Effect.gen(function* () {
     const last = folded;
@@ -312,7 +351,10 @@ interface FollowState {
  * A read that fails with a retryable transport or storage fault is retried from the same
  * offset, so a restart or network drop yields each item once.
  */
-export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: FollowOptions = {}) {
+export function follow<A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+  options: FollowOptions = {},
+): Stream.Stream<Batch<A>, FollowFailure, StreamsReader | RD> {
   const { retry = defaultFollowRetry, ...readOptions } = options;
   const retrying = <T, E extends { readonly _tag: string }, R>(read: Effect.Effect<T, E, R>) =>
     read.pipe(
@@ -359,11 +401,11 @@ export const session = Effect.fn("Streams.session")(function* <A, RD, RE>(
 });
 export const head = Effect.fn("Streams.head")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
-) {
+): Effect.fn.Return<HeadResult, HeadFailure, StreamsReader> {
   return yield* (yield* StreamsReader).head(address.id);
 });
 export const remove = Effect.fn("Streams.remove")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
-) {
+): Effect.fn.Return<void, RemoveFailure, StreamsWriter> {
   return yield* (yield* StreamsWriter).remove(address.id);
 });

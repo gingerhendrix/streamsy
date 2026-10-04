@@ -16,12 +16,13 @@ import {
 } from "@humanlayer/fold-core";
 import {
   CreateResult,
-  DecodeFault,
   isStreamsFault,
-  StreamGone,
-  StreamNotFound,
+  type ReadFailure,
+  type FollowFailure,
+  type AppendFailure,
+  type CreateFailure,
 } from "@streamsy/core";
-import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
+import { Context, Effect, Layer, Match, Schema, Semaphore, Stream } from "effect";
 import {
   Sessions,
   corrupt,
@@ -37,19 +38,44 @@ export interface StreamsyEventLogOptions {
   readonly session: SessionId;
   readonly mode: StreamsyEventLogMode;
 }
-const toFoldError = (error: { readonly _tag: string; readonly message: string }) => {
-  if (
-    Schema.is(EventLogCorruptEntryError)(error) ||
-    Schema.is(EventLogUnavailableError)(error) ||
-    Schema.is(EventLogInvalidEntryError)(error) ||
-    Schema.is(EventLogUnsupportedVersionError)(error)
-  )
-    return error;
-  if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
-  if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
-  if (Schema.is(DecodeFault)(error)) return corrupt(error.message);
-  return unavailable(error.message, isStreamsFault(error) && error.retryable, error);
-};
+type LogFailure =
+  | ReadFailure
+  | FollowFailure
+  | AppendFailure<{ expectedOffset: string }>
+  | CreateFailure
+  | Schema.SchemaError;
+const toUnavailable = (error: LogFailure) =>
+  unavailable(error.message, isStreamsFault(error) && error.retryable, error);
+const toFoldError = (
+  error:
+    | LogFailure
+    | EventLogCorruptEntryError
+    | EventLogUnavailableError
+    | EventLogInvalidEntryError
+    | EventLogUnsupportedVersionError,
+) =>
+  Match.valueTags(error, {
+    EventLogCorruptEntryError: (error) => error,
+    EventLogUnavailableError: (error) => error,
+    EventLogInvalidEntryError: (error) => error,
+    EventLogUnsupportedVersionError: (error) => error,
+    StreamNotFound: (error) => unavailable(`Stream ${error.id}: not-found`),
+    StreamGone: (error) => unavailable(`Stream ${error.id}: gone`),
+    DecodeFault: (error) => corrupt(error.message),
+    TransportFault: toUnavailable,
+    StorageFault: toUnavailable,
+    EncodeFault: toUnavailable,
+    InvalidReadRequest: toUnavailable,
+    NotSupported: toUnavailable,
+    StreamClosed: toUnavailable,
+    StreamBusy: toUnavailable,
+    AppendConflict: toUnavailable,
+    OffsetMismatch: toUnavailable,
+    CreateConflict: toUnavailable,
+    ForkSourceNotFound: toUnavailable,
+    InvalidForkRequest: toUnavailable,
+    SchemaError: toUnavailable,
+  });
 
 /** Export the typed constructor for tests, avoiding casts through Fold's unknown-error descriptor. */
 export const makeEventLog = (options: StreamsyEventLogOptions) =>

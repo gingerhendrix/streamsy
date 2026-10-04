@@ -1,14 +1,6 @@
 import { Effect, Match } from "effect";
-import type {
-  ReadError,
-  AppendErrorFor,
-  StreamNotFound,
-  StreamGone,
-  OffsetMismatch,
-  StreamsFault,
-  DecodeFault,
-  EncodeFault,
-} from "@streamsy/core";
+import type { ReadFailure, AppendFailure, CreateFailure } from "@streamsy/core";
+import type { PlatformError } from "effect";
 import { BadRequest, Conflict, InternalServerError, NotFound } from "../../shared/api-schema.ts";
 import type { WorkspaceNotFound, WriteConflict } from "../issue-tracker.ts";
 import type { IssueNotFound, UnknownReference } from "../state.ts";
@@ -16,13 +8,10 @@ import type { IssueNotFound, UnknownReference } from "../state.ts";
 type DomainError = WorkspaceNotFound | WriteConflict | UnknownReference | IssueNotFound;
 
 type StoreError =
-  | Exclude<
-      ReadError | AppendErrorFor<{ expectedOffset: string }>,
-      StreamNotFound | StreamGone | OffsetMismatch
-    >
-  | StreamsFault
-  | DecodeFault
-  | EncodeFault;
+  | ReadFailure
+  | AppendFailure<{ expectedOffset: string }>
+  | CreateFailure
+  | PlatformError.PlatformError;
 
 /** Answer domain failures with their status; log other failures and answer 500. */
 export const apiErrors = <A, R>(handler: Effect.Effect<A, StoreError | DomainError, R>) =>

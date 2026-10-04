@@ -4,9 +4,15 @@ import { Storage } from "../storage/storage.ts";
 import { ChangeFeed } from "./changes.ts";
 import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
-import type { StreamsFault } from "../fault.ts";
+import type { DecodeFault, StreamsFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import type { LazyArg } from "effect/Function";
+import type {
+  AppendResult,
+  CreateResult,
+  HeadResult,
+  ReadNextResult,
+} from "../protocol/results.ts";
 import type {
   AppendCallOptions,
   CreateOptions,
@@ -44,7 +50,10 @@ function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
 }
 
 /** Build a stream service over one protocol graph's wires, with the ownership guard on writes. */
-function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
+function wireApi<P, A, RD, RE>(
+  route: Route.StreamRoute<P, A, RD, RE>,
+  services: Wires,
+): Api<P, A, RD, RE> {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
@@ -102,7 +111,7 @@ function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services:
       Streams.collect(route.address(params), options).pipe(Effect.provide(context)),
     decide: <S, B, E, R>(params: P, spec: Streams.DecideSpec<A, S, B, E, R>) =>
       Streams.decide(route.address(params), spec).pipe(Effect.provide(context)),
-    follow: (params: P, options?: ReadOptions) =>
+    follow: (params: P, options?: Streams.FollowOptions) =>
       Streams.follow(route.address(params), options).pipe(Stream.provideContext(context)),
     session: (params: P, options: ReadNextOptions) =>
       wire.readNext(route.address(params).id, options),
@@ -113,9 +122,60 @@ function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services:
         ...options,
         contentType: route.address(params).contentType,
       }),
-  };
+  } satisfies Api<P, A, RD, RE>;
 }
-export type Api<P, A, RD = never, RE = never> = ReturnType<typeof wireApi<P, A, RD, RE>>;
+/** A stream service with named failures for each toolkit call. */
+export interface Api<P, A, RD = never, RE = never> {
+  readonly owner: object;
+  readonly route: Route.StreamRoute<P, A, RD, RE>;
+  readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
+  readonly create: (
+    params: P,
+    options?: Omit<CreateOptions, "contentType">,
+  ) => Effect.Effect<CreateResult, Streams.CreateFailure>;
+  readonly append: <const O extends AppendCallOptions = {}>(
+    params: P,
+    items: Streams.AppendItems<A, O>,
+    options?: O,
+  ) => Effect.Effect<AppendResult, Streams.AppendFailure<O>, RE>;
+  readonly read: (
+    params: P,
+    options?: ReadOptions,
+  ) => Stream.Stream<Streams.Batch<A>, Streams.ReadFailure, RD>;
+  readonly fold: <S>(
+    params: P,
+    initial: LazyArg<S>,
+    f: (state: S, item: A) => S,
+    options?: ReadOptions,
+  ) => Effect.Effect<Streams.Folded<S>, Streams.ReadFailure, RD>;
+  readonly collect: (
+    params: P,
+    options?: ReadOptions,
+  ) => Effect.Effect<Streams.Collected<A>, Streams.ReadFailure, RD>;
+  readonly decide: <S, B, E, R>(
+    params: P,
+    spec: Streams.DecideSpec<A, S, B, E, R>,
+  ) => Effect.Effect<
+    Streams.Decided<B>,
+    Streams.ReadFailure | Streams.AppendFailure<{ expectedOffset: string }> | E,
+    RD | RE | R
+  >;
+  readonly follow: (
+    params: P,
+    options?: Streams.FollowOptions,
+  ) => Stream.Stream<Streams.Batch<A>, Streams.FollowFailure, RD>;
+  readonly session: (
+    params: P,
+    options: ReadNextOptions,
+  ) => Effect.Effect<ReadNextResult, Exclude<Streams.FollowFailure, DecodeFault>>;
+  readonly head: (params: P) => Effect.Effect<HeadResult, Streams.HeadFailure>;
+  readonly remove: (params: P) => Effect.Effect<void, Streams.RemoveFailure>;
+  readonly fork: (
+    params: P,
+    source: P,
+    options?: Omit<CreateOptions, "contentType" | "forkedFrom">,
+  ) => Effect.Effect<CreateResult, Streams.CreateFailure>;
+}
 
 /** An address names one stream. It holds no data. It is not an Effect `Ref`. */
 export type Address<A, R, RD = never, RE = never> = StreamAddress.StreamAddress<A, RD, RE> & {

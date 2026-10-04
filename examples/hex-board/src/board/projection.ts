@@ -502,6 +502,7 @@ function applyEvent(
         break;
       }
     }
+    return undefined;
   });
 }
 
