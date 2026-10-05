@@ -181,4 +181,4 @@ The other tests run the store contract on memory and SQLite, and drive the real 
 - If the process stops after a model call and before its append commits, the next turn calls the model again. A provider request in progress is not recovered.
 - A fenced writer stays fenced. The demo does not retry or merge. The caller opens a new writer from the log.
 - The demo has no HTTP surface. Its SQLite process tests are its smoke tests.
-- `@humanlayer/fold-core` declares older Effect peers. The workspace pins Effect, and the tests cover that combination.
+- `@humanlayer/fold-core` declares an exact Effect `4.0.0` peer. The workspace override pins one Effect `4.0.1` copy for it, and the tests cover that combination.

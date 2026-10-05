@@ -40,7 +40,9 @@ export const readHistory = Effect.fn("Fold.readHistory")(function* (params: Sess
 /** Fold requires exactly one `session_started` entry, and it must be the first. */
 export const isSessionStart = Predicate.isTagged("session_started");
 
-export const decodeLog = Effect.fn("Fold.decodeLog")(function* (values: ReadonlyArray<unknown>) {
+export const decodeLog = Effect.fn("Fold.decodeLog")(function* (
+  values: ReadonlyArray<Schema.Json>,
+) {
   const entries: LogEntry[] = [];
   for (const value of values) {
     const entry = yield* decodeStoredLogEntry(value);

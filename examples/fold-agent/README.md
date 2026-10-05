@@ -62,6 +62,7 @@ Full-history recovery is O(log). Snapshots, retention, and recovery of an
 in-flight provider request are not provided. Non-recomputable payloads need
 the persisted tuple contract described under
 [Producer restarts](../../packages/core/README.md#producer-restarts). Effect is
-pinned to `4.0.0-rc.115` through the workspace override;
-`@humanlayer/fold-core` declares older peers, and the tests cover that
+pinned to `4.0.1` through the workspace override.
+`@humanlayer/fold-core` 0.1.32 declares an exact `effect` `4.0.0` peer. The
+override gives it the workspace's single `4.0.1` copy, and the tests cover that
 combination.
