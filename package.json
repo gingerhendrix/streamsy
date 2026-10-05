@@ -20,7 +20,7 @@
     "catalog": {
       "alchemy": "0.82.1",
       "@cloudflare/workers-types": "^4.20251228.0",
-      "typescript": "^5.8.3"
+      "typescript": "^7.0.2"
     }
   },
   "type": "module",
@@ -63,7 +63,8 @@
     "oxfmt": "^0.48.0",
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",
-    "tsdown": "^0.23.0"
+    "tsdown": "^0.23.0",
+    "typescript": "catalog:"
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
