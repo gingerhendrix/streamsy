@@ -38,7 +38,10 @@ const requiredHeader = (response: HttpClientResponse.HttpClientResponse, name: s
 const readSseUntilControl = (response: HttpClientResponse.HttpClientResponse) =>
   response.stream.pipe(
     Stream.decodeText,
-    Stream.scan("", (output, chunk) => output + chunk),
+    Stream.scan(
+      () => "",
+      (output, chunk) => output + chunk,
+    ),
     Stream.takeUntil(
       (output) => output.includes("event: data") && output.includes("event: control"),
     ),
