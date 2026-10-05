@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun test test",
     "test:deployed": "bun run --cwd ../packages/conformance-tests build:worker && bun run src/main.ts",
     "deploy": "node node_modules/alchemy/bin/cli.js deploy",

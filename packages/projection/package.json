@@ -53,6 +53,7 @@
     "typescript": "catalog:"
   },
   "tsdown": {
-    "fixedExtension": false
+    "fixedExtension": false,
+    "tsconfig": "tsconfig.build.json"
   }
 }
