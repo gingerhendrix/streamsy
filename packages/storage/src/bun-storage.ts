@@ -5,6 +5,7 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
+import type { SqlError } from "effect/sql/SqlError";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import * as SqliteFile from "./sqlite-file.ts";
 import { storageLayer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
@@ -35,9 +36,12 @@ const openFault = (error: SqliteOpenError, rendered: string) =>
   });
 
 const normalizeSqliteDefect = <A, R>(
-  acquisition: Effect.Effect<A, never, R>,
+  acquisition: Effect.Effect<A, SqlError, R>,
 ): Effect.Effect<A, StorageFault, R> =>
   acquisition.pipe(
+    // Since 4.0.1, SqliteClient.make fails with SqlError where it used to die with the
+    // native error. Turn it back into that defect so one path classifies both.
+    Effect.catch((error) => Effect.die(error.reason.cause)),
     Effect.catchCause((cause) =>
       Result.match(Cause.findDefect(cause), {
         onFailure: () => Effect.failCause(cause),

@@ -105,7 +105,7 @@ const makeTestLayer = (
         filename,
         busyTimeout: 0,
         disableWAL: options.disableWAL,
-      }),
+      }).pipe(Effect.orDie),
     ),
   );
   const storage = layerWithTestProbe(
