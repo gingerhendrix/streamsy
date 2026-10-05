@@ -1,7 +1,7 @@
 import { Clock, Effect } from "effect";
 import { StorageFault } from "@streamsy/core";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
-import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
+import type { SqlClient } from "effect/sql/SqlClient";
+import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import { storageDialect, type StorageDialect } from "./dialect.ts";
 import {
   LEGACY_VERSION_TABLES,

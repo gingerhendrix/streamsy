@@ -12,12 +12,12 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { TransportFault } from "../../src/fault.ts";
 import { StreamAddress, StreamId, ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";
 import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { RemoteStreams } from "@streamsy/core/remote";
 
 const id = StreamId.make("orders/nested");

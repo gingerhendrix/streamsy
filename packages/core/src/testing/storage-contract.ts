@@ -14,7 +14,7 @@ import {
   Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { SqlError } from "effect/sql/SqlError";
 import { ProducerId, StreamId, type ChangeSnapshot, type StreamRecord } from "../schema/index.ts";
 import { ZERO_OFFSET, next } from "../offset/index.ts";
 import { Storage } from "../storage/storage.ts";

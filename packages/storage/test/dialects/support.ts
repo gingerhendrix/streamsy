@@ -2,9 +2,9 @@
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { Config, Context, Effect, Layer, Option, Redacted, type Scope } from "effect";
-import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type * as Reactivity from "effect/reactivity/Reactivity";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import { clientLayer } from "../../src/boundary.ts";
 
 const optionalUrl = (name: string) =>

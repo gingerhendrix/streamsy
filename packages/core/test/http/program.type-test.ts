@@ -8,7 +8,7 @@
  * every assertion below is checked at compile time.
  */
 import { Effect } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/tags.ts";
 import { app } from "@streamsy/core/http";
 

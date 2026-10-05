@@ -2,7 +2,7 @@
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Layer, ManagedRuntime } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import { Streamsy, Http, MemoryStorage } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
 

@@ -1,5 +1,5 @@
 import { Layer, Schema } from "effect";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 import { MemoryStorage, type StorageFault, Streamsy, type TransportFault } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { BunStorage } from "@streamsy/storage/bun";

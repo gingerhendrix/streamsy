@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiBuilder, HttpApiMiddleware, type HttpApiError } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiBuilder, HttpApiMiddleware, type HttpApiError } from "effect/http-api";
 import { RequestErrors, IssueTrackerApi } from "../shared/api.ts";
 import { BadRequest } from "../shared/api-schema.ts";
 import { CommentsLive } from "./routes/comments.ts";

@@ -7,7 +7,7 @@ import { StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";
 import { Protocol, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { faultyStorage } from "../../src/testing/fault-injection.ts";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { read } from "../../src/http/read.ts";
 
 it("rejects malformed cursor and producer tuple fields at ingress", async () => {

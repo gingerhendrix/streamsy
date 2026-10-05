@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { StorageFault } from "@streamsy/core";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 
 /** One value for each SQL dialect that Streamsy storage supports. */
 export interface DialectSql<A> {

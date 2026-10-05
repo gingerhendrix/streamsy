@@ -1,6 +1,6 @@
 import type { StreamsFault } from "../fault.ts";
 import { Clock, Effect, Random, Stream } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 import type { Reader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";

@@ -1,7 +1,7 @@
 import { bind, type Any, type Identifiers } from "../toolkit/streamsy.ts";
 import type * as Group from "../toolkit/streamsy.ts";
 import { Context, Effect, Fiber, Layer, Scope } from "effect";
-import { HttpClient, type HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, type HttpClientRequest } from "effect/http";
 import { StreamId } from "../schema/index.ts";
 import { NotSupported } from "../protocol/errors.ts";
 import { TransportFault } from "../fault.ts";

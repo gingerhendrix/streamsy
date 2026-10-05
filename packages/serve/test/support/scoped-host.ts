@@ -1,7 +1,7 @@
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { Context, Deferred, Effect, Fiber, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { NetAddress } from "effect/unstable/net";
+import { HttpRouter, HttpServer } from "effect/http";
+import { NetAddress } from "effect/net";
 import { Http } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Serve } from "../../src/index.ts";
@@ -22,7 +22,7 @@ export function testHost<E>(options: TestHostOptions<E>) {
   return Effect.gen(function* () {
     const ready = yield* Deferred.make<
       HttpServer.HttpServer["Service"],
-      E | import("effect/unstable/http/HttpServerError").ServeError
+      E | import("effect/http/HttpServerError").ServeError
     >();
     const owner = yield* Effect.forkDetach(
       Effect.scoped(

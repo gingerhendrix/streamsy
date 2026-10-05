@@ -4,7 +4,7 @@
  */
 import { Serve } from "@streamsy/serve";
 import { Config, Effect, Layer } from "effect";
-import type { HttpServer } from "effect/unstable/http";
+import type { HttpServer } from "effect/http";
 import * as App from "./app.ts";
 
 export const DEFAULT_PORT = 4100;

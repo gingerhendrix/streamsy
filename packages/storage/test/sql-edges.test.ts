@@ -10,7 +10,7 @@ import {
   ZERO_OFFSET,
   type StreamRecord,
 } from "@streamsy/core";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { storageLayer as sqlLayer } from "../src/storage.ts";
 

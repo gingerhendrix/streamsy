@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
 import { read as readProtocol } from "./read.ts";

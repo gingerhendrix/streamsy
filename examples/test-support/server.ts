@@ -1,7 +1,7 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { Console, Effect, Exit, Fiber, Schedule, Schema, Stream } from "effect";
-import { HttpClient, HttpServer } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpServer } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 /** The server process exited, or its port did not answer, before it was ready. */
 export class ServerStartError extends Schema.TaggedError<ServerStartError>()("ServerStartError", {

@@ -1,7 +1,7 @@
 import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/workers-types";
 import { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import type { Storage, StorageFault } from "@streamsy/core";
 import { alarmLayer } from "./alarm.ts";
 import { alarm } from "./host-program.ts";

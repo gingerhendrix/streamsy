@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect";
-import { HttpClient, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpRouter } from "effect/http";
 import {
   type CommitBoundary,
   type TransportFault,

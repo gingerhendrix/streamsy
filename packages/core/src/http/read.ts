@@ -1,5 +1,5 @@
 import { Clock, Effect, Option, Random } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 import type { Reader } from "../protocol/tags.ts";
 import type { StreamsFault } from "../fault.ts";
 import type { StreamId } from "../schema/index.ts";

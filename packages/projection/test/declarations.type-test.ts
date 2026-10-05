@@ -167,7 +167,7 @@ const fetchWatch = Projection.watch(transactional).pipe(
 const missingFetchFeed: Effect.Effect<
   unknown,
   ProjectionFault | import("@streamsy/core").TransportFault,
-  CheckpointStore | Scope.Scope | import("effect/unstable/http/HttpClient").HttpClient
+  CheckpointStore | Scope.Scope | import("effect/http/HttpClient").HttpClient
 > = fetchWatch;
 void missingFetchFeed;
 
@@ -187,7 +187,7 @@ export type FeedChecks = [
       | Transaction
       | CheckpointStore
       | Scope.Scope
-      | import("effect/unstable/http/HttpClient").HttpClient
+      | import("effect/http/HttpClient").HttpClient
     >
   >,
 ];

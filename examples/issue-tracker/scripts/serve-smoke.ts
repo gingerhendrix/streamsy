@@ -2,7 +2,7 @@ import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Console, Effect, Layer, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { IssueEvent } from "../domain/issue.ts";
 import { LabelCountRow, WorkspaceSummary } from "../domain/outputs.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";

@@ -31,8 +31,8 @@ import {
   type TestHost,
   type TestHostOptions,
 } from "../../serve/test/support/scoped-host.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { isSqlError } from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import { isSqlError } from "effect/sql/SqlError";
 import { BunStorage } from "@streamsy/storage/bun";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";
 import { layerWithTestProbe } from "../src/storage.ts";

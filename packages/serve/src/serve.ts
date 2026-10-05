@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Http, Offset, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { StreamsReader, type StreamRoute } from "@streamsy/core/protocol";
 import * as Contract from "./contract.ts";

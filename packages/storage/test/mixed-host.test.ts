@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Layer, Schema } from "effect";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 
 class MemoryFamily extends Streamsy.json<MemoryFamily>()("MixedHost/Memory", "memory/:name", {
   params: { name: Schema.String },

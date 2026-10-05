@@ -10,7 +10,7 @@
 import { Http } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Backends from "./backends.ts";
 
 type WebHandler = (request: Request) => Promise<Response>;

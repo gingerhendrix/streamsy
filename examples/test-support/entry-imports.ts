@@ -9,7 +9,7 @@ const isRelative = (specifier: string) => specifier.startsWith("./") || specifie
 /**
  * The bare modules that a built entry file can load. The walk starts at
  * `entry`, follows each relative import into its chunk, and collects every
- * other specifier as it is written (`effect/unstable/sql`, `node:sqlite`).
+ * other specifier as it is written (`effect/sql`, `node:sqlite`).
  * It reads static imports, `export ... from` and `import()` with a literal
  * path. It does not follow bare modules into `node_modules`.
  */

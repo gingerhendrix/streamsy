@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Schema, Scope } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { ShutdownSignal } from "@streamsy/core/http";
 import {

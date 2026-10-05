@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real local HTTP server. */
 import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
+import { FetchHttpClient, HttpRouter } from "effect/http";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { RemoteStreams } from "@streamsy/core/remote";

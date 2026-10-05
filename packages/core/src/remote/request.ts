@@ -1,4 +1,4 @@
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpClientRequest } from "effect/http";
 import type {
   AppendOptions,
   CreateOptions,

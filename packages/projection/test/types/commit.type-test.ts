@@ -2,7 +2,7 @@ import { memoryHost } from "../support/memory-host.ts";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Protocol } from "@streamsy/core/protocol";
 import { Context, Effect, Layer, Option, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
 import {
   CheckpointStore,

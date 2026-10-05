@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { HttpServerRequest } from "effect/unstable/http";
+import type { HttpServerRequest } from "effect/http";
 import * as Responses from "./responses.ts";
 
 export type BodyReadResult =

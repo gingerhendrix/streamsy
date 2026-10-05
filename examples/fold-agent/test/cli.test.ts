@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, ConfigProvider, Console, Effect, Exit, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { cli } from "../src/cli.ts";
 import { DatabasePath, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
 import { SessionId } from "@humanlayer/fold-core";

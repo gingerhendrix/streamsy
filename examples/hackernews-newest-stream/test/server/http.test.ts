@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { BunHttpServer } from "@effect/platform-bun";
 import { DurableState } from "@streamsy/core";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { Effect, Layer, Schema } from "effect";
 import { app, stateRoute } from "../../src/server/http.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";

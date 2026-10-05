@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "effect";
 import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { makeBoundaryTestProbe } from "../../src/boundary.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";

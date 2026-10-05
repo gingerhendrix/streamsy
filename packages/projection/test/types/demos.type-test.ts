@@ -1,5 +1,5 @@
 import { Context, Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { DurableState, Streamsy } from "@streamsy/core";
 import {
   CheckpointStore,

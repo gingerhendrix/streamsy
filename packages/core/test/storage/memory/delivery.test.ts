@@ -101,7 +101,7 @@ for (const sameId of [false, true]) {
                 });
               }
               yield* Deferred.await(unchanged);
-              // rc.112 adjust(0) yields through a child fiber; it is not a quiescence barrier.
+              // Effect 4.0.1 adjust(0) yields through a child fiber; it is not a quiescence barrier.
               // The unchanged snapshot proves W1 was taken; a new wake now has room.
               yield* TestClock.adjust(0);
               expect(snapshots).toBe(2);

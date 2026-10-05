@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/http";
 
 const missingBuild =
   "Hacker News newest stream API is running. Run `bun run build` in examples/hackernews-newest-stream to serve the React app from this Bun server.";

@@ -4,7 +4,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
   type HttpServerRespondable,
-} from "effect/unstable/http";
+} from "effect/http";
 import { Http, type Storage, type StorageFault } from "@streamsy/core";
 import { Alarm, reconcileAlarm } from "./alarm.ts";
 import { withMutationReconciliation } from "./host-program.ts";

@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import type { HttpServerRequest } from "effect/unstable/http";
+import type { HttpServerRequest } from "effect/http";
 
 /**
  * Consumes an unread request body before an early rejection.

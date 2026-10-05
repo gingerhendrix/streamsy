@@ -19,7 +19,7 @@ import {
   HttpBody,
   HttpClient,
   type HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,

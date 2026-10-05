@@ -1,6 +1,6 @@
 import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { CommandRequest } from "../shared/api.ts";
 import type { IssueEvent } from "../domain/issue.ts";
 import { issueRows, storedIssue } from "./projection.ts";

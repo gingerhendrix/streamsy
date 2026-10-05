@@ -2,7 +2,7 @@ import { BunRuntime } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { Config, Console, Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 // A minimal host for the spawnServer tests. FIXTURE_MODE picks how it stops:
 // stderr (exit 0 with stderr output) or interrupted (default teardown, exit 130).

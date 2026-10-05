@@ -1,6 +1,6 @@
 import { Effect, Option, Predicate, Schema } from "effect";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { SqlClient } from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import type { DeadLetterReason } from "./errors.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import type {

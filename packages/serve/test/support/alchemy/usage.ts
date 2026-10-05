@@ -2,7 +2,7 @@ import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import * as Cloudflare from "alchemy/Cloudflare";
 import type { HttpEffect } from "alchemy/Http";
 import { Effect, Layer } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import * as Host from "@streamsy/serve/alchemy";
 

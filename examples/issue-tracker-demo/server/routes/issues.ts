@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder } from "effect/http-api";
 import { IssueTrackerApi } from "../../shared/api.ts";
 import { IssueTracker } from "../issue-tracker.ts";
 import { createIssue, updateIssue } from "../state.ts";

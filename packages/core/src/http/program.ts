@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { StreamId } from "../schema/index.ts";
 import type { StreamsFault } from "../fault.ts";

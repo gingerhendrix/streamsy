@@ -2,7 +2,7 @@ import { BunCrypto, BunHttpServer } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, StorageFault } from "@streamsy/core";
 import { afterAll, describe, expect, test } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
 import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import { Workspaces } from "../../server/streams.ts";

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";

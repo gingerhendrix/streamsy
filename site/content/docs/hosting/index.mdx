@@ -80,7 +80,7 @@ Every storage Layer gives `CommitBoundary`. On the SQLite Layers, `withTransacti
 ```ts
 import { Effect } from "effect";
 import { CommitBoundary, Storage, type Mutation } from "@streamsy/core";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 declare const mutation: Mutation;
 
