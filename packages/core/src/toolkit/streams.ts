@@ -248,7 +248,7 @@ export interface DecideSpec<A, S, B, E, R> {
   readonly decide: (
     state: S,
     at: { readonly offset: string },
-  ) => Effect.Effect<Decision<B, A>, E, R>;
+  ) => Effect.Effect<Decision<B, NoInfer<A>>, E, R>;
   /** Retries after `OffsetMismatch`. Default: `Schedule.recurs(3)`. Nothing else is retried. */
   readonly retry?: Schedule.Schedule<unknown, OffsetMismatch>;
 }
