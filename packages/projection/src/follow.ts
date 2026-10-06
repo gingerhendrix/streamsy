@@ -30,6 +30,7 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
 ) {
   const cursor = (yield* Ref.get(cursors))[input];
   const { wire: reader } = yield* address.stream;
+
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
@@ -37,6 +38,7 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
       input,
       message: `Required history of ${address.id} after ${offset} is unavailable`,
     });
+
   const storageFailure = (cause: unknown) =>
     new ProjectionFault({
       phase: "read",
@@ -45,6 +47,7 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
       message: `Cannot wait on ${address.id}`,
       cause,
     });
+
   return yield* reader.readNext(address.id, { offset, cursor }).pipe(
     Effect.tap((result) =>
       Ref.update(cursors, (current) => ({ ...current, [input]: result.cursor })),
@@ -102,6 +105,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
 > {
   yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;
+
   if (!Number.isSafeInteger(interval) || interval <= 0)
     return yield* new ProjectionFault({
       phase: "load",
@@ -109,15 +113,18 @@ export const follow = Effect.fn("Projection.follow")(function* <
       message: "repairIntervalMs must be a positive safe integer",
     });
   const cursors = yield* Ref.make<Readonly<Record<string, string>>>({});
+
   const wake = (result: Progress<Inputs>) =>
     Effect.raceAllFirst(
       inputEntries(projection.inputs).map(([name, address]) =>
         hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval, cursors),
       ),
     );
+
   const cycle = run(projection, options).pipe(
     Effect.tap((result) => (result.status === "caught-up" ? wake(result) : Effect.yieldNow)),
   );
+
   return yield* cycle.pipe(
     Effect.retry({
       while: (fault) => fault instanceof ProjectionFault && fault.retryable,

@@ -26,6 +26,7 @@ export const reconcileNewest = (
       const changes = diffNewest(rows, fetched);
       // No change gives no events: `decide` then appends nothing and does not check the tail.
       const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+
       return Effect.succeed({
         value: { rows: events.reduce(applyChange, rows), changes },
         items: events,
@@ -42,6 +43,7 @@ export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly 
   const removed = Object.values(previous)
     .filter((story) => !fetched.newestIds.has(story.id))
     .toSorted((a, b) => a.id - b.id);
+
   const changed = fetched.stories
     .filter(
       (story) =>
@@ -50,6 +52,7 @@ export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly 
           !storyEquals(previous[String(story.id)], story)),
     )
     .toSorted(newestStorySort);
+
   return [
     ...removed.map((story) => DurableState.remove("hn-story", story.id, { oldValue: story })),
     ...changed.map((story) => DurableState.upsert("hn-story", story)),

@@ -18,6 +18,7 @@ export const readOutput = <A, RD, RE, R>(
     const address = output.address({ workspaceId });
     const result = yield* (yield* output.at({ workspaceId }).stream).wire.read(address.id);
     expect(result.upToDate).toBe(true);
+
     return yield* Effect.forEach(result.messages, (message) =>
       Schema.decodeEffect(address.codec)(new TextDecoder().decode(message.data)),
     );
@@ -30,6 +31,7 @@ export const patchOutputAppends =
       const board = yield* Board;
       const counts = yield* LabelCounts;
       const transitions = yield* Transitions;
+
       return yield* body.pipe(
         Effect.provideService(Board, {
           ...board,

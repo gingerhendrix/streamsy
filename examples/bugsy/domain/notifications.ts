@@ -10,4 +10,5 @@ export const NotificationDraft = Schema.Struct({
   eventId: Identifier,
   occurredAt: Timestamp,
 });
+
 export type NotificationDraft = typeof NotificationDraft.Type;

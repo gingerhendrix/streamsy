@@ -6,6 +6,7 @@ import { baseOptions } from "#/lib/layout.shared";
 import { withBasePath } from "#/lib/base-path";
 
 const title = "Streamsy — Effect streams, from server to browser";
+
 const description =
   "An Effect server and toolkit for Durable Streams. Typed streams, Bun and Cloudflare hosts, and official Durable Streams packages in the browser.";
 

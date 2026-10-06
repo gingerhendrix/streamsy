@@ -6,6 +6,7 @@ export interface TransactionRetryPolicy {
 }
 
 export const DEFAULT_TRANSACTION_RETRY_ATTEMPTS = 16;
+
 export const DEFAULT_TRANSACTION_RETRY_DELAY_MS = 25;
 
 export const transactionRetryPolicy = (options: {
@@ -14,10 +15,13 @@ export const transactionRetryPolicy = (options: {
 }): TransactionRetryPolicy => {
   const attempts = options.transactionRetryAttempts ?? DEFAULT_TRANSACTION_RETRY_ATTEMPTS;
   const delayMs = options.transactionRetryDelayMs ?? DEFAULT_TRANSACTION_RETRY_DELAY_MS;
+
   if (!Number.isSafeInteger(attempts) || attempts <= 0)
     throw new RangeError("transactionRetryAttempts must be a positive safe integer");
+
   if (!Number.isFinite(delayMs) || delayMs <= 0)
     throw new RangeError("transactionRetryDelayMs must be positive");
+
   return { attempts, delayMs };
 };
 

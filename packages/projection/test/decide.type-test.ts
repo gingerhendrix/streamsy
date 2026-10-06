@@ -17,10 +17,12 @@ class Numbers extends Streamsy.json<Numbers>()("decideTypes/Numbers", "numbers",
   params: {},
   schema: Schema.Finite,
 }) {}
+
 class Words extends Streamsy.json<Words>()("decideTypes/Words", "words", {
   params: {},
   schema: Schema.String,
 }) {}
+
 const totals = Projection.fold({
   id: "decide-types",
   params: {},
@@ -35,6 +37,7 @@ const decided = Projection.decide(totals, {
   decide: ({ state, offsets }) =>
     Effect.succeed({ value: `${state}@${offsets.numbers}`, items: [offsets.words] }),
 });
+
 export const decidedType: Equal<
   typeof decided,
   Effect.Effect<

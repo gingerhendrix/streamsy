@@ -72,6 +72,7 @@ export type CollectionsEncodedChange<C extends Collections> = {
 
 export type CollectionsDecodingServices<C extends Collections> =
   C[keyof C]["schema"]["DecodingServices"];
+
 export type CollectionsEncodingServices<C extends Collections> =
   C[keyof C]["schema"]["EncodingServices"];
 
@@ -94,6 +95,7 @@ export interface StateAddress<
 
 /** The address constructors. Each class owns the `_tag` of one address kind. */
 const JsonAddress = Data.TaggedClass("Json");
+
 const BytesAddress = Data.TaggedClass("Bytes");
 
 export function json<A, I, RD, RE>(
@@ -121,12 +123,14 @@ export function stateChange<A, I, RD, RE, const Type extends string>(options: {
     Schema.Literal("insert").transform("upsert"),
     Schema.Literal("update").transform("upsert"),
   ]);
+
   const headers = {
     offset: Schema.optionalKey(Schema.String),
     txid: Schema.optionalKey(Schema.String),
     timestamp: Schema.optionalKey(Schema.String),
     from: Schema.optionalKey(Schema.String),
   };
+
   return Schema.Union([
     Schema.Struct({
       type: Schema.Literal(options.type),
@@ -155,6 +159,7 @@ export function state<const C extends Collections>(
   const codecs = Object.entries(options.collections).map(([type, collection]) =>
     stateChange({ schema: collection.schema, type }),
   );
+
   // SAFETY: `codecs` holds exactly one `stateChange` codec per entry of
   // `options.collections`, each tagged with that entry's type literal, so the
   // runtime union accepts precisely the events `CollectionsChange<C>` describes.
@@ -165,7 +170,9 @@ export function state<const C extends Collections>(
     CollectionsDecodingServices<C>,
     CollectionsEncodingServices<C>
   >;
+
   const address = json(id, { schema });
+
   return new JsonAddress<Omit<StateAddress<C>, "_tag">>({
     id: address.id,
     contentType: address.contentType,

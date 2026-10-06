@@ -6,6 +6,7 @@ export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "number
   params: {},
   schema: Schema.Finite,
 }) {}
+
 export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "doubled", {
   params: {},
   schema: Schema.Finite,
@@ -18,6 +19,7 @@ export const minimal = Effect.gen(function* () {
   yield* numbers.create({});
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
+
   return yield* Projection.run(
     Projection.emit({
       id: "doubled",

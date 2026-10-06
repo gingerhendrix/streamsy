@@ -9,12 +9,14 @@ class MemoryFamily extends Streamsy.json<MemoryFamily>()("MixedHost/Memory", "me
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
+
 class SqliteFamily extends Streamsy.json<SqliteFamily>()("MixedHost/Sqlite", "sqlite/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
 
 const streams = Streamsy.group(MemoryFamily, SqliteFamily);
+
 const hostLayer = Layer.merge(
   MemoryStorage.layer(Streamsy.group(MemoryFamily)),
   BunStorage.layer(Streamsy.group(SqliteFamily), { client: { filename: ":memory:" } }),
@@ -25,8 +27,10 @@ test("one Http.routes host serves memory and SQLite streams", async () => {
     Http.routes(streams, { access: "full" }).pipe(HttpRouter.provideRequest(hostLayer)),
     { disableLogger: true },
   );
+
   const server = Bun.serve({ port: 0, fetch: (request) => web.handler(request) });
   const host = { url: server.url };
+
   try {
     for (const path of ["memory/notes", "sqlite/notes"]) {
       const created = await fetch(new URL(path, host.url), {
@@ -34,6 +38,7 @@ test("one Http.routes host serves memory and SQLite streams", async () => {
         headers: { "content-type": "application/json" },
         body: '"first"',
       });
+
       expect(created.status).toBe(201);
 
       const appended = await fetch(new URL(path, host.url), {
@@ -41,6 +46,7 @@ test("one Http.routes host serves memory and SQLite streams", async () => {
         headers: { "content-type": "application/json" },
         body: '["second"]',
       });
+
       expect(appended.status).toBe(204);
 
       const read = await fetch(new URL(path, host.url));

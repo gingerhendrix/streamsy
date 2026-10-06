@@ -13,8 +13,11 @@ import { memoryHost } from "./support/memory-host.ts";
 import { BunStorage } from "@streamsy/storage/bun";
 
 const input = FamilyFixture.json("snapshot-input", { schema: Schema.Finite });
+
 const words = FamilyFixture.json("snapshot-words", { schema: Schema.String });
+
 const Totals = Schema.Struct({ sum: Schema.Finite, count: Schema.Finite });
+
 const totals = Projection.fold({
   id: "snapshot-totals",
   params: {},
@@ -25,12 +28,14 @@ const totals = Projection.fold({
     count: state.count + 1,
   }),
 }).at({});
+
 const seed = Effect.gen(function* () {
   yield* Streams.create(input);
   yield* Streams.create(words);
   yield* Streams.append(input, [2, 3]);
   yield* Streams.append(words, ["a"]);
 });
+
 const tailOf = (address: StreamAddress.StreamAddress<unknown, unknown, unknown>) =>
   Streams.head(address).pipe(Effect.map((head) => head.nextOffset));
 
@@ -40,6 +45,7 @@ const sqlite = (filename = ":memory:") =>
       Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
     ),
   );
+
 const hosts: ReadonlyArray<
   readonly [
     string,
@@ -77,16 +83,19 @@ for (const [name, host] of hosts) {
         expect(progress.status).toBe("caught-up");
         const store = yield* CheckpointStore;
         let loads = 0;
+
         const snapshot = yield* Projection.read(totals).pipe(
           Effect.provideService(CheckpointStore, {
             ...store,
             load: (key) =>
               Effect.suspend(() => {
                 loads += 1;
+
                 return store.load(key);
               }),
           }),
         );
+
         // State and offsets come from one record load.
         expect(loads).toBe(1);
         expect(snapshot.offsets).toEqual(progress.offsets);
@@ -103,6 +112,7 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         const doubled = FamilyFixture.json("snapshot-doubled", { schema: Schema.Finite });
         const seen: number[] = [];
+
         const counter = Projection.mapAccumBatch({
           commit: Commit.producer,
           id: "snapshot-counter",
@@ -113,12 +123,14 @@ for (const [name, host] of hosts) {
           mapAccumBatch: (count, batch) =>
             Effect.sync(() => {
               seen.push(count);
+
               return [
                 count + batch.input.items.length,
                 { doubled: batch.input.items.map((n) => n * 2) },
               ] as const;
             }),
         }).at({ start: 10 });
+
         yield* seed;
         expect((yield* Projection.read(counter)).state).toBe(10);
         const first = yield* Projection.run(counter);
@@ -136,6 +148,7 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
+
         const stateless = Projection.process({
           commit: Commit.atLeastOnce,
           id: "snapshot-stateless",
@@ -143,6 +156,7 @@ for (const [name, host] of hosts) {
           inputs: { input },
           process: () => Effect.void,
         }).at({});
+
         const progress = yield* Projection.run(stateless);
         expect(yield* Projection.read(stateless)).toEqual({
           state: undefined,
@@ -157,6 +171,7 @@ test("SQLite: a second process writes between two reads of the same file", async
   const filename = join(directory, "snapshot.sqlite");
   const reader = ManagedRuntime.make(sqlite(filename));
   const writer = ManagedRuntime.make(sqlite(filename));
+
   try {
     await reader.runPromise(seed.pipe(Effect.andThen(Projection.run(totals))));
     const first = await reader.runPromise(Projection.read(totals));

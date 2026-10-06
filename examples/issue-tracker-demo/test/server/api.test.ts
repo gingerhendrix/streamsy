@@ -20,6 +20,7 @@ const { handler, dispose } = HttpRouter.toWebHandler(
   ),
   { disableLogger: true },
 );
+
 afterAll(dispose);
 
 const ErrorBody = Schema.Struct({ _tag: Schema.String, error: Schema.String });
@@ -32,11 +33,13 @@ async function send(method: string, path: string, body?: string) {
       body,
     }),
   );
+
   return { status: response.status, body: await response.json() };
 }
 
 async function sendError(method: string, path: string, body?: string) {
   const { status, body: payload } = await send(method, path, body);
+
   return { status, ...Schema.decodeUnknownSync(ErrorBody)(payload) };
 }
 
@@ -96,17 +99,20 @@ describe("domain errors map to status codes", () => {
 
   test("a fourth issue in progress answers 422 WipLimitReached", async () => {
     const { body: workspace } = await send("POST", "/api/workspaces");
+
     const { body: project } = await send(
       "POST",
       `/api/w/${workspace.id}/projects`,
       JSON.stringify({ name: "Limits" }),
     );
+
     const start = () =>
       send(
         "POST",
         `/api/w/${workspace.id}/issues`,
         JSON.stringify({ projectId: project.project.id, status: "in_progress" }),
       );
+
     for (let index = 0; index < 3; index += 1) expect((await start()).status).toBe(201);
     expect(await start()).toEqual({
       status: 422,
@@ -130,11 +136,13 @@ describe("domain errors map to status codes", () => {
 describe("successful writes", () => {
   test("a created issue answers 201 with the entity, awaitOffset and the client txid", async () => {
     const txid = crypto.randomUUID();
+
     const { status, body } = await send(
       "POST",
       "/api/w/main/issues",
       JSON.stringify({ projectId: "proj_streamsy", title: " Ship ", txid }),
     );
+
     expect(status).toBe(201);
     expect(body).toMatchObject({ issue: { title: "Ship", status: "open" }, txid });
     expect(body.awaitOffset).toBeString();
@@ -142,6 +150,7 @@ describe("successful writes", () => {
 
   test("the server stamps the times and keeps the writer's name", async () => {
     const before = new Date().toISOString();
+
     const { body } = await send(
       "POST",
       "/api/w/main/issues",
@@ -152,6 +161,7 @@ describe("successful writes", () => {
         createdAt: "1999-01-01T00:00:00.000Z",
       }),
     );
+
     expect(body.issue.createdAt >= before).toBe(true);
     expect(body.issue.updatedAt).toBe(body.issue.createdAt);
     expect(body.issue.updatedBy).toBe("Ann");
@@ -163,6 +173,7 @@ describe("successful writes", () => {
       "/api/w/main/issues/issue%5Fbootstrap",
       `{"status":"open"}`,
     );
+
     expect(status).toBe(200);
     expect(body.issue).toMatchObject({ id: "issue_bootstrap", status: "open" });
   });
@@ -183,6 +194,7 @@ test("an operational failure is logged and answered as 500", () =>
           message: "store busy",
           retryable: true,
         });
+
         const failingTracker = Layer.effect(
           IssueTracker,
           Effect.map(IssueTracker, (tracker) => ({
@@ -193,6 +205,7 @@ test("an operational failure is logged and answered as 500", () =>
           Layer.provide(IssueTrackerLive),
           Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
         );
+
         const failing = yield* Effect.acquireRelease(
           Effect.sync(() =>
             HttpRouter.toWebHandler(
@@ -205,6 +218,7 @@ test("an operational failure is logged and answered as 500", () =>
           ),
           (server) => Effect.promise(() => server.dispose()),
         );
+
         const response = yield* Effect.promise(() =>
           failing.handler(
             new Request("http://localhost/api/w/main/projects", {
@@ -214,6 +228,7 @@ test("an operational failure is logged and answered as 500", () =>
             }),
           ),
         );
+
         expect(response.status).toBe(500);
         expect(yield* Effect.promise(() => response.json())).toMatchObject({
           error: "Internal server error",
@@ -231,6 +246,7 @@ test("a typed workspace create failure answers 500", () =>
           message: "store busy",
           retryable: true,
         });
+
         const failingTracker = Layer.effect(
           IssueTracker,
           Effect.map(IssueTracker, (tracker) => ({
@@ -241,6 +257,7 @@ test("a typed workspace create failure answers 500", () =>
           Layer.provide(IssueTrackerLive),
           Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
         );
+
         const failing = yield* Effect.acquireRelease(
           Effect.sync(() =>
             HttpRouter.toWebHandler(
@@ -253,9 +270,11 @@ test("a typed workspace create failure answers 500", () =>
           ),
           (server) => Effect.promise(() => server.dispose()),
         );
+
         const response = yield* Effect.promise(() =>
           failing.handler(new Request("http://localhost/api/workspaces", { method: "POST" })),
         );
+
         expect(response.status).toBe(500);
         expect(yield* Effect.promise(() => response.json())).toMatchObject({
           error: "Internal server error",

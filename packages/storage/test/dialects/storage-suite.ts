@@ -53,6 +53,7 @@ const record = (id: string, expiresAtMs?: number): StreamRecord => ({
 });
 
 const one = Offset.make("0000000000000001_0000000000000000");
+
 const encode = (text: string) => new TextEncoder().encode(text);
 
 /** A producer write that expects `expected` and advances its sequence by one. */
@@ -70,8 +71,10 @@ const count = (sql: SqlClient.SqlClient, table: string) =>
 
 export const storageDialectSuite = (dialect: SqlDialect): void => {
   const baseUrl = dialect.url;
+
   if (baseUrl === undefined) {
     test.skip(`${dialect.name} storage suite (set its database URL to run)`, () => {});
+
     return;
   }
 
@@ -89,9 +92,11 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
   const reset = Layer.effectDiscard(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+
       for (const table of STORAGE_TABLES) yield* sql`DELETE FROM ${sql(table)}`;
     }),
   );
+
   const storeLayer = Layer.unwrap(
     Effect.sync(() =>
       reset.pipe(
@@ -119,6 +124,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
   ) =>
     Effect.gen(function* () {
       const context = yield* Layer.build(storeLayer);
+
       return yield* use(Context.get(context, Storage), Context.get(context, SqlClient.SqlClient));
     }).pipe(Effect.scoped);
 
@@ -147,10 +153,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               data: new Uint8Array([1]),
             })}`;
             const badMessage = yield* storage.messages(StreamId.make("bad"), {}).pipe(Effect.exit);
+
             return [died(badRecord), died(badMessage)];
           }),
         ),
       );
+
       expect(result).toEqual([true, true]);
     });
 
@@ -177,6 +185,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             const included = yield* storage.messages(StreamId.make("bounded"), { until: one });
             const zero = yield* storage.messages(StreamId.make("bounded"), { limit: 0 });
             const full = yield* storage.messages(StreamId.make("bounded"), {}).pipe(Effect.exit);
+
             return {
               included: included.map(({ offset }) => offset),
               zero,
@@ -185,6 +194,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({ included: [one], zero: [], fullDefected: true });
     });
 
@@ -195,6 +205,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             const context = yield* Layer.build(
               storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
             );
+
             const storage = Context.get(context, Storage);
             const sql = Context.get(context, SqlClient.SqlClient);
             yield* storage.mutate({
@@ -211,6 +222,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                 },
               ],
             });
+
             const write = storage.mutate({
               operations: [
                 {
@@ -222,14 +234,17 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                 },
               ],
             });
+
             const outcomes = yield* Effect.all(
               [write, write].map((effect) =>
                 effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
               ),
               { concurrency: 2 },
             );
+
             yield* sql`ALTER TABLE streamsy_streams RENAME TO streamsy_streams_gone`;
             const fault = yield* storage.record(StreamId.make("race")).pipe(Effect.exit);
+
             return {
               tags: outcomes.map(({ _tag }) => _tag).toSorted(),
               typedFault: Exit.isFailure(fault)
@@ -243,6 +258,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({ tags: ["Applied", "MutationRejected"], typedFault: true });
     });
 
@@ -254,10 +270,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               storage.mutate({
                 operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
               });
+
             // 512 code points pass, even when they take 1024 UTF-16 units.
             yield* create("a".repeat(512));
             yield* create("\u{1F600}".repeat(512));
             const tooLong = yield* create("b".repeat(513)).pipe(Effect.flip);
+
             return {
               fault: Predicate.isTagged(tooLong, "StorageFault")
                 ? { operation: tooLong.operation, retryable: tooLong.retryable }
@@ -267,6 +285,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({
         fault: { operation: "mutate.stream-id", retryable: false },
         count: 2,
@@ -280,6 +299,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             yield* storage.mutate({
               operations: [{ _tag: "Create", record: record("producers"), initialMessages: [] }],
             });
+
             const write = (producerId: string) =>
               storage.mutate({
                 operations: [
@@ -296,12 +316,16 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                   },
                 ],
               });
+
             const tooLong = yield* write("p".repeat(256)).pipe(Effect.flip);
+
             const before = [
               yield* count(sql, "streamsy_producers"),
               yield* count(sql, "streamsy_messages"),
             ];
+
             yield* write("\u{1F600}".repeat(255));
+
             return {
               fault: Predicate.isTagged(tooLong, "StorageFault")
                 ? { operation: tooLong.operation, retryable: tooLong.retryable }
@@ -312,6 +336,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({
         fault: { operation: "mutate.producer-id", retryable: false },
         before: [0, 0],
@@ -325,10 +350,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
         withStore((storage, sql) =>
           Effect.gen(function* () {
             const ids = ["x", "x "];
+
             for (const id of ids)
               yield* storage.mutate({
                 operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
               });
+
             for (const [lastSeq, producerId] of ["p", "p "].entries())
               yield* storage.mutate({
                 operations: [
@@ -346,9 +373,11 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                 ],
               });
             const records = yield* Effect.forEach(ids, (id) => storage.record(StreamId.make(id)));
+
             const producers = yield* Effect.forEach(["p", "p "], (id) =>
               storage.producer(StreamId.make("x"), ProducerId.make(id)),
             );
+
             return {
               ids: records.map(Option.map(({ id }) => id)),
               seqs: producers.map(Option.map(({ lastSeq }) => lastSeq)),
@@ -360,6 +389,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({
         ids: [Option.some(StreamId.make("x")), Option.some(StreamId.make("x "))],
         seqs: [Option.some(0), Option.some(1)],
@@ -382,10 +412,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             yield* Layer.build(
               storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
             ).pipe(Effect.scoped);
+
             const writer = Context.get(
               yield* Layer.build(dialectClient(dialect, fresh)),
               SqlClient.SqlClient,
             );
+
             yield* writer`INSERT INTO streamsy_streams ${writer.insert({
               stream_id: "kept",
               content_type: "text/plain",
@@ -395,16 +427,19 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               soft_deleted: 0,
               expires_at_ms: 42,
             })}`;
+
             const reopened = Context.get(
               yield* Layer.build(
                 storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
               ),
               Storage,
             );
+
             return yield* reopened.nextExpiry;
           }),
         ),
       );
+
       expect(result).toMatchObject({ _tag: "Some", value: { at: 42, streamId: "kept" } });
     });
 
@@ -416,6 +451,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               yield* Layer.build(dialectClient(dialect, fresh)),
               SqlClient.SqlClient,
             );
+
             const failed = yield* migrate(sql, {
               beforeVersion: (version) =>
                 version === 1
@@ -428,11 +464,15 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                     )
                   : Effect.void,
             }).pipe(Effect.exit);
+
             const tables = yield* tableNames(sql);
+
             const versions = tables.includes(STORAGE_VERSION_TABLE)
               ? yield* count(sql, STORAGE_VERSION_TABLE)
               : 0;
+
             yield* migrate(sql);
+
             return {
               failed: Exit.isFailure(failed),
               tables,
@@ -442,6 +482,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({
         failed: true,
         // MySQL commits DDL by itself, so only its version table outlives the failure.
@@ -453,6 +494,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
 
     test("legacy and too-new schemas reject without changes", async () => {
       const outcomes: Array<unknown> = [];
+
       for (const kind of ["legacy", "legacy-0.4", "newer"] as const) {
         outcomes.push(
           await Effect.runPromise(
@@ -462,20 +504,25 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                   yield* Layer.build(dialectClient(dialect, fresh)),
                   SqlClient.SqlClient,
                 );
+
                 const table =
                   kind === "legacy"
                     ? "streamsy_schema_version"
                     : kind === "legacy-0.4"
                       ? "streamsy_storage_schema_version"
                       : STORAGE_VERSION_TABLE;
+
                 const version =
                   kind === "legacy" ? 3 : kind === "legacy-0.4" ? 2 : STORAGE_SCHEMA_VERSION + 1;
+
                 yield* sql`CREATE TABLE ${sql(table)} (version INTEGER PRIMARY KEY, applied_at_ms BIGINT NOT NULL)`;
                 yield* sql`INSERT INTO ${sql(table)} ${sql.insert({ version, applied_at_ms: 1 })}`;
                 const exit = yield* migrate(sql).pipe(Effect.exit);
+
                 const fault = Exit.isFailure(exit)
                   ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
                   : undefined;
+
                 return {
                   kind,
                   operation: fault?.operation,
@@ -487,6 +534,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           ),
         );
       }
+
       const rejected = { operation: "migration.open", retryable: false };
       expect(outcomes).toEqual([
         { kind: "legacy", ...rejected, tables: ["streamsy_schema_version"] },
@@ -502,11 +550,14 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             const open = Layer.build(
               storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
             ).pipe(Effect.map((context) => Context.get(context, Storage)));
+
             const [left, right] = yield* Effect.all([open, open], { concurrency: 2 });
+
             const sql = Context.get(
               yield* Layer.build(dialectClient(dialect, fresh)),
               SqlClient.SqlClient,
             );
+
             return {
               left: yield* left.record(StreamId.make("x")),
               right: yield* right.record(StreamId.make("x")),
@@ -519,6 +570,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
           }),
         ),
       );
+
       expect(result).toEqual({
         left: Option.none(),
         right: Option.none(),

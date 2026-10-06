@@ -8,6 +8,7 @@ import { listener } from "@streamsy/serve/bun";
 
 describe("Streamsy.Wildcard memory Bun host", () => {
   const config = { baseUrl: "" };
+
   const runtime = ManagedRuntime.make(
     HttpRouter.serve(Http.routes(Streamsy.group(Streamsy.Wildcard), { access: "full" }), {
       disableLogger: true,
@@ -19,6 +20,7 @@ describe("Streamsy.Wildcard memory Bun host", () => {
       Layer.provideMerge(listener({ port: 0 })),
     ),
   );
+
   beforeAll(async () => {
     const server = await runtime.runPromise(HttpServer.HttpServer);
     config.baseUrl = HttpServer.formatAddress(server.address);

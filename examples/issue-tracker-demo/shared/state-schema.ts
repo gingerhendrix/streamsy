@@ -15,12 +15,14 @@ export const Project = Schema.Struct({
   description: Schema.String,
   createdAt: Schema.String,
 });
+
 export type Project = typeof Project.Type;
 
 /** The issue statuses accepted on the wire, in UI order. */
 export const issueStatuses = ["open", "in_progress", "done"] as const;
 
 export const IssueStatus = Schema.Literals(issueStatuses);
+
 export type IssueStatus = typeof IssueStatus.Type;
 
 /** A project holds at most this many issues `in_progress` at once. */
@@ -39,6 +41,7 @@ export const Issue = Schema.Struct({
   /** The display name of the last writer, when the writer gave one. */
   updatedBy: Schema.optionalKey(Schema.String),
 });
+
 export type Issue = typeof Issue.Type;
 
 export const Comment = Schema.Struct({
@@ -48,6 +51,7 @@ export const Comment = Schema.Struct({
   body: Schema.String,
   createdAt: Schema.String,
 });
+
 export type Comment = typeof Comment.Type;
 
 /** The browser's StreamDB collections, checked by the same Effect schemas as the server. */
@@ -84,6 +88,7 @@ export const StateEvent = Schema.Union([
   changeEvent("issue", Issue),
   changeEvent("comment", Comment),
 ]);
+
 export type StateEvent = typeof StateEvent.Type;
 
 /** Decode a stream read body. Unknown extension fields are ignored. */

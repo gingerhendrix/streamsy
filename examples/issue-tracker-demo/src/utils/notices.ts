@@ -16,6 +16,7 @@ export function useNotices() {
 
   useEffect(() => {
     const pending = timers.current;
+
     return () => {
       for (const timer of pending) clearTimeout(timer);
     };
@@ -24,10 +25,12 @@ export function useNotices() {
   const notify = useCallback((message: string) => {
     const id = nextId.current++;
     setNotices((current) => [...current, { id, message }]);
+
     const timer = setTimeout(() => {
       timers.current.delete(timer);
       setNotices((current) => current.filter((notice) => notice.id !== id));
     }, noticeMillis);
+
     timers.current.add(timer);
   }, []);
 

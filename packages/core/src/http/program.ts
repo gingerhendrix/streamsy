@@ -24,6 +24,7 @@ export interface HttpOptions {
 }
 
 const responses = Responses;
+
 /**
  * The public HTTP program. It is the whole application an Effect host serves.
  *
@@ -36,10 +37,12 @@ export function app(options: HttpOptions = {}) {
   checkReadOptions(options);
   const path = streamPath(options.pathPrefix ?? "/");
   const bodyReader = requestBodyReader(options.maxMessageSize ?? 1024 * 1024);
+
   const failure = (error: ProtocolError) =>
     Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
       protocolErrorResponse(error, { method: request.method }),
     );
+
   return Effect.gen(function* (): Effect.fn.Return<
     Response | HttpServerResponse.HttpServerResponse,
     StreamsFault | ProtocolError,
@@ -48,19 +51,26 @@ export function app(options: HttpOptions = {}) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const writer = yield* StreamsWriter;
     const url = requestUrl(request);
+
     if (!url) return responses.badRequest("Invalid request URL");
     const stripped = path.strip(url.pathname);
+
     if (!stripped || stripped === url.pathname)
       return responses.badRequest(`Stream path required: ${path.requiredPathPattern()}`);
     const id = StreamId.make(stripped);
     const headers = new Headers(request.headers);
+
     if (request.method === "PUT") {
       const parsed = Create.parseHeaders({ headers }, path);
+
       if (!parsed.ok) return parsed.response;
       const body = yield* bodyReader.read(request);
+
       if (!body.ok) return body.response;
       const normalized = Create.normalizeInitialData(body.data, parsed.contentType);
+
       if (!normalized.ok) return normalized.response;
+
       const result = yield* writer.create(id, {
         contentType: parsed.contentType,
         ttlSeconds: parsed.ttlSeconds,
@@ -71,8 +81,10 @@ export function app(options: HttpOptions = {}) {
         forkOffset: parsed.forkOffset,
         forkSubOffset: parsed.forkSubOffset,
       });
+
       return Create.toResponse(result, url.href);
     }
+
     if (request.method === "OPTIONS")
       return responses.empty(204, {
         "access-control-allow-origin": "*",
@@ -81,25 +93,35 @@ export function app(options: HttpOptions = {}) {
           "Authorization, Content-Type, If-None-Match, Producer-Id, Producer-Epoch, Producer-Seq, Stream-Closed, Stream-Expected-Offset, Stream-Seq, Stream-TTL, Stream-Expires-At",
         "access-control-max-age": "86400",
       });
+
     if (!["POST", "GET", "HEAD", "DELETE"].includes(request.method))
       return responses.methodNotAllowed();
+
     switch (request.method) {
       case "POST": {
         const parsed = Append.parseHeaders({ headers });
+
         if (!parsed.ok) {
           // The body is unread here. Consume it so the host can keep the connection.
           yield* discardRequestBody(request);
+
           return parsed.response;
         }
+
         const body = yield* bodyReader.read(request);
+
         if (!body.ok) return body.response;
         const isEmpty = body.byteLength === 0;
+
         if (isEmpty && !parsed.wantClose) return responses.badRequest("Empty body not allowed");
+
         if (!parsed.contentType && !isEmpty) return responses.badRequest("Content-Type required");
         // Malformed JSON is a request fault the edge must reject before framing.
         // An empty message set is a protocol rejection, so the rule lives in one place.
         const normalized = Create.normalizeInitialData(body.data, parsed.contentType ?? undefined);
+
         if (!normalized.ok) return normalized.response;
+
         const result = yield* writer.append(id, {
           data: body.data,
           contentType: parsed.contentType ?? "application/octet-stream",
@@ -109,15 +131,19 @@ export function app(options: HttpOptions = {}) {
           close: parsed.wantClose,
           expectedOffset: parsed.expectedOffset,
         });
+
         return Append.toResponse(result, parsed.producerHeaders, isEmpty);
       }
+
       case "GET":
       case "HEAD":
         return yield* read(id, options);
       case "DELETE": {
         yield* writer.remove(id);
+
         return responses.empty(204);
       }
+
       default:
         return responses.methodNotAllowed();
     }
@@ -130,6 +156,7 @@ export function app(options: HttpOptions = {}) {
     Effect.map((response) => {
       // Raw preserves the legacy Web response's byte and content-type conventions.
       const result = response instanceof Response ? responses.fromWeb(response) : response;
+
       return HttpServerResponse.setHeaders(result, securityHeaders);
     }),
   );

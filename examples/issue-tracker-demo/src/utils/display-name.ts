@@ -8,10 +8,13 @@ const storageKey = "issue-tracker-demo:display-name";
  */
 export function useDisplayName(): [string, (name: string) => void] {
   const [name, setName] = useState(() => localStorage.getItem(storageKey) ?? "");
+
   const update = (next: string) => {
     setName(next);
+
     if (next.trim()) localStorage.setItem(storageKey, next.trim());
     else localStorage.removeItem(storageKey);
   };
+
   return [name, update];
 }

@@ -16,16 +16,20 @@ const parkLongPoll = async (
   options: Omit<TestHostOptions, "layer">,
 ) => {
   const host = await Effect.runPromise(testHost({ ...options, layer, port: 0 }));
+
   const created = await fetch(new URL("s", host.url), {
     method: "PUT",
     headers: { "content-type": "text/plain" },
     body: "seed",
   });
+
   const tail = created.headers.get("stream-next-offset");
+
   if (!tail) throw new Error("Expected current tail");
   const url = new URL("s", host.url);
   url.search = `offset=${tail}&live=long-poll`;
   let settled = false;
+
   const pending = fetch(url).then(
     () => {
       settled = true;
@@ -34,6 +38,7 @@ const parkLongPoll = async (
       settled = true;
     },
   );
+
   return {
     host,
     parked: () => !settled,
@@ -52,6 +57,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     let activeReads = 0;
     let interrupted = false;
     let ownerClosed = false;
+
     const observedStorage = Layer.effect(
       Storage,
       Effect.gen(function* () {
@@ -61,6 +67,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
             ownerClosed = true;
           }),
         );
+
         return Storage.of({
           ...storage,
           changes: (id) =>
@@ -75,6 +82,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
                       subscribers--;
                     }).pipe(Effect.andThen(Deferred.succeed(released, undefined))),
                 );
+
                 return storage
                   .changes(id)
                   .pipe(Stream.tap(() => Deferred.succeed(subscribed, undefined)));
@@ -83,10 +91,12 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
         });
       }),
     ).pipe(Layer.provide(MemoryStorage.layerProtocol()));
+
     const observedProtocol = Layer.effectContext(
       Effect.gen(function* () {
         const reader = yield* StreamsReader;
         const writer = yield* StreamsWriter;
+
         return Context.make(StreamsWriter, writer).pipe(
           Context.add(
             StreamsReader,
@@ -95,6 +105,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
               readNext: (id, options) =>
                 Effect.suspend(() => {
                   activeReads++;
+
                   return reader.readNext(id, options).pipe(
                     Effect.onExit((exit) =>
                       Effect.sync(() => {
@@ -113,24 +124,30 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
         Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(Layer.provide(observedStorage)),
       ),
     );
+
     const errors = spyOn(console, "error");
     const warnings = spyOn(console, "warn");
     const logs = spyOn(console, "log");
     const stderr = spyOn(process.stderr, "write");
     const host = await Effect.runPromise(testHost({ layer: observedProtocol, port: 0 }));
     const abort = new AbortController();
+
     try {
       const url = new URL("s", host.url);
+
       const created = await fetch(url, {
         method: "PUT",
         headers: { "content-type": "text/plain" },
         body: "seed",
       });
+
       expect(created.status).toBe(201);
       const tail = created.headers.get("stream-next-offset");
+
       if (!tail) throw new Error("Expected current tail");
       url.search = `offset=${tail}&live=${shutdown === "long-poll-abort" ? "long-poll" : "sse"}`;
       let pending: Promise<unknown>;
+
       if (shutdown === "long-poll-abort") {
         // Start the request without awaiting headers: it must remain parked for 30 seconds unless interrupted.
         pending = fetch(url, { signal: abort.signal }).catch((error) => {
@@ -139,12 +156,14 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
         });
       } else {
         const response = await fetch(url, { signal: abort.signal });
+
         if (!response.body) throw new Error("Expected SSE response body");
         const reader = response.body.getReader();
         const first = await reader.read();
         expect(new TextDecoder().decode(first.value)).toContain("event: control");
         pending = reader.read().catch(() => ({ done: true }));
       }
+
       await Effect.runPromise(
         Deferred.await(subscribed).pipe(
           Effect.timeout(2000),
@@ -164,9 +183,11 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       );
       expect(subscribers).toBe(1);
       expect(activeReads).toBe(1);
+
       if (shutdown === "stop") await Effect.runPromise(host.stop);
       else abort.abort();
       const completed = await pending;
+
       if (shutdown === "long-poll-abort") expect(completed).toMatchObject({ name: "AbortError" });
       await Effect.runPromise(
         Deferred.await(released).pipe(
@@ -208,9 +229,11 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       expect(ownerClosed).toBe(shutdown === "stop");
       await Effect.runPromise(host.stop);
       expect(ownerClosed).toBe(true);
+
       const rebound = await Effect.runPromise(
         testHost({ layer: MemoryStorage.layerProtocol(), port: host.port }),
       );
+
       try {
         expect(rebound.port).toBe(host.port);
         expect((await fetch(new URL("s", rebound.url), { method: "PUT" })).status).toBe(201);
@@ -219,6 +242,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       }
     } finally {
       abort.abort();
+
       try {
         await Effect.runPromise(host.stop);
         expect(errors).not.toHaveBeenCalled();
@@ -234,12 +258,15 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     }
   });
 }
+
 it("a set graceful shutdown timeout bounds the drain of a parked long poll", async () => {
   const readStarted = Deferred.makeUnsafe<void>();
   const hold = Deferred.makeUnsafe<void>();
+
   const probe = await parkLongPoll(parkableLayer(readStarted, hold), {
     gracefulShutdownTimeout: Duration.millis(400),
   });
+
   try {
     await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
     await Effect.runPromise(Effect.sleep("150 millis"));
@@ -261,6 +288,7 @@ it("an unset graceful shutdown timeout does not wait for a parked long poll", as
   const readStarted = Deferred.makeUnsafe<void>();
   const hold = Deferred.makeUnsafe<void>();
   const probe = await parkLongPoll(parkableLayer(readStarted, hold), {});
+
   try {
     await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
     await Effect.runPromise(Effect.sleep("150 millis"));
@@ -278,6 +306,7 @@ it("a set drain bound does not delay a drain with no parked read", async () => {
   const probe = await parkLongPoll(memoryLayer, {
     gracefulShutdownTimeout: Duration.seconds(10),
   });
+
   const startedAt = performance.now();
   await Effect.runPromise(probe.host.stop);
   expect(performance.now() - startedAt).toBeLessThan(1000);
@@ -285,6 +314,7 @@ it("a set drain bound does not delay a drain with no parked read", async () => {
 
 it("a parked long poll survives past 10 seconds under the default idle timeout", async () => {
   const probe = await parkLongPoll(memoryLayer, {});
+
   try {
     await probe.settle(10_500);
     expect(probe.parked()).toBe(true);

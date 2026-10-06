@@ -41,6 +41,7 @@ function withBufferGlobal<Result, Replacement>(
     writable: true,
     value: replacement,
   });
+
   try {
     return run(replacement);
   } finally {
@@ -64,6 +65,7 @@ describe("MessageBodyCodec base64 fallback", () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
     Reflect.deleteProperty(globalThis, "Buffer");
     let withoutBuffer: string;
+
     try {
       withoutBuffer = codec.bytesToBase64(view);
     } finally {
@@ -76,6 +78,7 @@ describe("MessageBodyCodec base64 fallback", () => {
 
   it("falls back to btoa when a foreign Buffer global returns an unusable value", () => {
     const codec = MessageBody;
+
     const encoded = withBufferGlobal(
       foreignBuffer(() => null),
       () => codec.bytesToBase64(new Uint8Array([1, 2, 3])),

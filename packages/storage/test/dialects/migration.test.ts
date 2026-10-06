@@ -26,6 +26,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
   describe.skipIf(url === undefined)(`${dialect.name} storage schema`, () => {
     test("migrates a fresh database twice to one version row and the storage tables", async () => {
       if (url === undefined) return;
+
       const result = await Effect.runPromise(
         withFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
@@ -33,12 +34,16 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
               yield* Layer.build(dialectClient(dialect, fresh)),
               SqlClient.SqlClient,
             );
+
             yield* migrate(sql);
             yield* migrate(sql);
+
             const versions = yield* sql.unsafe<{ readonly version: unknown }>(
               `SELECT version FROM ${STORAGE_VERSION_TABLE}`,
             );
+
             const tables = yield* sql.unsafe<{ readonly name: string }>(dialect.tables);
+
             return {
               versions: versions.map(({ version }) => Number(version)),
               tables: tables.map(({ name }) => name),
@@ -46,6 +51,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
           }),
         ),
       );
+
       expect(result).toEqual({
         versions: [STORAGE_SCHEMA_VERSION],
         tables: [
@@ -63,12 +69,14 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       const id = StreamId.make("dialect/stream");
       const first = Offset.make("0000000000000001_0000000000000001");
       const second = Offset.make("0000000000000002_0000000000000001");
+
       const result = await Effect.runPromise(
         withFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
             const context = yield* Layer.build(
               storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
             );
+
             const storage = Context.get(context, Storage);
             yield* storage.mutate({
               operations: [
@@ -99,6 +107,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             const all = yield* storage.messages(id, {});
             const after = yield* storage.messages(id, { after: first, limit: 1 });
             const record = Option.getOrThrow(yield* storage.record(id));
+
             return {
               created: created.currentOffset,
               current: record.currentOffset,
@@ -108,6 +117,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
           }),
         ),
       );
+
       expect(result).toEqual({
         created: first,
         current: second,

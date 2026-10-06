@@ -26,15 +26,20 @@ export function validateProducer(
     return seq === 0
       ? ProducerValidation.Accepted({ proposedState: { epoch, lastSeq: 0 } })
       : ProducerValidation.Gap({ expectedSeq: 0, receivedSeq: seq });
+
   if (epoch < state.epoch) return ProducerValidation.StaleEpoch({ currentEpoch: state.epoch });
+
   if (epoch > state.epoch)
     return seq === 0
       ? ProducerValidation.Accepted({ proposedState: { epoch, lastSeq: 0 } })
       : ProducerValidation.InvalidEpochSeq();
+
   if (seq <= state.lastSeq)
     return ProducerValidation.Duplicate({ lastSeq: state.lastSeq, epoch: state.epoch });
+
   if (seq === state.lastSeq + 1)
     return ProducerValidation.Accepted({ proposedState: { epoch, lastSeq: seq } });
+
   return ProducerValidation.Gap({ expectedSeq: state.lastSeq + 1, receivedSeq: seq });
 }
 

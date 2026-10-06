@@ -23,4 +23,5 @@ export const CommandRequest = Schema.Union([
     assigneeId: Identifier,
   }),
 ]);
+
 export type CommandRequest = typeof CommandRequest.Type;

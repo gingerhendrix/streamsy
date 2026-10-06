@@ -2,6 +2,7 @@ import type { Duration } from "effect";
 import { BunHttpServer } from "@effect/platform-bun";
 
 export const DEFAULT_PORT = 3000;
+
 export const DEFAULT_HOSTNAME = "127.0.0.1";
 
 export interface ListenerOptions {

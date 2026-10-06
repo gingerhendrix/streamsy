@@ -126,6 +126,7 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
   Effect.gen(function* () {
     const store = yield* OutboxStore;
     const startedAtMs = yield* Clock.currentTimeMillis;
+
     const claimed = yield* store.claimDue(
       sink.name,
       options.partitionId,
@@ -140,6 +141,7 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
     for (const entry of claimed) {
       const attempt = entry.attempts + 1;
       const decoded = decodePayload(sink, entry);
+
       if (decoded.kind === "poison") {
         yield* settle(entry, attempt, "payload-poison", decoded.detail);
         deadLettered += 1;
@@ -156,23 +158,27 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
           payload: decoded.payload,
         }),
       );
+
       if (Exit.isSuccess(exit)) {
         const at = yield* Clock.currentTimeMillis;
         yield* store.markDelivered(entry.id, attempt, at);
         delivered += 1;
         continue;
       }
+
       // An interrupted pass has decided nothing about this entry, so it is left
       // exactly as it was claimed and the whole drain unwinds.
       if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt;
 
       const failure = failureOf(sink, entry, exit.cause);
       const reason = deadLetterReason(sink, attempt, failure);
+
       if (reason !== undefined) {
         yield* settle(entry, attempt, reason, failure.detail);
         deadLettered += 1;
         continue;
       }
+
       const at = yield* Clock.currentTimeMillis;
       yield* store.reschedule(
         entry.id,
@@ -231,7 +237,9 @@ function failureOf<Payload, From extends ActionSinkRelation>(
   cause: Cause.Cause<ActionSinkDeliveryFailure>,
 ): ActionSinkDeliveryFailure {
   const declared = cause.reasons.find(Cause.isFailReason);
+
   if (declared !== undefined) return declared.error;
+
   return ActionSinkDeliveryFailure.retryable(
     sink.handler.name,
     entry.idempotencyKey,
@@ -245,7 +253,9 @@ function deadLetterReason<Payload, From extends ActionSinkRelation>(
   failure: ActionSinkDeliveryFailure,
 ): DeadLetterReason | undefined {
   if (!failure.retryable) return "permanent";
+
   if (attempt >= sink.delivery.maxAttempts) return "attempts-exhausted";
+
   return undefined;
 }
 

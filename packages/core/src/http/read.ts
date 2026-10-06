@@ -15,8 +15,11 @@ import { generateCursor } from "../policy/cursor-generator.ts";
 import { ShutdownSignal, type ShutdownSignalService } from "./shutdown-signal.ts";
 
 const responses = Responses;
+
 const bodyCodec = MessageBody;
+
 const etags = Etags;
+
 const queryParser = readQueryParser(isValid);
 
 /**
@@ -34,6 +37,7 @@ const drainReply = Effect.fn("Http.drainReply")(function* (
   const head = yield* reader.head(id);
   const now = yield* Clock.currentTimeMillis;
   const random = yield* Random.next;
+
   return {
     contentType: head.contentType,
     messages: [],
@@ -54,12 +58,16 @@ const longPoll = (
   signal: Option.Option<ShutdownSignalService>,
 ) => {
   const wait = reader.readNext(id, { offset, cursor });
+
   if (Option.isNone(signal)) return wait;
+
   const drained = signal.value.draining.pipe(
     Effect.andThen(drainReply(reader, id, offset, cursor)),
   );
+
   return signal.value.track(Effect.raceFirst(wait, drained));
 };
+
 export const read = Effect.fn("Http.read")(function* (
   reader: Reader<StreamsFault>,
   id: StreamId,
@@ -72,21 +80,28 @@ export const read = Effect.fn("Http.read")(function* (
   StreamsFault | ReadNextError
 > {
   const query = queryParser.parse(url);
+
   if (!query.ok) return query.response;
   const offset = query.offset;
+
   if (offset === "now" && !query.live) {
     const result = yield* reader.read(id, { offset: "now" });
+
     const headers = new Headers({
       "content-type": result.contentType,
       "stream-next-offset": result.nextOffset,
       "stream-up-to-date": "true",
       "cache-control": "no-store",
     });
+
     if (result.closed) headers.set("stream-closed", "true");
+
     return new Response(bodyCodec.emptyBodyForContentType(result.contentType), { headers });
   }
+
   if (query.live && !offset) return responses.badRequest("offset required for live modes");
   const signal = yield* Effect.serviceOption(ShutdownSignal);
+
   if (query.live === "sse" && offset) {
     const meta = yield* reader.head(id);
 
@@ -100,7 +115,9 @@ export const read = Effect.fn("Http.read")(function* (
       Option.getOrUndefined(signal),
     );
   }
+
   const live = query.live === "long-poll" && offset !== undefined;
+
   const result =
     live && offset !== undefined
       ? yield* longPoll(reader, id, offset, query.cursor, signal)
@@ -109,27 +126,37 @@ export const read = Effect.fn("Http.read")(function* (
           .pipe(Effect.map((batch) => ({ ...batch, cursor: undefined })));
 
   const headers = new Headers({ "stream-next-offset": result.nextOffset });
+
   if (result.closed) headers.set("stream-closed", "true");
+
   if (live || result.upToDate) headers.set("stream-up-to-date", "true");
+
   if (live && !result.closed && result.cursor !== undefined)
     headers.set("stream-cursor", result.cursor);
+
   if (live && result.messages.length === 0) {
     headers.set("cache-control", "no-store");
+
     return responses.empty(204, headers);
   }
+
   const etag = etags.forCatchUp(
     url.pathname,
     offset ?? "-1",
     result.nextOffset,
     result.closed === true,
   );
+
   const literalNow = live && query.offset === "now";
   headers.set("cache-control", literalNow ? "no-store" : cacheControl);
+
   if (!literalNow) {
     if (requestHeaders.get("if-none-match") === etag)
       return responses.empty(304, { etag, "cache-control": cacheControl });
     headers.set("etag", etag);
   }
+
   headers.set("content-type", result.contentType);
+
   return new Response(bodyCodec.encodeHttpBody(result.messages, result.contentType), { headers });
 });

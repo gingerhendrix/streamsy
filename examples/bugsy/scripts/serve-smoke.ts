@@ -31,6 +31,7 @@ const LabelCountChanges = Schema.Array(
 const produce = Effect.gen(function* () {
   yield* createInputs("live");
   const ref = Labels.at({ workspaceId: "live" });
+
   const label = {
     workspaceId: "live",
     labelId: "keep",
@@ -38,6 +39,7 @@ const produce = Effect.gen(function* () {
     color: "#123456",
     updatedAt: "2026-09-23T10:00:00Z",
   };
+
   const removed = { ...label, labelId: "remove", name: "Remove" };
   yield* (yield* Labels).append(
     { workspaceId: "live" },
@@ -86,6 +88,7 @@ const smoke = Effect.gen(function* () {
     issueId: "smoke",
     status: "done",
   });
+
   const verify = (afterRestartCommand = false) =>
     Effect.gen(function* () {
       const status = afterRestartCommand ? "todo" : "done";
@@ -95,11 +98,13 @@ const smoke = Effect.gen(function* () {
         "board rows missing",
       );
       yield* check(board.rows[0]?.labelIds.join() === "keep", "membership missing");
+
       // This small fixture fits label-counts and transitions in one protocol page.
       const changes = yield* getJson(
         `${baseUrl}/state/workspaces/live/label-counts?offset=-1`,
         LabelCountChanges,
       );
+
       yield* check(
         changes.some(
           (change) =>
@@ -110,15 +115,19 @@ const smoke = Effect.gen(function* () {
         "key-only output delete missing",
       );
       const counts = new Map<string, LabelCountRow>();
+
       for (const change of changes) {
         if (change.headers.operation === "delete") counts.delete(change.key);
         else if (change.value) counts.set(change.key, change.value);
       }
+
       yield* check(counts.size === 1 && counts.get("keep")?.count === 1, "label counts incorrect");
+
       const transitions = yield* getJson(
         `${baseUrl}/feed/workspaces/live/issue-transitions?offset=-1`,
         Schema.Array(IssueEvent),
       );
+
       yield* check(
         transitions.map((event) => event.eventId).join() ===
           (afterRestartCommand ? "serve-1,serve-2,serve-3" : "serve-1,serve-2"),
@@ -132,13 +141,18 @@ const smoke = Effect.gen(function* () {
         "summary incorrect",
       );
       const etag = response.headers["etag"];
+
       if (etag === undefined) return yield* new SmokeFailure({ message: "summary has no ETag" });
+
       const revalidated = yield* HttpClient.get(`${baseUrl}/workspaces/live/summary`, {
         headers: { "if-none-match": etag },
       });
+
       yield* check(revalidated.status === 304, "summary revalidation failed");
+
       return etag;
     });
+
   const etag = yield* verify();
   yield* server.stop;
   yield* startServer(database, server.port);
@@ -150,9 +164,11 @@ const smoke = Effect.gen(function* () {
     status: "todo",
   });
   yield* check((yield* verify(true)) !== etag, "summary ETag did not advance");
+
   const advanced = yield* HttpClient.get(`${baseUrl}/workspaces/live/summary`, {
     headers: { "if-none-match": etag },
   });
+
   yield* check(
     advanced.status === 200 && advanced.headers["etag"] !== etag,
     "old ETag incorrectly revalidated",

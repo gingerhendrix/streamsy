@@ -130,9 +130,12 @@ const makeBoundary = (
       Effect.gen(function* () {
         const active = yield* Effect.sync(() => {
           closed = true;
+
           if (probe !== undefined) probe.closed = true;
+
           return [...subscriptions];
         });
+
         for (const subscription of active) yield* subscription.cleanup;
       }),
     );
@@ -143,16 +146,20 @@ const makeBoundary = (
         const pending = new Set<string>();
         const transactionBody = body.pipe(Effect.provideService(PendingInvalidations, pending));
         const transaction = sql.withTransaction(transactionBody);
+
         const guardedTransaction =
           transactionMaxOpsBeforeYield === undefined
             ? transaction
             : transaction.pipe(
                 Effect.provideService(Scheduler.MaxOpsBeforeYield, transactionMaxOpsBeforeYield),
               );
+
         return guardedTransaction.pipe(
           Effect.tap(() => {
             if (pending.size === 0) return Effect.void;
+
             if (probe !== undefined) probe.invalidations += 1;
+
             return reactivity.invalidate([...pending]);
           }),
         );
@@ -161,11 +168,13 @@ const makeBoundary = (
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
       Effect.flatMap(Effect.serviceOption(PendingInvalidations), (owned) => {
         if (Option.isSome(owned)) return body;
+
         return Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) => {
           if (Option.isSome(ambient))
             return Effect.die(
               new Error("Commit boundary cannot enter an unowned ambient SQL transaction"),
             );
+
           return ownedTransaction(body);
         });
       });
@@ -177,10 +186,12 @@ const makeBoundary = (
           // transaction cannot execute an unnotified storage statement.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
+
           const run = Effect.tap(effect, () =>
             Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pending) => {
               if (Option.isNone(pending))
                 return Effect.die(new Error("CommitBoundary owner context disappeared"));
+
               return Effect.sync(() => {
                 // A mutation that succeeds is applied: a rejection travels on the error
                 // channel and rolls the transaction back.
@@ -188,6 +199,7 @@ const makeBoundary = (
               });
             }),
           );
+
           return Option.isSome(ambient)
             ? run
             : retryWithPolicy(ownedTransaction(run), transactionRetry, (error) =>
@@ -209,6 +221,7 @@ const makeBoundary = (
             Effect.gen(function* () {
               const queue = yield* Queue.make<void>({ capacity: 1, strategy: "dropping" });
               const repairStarted = yield* Deferred.make<void>();
+
               const repairFiber = yield* Effect.acquireUseRelease(
                 Effect.sync(() => {
                   if (probe !== undefined) probe.activeRepairFibers += 1;
@@ -219,7 +232,9 @@ const makeBoundary = (
                     Effect.andThen(
                       Effect.suspend(() => {
                         if (probe?.repairsPaused === true) return Effect.void;
+
                         if (probe !== undefined) probe.repairPasses += 1;
+
                         return Queue.offer(queue, undefined);
                       }),
                     ),
@@ -230,9 +245,11 @@ const makeBoundary = (
                     if (probe !== undefined) probe.activeRepairFibers -= 1;
                   }),
               ).pipe(Effect.forkScoped);
+
               yield* Deferred.await(repairStarted);
               let cleaned = false;
               let cancel = noop;
+
               const active: ActiveSubscription = {
                 queue,
                 cleanup: Effect.suspend(() => {
@@ -240,29 +257,39 @@ const makeBoundary = (
                   cleaned = true;
                   subscriptions.delete(active);
                   probe?.queues.delete(queue);
+
                   if (probe !== undefined) probe.activeRegistrations -= 1;
                   cancel();
+
                   return Fiber.interrupt(repairFiber).pipe(Effect.andThen(Queue.shutdown(queue)));
                 }),
               };
+
               const registered = yield* Effect.sync(() => {
                 if (closed) return false;
                 cancel = reactivity.registerUnsafe(keys, () => Queue.offerUnsafe(queue, undefined));
                 subscriptions.add(active);
                 probe?.queues.add(queue);
+
                 if (probe !== undefined) probe.activeRegistrations += 1;
+
                 return true;
               });
+
               if (!registered) {
                 yield* Fiber.interrupt(repairFiber);
                 yield* Queue.shutdown(queue);
+
                 return yield* Effect.interrupt;
               }
+
               if (probe?.afterRegister !== undefined) yield* probe.afterRegister;
+
               return active;
             }),
             (active) => active.cleanup,
           );
+
           return Stream.concat(
             Stream.fromEffect(read),
             Stream.fromQueue(subscription.queue).pipe(Stream.mapEffect(() => read)),

@@ -13,6 +13,7 @@ const program = Effect.gen(function* () {
       () => new Usage({ message: "usage: BUGSY_DB=<path> run-once.ts <workspaceId>" }),
     ),
   );
+
   yield* Effect.log(yield* Projection.run(issueRows.at({ workspaceId })));
   yield* Effect.log(yield* Projection.run(tracker.at({ workspaceId })));
 });

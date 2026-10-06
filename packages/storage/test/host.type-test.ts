@@ -8,7 +8,9 @@ class Notes extends Streamsy.json<Notes>()("StorageHost/Notes", "notes", {
   params: {},
   schema: Schema.String,
 }) {}
+
 const group = Streamsy.group(Notes);
+
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
@@ -24,8 +26,10 @@ const host = (
     : BunStorage.layer(group, { client: { filename } });
 
 const bunOptions: BunStorage.Options = { client: { filename: ":memory:" }, longPollTimeoutMs: 100 };
+
 // @ts-expect-error BunStorage.Options requires a client.
 const missingClient: BunStorage.Options = {};
+
 // @ts-expect-error A remote host has no change feed, so it is not a Host.
 const remote: Layer.Layer<
   Streamsy.Host<typeof group>,

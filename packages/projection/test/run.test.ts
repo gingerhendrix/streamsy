@@ -26,19 +26,25 @@ const run = <A, E>(
   Effect.runPromise(
     body.pipe(Effect.provide(FamilyFixture.withFamilies(layerSqlite(readLimit), Numbers, Doubled))),
   );
+
 const failure = <A, E>(
   body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
 ) =>
   Effect.gen(function* () {
     const result = yield* body.pipe(Effect.result);
     expect(result._tag).toBe("Failure");
+
     return result._tag === "Failure" ? Option.some(result.failure) : Option.none<E>();
   });
+
 const fault = (value: Option.Option<unknown>): ProjectionFault => {
   const error = Option.getOrThrow(value);
+
   if (!(error instanceof ProjectionFault)) throw new Error("Expected a ProjectionFault");
+
   return error;
 };
+
 const sum = Projection.fold({
   id: "sum",
   params: {},
@@ -46,6 +52,7 @@ const sum = Projection.fold({
   state: { schema: Schema.Finite, initial: 0 },
   fold: (total, { item }) => total + item,
 }).at({});
+
 /** Substitutes the reader's `read` for one effect; every other operation is untouched. */
 const withRead = <A, E, R>(
   body: Effect.Effect<A, E, R | StreamsReader>,
@@ -53,6 +60,7 @@ const withRead = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
+
     return yield* body.pipe(
       FamilyFixture.provideReader(StreamsReader.of({ ...reader, read: read(reader) })),
     );
@@ -78,10 +86,13 @@ test("run reaches caught-up through a trailing empty pass without losing totals"
     Effect.gen(function* () {
       let reads = 0;
       yield* initialize;
+
       const result = yield* withRead(Projection.run(positives), (reader) => (id, options) => {
         reads += 1;
+
         return reader.read(id, options);
       });
+
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(1);
       expect(result.items).toBe(3);
@@ -110,11 +121,13 @@ test("first commit failure leaves no output and no record", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
+
       const failed = fault(
         yield* failAtSave.pipe(
           Effect.map((r) => (r._tag === "Failure" ? Option.some(r.failure) : Option.none())),
         ),
       );
+
       expect(failed.phase).toBe("checkpoint");
       const stored = yield* inspect;
       expect(Option.isNone(stored.loaded.record)).toBe(true);
@@ -147,6 +160,7 @@ test("identity mismatch on inputs stops without reset", () =>
       const before = yield* inspect;
       const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
+
       const changed = Projection.process({
         commit: Commit.transaction,
         id: positives.id,
@@ -154,6 +168,7 @@ test("identity mismatch on inputs stops without reset", () =>
         inputs: { input: other },
         process: () => Effect.void,
       }).at({});
+
       const failed = fault(yield* failure(Projection.run(changed)));
       expect(failed.phase).toBe("load");
       expect(failed.reason).toBe("identity-mismatch");
@@ -200,12 +215,15 @@ test("invalid stored record stops", () =>
       yield* Projection.run(positives);
       const sql = yield* SqlClient.SqlClient;
       const key = recordKey(Projection.key(positives));
+
       const rows = yield* sql<{
         readonly value: string;
       }>`SELECT owner_value AS value FROM streamsy_owner_records WHERE owner_key = ${key}`;
+
       const stored = Option.getOrThrow(Option.fromUndefinedOr(rows[0])).value;
       const bad = stored.replace(/"input":"\d{16}_\d{16}"/, '"input":"not-an-offset"');
       expect(bad).not.toBe(stored);
+
       for (const value of ["{not json", '{"version":1,"record":{}}', bad]) {
         yield* sql`UPDATE streamsy_owner_records SET owner_value = ${value} WHERE owner_key = ${key}`;
         const failed = fault(yield* failure(Projection.run(positives)));
@@ -220,18 +238,22 @@ test("invalid options fails before reading", () =>
     Effect.gen(function* () {
       let reads = 0;
       yield* initialize;
+
       for (const options of [{ limit: 0 }, { limit: -1 }, { limit: Infinity }, { limit: 1.5 }]) {
         const failed = fault(
           yield* failure(
             withRead(Projection.run(positives, options), (reader) => (id, readOptions) => {
               reads += 1;
+
               return reader.read(id, readOptions);
             }),
           ),
         );
+
         expect(failed.phase).toBe("load");
         expect(failed.reason).toBe("invalid-options");
       }
+
       expect(reads).toBe(0);
       expect(Option.isNone((yield* inspect).loaded.record)).toBe(true);
     }),
@@ -253,6 +275,7 @@ test("nonadvancing read is rejected without a commit", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
+
       const failed = fault(
         yield* failure(
           withRead(
@@ -264,6 +287,7 @@ test("nonadvancing read is rejected without a commit", () =>
           ),
         ),
       );
+
       expect(failed.phase).toBe("read");
       expect(failed.reason).toBe("invalid-source");
       expect(failed.input).toBe("input");
@@ -276,6 +300,7 @@ test("record change between load and transaction is a token conflict", () =>
     Effect.gen(function* () {
       yield* initialize;
       const services = yield* Effect.context<Services>();
+
       // A competing runner completes inside this runner's read window.
       const raced = <A, E>(pass: Effect.Effect<A, E, Services>) =>
         failure(
@@ -290,6 +315,7 @@ test("record change between load and transaction is a token conflict", () =>
               ),
           ),
         ).pipe(Effect.map(fault));
+
       const failed = yield* raced(Projection.pass(positives));
       expect(failed.phase).toBe("checkpoint");
       expect(failed.reason).toBe("token-conflict");
@@ -312,6 +338,7 @@ test("two competing passes on one SQLite host: the second conflicts and output i
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
       const firstDone = yield* Deferred.make<void>();
+
       const gated = Projection.process({
         commit: Commit.transaction,
         id: positives.id,
@@ -322,12 +349,15 @@ test("two competing passes on one SQLite host: the second conflicts and output i
           Deferred.succeed(inside, undefined).pipe(Effect.andThen(Deferred.await(release))),
         process: (batch, unit) => positives.process(batch, unit),
       }).at({});
+
       const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
+
       const observing = CheckpointStore.of({
         ...owner,
         load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
       });
+
       const second = yield* Effect.forkChild(
         Projection.pass(
           Projection.process({
@@ -340,6 +370,7 @@ test("two competing passes on one SQLite host: the second conflicts and output i
           }).at({}),
         ).pipe(Effect.provideService(CheckpointStore, observing)),
       );
+
       yield* Deferred.await(loaded);
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(first)).items).toBe(3);
@@ -357,7 +388,9 @@ test("handler failure rolls back the output append and the checkpoint", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
+
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
+
       const failing = Projection.process({
         commit: Commit.transaction,
         id: positives.id,
@@ -365,6 +398,7 @@ test("handler failure rolls back the output append and the checkpoint", () =>
         inputs: { input },
         process: (batch, unit) => positives.process(batch, unit).pipe(Effect.andThen(new Boom())),
       }).at({});
+
       const failed = yield* failure(Projection.run(failing));
       expect(Option.getOrThrow(failed)).toBeInstanceOf(Boom);
       const stored = yield* inspect;
@@ -381,6 +415,7 @@ test("run without a limit drains more than one hundred server pages", () =>
         input,
         Array.makeBy(101, (n) => n),
       );
+
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "uncapped",
@@ -388,6 +423,7 @@ test("run without a limit drains more than one hundred server pages", () =>
         inputs: { input },
         process: () => Effect.void,
       }).at({});
+
       const result = yield* Projection.run(projection);
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(101);

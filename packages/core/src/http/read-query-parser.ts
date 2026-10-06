@@ -23,6 +23,7 @@ export const readQueryParser = (isValidOffset: (offset: string) => boolean) => (
     ) {
       return { ok: false, response: new Response("Invalid cursor", { status: 400 }) };
     }
+
     return { ok: true, offset, live, cursor };
   },
 });

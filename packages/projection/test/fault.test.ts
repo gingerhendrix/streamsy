@@ -23,6 +23,7 @@ test("ProjectionFault retries only storage failures with a retryable or unknown 
       retryable: false,
     },
   ];
+
   for (const { cause, retryable } of causes) {
     expect(
       new ProjectionFault({ phase: "load", reason: "storage-failure", message: "failed", cause })

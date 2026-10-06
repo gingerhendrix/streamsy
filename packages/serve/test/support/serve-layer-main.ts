@@ -17,6 +17,7 @@ const Active = HttpRouter.add(
   "/active",
   Effect.gen(function* () {
     const signal = yield* ShutdownSignal;
+
     return HttpServerResponse.text(String(yield* signal.active));
   }),
 );

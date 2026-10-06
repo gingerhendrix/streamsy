@@ -15,9 +15,11 @@ import type { Rng } from "./rng.ts";
 import { Schema } from "effect";
 
 export const MAP_VERSION = "procedural-hex-v1";
+
 export const GENERATOR_VERSION = "hex-generator-v2";
 
 export type MapVersion = typeof MAP_VERSION;
+
 export type GeneratorVersion = typeof GENERATOR_VERSION;
 
 /**
@@ -70,7 +72,9 @@ export interface GeneratedMap {
 }
 
 export const TerrainSchema = Schema.Literals(TERRAIN_TYPES);
+
 export const AxialSchema = Schema.Struct({ q: Schema.Int, r: Schema.Int });
+
 export const HexTileDefSchema = Schema.Struct({
   id: Schema.String,
   q: Schema.Int,
@@ -78,6 +82,7 @@ export const HexTileDefSchema = Schema.Struct({
   territoryId: Schema.String,
   terrain: TerrainSchema,
 });
+
 export const TerritoryDefSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -86,7 +91,9 @@ export const TerritoryDefSchema = Schema.Struct({
   adjacentTerritoryIds: Schema.Array(Schema.String),
   labelAnchor: AxialSchema,
 });
+
 export const ContinentPaletteSchema = Schema.Struct({ hue: Schema.Finite, pattern: Schema.String });
+
 export const ContinentDefSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -94,6 +101,7 @@ export const ContinentDefSchema = Schema.Struct({
   reinforcementBonus: Schema.Int,
   palette: ContinentPaletteSchema,
 });
+
 export const GeneratedMapSchema = Schema.Struct({
   mapVersion: Schema.Literal(MAP_VERSION),
   generatorVersion: Schema.Literal(GENERATOR_VERSION),
@@ -157,11 +165,13 @@ export const MAP_PROFILES: readonly MapProfile[] = [
 
 export function mapProfileFor(playerCount: number): MapProfile {
   const profile = MAP_PROFILES.find((p) => p.players === playerCount);
+
   if (!profile) {
     throw new Error(
       `No map profile for ${playerCount} players; expected ${RULES.minPlayers}..${RULES.maxPlayers}.`,
     );
   }
+
   return profile;
 }
 
@@ -214,7 +224,9 @@ export function baseReinforcement(ownedTerritories: number): number {
  */
 export function generateMapSeed(rng: Rng): string {
   let seed = "";
+
   for (let i = 0; i < 32; i += 1) seed += rng.nextInt(16).toString(16);
+
   return seed;
 }
 
@@ -256,13 +268,17 @@ export function adjacentTo(index: MapIndex, id: string): readonly string[] {
 /** Terrain mix of a territory, as counts keyed by terrain type. Presentation only. */
 export function territoryTerrainMix(index: MapIndex, territoryId: string) {
   const territory = index.territoryById.get(territoryId);
+
   if (!territory) return {};
   const mix: Partial<Record<Terrain, number>> = {};
+
   for (const hex of territory.hexIds) {
     const tile = index.tileById.get(hex);
+
     if (!tile) continue;
     mix[tile.terrain] = (mix[tile.terrain] ?? 0) + 1;
   }
+
   return mix;
 }
 
@@ -270,12 +286,15 @@ export function territoryTerrainMix(index: MapIndex, territoryId: string) {
 export function labelAnchorDistance(index: MapIndex, a: string, b: string): number {
   const from = index.territoryById.get(a)?.labelAnchor;
   const to = index.territoryById.get(b)?.labelAnchor;
+
   if (!from || !to) return Number.POSITIVE_INFINITY;
+
   return hexDistance(from, to);
 }
 
 /** Axial coordinate of a tile id, read from the snapshot rather than reparsed. */
 export function tileCoordinate(index: MapIndex, hexIdValue: string): Axial {
   const tile = index.tileById.get(hexIdValue);
+
   return tile ? { q: tile.q, r: tile.r } : parseHexId(hexIdValue);
 }

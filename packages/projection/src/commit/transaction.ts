@@ -21,6 +21,7 @@ export const transaction = withPrepare(
         const tx = yield* Transaction;
         const store = yield* CheckpointStore;
         const outputs = detailsOf(pending).outputs;
+
         for (const { address, service } of Object.values(outputs)) {
           if (service.owner !== tx.owner)
             return yield* new ProjectionFault({
@@ -29,17 +30,21 @@ export const transaction = withPrepare(
               message: `Output ${address.id} does not share the transaction owner`,
             });
         }
+
         const prepare = detailsOf(pending).prepare;
+
         if (prepare !== undefined) yield* prepare;
         yield* tx.withTransaction(
           Effect.gen(function* () {
             const again = yield* store.load(pending.key);
+
             if (again.token !== pending.loaded.token)
               return yield* new ProjectionFault({
                 phase: "checkpoint",
                 reason: "token-conflict",
                 message: `Record of ${pending.key.id} changed while the unit was read`,
               });
+
             const result = yield* pending.run.pipe(
               Effect.provideService(SqlClient.SqlClient, tx.sql),
               Effect.provideService(CurrentOwner, tx.owner),
@@ -55,10 +60,12 @@ export const transaction = withPrepare(
                   : Effect.die(defect),
               ),
             );
+
             if (result !== undefined && "outputs" in result) {
               for (const [name, output] of Object.entries(result.outputs)) {
                 if (!Array.isReadonlyArrayNonEmpty(output.items)) continue;
                 const resolved = outputs[name];
+
                 if (resolved === undefined)
                   return yield* new ProjectionFault({
                     phase: "process",
@@ -79,6 +86,7 @@ export const transaction = withPrepare(
                 );
               }
             }
+
             yield* settle(pending, result);
           }),
         );

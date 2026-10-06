@@ -34,6 +34,7 @@ const templateOf = (route: Route.Matcher): string | undefined => {
   if (!("template" in route)) return undefined;
   // SAFETY: StreamRoute carries a string template; custom routes carry the empty string.
   const template = route.template as string;
+
   return template.length > 0 ? template : undefined;
 };
 
@@ -41,8 +42,10 @@ const templateOf = (route: Route.Matcher): string | undefined => {
 function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
   const templates = routes.flatMap((route) => {
     const template = templateOf(route);
+
     return template === undefined ? [] : [template];
   });
+
   for (const [index, template] of templates.entries())
     for (const other of templates.slice(index + 1))
       if (templatesOverlap(template, other))
@@ -56,14 +59,17 @@ function wireApi<P, A, RD, RE>(
 ): Api<P, A, RD, RE> {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
+
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
     checkWriteOwner(owner, id, storage !== undefined).pipe(Effect.andThen(Effect.suspend(run)));
+
   const own = <A, E>(id: string, run: () => Effect.Effect<A, E>): Effect.Effect<A, E> =>
     Effect.suspend(() =>
       route.match(id)
         ? run()
         : Effect.die(new RangeError(`${id} is outside stream ${route.template}`)),
     );
+
   const wire: Reader<StreamsFault> & Writer<StreamsFault> = {
     head: (id) => own(id, () => services.reader.head(id)),
     read: (id, options) => own(id, () => services.reader.read(id, options)),
@@ -91,7 +97,9 @@ function wireApi<P, A, RD, RE>(
     append: (id, options) => write(id, () => own(id, () => services.writer.append(id, options))),
     remove: (id) => write(id, () => own(id, () => services.writer.remove(id))),
   };
+
   const context = Context.make(StreamsReader, wire).pipe(Context.add(StreamsWriter, wire));
+
   return {
     owner,
     route,
@@ -124,6 +132,7 @@ function wireApi<P, A, RD, RE>(
       }),
   } satisfies Api<P, A, RD, RE>;
 }
+
 /** A stream service with named failures for each toolkit call. */
 export interface Api<P, A, RD = never, RE = never> {
   readonly owner: object;
@@ -211,18 +220,22 @@ function define<Self>() {
   ): Class<Self, Name, P, A, RD, RE, R> => {
     const key: `@streamsy/core/Stream/${Name}` = `@streamsy/core/Stream/${name}`;
     const service = Context.Service<Self, Api<P, A, RD, RE>>()(key);
+
     const declared = Object.defineProperty(service, metadataKey, {
       value: { route, make: (services: Wires) => wireApi(route, services) },
     });
+
     return Object.assign(declared, route, {
       at: (params: P): ReturnType<R["address"]> & Address<A, Self, RD, RE> => {
         const address: unknown = Object.assign(route.address(params), { stream: service });
+
         // SAFETY: the route returns its declared address, including State collections; only its key is added.
         return address as ReturnType<R["address"]> & Address<A, Self, RD, RE>;
       },
     });
   };
 }
+
 export type JsonClass<
   Self,
   Name extends string,
@@ -241,6 +254,7 @@ export type JsonClass<
   RE,
   ReturnType<typeof Route.json<T, C, A, I, RD, RE>>
 >;
+
 export const json =
   <Self>() =>
   <const Name extends string, const T extends string, C extends Route.ParamCodecs, A, I, RD, RE>(
@@ -248,6 +262,7 @@ export const json =
     ...args: Parameters<typeof Route.json<T, C, A, I, RD, RE>>
   ): JsonClass<Self, Name, T, C, A, I, RD, RE> =>
     define<Self>()(name, Route.json<T, C, A, I, RD, RE>(...args));
+
 export type StateClass<
   Self,
   Name extends string,
@@ -263,6 +278,7 @@ export type StateClass<
   StreamAddress.CollectionsEncodingServices<Collections>,
   ReturnType<typeof Route.state<T, C, Collections>>
 >;
+
 export const state =
   <Self>() =>
   <
@@ -275,6 +291,7 @@ export const state =
     ...args: Parameters<typeof Route.state<T, C, Collections>>
   ): StateClass<Self, Name, T, C, Collections> =>
     define<Self>()(name, Route.state<T, C, Collections>(...args));
+
 export type BytesClass<
   Self,
   Name extends string,
@@ -289,6 +306,7 @@ export type BytesClass<
   never,
   ReturnType<typeof Route.bytes<T, C>>
 >;
+
 export const bytes =
   <Self>() =>
   <const Name extends string, const T extends string, C extends Route.ParamCodecs>(
@@ -306,6 +324,7 @@ export type CustomClass<Self, Name extends string, P, A, RD, RE> = Class<
   RE,
   ReturnType<typeof Route.custom<P, A, RD, RE>>
 >;
+
 export const custom =
   <Self>() =>
   <const Name extends string, P, A, RD, RE>(
@@ -315,6 +334,7 @@ export const custom =
     define<Self>()(name, Route.custom(options));
 
 const metadataKey = Symbol.for("@streamsy/core/Stream/metadata");
+
 interface Metadata {
   readonly route: Route.Matcher;
   readonly make: (services: Wires) => {
@@ -322,12 +342,16 @@ interface Metadata {
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
   };
 }
+
 function declaration(key: Any): Metadata {
   // SAFETY: define installs this inherited symbol on every declaration, including across package copies.
   const value = (key as Any & { readonly [metadataKey]?: Metadata })[metadataKey];
+
   if (value === undefined) throw new TypeError(`Unknown stream declaration: ${key.key}`);
+
   return value;
 }
+
 export class Wildcard extends define<Wildcard>()(
   "Wildcard",
   Route.custom({
@@ -349,20 +373,25 @@ export interface Any extends Context.Key<
   readonly template: string;
   readonly match: (id: string) => boolean;
 }
+
 export type Identifiers<Keys extends ReadonlyArray<Any>> = Keys[number]["Identifier"];
 
 export function checkStreams(keys: ReadonlyArray<Any>): void {
   const templates = new Set<string>();
   const names = new Set<string>();
+
   for (const [index, key] of keys.entries()) {
     if (names.has(key.key)) throw new RangeError(`duplicate stream name: ${key.key}`);
     names.add(key.key);
+
     if (key.template !== "" && templates.has(key.template))
       throw new RangeError(`duplicate stream template: ${key.template}`);
     templates.add(key.template);
+
     if (key.key === Wildcard.key && index !== keys.length - 1)
       throw new RangeError("Wildcard must be last");
   }
+
   checkNoOverlap(keys.map((key) => declaration(key).route));
 }
 
@@ -384,6 +413,7 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
 ) {
   const keys = group.streams;
   checkStreams(keys);
+
   const bindContext = (wires: Wires, storage?: typeof Storage.Service) => {
     if (
       storage !== undefined &&
@@ -391,8 +421,10 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
     )
       throw new RangeError("The exposed Storage does not own the protocol wires");
     let context = Context.empty();
+
     for (const key of keys) {
       context = Context.add(context, key, declaration(key).make(wires));
+
       if (storage !== undefined)
         context = Context.add(context, ChangeFeed(key), {
           owner: ownerOf(storage),
@@ -402,9 +434,11 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
               : Stream.die(new RangeError(`${id} is outside stream ${key.template}`)),
         });
     }
+
     // SAFETY: each stream comes from its factory; feed keys are added only for an exposed Storage.
     return context as Context.Context<Identifiers<Keys>>;
   };
+
   return source.pipe(
     Layer.flatMap((context) =>
       Layer.syncContext(() =>
@@ -423,11 +457,16 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
 export interface Group<Keys extends ReadonlyArray<Any> = ReadonlyArray<Any>> {
   readonly streams: Keys;
 }
+
 export type Services<G extends Group> = G["streams"][number]["Identifier"];
+
 /** What every host Layer gives for a group: its stream services and their change feeds. */
 export type Host<G extends Group> = Services<G> | ChangeFeed<Services<G>>;
+
 export function group<const Keys extends ReadonlyArray<Any>>(...keys: Keys): Group<Keys> {
   checkStreams(keys);
+
   return Object.freeze({ streams: Object.freeze(keys) });
 }
+
 export { ChangeFeed, type ChangeFeedApi } from "./changes.ts";

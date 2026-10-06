@@ -25,6 +25,7 @@ interface CommitResult {
   outcome: MutationApplied;
   changed: Set<StreamId>;
 }
+
 export interface MemoryOptions {
   readonly constrained?: boolean;
   readonly pollIntervalMs?: number;
@@ -34,16 +35,20 @@ function reject(state: State, operation: Operation, index: number): MutationReje
   const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
   const entry = state.entries.get(id);
   const record = entry?.record;
+
   const rejected = (reason: MutationRejected["reason"]): MutationRejected =>
     new MutationRejected({
       index,
       reason,
       record: record ? Option.some(copyRecord(record)) : Option.none(),
     });
+
   if (Predicate.isTagged(operation, "Create")) {
     if (record) return rejected("exists");
+
     if (operation.forkSource) {
       const source = state.entries.get(operation.forkSource.id)?.record;
+
       if (
         !source ||
         source.lifecycle.softDeleted ||
@@ -51,10 +56,14 @@ function reject(state: State, operation: Operation, index: number): MutationReje
       )
         return rejected("fork-source-gone");
     }
+
     return undefined;
   }
+
   if (!entry || !record) return rejected("not-found");
+
   if (record.lifecycle.softDeleted) return rejected("gone");
+
   if (Predicate.isTagged(operation, "Delete")) {
     if (
       operation.reason === "expiry" &&
@@ -62,21 +71,27 @@ function reject(state: State, operation: Operation, index: number): MutationReje
         record.lifecycle.expiresAtMs !== operation.expectedExpiresAtMs)
     )
       return rejected("expiry-mismatch");
+
     return undefined;
   }
+
   if (operation.expectedOffset !== undefined && operation.expectedOffset !== record.currentOffset)
     return rejected("offset");
+
   if (
     operation.expectedClosed !== undefined &&
     operation.expectedClosed !== record.lifecycle.closed
   )
     return rejected("closed");
+
   if (operation.producer) {
     const actual = entry.producers.get(operation.producer.producerId);
     const expected = Option.getOrUndefined(operation.producer.expected);
+
     if (actual?.epoch !== expected?.epoch || actual?.lastSeq !== expected?.lastSeq)
       return rejected("producer");
   }
+
   return undefined;
 }
 
@@ -87,18 +102,24 @@ export const layer = (
     Effect.gen(function* () {
       const chain = !options.constrained;
       const interval = options.pollIntervalMs ?? 25;
+
       if (!Number.isFinite(interval) || interval <= 0)
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
       const committed: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const bus = yield* createNotifier;
       const owner = yield* makeBoundary(committed, bus.publish);
+
       const commit = (state: State, mutation: Mutation): CommitResult | MutationRejected => {
         const changed = new Set<StreamId>();
+
         for (const [index, operation] of mutation.operations.entries()) {
           const rejection = reject(state, operation, index);
+
           if (rejection) return rejection;
         }
+
         const results: OperationResult[] = [];
+
         // Create edges before deleting sources, independent of operation order.
         for (const operation of mutation.operations) {
           if (!Predicate.isTagged(operation, "Create")) continue;
@@ -108,14 +129,18 @@ export const layer = (
             messages: operation.initialMessages.map(copyMessage),
             producers: new Map(),
           });
+
           if (chain && record.lifecycle.forkedFrom !== undefined)
             addEdge(state, record.lifecycle.forkedFrom, record.id);
         }
+
         for (const operation of mutation.operations) {
           const id = Predicate.isTagged(operation, "Create")
             ? operation.record.id
             : operation.streamId;
+
           const entry = state.entries.get(id);
+
           if (!entry) throw new Error("Mutation target disappeared after preflight");
           changed.add(id);
           Operations.$match(operation, {
@@ -125,6 +150,7 @@ export const layer = (
             Append: (append) => {
               entry.messages.push(...append.messages.map(copyMessage));
               entry.record = patchRecord(entry.record, append.patch);
+
               if (append.producer)
                 entry.producers.set(append.producer.producerId, { ...append.producer.next });
               results.push(OperationResults.Appended({ record: copyRecord(entry.record) }));
@@ -140,11 +166,15 @@ export const layer = (
             },
           });
         }
+
         if (chain) indexDeadlines(state);
         const [first, ...rest] = results;
+
         if (!first) throw new Error("Empty mutation");
+
         return { outcome: Mutations.Applied({ results: [first, ...rest] }), changed };
       };
+
       const storage = Storage.of({
         capabilities: {
           fork: chain ? "chain" : "copy",
@@ -180,15 +210,20 @@ export const layer = (
           const ids = mutation.operations.map((operation) =>
             Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId,
           );
+
           if (ids.length === 0 || new Set(ids).size !== ids.length || (!chain && ids.length > 1))
             return yield* Effect.die(
               new Error("Mutation requires distinct streams within atomicScope"),
             );
+
           return yield* Effect.gen(function* () {
             const result = yield* owner.access((state) => commit(state, mutation));
+
             if (Predicate.isTagged(result, "MutationRejected")) return yield* result;
             const { outcome, changed } = result;
+
             if (changed.size > 0) yield* owner.changed;
+
             return outcome;
           }).pipe(owner.withTransaction, Effect.uninterruptible);
         }),
@@ -199,6 +234,7 @@ export const layer = (
           ),
         ),
       });
+
       return Context.make(Storage, attachOwner(storage, ownerOf(owner.boundary))).pipe(
         Context.add(CommitBoundary, owner.boundary),
         Context.add(OwnerRecords, owner.records),

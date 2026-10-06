@@ -1,6 +1,7 @@
 import type { DialectSql } from "./dialect.ts";
 
 export const STORAGE_SCHEMA_VERSION = 1;
+
 export const STORAGE_VERSION_TABLE = "streamsy_schema";
 
 /** Version tables of earlier formats. A database that holds one must not be migrated. */
@@ -8,6 +9,7 @@ export const LEGACY_VERSION_TABLES = [
   "streamsy_schema_version",
   "streamsy_storage_schema_version",
 ] as const;
+
 export const STORAGE_TABLES = [
   "streamsy_streams",
   "streamsy_messages",
@@ -24,10 +26,13 @@ export const STORAGE_VERSION_TABLE_DDL: DialectSql<string> = {
 // MySQL keys need a bounded VARCHAR. Stream ids are capped at 512 characters by storage.
 // `utf8mb4_0900_bin` compares bytes and does not pad, so "x" and "x " are different ids.
 const MYSQL_STREAM_ID = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+
 // InnoDB limits an index key to 3072 bytes. The producer key holds a stream id
 // (2048 bytes) and a producer id, so the producer id gets 255 characters (1020 bytes).
 const MYSQL_PRODUCER_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+
 const MYSQL_OFFSET = "VARCHAR(33) CHARACTER SET ascii COLLATE ascii_bin";
+
 // Owner record keys are encoded projection keys, bounded like stream ids and compared as bytes.
 const MYSQL_OWNER_KEY = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 

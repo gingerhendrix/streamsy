@@ -12,12 +12,15 @@ import { applicationLayer, sqlStorage, sqliteStorage } from "./host.ts";
 const storage = (choice: StorageChoice) =>
   Effect.gen(function* () {
     if (choice.dialect === "pg") return sqlStorage(PgClient.make({ url: choice.url }));
+
     if (choice.dialect === "mysql") return sqlStorage(MysqlClient.make({ url: choice.url }));
+
     if (choice.filename !== ":memory:") {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.dirname(choice.filename), { recursive: true });
     }
+
     return sqliteStorage(choice.filename);
   });
 
@@ -25,6 +28,7 @@ const Server = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
     const host = applicationLayer(yield* storage(yield* storageChoice(config)), config.workspaces);
+
     return Serve.layer(app(config.workspaces), { disableLogger: true }).pipe(
       Layer.provide(host),
       Layer.provideMerge(listener({ port: config.port })),

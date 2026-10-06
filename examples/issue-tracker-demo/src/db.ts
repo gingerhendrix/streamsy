@@ -13,7 +13,9 @@ import { trackConnection, type Connection } from "./connection.ts";
 export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
 
 export type CreateProjectAction = { project: Project; txid: string };
+
 export type CreateIssueAction = { issue: Issue; txid: string };
+
 /** A patch of the fields a user can edit, with the writer's display name. */
 export type UpdateIssueAction = {
   issue: Issue;
@@ -21,6 +23,7 @@ export type UpdateIssueAction = {
   updatedBy: string | undefined;
   txid: string;
 };
+
 export type CreateCommentAction = { comment: Comment; txid: string };
 
 export type IssueDb = StreamDB<typeof issueTrackerState> & {
@@ -56,6 +59,7 @@ function apiUrl(workspaceId: string, path: string): string {
 
 export function createIssueDb(workspaceId: string): IssueDb {
   const connection = trackConnection();
+
   const streamDb = createStreamDB({
     streamOptions: {
       url: streamUrl(workspaceId),
@@ -76,6 +80,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
             description: project.description,
             txid,
           };
+
           const result = await postJson(apiUrl(workspaceId, "/projects"), body);
           await db.utils.awaitTxId(result.txid);
         },
@@ -93,6 +98,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
             updatedBy: issue.updatedBy,
             txid,
           };
+
           const result = await postJson(apiUrl(workspaceId, "/issues"), body);
           await db.utils.awaitTxId(result.txid);
         },
@@ -102,6 +108,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.issues.update(issue.id, (draft) => {
             Object.assign(draft, patch);
             draft.updatedAt = new Date().toISOString();
+
             if (updatedBy === undefined) delete draft.updatedBy;
             else draft.updatedBy = updatedBy;
           });
@@ -109,11 +116,13 @@ export function createIssueDb(workspaceId: string): IssueDb {
         mutationFn: async ({ issue, patch, updatedBy, txid }: UpdateIssueAction) => {
           // JSON leaves out an undefined `updatedBy`.
           const body: IssueInput = { ...patch, updatedBy, txid };
+
           const result = await postJson(
             apiUrl(workspaceId, `/issues/${encodeURIComponent(issue.id)}`),
             body,
             { method: "PATCH" },
           );
+
           await db.utils.awaitTxId(result.txid);
         },
       },
@@ -129,31 +138,38 @@ export function createIssueDb(workspaceId: string): IssueDb {
             body: comment.body,
             txid,
           };
+
           const result = await postJson(apiUrl(workspaceId, "/comments"), body);
           await db.utils.awaitTxId(result.txid);
         },
       },
     }),
   });
+
   return Object.assign(streamDb, { connection });
 }
 
 async function postJson(url: string, body: JsonValue, init: RequestInit = {}): Promise<Written> {
   const headers = new Headers(init.headers);
+
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
+
   const response = await fetch(url, {
     ...init,
     method: init.method ?? "POST",
     headers,
     body: JSON.stringify(body),
   });
+
   if (!response.ok) throw await apiError(response);
+
   return Schema.decodeUnknownSync(Written)(await response.json());
 }
 
 /** The `{ error }` body as an `ApiError`, or the status when the body is not one. */
 async function apiError(response: Response): Promise<ApiError> {
   const text = await response.text();
+
   try {
     return new ApiError(Schema.decodeUnknownSync(ErrorBody)(JSON.parse(text)).error);
   } catch {

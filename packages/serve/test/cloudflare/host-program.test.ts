@@ -23,9 +23,11 @@ const failingStorage = Storage.of({
 
 test("mutation reconciliation runs after an interrupted committed mutation", async () => {
   const events: Array<string> = [];
+
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const committed = yield* Deferred.make<void>();
+
       const fiber = yield* Effect.forkChild(
         withMutationReconciliation(
           Effect.gen(function* () {
@@ -34,11 +36,13 @@ test("mutation reconciliation runs after an interrupted committed mutation", asy
                 Effect.andThen(Deferred.succeed(committed, undefined)),
               ),
             );
+
             return yield* Effect.never;
           }),
           Effect.sync(() => events.push("reconciled")),
         ),
       );
+
       yield* Deferred.await(committed);
       yield* Fiber.interrupt(fiber);
     }),
@@ -71,7 +75,9 @@ test("an alarm exposes StorageFault for platform retry without an HTTP request",
       ),
     ),
   );
+
   expect(Exit.isFailure(result)).toBe(true);
+
   if (Exit.isFailure(result))
     expect(result.cause.reasons).toMatchObject([
       { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },

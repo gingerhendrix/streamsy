@@ -19,6 +19,7 @@ test("Alchemy placement strips the prefix and preserves the request and response
   const forwarded: Array<HttpServerRequest.HttpServerRequest> = [];
   const input = request("/streams/t1/a%2Fb?offset=-1");
   const output = HttpServerResponse.text("response body", { status: 202 });
+
   const response = await Effect.runPromise(
     Host.router({
       prefix: "/streams",
@@ -26,9 +27,11 @@ test("Alchemy placement strips the prefix and preserves the request and response
       objects: {
         getByName: (name) => {
           names.push(name);
+
           return {
             fetch: (received) => {
               forwarded.push(received);
+
               return Effect.succeed(output);
             },
           };
@@ -36,6 +39,7 @@ test("Alchemy placement strips the prefix and preserves the request and response
       },
     }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, input)),
   );
+
   expect(names).toEqual(["t1"]);
   expect(forwarded).toEqual([input]);
   expect(await Effect.runPromise(input.text)).toBe("payload");
@@ -48,6 +52,7 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
     params: { user: Schema.String },
     schema: Schema.String,
   });
+
   const cases = [
     { path: "/outside/a", placement: Host.Placement.byStream(), status: 400 },
     { path: "/streams", placement: Host.Placement.byStream(), status: 400 },
@@ -65,6 +70,7 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
       status: 400,
     },
   ];
+
   for (const row of cases) {
     const response = await Effect.runPromise(
       Host.router({
@@ -77,6 +83,7 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
         },
       }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request(row.path))),
     );
+
     expect(response.status).toBe(row.status);
     const web = HttpServerResponse.toWeb(response);
     expect(web.headers.get("x-content-type-options")).toBe("nosniff");
@@ -86,14 +93,18 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
 
 test("Alchemy router preserves the stub's HttpServerError", async () => {
   const input = request("/s");
+
   const error = new HttpServerError.HttpServerError({
     reason: new HttpServerError.RequestParseError({ request: input }),
   });
+
   const result = await Effect.runPromiseExit(
     Host.router({ objects: { getByName: () => ({ fetch: () => Effect.fail(error) }) } }).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, input),
     ),
   );
+
   expect(Exit.isFailure(result)).toBe(true);
+
   if (Exit.isFailure(result)) expect(result.cause.reasons).toMatchObject([{ _tag: "Fail", error }]);
 });

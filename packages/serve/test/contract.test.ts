@@ -70,8 +70,10 @@ const errors: readonly PublicError[] = [
   { _tag: "TransportUnavailable", route: "/feed", detail: "unavailable" },
   { _tag: "WireEncodeFailed", route: "/value", detail: "invalid" },
 ];
+
 test("S-4 server Schema and browser decoder agree on the wire JSON domain", () => {
   const server = Schema.decodeUnknownSync(PublicErrorSchema);
+
   const accepts = (decode: (value: unknown) => PublicError, value: unknown) => {
     try {
       return { ok: true, value: decode(value) };
@@ -79,20 +81,26 @@ test("S-4 server Schema and browser decoder agree on the wire JSON domain", () =
       return { ok: false };
     }
   };
+
   const candidates: unknown[] = [null, [], {}, 1, "error"];
+
   for (const error of errors) {
     expect(server(error)).toEqual(decodePublicError(error));
     candidates.push(error, { ...error, extra: "ignored" });
+
     for (const key of Object.keys(error)) {
       const missing = Object.fromEntries(Object.entries(error).filter(([name]) => name !== key));
       candidates.push(missing);
+
       for (const wrong of [null, false, [], {}, 2, "unknown"])
         candidates.push({ ...error, [key]: wrong });
     }
   }
+
   for (const candidate of candidates)
     expect(accepts(decodePublicError, candidate)).toEqual(accepts(server, candidate));
 });
+
 test("browser decoder rejects accessor and boxed required fields", () => {
   let accessed = false;
   expect(() =>
@@ -100,6 +108,7 @@ test("browser decoder rejects accessor and boxed required fields", () => {
       ...errors[0],
       get route() {
         accessed = true;
+
         return "/feed";
       },
     }),

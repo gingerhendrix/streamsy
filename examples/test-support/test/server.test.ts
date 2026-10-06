@@ -18,11 +18,14 @@ describe("spawnServer", () => {
     const exit = await run(
       Effect.scoped(Effect.flatMap(fixture("interrupted"), (server) => Effect.flip(server.stop))),
     );
+
     expect(Exit.isSuccess(exit)).toBe(true);
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value).toBeInstanceOf(UncleanStop);
       expect(exit.value.exitCode).toBe(130);
     }
+
     const finalized = await run(Effect.scoped(Effect.asVoid(fixture("interrupted"))));
     expect(Exit.isFailure(finalized)).toBe(true);
     expect(String(finalized)).toContain("UncleanStop");
@@ -32,7 +35,9 @@ describe("spawnServer", () => {
     const exit = await run(
       Effect.scoped(Effect.flatMap(fixture("stderr"), (server) => Effect.flip(server.stop))),
     );
+
     expect(Exit.isSuccess(exit)).toBe(true);
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.exitCode).toBe(0);
       expect(exit.value.stderr).toContain("fixture wrote to stderr");

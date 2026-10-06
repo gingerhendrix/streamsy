@@ -26,14 +26,22 @@ import { contentTypeMatches } from "./content-type-matcher.ts";
 export function configMatches(existing: StreamRecord, options: CreateOptions): boolean {
   const contentType =
     options.contentType ?? existing.config.contentType ?? "application/octet-stream";
+
   if (!contentTypeMatches(existing.config.contentType, contentType)) return false;
+
   if ((options.forkedFrom ?? undefined) !== existing.lifecycle.forkedFrom) return false;
+
   if (options.forkOffset !== undefined && options.forkOffset !== existing.lifecycle.forkOffset)
     return false;
+
   if ((options.forkSubOffset ?? 0) !== (existing.lifecycle.forkSubOffset ?? 0)) return false;
+
   const inheritedForkExpiry =
     options.forkedFrom && options.ttlSeconds === undefined && options.expiresAt === undefined;
+
   if (existing.config.ttlSeconds !== options.ttlSeconds && !inheritedForkExpiry) return false;
+
   if (existing.config.expiresAt !== options.expiresAt && !inheritedForkExpiry) return false;
+
   return existing.lifecycle.closed === (options.closed === true);
 }

@@ -34,14 +34,18 @@ export function hexId(q: number, r: number): string {
 
 export function parseHexId(id: string): Axial {
   const parts = id.split(":");
+
   if (parts.length !== 3 || parts[0] !== "h") {
     throw new Error(`Malformed hex id: ${id}`);
   }
+
   const q = Number.parseInt(parts[1]!, 10);
   const r = Number.parseInt(parts[2]!, 10);
+
   if (!Number.isInteger(q) || !Number.isInteger(r)) {
     throw new Error(`Malformed hex id: ${id}`);
   }
+
   return { q, r };
 }
 
@@ -65,6 +69,7 @@ export function hexDistance(a: Axial, b: Axial): number {
   const dq = a.q - b.q;
   const dr = a.r - b.r;
   const ds = -(dq + dr);
+
   return (Math.abs(dq) + Math.abs(dr) + Math.abs(ds)) / 2;
 }
 
@@ -85,16 +90,20 @@ export function scaledCentroidDistance(
   const dq = hex.q * count - sumQ;
   const dr = hex.r * count - sumR;
   const ds = -(dq + dr);
+
   return Math.abs(dq) + Math.abs(dr) + Math.abs(ds);
 }
 
 /** All hexes within `radius` of the origin, in canonical coordinate order. */
 export function hexesWithinRadius(radius: number): Axial[] {
   const out: Axial[] = [];
+
   for (let q = -radius; q <= radius; q += 1) {
     const lo = Math.max(-radius, -q - radius);
     const hi = Math.min(radius, -q + radius);
+
     for (let r = lo; r <= hi; r += 1) out.push({ q, r });
   }
+
   return out.toSorted(compareAxial);
 }

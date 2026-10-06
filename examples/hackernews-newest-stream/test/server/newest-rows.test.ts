@@ -7,6 +7,7 @@ import { demoHarness, story } from "../../src/server/test-support.ts";
 
 test("fold resumes across pages, accepts the tail, and writes no extra stream events", async () => {
   const h = await demoHarness(1);
+
   try {
     expect((await h.runtime.runPromise(Projection.run(newestRows))).offsets.input).toBe(
       ZERO_OFFSET,
@@ -21,10 +22,12 @@ test("fold resumes across pages, accepts the tail, and writes no extra stream ev
       items: 2,
       units: 2,
     });
+
     const ack = await h.append([
       DurableState.remove("hn-story", first.id, { oldValue: first }),
       DurableState.upsert("hn-story", { ...second, title: "updated" }),
     ]);
+
     const progress = await h.runtime.runPromise(Projection.run({ ...newestRows }));
     expect(progress.offsets.input).toBe(ack.offset);
     expect(await h.runtime.runPromise(Projection.read(newestRows))).toEqual({

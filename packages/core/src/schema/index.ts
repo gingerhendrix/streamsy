@@ -1,10 +1,12 @@
 import { Schema } from "effect";
 
 export const StreamId = Schema.String.pipe(Schema.brand("StreamId"));
+
 export const Offset = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^\d{16}_\d{16}$/)),
   Schema.brand("Offset"),
 );
+
 export const ProducerId = Schema.String.pipe(Schema.brand("ProducerId"));
 
 export const StreamConfig = Schema.Struct({
@@ -92,4 +94,5 @@ export const RecordPatch = Schema.Struct({
     Schema.Array(Schema.Literals(["ttlSeconds", "expiresAt", "expiresAtMs", "lastSeq"])),
   ),
 });
+
 export interface RecordPatch extends Schema.Schema.Type<typeof RecordPatch> {}

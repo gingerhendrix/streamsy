@@ -18,6 +18,7 @@ export function useProjects(db: IssueDb) {
       .orderBy(({ project }) => project.createdAt)
       .orderBy(({ project }) => project.name),
   );
+
   return data ?? [];
 }
 
@@ -29,6 +30,7 @@ export function useIssueCountByProject(db: IssueDb) {
       .groupBy(({ issue }) => issue.projectId)
       .select(({ issue }) => ({ projectId: issue.projectId, issues: count(issue.id) })),
   );
+
   return useMemo(() => new Map((data ?? []).map((row) => [row.projectId, row.issues])), [data]);
 }
 
@@ -39,12 +41,15 @@ export function useVisibleIssues(db: IssueDb, projectId: string, filter: StatusF
       const inProject = q
         .from({ issue: db.collections.issues })
         .where(({ issue }) => eq(issue.projectId, projectId));
+
       const filtered =
         filter === "all" ? inProject : inProject.where(({ issue }) => eq(issue.status, filter));
+
       return filtered.orderBy(({ issue }) => issue.updatedAt, "desc");
     },
     [projectId, filter],
   );
+
   return data ?? [];
 }
 
@@ -59,12 +64,15 @@ export function useStatusCounts(db: IssueDb, projectId: string) {
         .select(({ issue }) => ({ status: issue.status, issues: count(issue.id) })),
     [projectId],
   );
+
   return useMemo(() => {
     const counts = { all: 0, open: 0, in_progress: 0, done: 0 };
+
     for (const row of data ?? []) {
       counts[row.status] = row.issues;
       counts.all += row.issues;
     }
+
     return counts;
   }, [data]);
 }
@@ -74,11 +82,14 @@ export function useCommentsByIssue(db: IssueDb) {
   const { data } = useLiveQuery((q) =>
     q.from({ comment: db.collections.comments }).orderBy(({ comment }) => comment.createdAt),
   );
+
   return useMemo(() => {
     const grouped = new Map<string, Array<Comment & { readonly $synced: boolean }>>();
+
     for (const comment of data ?? []) {
       grouped.set(comment.issueId, [...(grouped.get(comment.issueId) ?? []), comment]);
     }
+
     return grouped;
   }, [data]);
 }

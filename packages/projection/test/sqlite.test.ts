@@ -36,6 +36,7 @@ const scratch = Effect.runSync(
 
 test("Bun SQLite fuses the handler's append and the checkpoint, including rollback at save", async () => {
   const runtime = ManagedRuntime.make(host(":memory:", 1));
+
   try {
     const result = await runtime.runPromise(composition);
     expect(result.first.status).toBe("limit-reached");
@@ -57,6 +58,7 @@ test("Bun SQLite fuses the handler's append and the checkpoint, including rollba
 
 test("a handler's SQL through the shared client commits and rolls back with the checkpoint", async () => {
   const runtime = ManagedRuntime.make(host(":memory:"));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -64,6 +66,7 @@ test("a handler's SQL through the shared client commits and rolls back with the 
         yield* sql.unsafe("CREATE TABLE seen (item INTEGER NOT NULL)");
         yield* Streams.create(input);
         yield* Streams.append(input, [1, -1, 3]);
+
         const projection = Projection.process({
           commit: Commit.transaction,
           id: "seen",
@@ -73,10 +76,13 @@ test("a handler's SQL through the shared client commits and rolls back with the 
             sql.unsafe("INSERT INTO seen (item) VALUES (?)", [item]),
           ),
         }).at({});
+
         const count = sql
           .unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM seen")
           .pipe(Effect.map((rows) => rows[0]?.n));
+
         const owner = yield* CheckpointStore;
+
         const failing = CheckpointStore.of({
           ...owner,
           compareAndSet: () =>
@@ -84,10 +90,12 @@ test("a handler's SQL through the shared client commits and rolls back with the 
               new ProjectionFault({ phase: "checkpoint", reason: "storage-failure", message: "" }),
             ),
         });
+
         const failed = yield* Projection.run(projection).pipe(
           Effect.provideService(CheckpointStore, failing),
           Effect.result,
         );
+
         expect(failed._tag).toBe("Failure");
         expect(yield* count).toBe(0);
         expect((yield* owner.load(Projection.key(projection))).token).toBe("0");
@@ -105,6 +113,7 @@ test("a handler's SQL through the shared client commits and rolls back with the 
 
 test("interruption inside the Bun SQLite transaction rolls back the handler's SQL, the append and the checkpoint", async () => {
   const runtime = ManagedRuntime.make(host(":memory:"));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -113,6 +122,7 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
         yield* initialize;
         const written = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+
         const blocking = Projection.process({
           commit: Commit.transaction,
           id: positives.id,
@@ -128,9 +138,11 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
               yield* Deferred.await(release);
             }),
         }).at({});
+
         const count = sql
           .unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM seen")
           .pipe(Effect.map((rows) => rows[0]?.n));
+
         const fiber = yield* Effect.forkChild(Projection.run(blocking));
         yield* Deferred.await(written);
         yield* Fiber.interrupt(fiber);
@@ -155,12 +167,14 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
 test("a new Bun process reopens the file and resumes without repeated output", async () => {
   const filename = join(mkdtempSync(join(scratch, "projection-reopen-")), "projection.sqlite");
   const first = ManagedRuntime.make(host(filename, 1));
+
   try {
     await first.runPromise(initialize);
     await first.runPromise(Projection.run(positives, { limit: 1 }));
   } finally {
     await first.dispose();
   }
+
   const child = Bun.spawnSync(
     [
       process.execPath,
@@ -189,8 +203,10 @@ test("a new Bun process reopens the file and resumes without repeated output", a
     ],
     { cwd: join(import.meta.dir, "..") },
   );
+
   expect(child.stderr.toString()).toBe("");
   expect(child.exitCode).toBe(0);
+
   const result = Schema.decodeSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -203,6 +219,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       }),
     ),
   )(child.stdout.toString());
+
   expect(result.status).toBe("caught-up");
   expect(result.items).toBe(2);
   expect(result.output).toEqual([1, 3]);
@@ -212,6 +229,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
 
 test("a checkpoint SQL failure retains its underlying cause", async () => {
   const runtime = ManagedRuntime.make(host(":memory:"));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -219,6 +237,7 @@ test("a checkpoint SQL failure retains its underlying cause", async () => {
         yield* sql.unsafe("DROP TABLE streamsy_owner_records");
         const result = yield* (yield* CheckpointStore).load(positives).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
+
         if (result._tag === "Failure") {
           expect(result.failure.phase).toBe("load");
           expect(result.failure.reason).toBe("storage-failure");
@@ -250,6 +269,7 @@ test("a SQLite file containing only v1 projection tables rebuilds from zero", as
     .run(recordKey(positives), "999");
   old.close();
   const runtime = ManagedRuntime.make(host(filename));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {

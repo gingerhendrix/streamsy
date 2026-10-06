@@ -12,6 +12,7 @@ class Events extends Streamsy.json<Events>()("serve/httpapi/Events", "events/:se
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
+
 class Api extends HttpApi.make("ServeApi").add(
   HttpApiGroup.make("feed").add(
     HttpApiEndpoint.get("declared", "/declared/:seat", {
@@ -26,6 +27,7 @@ class Api extends HttpApi.make("ServeApi").add(
     HttpApiEndpoint.get("respondable", "/respondable/:seat", { params: { seat: Schema.String } }),
   ),
 ) {}
+
 const Feed = HttpApiBuilder.group(Api, "feed", (handlers) =>
   handlers
     .handleRaw("declared", ({ params }) => Serve.stream(Events.at(params)))
@@ -46,9 +48,11 @@ test("handleRaw serves stream responses; declared errors use HttpApi encoding", 
     ),
     { disableLogger: true },
   );
+
   try {
     // An absent stream response passes through handleRaw.
     expect((await web.handler(new Request("http://host/declared/a"))).status).toBe(404);
+
     const seeded = await web.handler(
       new Request("http://host/_seed/events/a", {
         method: "PUT",
@@ -56,17 +60,20 @@ test("handleRaw serves stream responses; declared errors use HttpApi encoding", 
         body: '"one"',
       }),
     );
+
     expect(seeded.status).toBe(201);
     const read = await web.handler(new Request("http://host/declared/a?offset=-1"));
     expect(read.status).toBe(200);
     expect(await read.json()).toEqual(["one"]);
     expect(read.headers.get(Contract.STREAM_VERSION_HEADER)).toBe("1");
+
     for (const path of ["declared", "respondable"]) {
       const response = await web.handler(
         new Request(`http://host/${path}/a`, {
           headers: { [Contract.STREAM_VERSION_HEADER]: "2" },
         }),
       );
+
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({
         _tag: "ProtocolVersionUnsupported",

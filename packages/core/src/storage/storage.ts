@@ -13,6 +13,7 @@ import type {
 } from "../schema/index.ts";
 import type { StorageCapabilities } from "./capabilities.ts";
 import type { Mutation, MutationApplied, MutationRejected } from "./mutation.ts";
+
 export interface StorageShape {
   readonly capabilities: StorageCapabilities;
   readonly record: (id: StreamId) => Effect.Effect<Option.Option<StreamRecord>, StorageFault>;
@@ -33,4 +34,5 @@ export interface StorageShape {
     StorageFault
   >;
 }
+
 export class Storage extends Context.Service<Storage, StorageShape>()("@streamsy/core/Storage") {}

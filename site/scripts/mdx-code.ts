@@ -14,6 +14,7 @@ export interface CodeFence {
 
 const visit = (node: Nodes, found: Array<Code>): void => {
   if (node.type === "code") found.push(node);
+
   if ("children" in node) for (const child of node.children) visit(child, found);
 };
 
@@ -23,8 +24,10 @@ export const codeFences = (text: string): ReadonlyArray<CodeFence> => {
     extensions: [mdxjs()],
     mdastExtensions: [mdxFromMarkdown()],
   });
+
   const found: Array<Code> = [];
   visit(tree, found);
+
   return found.map((node) => ({
     lang: node.lang ?? null,
     meta: node.meta ?? null,

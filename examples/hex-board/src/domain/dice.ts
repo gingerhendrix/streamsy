@@ -33,10 +33,12 @@ export function compareRolls(
   let attackerLosses = 0;
   let defenderLosses = 0;
   const pairs = Math.min(attacker.length, defender.length);
+
   for (let i = 0; i < pairs; i += 1) {
     if (attacker[i]! > defender[i]!) defenderLosses += 1;
     else attackerLosses += 1;
   }
+
   return { attackerLosses, defenderLosses };
 }
 

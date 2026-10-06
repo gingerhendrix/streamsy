@@ -14,6 +14,7 @@ test.each(["typed", "defect"])(
     let releases = 0;
     let alarms = 0;
     const protocol = MemoryStorage.layerProtocol();
+
     const layer = Layer.unwrap(
       Effect.gen(function* () {
         acquisitions += 1;
@@ -22,8 +23,10 @@ test.each(["typed", "defect"])(
             releases += 1;
           }),
         );
+
         if (acquisitions === 1 && failure === "defect")
           return yield* Effect.die(new Error("fixture acquisition defect"));
+
         if (acquisitions === 1)
           return yield* Effect.fail(
             new StorageFault({
@@ -32,6 +35,7 @@ test.each(["typed", "defect"])(
               retryable: true,
             }),
           );
+
         return Layer.mergeAll(
           protocol,
           Layer.succeed(Alarm, {
@@ -44,13 +48,16 @@ test.each(["typed", "defect"])(
         );
       }),
     );
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const handlers = yield* objectHandlers({
           app: protocolRoutes({ prefix: "/streams" }),
           layer,
         });
+
         expect(acquisitions).toBe(0);
+
         const fetch = handlers.fetch.pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
@@ -59,6 +66,7 @@ test.each(["typed", "defect"])(
             ),
           ),
         );
+
         const failed = HttpServerResponse.toWeb(yield* fetch);
         expect(failed.status).toBe(503);
         expect(failed.headers.get("retry-after")).toBe("1");
@@ -67,12 +75,14 @@ test.each(["typed", "defect"])(
         expect(releases).toBe(1);
         const responses = yield* Effect.all([fetch, fetch], { concurrency: "unbounded" });
         expect(responses.map((response) => response.status)).toEqual([204, 204]);
+
         const missing = yield* handlers.fetch.pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             HttpServerRequest.fromWeb(new Request("https://streams.test/outside")),
           ),
         );
+
         expect(missing.status).toBe(404);
 
         yield* handlers.alarm();

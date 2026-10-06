@@ -5,5 +5,6 @@ export function forCatchUp(
   closed: boolean,
 ): string {
   const closedSuffix = closed ? ":c" : "";
+
   return `"${btoa(pathname)}:${startOffset}:${nextOffset}${closedSuffix}"`;
 }

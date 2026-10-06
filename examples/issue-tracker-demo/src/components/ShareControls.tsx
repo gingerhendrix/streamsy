@@ -12,6 +12,7 @@ export function ShareControls({ workspaceId }: { workspaceId: string }) {
 
   const createWorkspace = async () => {
     setCreating(true);
+
     try {
       gotoWorkspace(await createSharedWorkspace());
     } catch (error) {

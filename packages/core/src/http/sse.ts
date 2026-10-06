@@ -37,11 +37,14 @@ export function sse(
     isText: contentType.toLowerCase().startsWith("text/"),
     useBase64: false,
   };
+
   encoding.useBase64 = !encoding.isJson && !encoding.isText;
+
   const frames = Stream.suspend(() => {
     let initial = true;
     let currentOffset = offset;
     let currentCursor = cursor;
+
     return Stream.fromEffectRepeat(
       Effect.gen(function* () {
         const result = initial
@@ -49,6 +52,7 @@ export function sse(
               .read(id, { offset: currentOffset })
               .pipe(Effect.map((batch) => ({ ...batch, cursor: undefined })))
           : yield* reader.readNext(id, { offset: currentOffset, cursor: currentCursor });
+
         if (initial) {
           const now = yield* Clock.currentTimeMillis;
           const random = yield* Random.next;
@@ -57,15 +61,18 @@ export function sse(
         initial = false;
         currentOffset = result.nextOffset;
         const chunks = result.messages.length ? events.dataEvent(result.messages, encoding) : [];
+
         const control: SseControlData = result.closed
           ? { streamNextOffset: currentOffset, streamClosed: true }
           : { streamNextOffset: currentOffset, streamCursor: currentCursor };
+
         if (!result.closed && result.upToDate) control.upToDate = true;
         chunks.push(events.controlEvent(control));
         // One chunk per batch: the deadline merge below can then end the body only
         // between batches, never between a data event and the control event that
         // moves the client's offset past it.
         const frame = concatBytes(chunks.map((data) => ({ data })));
+
         return { frames: [frame], done: result.closed === true };
       }).pipe(
         Effect.catchTags({
@@ -89,12 +96,15 @@ export function sse(
       }),
     );
   });
+
   const headers = new Headers({
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
+
   if (encoding.useBase64) headers.set("stream-sse-data-encoding", "base64");
   const body = signal === undefined ? frames : signal.trackStream(frames);
+
   return HttpServerResponse.stream(body, { headers: Object.fromEntries(headers) });
 }

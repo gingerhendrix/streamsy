@@ -44,6 +44,7 @@ export type PathSchema<P> = Schema.Codec<
   never,
   never
 >;
+
 type WithPathSchema<P> = { readonly paramSchema: PathSchema<P> };
 
 /** The route constructor. It owns the `StreamRoute` tag of every route. */
@@ -109,16 +110,20 @@ function decodeParams<Codecs extends ParamCodecs>(
   raw: Readonly<Record<string, string>>,
 ): Option.Option<Params<Codecs>> {
   const decoded: Record<string, unknown> = {};
+
   for (const name of Object.keys(codecs)) {
     const value = raw[name];
     const codec = codecs[name];
+
     if (value === undefined || codec === undefined) return Option.none();
     // A parameter codec decodes from a string with no services, so this call is
     // synchronous, pure and total.
     const result = Schema.decodeUnknownOption(codec)(value);
+
     if (Option.isNone(result)) return Option.none();
     decoded[name] = result.value;
   }
+
   // The loop above visits exactly the keys of `Codecs` and writes each decoded
   // value under its own name, so the bag has the shape of `Params<Codecs>`.
   return Option.some(decoded as Params<Codecs>);
@@ -130,18 +135,24 @@ function matchTemplate<Codecs extends ParamCodecs>(
   id: string,
 ): Option.Option<Params<Codecs>> {
   const actual = id.split("/");
+
   if (actual.length !== segments.length) return Option.none();
   const raw: Record<string, string> = {};
+
   for (const [index, segment] of segments.entries()) {
     const value = actual[index];
+
     if (value === undefined) return Option.none();
+
     if (segment.kind === "literal") {
       if (value !== segment.value) return Option.none();
       continue;
     }
+
     if (!isCanonicalIdSegment(value)) return Option.none();
     raw[segment.name] = value;
   }
+
   return decodeParams(codecs, raw);
 }
 
@@ -152,25 +163,31 @@ function buildId<Codecs extends ParamCodecs>(
   params: Params<Codecs>,
 ): StreamId {
   const record: Readonly<Record<string, unknown>> = params;
+
   const built = segments.map((segment) => {
     if (segment.kind === "literal") return segment.value;
     const codec = codecs[segment.name];
     const value = record[segment.name];
+
     if (codec === undefined || value === undefined)
       throw new RangeError(`stream route ${template} has no value for parameter: ${segment.name}`);
     // The parameter bag stores each entry as `Codecs[Name]["Type"]`, so this
     // value is exactly the decoded type that this parameter's codec encodes.
     const text = Option.getOrUndefined(Schema.encodeOption(codec)(value));
+
     if (text === undefined)
       throw new RangeError(
         `stream route ${template} parameter ${segment.name} cannot encode to an id segment`,
       );
+
     if (!isCanonicalIdSegment(text))
       throw new RangeError(
         `stream route ${template} parameter ${segment.name} is not a canonical id segment: ${text}`,
       );
+
     return text;
   });
+
   return StreamId.make(built.join("/"));
 }
 
@@ -186,6 +203,7 @@ function checkTemplateParams(
   for (const name of names)
     if (codecs[name] === undefined)
       throw new RangeError(`stream route ${template} has no codec for parameter: ${name}`);
+
   for (const name of Object.keys(codecs))
     if (!names.includes(name))
       throw new RangeError(`stream route codec is absent from the template: ${name}`);
@@ -201,6 +219,7 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
+
   return new Route<
     Omit<StreamRoute<Params<Codecs>, A, RD, RE, Template> & WithPathSchema<Params<Codecs>>, "_tag">
   >({
@@ -226,6 +245,7 @@ export function state<
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
+
   return new Route<
     Omit<StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>>, "_tag">
   >({
@@ -249,6 +269,7 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
+
   return new Route<
     Omit<
       StreamRoute<Params<Codecs>, Uint8Array, never, never, Template> &

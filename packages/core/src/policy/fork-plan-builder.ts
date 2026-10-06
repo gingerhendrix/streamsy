@@ -11,6 +11,7 @@ import {
 } from "../protocol/errors.ts";
 import { CreateResult } from "../protocol/results.ts";
 import { Offset, type StoredMessage, type StreamId, type StreamRecord } from "../schema/index.ts";
+
 interface Clock {
   now(): number;
 }
@@ -60,9 +61,13 @@ export interface ForkPlanBuilderDeps {
 
 export function resolveForkExpiry(opts: CreateOptions, source: StreamRecord): ForkExpiryOptions {
   if (opts.ttlSeconds !== undefined) return { ttlSeconds: opts.ttlSeconds };
+
   if (opts.expiresAt) return { expiresAt: opts.expiresAt };
+
   if (source.config.ttlSeconds !== undefined) return { ttlSeconds: source.config.ttlSeconds };
+
   if (source.config.expiresAt) return { expiresAt: source.config.expiresAt };
+
   return {};
 }
 
@@ -85,6 +90,7 @@ export class ForkPlanBuilder {
       return ForkBuildResult.Rejected({
         error: new ForkSourceNotFound({ id: targetId, source: sourcePath }),
       });
+
     if (source.lifecycle.softDeleted) {
       return ForkBuildResult.Rejected({
         error: new CreateConflict({
@@ -96,6 +102,7 @@ export class ForkPlanBuilder {
     }
 
     const forkOffset = options.forkOffset ?? source.currentOffset;
+
     if (!isValid(forkOffset)) {
       return ForkBuildResult.Rejected({
         error: new InvalidForkRequest({
@@ -104,6 +111,7 @@ export class ForkPlanBuilder {
         }),
       });
     }
+
     if (
       compareOffsets(forkOffset, ZERO_OFFSET) < 0 ||
       compareOffsets(forkOffset, source.currentOffset) > 0
@@ -117,6 +125,7 @@ export class ForkPlanBuilder {
     }
 
     let contentType = options.contentType;
+
     if (!contentType || contentType.trim() === "") contentType = source.config.contentType;
     else if (!contentTypeMatches(contentType, source.config.contentType)) {
       return ForkBuildResult.Rejected({
@@ -130,6 +139,7 @@ export class ForkPlanBuilder {
 
     const subOffset = options.forkSubOffset;
     const prefix = this.materializePrefix(subOffset, contentType, sourceTail);
+
     if (ForkPrefix.$is("Invalid")(prefix)) {
       return ForkBuildResult.Rejected({
         error: new InvalidForkRequest({ id: targetId, message: prefix.errorMessage }),
@@ -137,19 +147,24 @@ export class ForkPlanBuilder {
     }
 
     const expiry = resolveForkExpiry(options, source);
+
     const fork: ForkDescriptor = {
       forkedFrom: sourcePath,
       forkOffset: Offset.make(forkOffset),
     };
+
     if (subOffset !== undefined && subOffset > 0) fork.forkSubOffset = subOffset;
     const baseRecord = this.deps.newRecord(targetId, contentType, { ...options, ...expiry }, fork);
+
     const initialMessages = this.initialMessages(
       prefix.messages,
       options.initialData,
       contentType,
       baseRecord.currentOffset,
     );
+
     const child = this.withInitialTail(baseRecord, initialMessages);
+
     const plan = Operations.Create({
       record: child,
       initialMessages,
@@ -181,22 +196,28 @@ export class ForkPlanBuilder {
   ): ForkPrefix {
     if (subOffset === undefined || subOffset === 0) return ForkPrefix.Prefix({ messages: [] });
     const tail = sourceTail ?? [];
+
     if (contentType.toLowerCase().startsWith("application/json")) {
       if (subOffset > tail.length)
         return ForkPrefix.Invalid({
           errorMessage: "Stream-Fork-Sub-Offset exceeds source message count",
         });
+
       return ForkPrefix.Prefix({ messages: tail.slice(0, subOffset).map((m) => m.data) });
     }
+
     const first = tail[0];
+
     if (!first)
       return ForkPrefix.Invalid({
         errorMessage: "Stream-Fork-Sub-Offset has no source message to fork",
       });
+
     if (subOffset > first.data.byteLength)
       return ForkPrefix.Invalid({
         errorMessage: "Stream-Fork-Sub-Offset exceeds source message length",
       });
+
     return ForkPrefix.Prefix({ messages: [first.data.subarray(0, subOffset)] });
   }
 
@@ -209,14 +230,17 @@ export class ForkPlanBuilder {
     const framed = [...prefix, ...(initialData ? frameMessages(initialData, contentType) : [])];
     let offset = previousOffset;
     const now = this.deps.clock.now();
+
     return framed.map((data) => {
       offset = next(offset);
+
       return { data, offset, timestamp: now };
     });
   }
 
   private withInitialTail(record: StreamRecord, initialMessages: StoredMessage[]): StreamRecord {
     const lastMessage = initialMessages[initialMessages.length - 1];
+
     return {
       id: record.id,
       config: record.config,

@@ -10,6 +10,7 @@ export interface OwnerRecordsApi {
   readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
   readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
 }
+
 export class OwnerRecords extends Context.Service<OwnerRecords, OwnerRecordsApi>()(
   "@streamsy/core/internal/OwnerRecords",
 ) {}

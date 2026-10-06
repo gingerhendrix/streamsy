@@ -9,7 +9,9 @@ import { HttpServerResponse } from "effect/http";
  */
 
 const CACHE_CONTROL_NO_STORE = "no-store";
+
 const CACHE_CONTROL_PUBLIC = "public, max-age=60, stale-while-revalidate=300";
+
 const CACHE_CONTROL_PRIVATE = "private, max-age=60, stale-while-revalidate=300";
 
 export function cacheControlForVisibility(visibility: "private" | "public"): string {
@@ -19,6 +21,7 @@ export function cacheControlForVisibility(visibility: "private" | "public"): str
 export function noStore(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("cache-control", CACHE_CONTROL_NO_STORE);
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

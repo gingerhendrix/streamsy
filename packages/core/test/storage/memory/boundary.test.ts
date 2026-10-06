@@ -10,6 +10,7 @@ import { CommitBoundary } from "../../../src/storage/commit-boundary.ts";
 import { OwnerRecords } from "../../../src/internal/owner-records.ts";
 
 const sink = StreamAddress.json("fused-sink", { schema: Schema.String });
+
 const turns = Effect.forEach([1, 2, 3, 4, 5], () => Effect.yieldNow, { discard: true });
 
 for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rejection"]) {
@@ -22,14 +23,17 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
         expect((yield* Streams.create(sink))._tag).toBe("Created");
         yield* records.write("state", "0");
         yield* records.write("checkpoint", "0");
+
         const read = Effect.gen(function* () {
           const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
+
           return {
             output: batches.flatMap((batch) => batch.items),
             state: Option.getOrThrow(yield* records.read("state")),
             checkpoint: Option.getOrThrow(yield* records.read("checkpoint")),
           };
         });
+
         const before = { output: [], state: "0", checkpoint: "0" };
         const after = { output: ["one"], state: "1", checkpoint: "1" };
         const pull = yield* Stream.toPull(storage.changes(sink.id));
@@ -37,6 +41,7 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
         const wake = yield* pull.pipe(Effect.forkScoped);
         const written = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+
         const transaction = yield* boundary
           .withTransaction(
             Effect.gen(function* () {
@@ -50,33 +55,42 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
               expect(yield* read).toEqual(after);
               yield* Deferred.succeed(written, undefined);
               yield* Deferred.await(release);
+
               if (outcome === "mutation-rejection")
                 return yield* storage.mutate({
                   operations: [
                     { _tag: "Delete", streamId: StreamId.make("missing"), reason: "delete" },
                   ],
                 });
+
               if (outcome === "failure") return yield* Effect.fail("after-sink");
+
               if (outcome === "defect") return yield* Effect.die("after-sink");
+
               return undefined;
             }),
           )
           .pipe(Effect.forkScoped);
+
         yield* Deferred.await(written);
         expect(yield* read).toEqual(before);
         yield* turns;
         expect(wake.pollUnsafe()).toBeUndefined();
+
         if (outcome === "interrupt") yield* Fiber.interrupt(transaction);
         else yield* Deferred.succeed(release, undefined);
         const exit = yield* Fiber.await(transaction);
         expect(Exit.isSuccess(exit)).toBe(outcome === "commit");
+
         if (outcome === "mutation-rejection") {
           expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
           expect(
             Exit.isFailure(exit) && Option.getOrThrow(Cause.findErrorOption(exit.cause)),
           ).toMatchObject({ _tag: "MutationRejected", reason: "not-found" });
         }
+
         expect(yield* read).toEqual(outcome === "commit" ? after : before);
+
         if (outcome === "commit") {
           const snapshots = yield* Fiber.join(wake);
           expect(snapshots[0]?.currentOffset).not.toBe("0000000000000000_0000000000000000");
@@ -104,9 +118,11 @@ test("memory owner rejects inherited child-fiber use and separate owners", () =>
         Effect.gen(function* () {
           const child = yield* records.write("state", "child").pipe(Effect.forkScoped);
           expect(Exit.isFailure(yield* Fiber.await(child))).toBe(true);
+
           const foreign = yield* Effect.gen(function* () {
             return yield* (yield* OwnerRecords).write("state", "foreign");
           }).pipe(Effect.provide(MemoryStorage.layerProtocol()), Effect.exit);
+
           expect(Exit.isFailure(foreign)).toBe(true);
         }),
       );
@@ -127,6 +143,7 @@ test("memory outer owners serialize without losing stream output or records", ()
       const held = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const entered = yield* Deferred.make<void>();
+
       const first = yield* boundary
         .withTransaction(
           Effect.gen(function* () {
@@ -137,7 +154,9 @@ test("memory outer owners serialize without losing stream output or records", ()
           }),
         )
         .pipe(Effect.forkScoped);
+
       yield* Deferred.await(held);
+
       const second = yield* boundary
         .withTransaction(
           Effect.gen(function* () {
@@ -148,6 +167,7 @@ test("memory outer owners serialize without losing stream output or records", ()
           }),
         )
         .pipe(Effect.forkScoped);
+
       yield* turns;
       expect(yield* Deferred.isDone(entered)).toBe(false);
       yield* Deferred.succeed(release, undefined);

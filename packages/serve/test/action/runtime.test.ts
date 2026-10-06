@@ -43,6 +43,7 @@ const sink = defineActionSink<Notification, NotificationRelation>({
     encode: (value) => JSON.stringify(value),
     decode: (value) => {
       if (!(value instanceof Object) || !("id" in value)) throw new TypeError("not a notification");
+
       // SAFETY: the guard above is this codec's parse boundary for a stored payload.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       return value as Notification;
@@ -61,6 +62,7 @@ interface Recorder {
 }
 
 const recorder = (): Recorder => ({ deliveries: [], accepted: new Set() });
+
 const runOutbox = <A>(effect: Effect.Effect<A, OutboxUnavailable>) =>
   Effect.runSync(Effect.orDie(effect));
 
@@ -77,10 +79,13 @@ const handlerFor = (
     Effect.gen(function* () {
       log.deliveries.push(delivery);
       const refusal = options.refuse?.(delivery.payload.id);
+
       if (refusal === "retryable") return yield* refuse.retryable("the notifier is down");
+
       if (refusal === "permanent") return yield* refuse.permanent("the recipient does not exist");
       // The idempotency key is the handler's half of the at-least-once contract.
       log.accepted.add(delivery.idempotencyKey);
+
       return yield* Effect.void;
     }),
   );
@@ -95,6 +100,7 @@ const drainAt = (
 ) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(atMs);
+
     return yield* drain(sink, handler, options);
   });
 
@@ -103,6 +109,7 @@ const runWithOutbox = <A>(
   effect: Effect.Effect<A, OutboxUnavailable, OutboxStore>,
 ): Promise<A> => {
   const runtime = ManagedRuntime.make(Layer.merge(outboxStoreLayer(outbox), TestClock.layer()));
+
   return runtime.runPromise(effect).finally(() => runtime.dispose());
 };
 
@@ -229,6 +236,7 @@ describe("draining an action sink", () => {
           handlerFor(log, { refuse: (id) => (id === "bad" ? "retryable" : undefined) }),
           0,
         );
+
         expect(report).toMatchObject({ claimed: 3, delivered: 2, retried: 1 });
         expect(states(outbox)).toEqual([
           { idempotencyKey: "bad", state: "pending" },
@@ -248,6 +256,7 @@ describe("draining an action sink", () => {
   test("a thrown handler is a failed delivery, not a failed pass", () => {
     const outbox = makeMemoryOutboxBacking();
     enqueue(outbox, [note("a"), note("b")]);
+
     const thrower = actionSinkHandler<Notification, NotificationRelation>(sink, (delivery) =>
       delivery.payload.id === "a"
         ? Effect.sync(() => {

@@ -8,7 +8,9 @@ import { RemoteStreams } from "@streamsy/core/remote";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
 let backend: TestHost | undefined;
+
 let gateway: TestHost | undefined;
+
 describe("Official conformance through RemoteStreams", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {

@@ -1,4 +1,5 @@
 import { DateTime } from "effect";
+
 /**
  * Live-read cursor generation for the durable streams protocol.
  *
@@ -26,6 +27,7 @@ interface Clock {
 export const CURSOR_EPOCH_MS = DateTime.toEpochMillis(
   DateTime.makeUnsafe("2024-10-09T00:00:00.000Z"),
 );
+
 export const CURSOR_INTERVAL_MS = 20_000;
 
 export function generateCursor(
@@ -34,10 +36,13 @@ export function generateCursor(
   random: () => number = Math.random,
 ): string {
   const currentInterval = Math.floor((clock.now() - CURSOR_EPOCH_MS) / CURSOR_INTERVAL_MS);
+
   if (!previous) return String(currentInterval);
   const previousInterval = parseInt(previous, 10);
+
   if (Number.isNaN(previousInterval) || previousInterval < currentInterval) {
     return String(currentInterval);
   }
+
   return String(previousInterval + Math.max(1, Math.floor(random() * 180)));
 }

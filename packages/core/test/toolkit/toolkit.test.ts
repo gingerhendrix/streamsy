@@ -26,10 +26,12 @@ function provideTest<R>(layer: Layer.Layer<R>) {
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(layer);
+
         return yield* program.pipe(Effect.provide(context));
       }),
     );
 }
+
 function check<E>(program: Effect.Effect<void, E, StreamsReader | StreamsWriter | StreamsTest>) {
   return expect(
     Effect.runPromiseExit(
@@ -39,6 +41,7 @@ function check<E>(program: Effect.Effect<void, E, StreamsReader | StreamsWriter 
     ),
   ).resolves.toEqual(Exit.succeed(undefined));
 }
+
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
 
 it("refs are inert and layerMemory supplies real tags", () =>
@@ -83,6 +86,7 @@ it("Schema encode failure is typed and performs no append", () =>
       const restricted = StreamAddress.json("restricted", {
         schema: Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0))),
       });
+
       yield* Streams.create(restricted);
       const exit = yield* Streams.append(restricted, [-1]).pipe(Effect.exit);
       expect(Exit.isFailure(exit) && Schema.is(EncodeFault)(Cause.squash(exit.cause))).toBe(true);
@@ -97,6 +101,7 @@ for (const body of ['{"n":"wrong"}', "{bad"]) {
         const writer = yield* StreamsWriter;
         const control = yield* StreamsTest;
         yield* Streams.create(address);
+
         if (body === "{bad") {
           const record = yield* control.storage.record(address.id);
           expect(Option.isSome(record)).toBe(true);
@@ -145,6 +150,7 @@ it("follow's parked subscription and fiber are interrupted by scope close", () =
       yield* Streams.create(address);
       const control = yield* StreamsTest;
       let completed = false;
+
       const stoppedFiber = yield* Effect.scoped(
         Effect.gen(function* () {
           const fiber = yield* Streams.follow(address).pipe(
@@ -156,11 +162,14 @@ it("follow's parked subscription and fiber are interrupted by scope close", () =
             ),
             Effect.forkScoped,
           );
+
           yield* control.snapshot;
           expect(yield* control.subscribers).toBe(1);
+
           return fiber;
         }),
       );
+
       const exit = yield* Fiber.await(stoppedFiber);
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
       expect(completed).toBe(true);
@@ -176,6 +185,7 @@ it("follow filters a timed-out long poll before yielding the next message", () =
     Effect.gen(function* () {
       yield* Streams.create(address);
       const control = yield* StreamsTest;
+
       const fiber = yield* Streams.follow(address).pipe(
         Stream.take(1),
         Stream.runCollect,
@@ -202,21 +212,25 @@ it("follow echoes the cursor from each live read on the next live read", () =>
       const inner = yield* StreamsReader;
       const sent: Array<string | undefined> = [];
       const returned: Array<string> = [];
+
       const recording = StreamsReader.of({
         ...inner,
         readNext: (id, options) => {
           sent.push(options.cursor);
+
           return inner
             .readNext(id, options)
             .pipe(Effect.tap((result) => Effect.sync(() => returned.push(result.cursor))));
         },
       });
+
       const fiber = yield* Streams.follow(address).pipe(
         Stream.take(3),
         Stream.runCollect,
         Effect.provideService(StreamsReader, recording),
         Effect.forkScoped,
       );
+
       yield* control.snapshot;
       yield* Streams.append(address, [{ n: 2 }]);
       yield* control.snapshot;
@@ -243,10 +257,12 @@ for (const point of ["read", "readNext"] as const) {
         const control = yield* StreamsTest;
         const inner = yield* StreamsReader;
         let failures = 0;
+
         const failOnce = <A, E>(call: Effect.Effect<A, E>): Effect.Effect<A, E | TransportFault> =>
           Effect.suspend(() => (failures++ === 0 ? Effect.fail(lost(point)) : Effect.void)).pipe(
             Effect.andThen(call),
           );
+
         const flaky = StreamsReader.of({
           ...inner,
           read: (id, options) =>
@@ -256,6 +272,7 @@ for (const point of ["read", "readNext"] as const) {
               ? failOnce(inner.readNext(id, options))
               : inner.readNext(id, options),
         });
+
         const fiber = yield* Streams.follow(address, { retry: Schedule.recurs(3) }).pipe(
           Streams.items,
           Stream.take(2),
@@ -263,6 +280,7 @@ for (const point of ["read", "readNext"] as const) {
           Effect.provideService(StreamsReader, flaky),
           Effect.forkScoped,
         );
+
         yield* control.snapshot;
         yield* Streams.append(address, [{ n: 2 }]);
         expect(yield* Fiber.join(fiber)).toEqual([{ n: 1 }, { n: 2 }]);
@@ -278,6 +296,7 @@ it("follow's default retry waits on the clock and then reads again", () =>
       yield* Streams.append(address, [{ n: 1 }]);
       const inner = yield* StreamsReader;
       let reads = 0;
+
       const flaky = StreamsReader.of({
         ...inner,
         read: (id, options) =>
@@ -285,6 +304,7 @@ it("follow's default retry waits on the clock and then reads again", () =>
             reads++ === 0 ? Effect.fail(lost("read")) : inner.read(id, options),
           ),
       });
+
       const fiber = yield* Streams.follow(address).pipe(
         Streams.items,
         Stream.take(1),
@@ -292,6 +312,7 @@ it("follow's default retry waits on the clock and then reads again", () =>
         Effect.provideService(StreamsReader, flaky),
         Effect.forkScoped,
       );
+
       yield* TestClock.adjust(0);
       expect(reads).toBe(1);
       expect(fiber.pollUnsafe()).toBeUndefined();
@@ -307,16 +328,20 @@ it("follow does not retry a missing stream or a decode failure", () =>
     Effect.gen(function* () {
       const inner = yield* StreamsReader;
       let reads = 0;
+
       const counting = StreamsReader.of({
         ...inner,
         read: (id, options) => Effect.suspend(() => (reads++, inner.read(id, options))),
       });
+
       const retry = Schedule.recurs(3);
+
       const missing = yield* Streams.follow(address, { retry }).pipe(
         Stream.runCollect,
         Effect.provideService(StreamsReader, counting),
         Effect.flip,
       );
+
       expect(missing._tag).toBe("StreamNotFound");
       expect(reads).toBe(1);
 
@@ -326,11 +351,13 @@ it("follow does not retry a missing stream or a decode failure", () =>
         data: new TextEncoder().encode('{"n":"wrong"}'),
       });
       reads = 0;
+
       const decode = yield* Streams.follow(address, { retry }).pipe(
         Stream.runCollect,
         Effect.provideService(StreamsReader, counting),
         Effect.flip,
       );
+
       expect(Schema.is(DecodeFault)(decode)).toBe(true);
       expect(reads).toBe(1);
     }),
@@ -360,6 +387,7 @@ it("Fold reduces existing items, waits for growth, and completes on close", () =
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }]);
       const control = yield* StreamsTest;
       const seen = yield* Deferred.make<void>();
+
       const fiber = yield* Streams.follow(address)
         .pipe(
           Streams.items,
@@ -372,6 +400,7 @@ it("Fold reduces existing items, waits for growth, and completes on close", () =
           Effect.tap(() => Deferred.succeed(seen, undefined)),
           Effect.forkScoped,
         );
+
       yield* control.snapshot;
       expect(yield* Deferred.isDone(seen)).toBe(false);
       yield* Streams.append(address, [{ n: 3 }], { close: true });
@@ -411,12 +440,14 @@ it("read and follow fail with gone while session preserves the classification", 
       const child = StreamAddress.json("child", { schema: Schema.Finite });
       yield* (yield* StreamsWriter).fork(child.id, address.id);
       yield* Streams.remove(address);
+
       for (const source of [Streams.read(address), Streams.follow(address)]) {
         const exit = yield* source.pipe(Stream.runCollect, Effect.exit);
         expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
           _tag: "StreamGone",
         });
       }
+
       expect((yield* Effect.flip(Streams.session(address, { offset: ZERO_OFFSET })))._tag).toBe(
         "StreamGone",
       );
@@ -458,21 +489,26 @@ for (const point of ["read", "readNext"] as const) {
         yield* Streams.create(address);
         const reader = yield* StreamsReader;
         let calls = 0;
+
         const fault = new TransportFault({
           operation: point,
           reason: "configuration",
           message: "bad URL",
         });
+
         const fail = () =>
           Effect.suspend(() => {
             calls += 1;
+
             return Effect.fail(fault);
           });
+
         const failure = yield* Streams.follow(address, { retry: Schedule.recurs(3) }).pipe(
           Stream.runCollect,
           Effect.provideService(StreamsReader, { ...reader, [point]: fail }),
           Effect.flip,
         );
+
         expect(failure).toBe(fault);
         expect(calls).toBe(1);
       }),

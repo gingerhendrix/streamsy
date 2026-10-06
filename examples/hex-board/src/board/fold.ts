@@ -10,6 +10,7 @@ export const BoardState = Schema.Struct({
   ordinal: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   board: ProjectionStateSchema,
 });
+
 export type BoardState = typeof BoardState.Type;
 
 export const initialBoard = ({ gameId }: { readonly gameId: string }): BoardState => ({

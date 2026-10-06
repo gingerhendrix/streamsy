@@ -16,4 +16,5 @@ export function createHnDb(origin: string) {
     state: hackerNewsState,
   });
 }
+
 export type HnDb = ReturnType<typeof createHnDb>;

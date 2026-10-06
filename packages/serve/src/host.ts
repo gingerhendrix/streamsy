@@ -24,6 +24,7 @@ const drain =
         yield* Effect.addFinalizer(() => signal.drain(timeout));
       }),
     );
+
     return trigger.pipe(Layer.provideMerge(serve), Layer.provide(layerShutdownSignal));
   };
 

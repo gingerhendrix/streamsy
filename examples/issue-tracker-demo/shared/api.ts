@@ -29,7 +29,9 @@ export class RequestErrors extends HttpApiMiddleware.Service<RequestErrors>()(
 ) {}
 
 const inWorkspace = { ws: WorkspaceId };
+
 const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
+
 /** An issue write can also break the work-in-progress rule. */
 const issueErrors = [...writeErrors, WipLimitReached];
 

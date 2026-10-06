@@ -15,6 +15,7 @@ export const Route = createFileRoute("/articles/$slug")({
   loader: async ({ params }) => {
     const data = await serverLoader({ data: params.slug });
     await clientLoader.preload(data.path);
+
     return data;
   },
   head: ({ loaderData }) => ({
@@ -42,9 +43,11 @@ const serverLoader = createServerFn({ method: "GET" })
   .inputValidator((slug: string) => slug)
   .handler(async ({ data: slug }) => {
     const page = articlesSource.getPage([slug]);
+
     if (!page) throw notFound();
 
     let image = "/og.webp";
+
     try {
       image = new URL(image, getRequestUrl().origin).href;
     } catch {
@@ -67,6 +70,7 @@ const clientLoader = browserCollections.articles.createClientLoader({
 
 function ArticlePage() {
   const data = useFumadocsLoader(Route.useLoaderData());
+
   return (
     <HomeLayout {...baseOptions()}>
       <article className="mx-auto w-full max-w-3xl px-6 py-14 sm:py-20">

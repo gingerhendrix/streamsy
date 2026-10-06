@@ -11,6 +11,7 @@ import {
 } from "@streamsy/projection";
 
 export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });
+
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
 /** Stateless transactional filter: positive items are copied to `output` inside the transaction. */
@@ -22,9 +23,11 @@ export const positives = Projection.process({
   process: (batch) =>
     Effect.gen(function* () {
       const kept = batch.input.items.filter((item) => item > 0);
+
       if (Array.isReadonlyArrayNonEmpty(kept)) yield* Streams.append(output, kept);
     }),
 }).at({});
+
 export type Services =
   | CheckpointStore
   | Transaction
@@ -37,10 +40,13 @@ export const initialize = Effect.gen(function* () {
   yield* Streams.create(output);
   yield* Streams.append(input, [1, -1, 3]);
 });
+
 export const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
+
 export const inspect = Effect.gen(function* () {
   const owner = yield* CheckpointStore;
+
   return {
     output: yield* readAll(output),
     loaded: yield* owner.load(Projection.key(positives)),
@@ -50,6 +56,7 @@ export const inspect = Effect.gen(function* () {
 /** Fault injected after the handler's real append, at the checkpoint save. */
 export const failAtSave = Effect.gen(function* () {
   const owner = yield* CheckpointStore;
+
   const failing = CheckpointStore.of({
     ...owner,
     compareAndSet: () =>
@@ -61,6 +68,7 @@ export const failAtSave = Effect.gen(function* () {
         }),
       ),
   });
+
   return yield* Projection.run(positives).pipe(
     Effect.provideService(CheckpointStore, failing),
     Effect.result,
@@ -76,5 +84,6 @@ export const composition = Effect.gen(function* () {
   const after = yield* inspect;
   const final = yield* Projection.run(positives);
   const restart = yield* Projection.run(positives);
+
   return { first, before, failed: failed._tag, after, final, restart, stored: yield* inspect };
 });

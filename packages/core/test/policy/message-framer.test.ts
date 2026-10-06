@@ -8,6 +8,7 @@ import { describe, it, expect } from "bun:test";
 import { frameMessages } from "../../src/policy/message-framer.ts";
 
 const enc = new TextEncoder();
+
 const dec = new TextDecoder();
 
 describe("frameMessages — non-JSON passthrough", () => {

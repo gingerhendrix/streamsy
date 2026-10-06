@@ -7,8 +7,11 @@ import { StreamsTest, layerTest } from "../../src/testing/streams-test.ts";
 import { StreamId } from "../../src/schema/index.ts";
 
 const id = StreamId.make("sse");
+
 const json = "application/json";
+
 const encoder = new TextEncoder();
+
 const decoder = new TextDecoder();
 
 function check<E>(program: Effect.Effect<void, E, StreamsReader | StreamsWriter | StreamsTest>) {
@@ -19,6 +22,7 @@ function check<E>(program: Effect.Effect<void, E, StreamsReader | StreamsWriter 
           const context = yield* Layer.build(
             Layer.mergeAll(layerTest({ longPollTimeoutMs: 100_000 }), TestClock.layer()),
           );
+
           return yield* program.pipe(Effect.provide(context));
         }),
       ),
@@ -32,7 +36,9 @@ const fixedRandom = (r: number) =>
 
 const body = (reader: typeof StreamsReader.Service, deadlineMs: number) => {
   const response = sse(reader, id, json, "-1", undefined, deadlineMs);
+
   if (response.body._tag !== "Stream") throw new Error("SSE body must be a stream");
+
   // The web body stream has an unknown error channel; a failure here is a test defect.
   return response.body.stream.pipe(Stream.orDie);
 };
@@ -54,11 +60,13 @@ for (const [r, deadline] of [
       Effect.gen(function* () {
         yield* (yield* StreamsWriter).create(id, { contentType: json });
         const control = yield* StreamsTest;
+
         const fiber = yield* body(yield* StreamsReader, 1000).pipe(
           Stream.runDrain,
           fixedRandom(r),
           Effect.forkScoped,
         );
+
         yield* control.snapshot;
         yield* TestClock.adjust(deadline - 1);
         expect(fiber.pollUnsafe()).toBeUndefined();
@@ -75,21 +83,25 @@ it("each SSE chunk is one whole batch that ends with its control event", () =>
       yield* writer.create(id, { contentType: json });
       yield* writer.append(id, { contentType: json, data: encoder.encode('[{"n":1},{"n":2}]') });
       const control = yield* StreamsTest;
+
       const fiber = yield* body(yield* StreamsReader, 60_000).pipe(
         Stream.take(2),
         Stream.runCollect,
         fixedRandom(0.5),
         Effect.forkScoped,
       );
+
       yield* control.snapshot;
       yield* writer.append(id, { contentType: json, data: encoder.encode('[{"n":3}]') });
       const chunks = (yield* Fiber.join(fiber)).map((chunk) => decoder.decode(chunk));
       expect(chunks).toHaveLength(2);
+
       for (const chunk of chunks) {
         expect(chunk.startsWith("event: data\n")).toBe(true);
         expect(chunk.split("event: control\n")).toHaveLength(2);
         expect(chunk).toMatch(/event: control\ndata:\{[^\n]*"streamNextOffset"[^\n]*\}\n\n$/);
       }
+
       expect(chunks[0]).toContain('data:{"n":1},\ndata:{"n":2}\n');
       expect(chunks[1]).toContain('data:{"n":3}\n');
     }).pipe(Effect.scoped),

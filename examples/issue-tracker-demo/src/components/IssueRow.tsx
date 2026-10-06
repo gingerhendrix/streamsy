@@ -24,6 +24,7 @@ export function IssueRow({
   onComment: (body: string) => void;
 }) {
   const [body, setBody] = useState("");
+
   return (
     <article className={pending ? "issue-row pending" : "issue-row"} aria-busy={pending}>
       <span className={`status-pill status-${issue.status}`}>{STATUS_LABEL[issue.status]}</span>
@@ -50,6 +51,7 @@ export function IssueRow({
             // The select only offers the three statuses below; anything else
             // is not a status change.
             const status = event.target.value;
+
             if (Schema.is(IssueStatus)(status)) onStatus(status);
           }}
         >
@@ -73,6 +75,7 @@ export function IssueRow({
           className="comment-form"
           onSubmit={(event) => {
             event.preventDefault();
+
             if (!body.trim()) return;
             onComment(body.trim());
             setBody("");
@@ -99,6 +102,7 @@ function IssueTitle({ title, onRename }: { title: string; onRename: (title: stri
   // Closing the field removes it, and the browser can then send one more blur.
   // The ref makes sure that one edit saves at most once.
   const open = useRef(false);
+
   const close = () => {
     open.current = false;
     setDraft(null);
@@ -126,6 +130,7 @@ function IssueTitle({ title, onRename }: { title: string; onRename: (title: stri
     if (!open.current) return;
     const next = draft.trim();
     close();
+
     if (next && next !== title) onRename(next);
   };
 
@@ -141,6 +146,7 @@ function IssueTitle({ title, onRename }: { title: string; onRename: (title: stri
       onBlur={save}
       onKeyDown={(event) => {
         if (event.key === "Enter") save();
+
         if (event.key === "Escape") close();
       }}
     />

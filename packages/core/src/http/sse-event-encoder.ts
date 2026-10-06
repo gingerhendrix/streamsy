@@ -15,6 +15,7 @@ export interface SseControlData {
 }
 
 const encoder = new TextEncoder();
+
 const decoder = new TextDecoder();
 
 export function dataEvent(
@@ -22,24 +23,30 @@ export function dataEvent(
   options: SseEncodingOptions,
 ): Uint8Array[] {
   const chunks: Uint8Array[] = [encode("event: data\n")];
+
   if (options.useBase64) {
     const combined = MessageBody.concatBytes(messages);
     chunks.push(encode(`data:${MessageBody.bytesToBase64(combined)}\n`));
   } else if (options.isJson) {
     const items = messages.map((msg) => decoder.decode(msg.data));
     chunks.push(encode("data:[\n"));
+
     for (let i = 0; i < items.length; i++) {
       const suffix = i < items.length - 1 ? "," : "";
       chunks.push(encode(`data:${items[i]}${suffix}\n`));
     }
+
     chunks.push(encode("data:]\n"));
   } else {
     const text = messages.map((msg) => decoder.decode(msg.data)).join("");
+
     for (const line of text.split(/\r\n|\r|\n/)) {
       chunks.push(encode(`data:${line}\n`));
     }
   }
+
   chunks.push(encode("\n"));
+
   return chunks;
 }
 

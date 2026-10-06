@@ -5,6 +5,7 @@ import { createStreamDB } from "@durable-streams/state/db";
 interface Order {
   id: string;
 }
+
 const orderSchema = {
   "~standard": {
     version: 1 as const,
@@ -18,6 +19,7 @@ const orderSchema = {
     },
   },
 };
+
 export const orders = createStateSchema({
   orders: { schema: orderSchema, type: "order", primaryKey: "id" },
 });
@@ -26,7 +28,9 @@ export const orders = createStateSchema({
 export function openOrders(url: string) {
   return createStreamDB({ streamOptions: { url, contentType: "application/json" }, state: orders });
 }
+
 export function appendOrder(url: string, order: Order) {
   const stream = new DurableStream({ url, contentType: "application/json" });
+
   return stream.append(JSON.stringify(orders.orders.insert({ value: order })));
 }

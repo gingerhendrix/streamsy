@@ -14,14 +14,18 @@ import { workspaceEvents, Workspaces, type WorkspaceChange } from "../../server/
 import type { Issue, Project } from "../../shared/state-schema.ts";
 
 const workspaceId = "concurrent-test";
+
 const createdAt = "2026-09-20T00:00:00.000Z";
+
 const stamp = (id: string): Stamp => ({ id, now: createdAt, txid: crypto.randomUUID() });
+
 const project: Project = {
   id: "proj_test",
   name: "Concurrent project",
   description: "",
   createdAt,
 };
+
 const makeIssue = (id: string, status: Issue["status"] = "open"): Issue => ({
   id,
   projectId: project.id,
@@ -45,6 +49,7 @@ const seeded = Effect.gen(function* () {
 
 const issueKeys = Effect.gen(function* () {
   const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
+
   return batches
     .flatMap((batch) => batch.items)
     .filter((event) => event.type === "issue")
@@ -63,6 +68,7 @@ const racingTracker = Effect.gen(function* () {
   const reader = yield* Workspaces;
   const firstReads = yield* Ref.make(0);
   const bothRead = yield* Deferred.make<void>();
+
   const barrierReader = Workspaces.of({
     ...reader,
     decide: (params, spec) =>
@@ -71,14 +77,17 @@ const racingTracker = Effect.gen(function* () {
         decide: (state, at) =>
           Effect.gen(function* () {
             const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+
             if (readNumber <= 2) {
               if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
               yield* Deferred.await(bothRead);
             }
+
             return yield* spec.decide(state, at);
           }),
       }),
   });
+
   return yield* IssueTracker.pipe(
     Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
     Effect.provideService(Workspaces, barrierReader),
@@ -87,25 +96,31 @@ const racingTracker = Effect.gen(function* () {
 
 test("two concurrent writers land without a lost update", async () => {
   let attempts = 0;
+
   const { keys, written } = await runWithStore(
     Effect.gen(function* () {
       yield* seeded;
       const tracker = yield* racingTracker;
+
       const write = (issue: Issue) =>
         tracker.mutate(workspaceId, (state) => {
           attempts += 1;
           expect(state.getProject(project.id)).toBeDefined();
+
           // The third attempt is the loser's retry: it must see the winner's issue.
           if (attempts === 3) {
             const otherId = issue.id === "issue_a" ? "issue_b" : "issue_a";
             expect(state.getIssue(otherId)).toBeDefined();
           }
+
           return Effect.succeed({ change: issueUpsert(issue, stamp(issue.id)), value: issue });
         });
+
       const results = yield* Effect.all(
         [write(makeIssue("issue_a")), write(makeIssue("issue_b"))],
         { concurrency: "unbounded" },
       );
+
       return { keys: yield* issueKeys, written: results };
     }),
   );
@@ -119,6 +134,7 @@ test("two writers race for the last in-progress place: the loser's retry breaks 
   const { results, inProgress } = await runWithStore(
     Effect.gen(function* () {
       yield* seeded;
+
       for (const issue of [
         makeIssue("issue_busy_1", "in_progress"),
         makeIssue("issue_busy_2", "in_progress"),
@@ -127,7 +143,9 @@ test("two writers race for the last in-progress place: the loser's retry breaks 
       ]) {
         yield* appendUnchecked(issueUpsert(issue, stamp(issue.id)));
       }
+
       const tracker = yield* racingTracker;
+
       // Both writers fold a head with two issues in progress, so both pass the
       // rule. One append lands. The other retries on the new head, where the
       // project is at the limit.
@@ -135,10 +153,13 @@ test("two writers race for the last in-progress place: the loser's retry breaks 
         tracker
           .mutate(workspaceId, updateIssue(issueId, { status: "in_progress" }, stamp(issueId)))
           .pipe(Effect.result);
+
       const answers = yield* Effect.all([start("issue_a"), start("issue_b")], {
         concurrency: "unbounded",
       });
+
       const { state } = yield* tracker.materialize(workspaceId);
+
       return { results: answers, inProgress: state.countInProgress(project.id) };
     }),
   );
@@ -153,13 +174,16 @@ test("two writers race for the last in-progress place: the loser's retry breaks 
 
 test("a writer that loses every race answers WriteConflict after three retries", async () => {
   let attempts = 0;
+
   const { failure, keys } = await runWithStore(
     Effect.gen(function* () {
       yield* seeded;
       const workspaces = yield* Workspaces;
+
       const tracker = yield* IssueTracker.pipe(
         Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
       );
+
       // Each attempt lets a rival writer append first, so the head the
       // attempt folded is never the tail when its own append arrives.
       const conflict = yield* tracker
@@ -169,10 +193,12 @@ test("a writer that loses every race answers WriteConflict after three retries",
             const rival = makeIssue(`issue_rival_${attempts}`);
             yield* appendUnchecked(issueUpsert(rival, stamp(rival.id)));
             const loser = makeIssue("issue_loser");
+
             return { change: issueUpsert(loser, stamp(loser.id)), value: loser };
           }).pipe(Effect.provideService(Workspaces, workspaces), Effect.orDie),
         )
         .pipe(Effect.flip);
+
       return { failure: conflict, keys: yield* issueKeys };
     }),
   );
@@ -189,30 +215,37 @@ test("mutating an unknown workspace fails with WorkspaceNotFound", async () => {
       const tracker = yield* IssueTracker.pipe(
         Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
       );
+
       return yield* Effect.flip(
         tracker.mutate("missing", () => Effect.die("the attempt must not run")),
       );
     }),
   );
+
   expect(failure).toMatchObject({ _tag: "WorkspaceNotFound", workspaceId: "missing" });
 });
 
 test("a domain failure is answered at once, not retried", async () => {
   let attempts = 0;
+
   const failure = await runWithStore(
     Effect.gen(function* () {
       yield* seeded;
+
       const tracker = yield* IssueTracker.pipe(
         Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
       );
+
       return yield* Effect.flip(
         tracker.mutate(workspaceId, (state) => {
           attempts += 1;
+
           return createIssue({ projectId: "proj_missing" }, stamp("issue_x"))(state);
         }),
       );
     }),
   );
+
   expect(failure).toMatchObject({ _tag: "UnknownReference", field: "projectId" });
   expect(attempts).toBe(1);
 });
@@ -222,16 +255,19 @@ test("materialize and mutate preserve operational failures in the error channel"
     Effect.scoped(
       Effect.gen(function* () {
         const workspaces = yield* Workspaces;
+
         const fault = new StorageFault({
           operation: "read",
           message: "store busy",
           retryable: true,
         });
+
         const failing = Layer.succeed(Workspaces, {
           ...workspaces,
           fold: () => Effect.fail(fault),
           decide: () => Effect.fail(fault),
         });
+
         const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
         const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
         expect(yield* Effect.flip(tracker.materialize(workspaceId))).toBe(fault);
@@ -247,15 +283,18 @@ test("create and the seed layer expose typed storage failures", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const workspaces = yield* Workspaces;
+
         const fault = new StorageFault({
           operation: "create",
           message: "store busy",
           retryable: true,
         });
+
         const failing = Layer.succeed(Workspaces, {
           ...workspaces,
           create: () => Effect.fail(fault),
         });
+
         const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
         const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
         expect(yield* Effect.flip(tracker.create)).toBe(fault);

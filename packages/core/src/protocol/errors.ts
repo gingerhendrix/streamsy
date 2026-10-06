@@ -9,11 +9,13 @@ export class StreamNotFound extends Schema.TaggedError<StreamNotFound>()("Stream
     return `Stream ${this.id} was not found`;
   }
 }
+
 export class StreamGone extends Schema.TaggedError<StreamGone>()("StreamGone", { id: StreamId }) {
   override get message(): string {
     return `Stream ${this.id} was deleted`;
   }
 }
+
 export class StreamClosed extends Schema.TaggedError<StreamClosed>()("StreamClosed", {
   id: StreamId,
   offset: Schema.String,
@@ -22,6 +24,7 @@ export class StreamClosed extends Schema.TaggedError<StreamClosed>()("StreamClos
     return `Stream ${this.id} is closed at ${this.offset}`;
   }
 }
+
 export class OffsetMismatch extends Schema.TaggedError<OffsetMismatch>()("OffsetMismatch", {
   id: StreamId,
   expected: Schema.String,
@@ -31,15 +34,18 @@ export class OffsetMismatch extends Schema.TaggedError<OffsetMismatch>()("Offset
     return `Stream ${this.id} is at ${this.actual}, not at the expected ${this.expected}`;
   }
 }
+
 export class AppendConflict extends Schema.TaggedError<AppendConflict>()("AppendConflict", {
   id: StreamId,
   message: Schema.String,
 }) {}
+
 export class StreamBusy extends Schema.TaggedError<StreamBusy>()("StreamBusy", { id: StreamId }) {
   override get message(): string {
     return `Stream ${this.id} is busy; try again`;
   }
 }
+
 export class StaleEpoch extends Schema.TaggedError<StaleEpoch>()("StaleEpoch", {
   id: StreamId,
   currentEpoch: Schema.Finite,
@@ -48,6 +54,7 @@ export class StaleEpoch extends Schema.TaggedError<StaleEpoch>()("StaleEpoch", {
     return `Producer epoch is stale on ${this.id}; the current epoch is ${this.currentEpoch}`;
   }
 }
+
 export class ProducerGap extends Schema.TaggedError<ProducerGap>()("ProducerGap", {
   id: StreamId,
   expectedSeq: Schema.Finite,
@@ -57,6 +64,7 @@ export class ProducerGap extends Schema.TaggedError<ProducerGap>()("ProducerGap"
     return `Producer sequence gap on ${this.id}: expected ${this.expectedSeq}, received ${this.receivedSeq}`;
   }
 }
+
 export class InvalidEpochSeq extends Schema.TaggedError<InvalidEpochSeq>()("InvalidEpochSeq", {
   id: StreamId,
 }) {
@@ -64,10 +72,12 @@ export class InvalidEpochSeq extends Schema.TaggedError<InvalidEpochSeq>()("Inva
     return `Invalid producer epoch or sequence on ${this.id}`;
   }
 }
+
 export class InvalidAppendRequest extends Schema.TaggedError<InvalidAppendRequest>()(
   "InvalidAppendRequest",
   { id: StreamId, message: Schema.String },
 ) {}
+
 export class CreateConflict extends Schema.TaggedError<CreateConflict>()("CreateConflict", {
   id: StreamId,
   reason: Schema.optionalKey(
@@ -80,6 +90,7 @@ export class CreateConflict extends Schema.TaggedError<CreateConflict>()("Create
   ),
   message: Schema.String,
 }) {}
+
 export class ForkSourceNotFound extends Schema.TaggedError<ForkSourceNotFound>()(
   "ForkSourceNotFound",
   { id: StreamId, source: StreamId },
@@ -88,10 +99,12 @@ export class ForkSourceNotFound extends Schema.TaggedError<ForkSourceNotFound>()
     return `Fork source ${this.source} of ${this.id} was not found`;
   }
 }
+
 export class InvalidForkRequest extends Schema.TaggedError<InvalidForkRequest>()(
   "InvalidForkRequest",
   { id: StreamId, message: Schema.String },
 ) {}
+
 export class NotSupported extends Schema.TaggedError<NotSupported>()("NotSupported", {
   id: StreamId,
   feature: Schema.String,
@@ -100,8 +113,11 @@ export class NotSupported extends Schema.TaggedError<NotSupported>()("NotSupport
     return `Stream ${this.id} does not support ${this.feature}`;
   }
 }
+
 export type CreateConflictReason = NonNullable<CreateConflict["reason"]>;
+
 export type HeadError = StreamNotFound | StreamGone;
+
 export class InvalidReadRequest extends Schema.TaggedError<InvalidReadRequest>()(
   "InvalidReadRequest",
   {
@@ -109,9 +125,13 @@ export class InvalidReadRequest extends Schema.TaggedError<InvalidReadRequest>()
     message: Schema.String,
   },
 ) {}
+
 export type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
+
 export type ReadNextError = ReadError | NotSupported;
+
 export type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
+
 /**
  * Append rejections that any call can get, whatever its options. The memory and
  * storage hosts never answer `NotSupported`; the remote client does when the server
@@ -124,6 +144,7 @@ export type AppendBaseError =
   | StreamBusy
   | AppendConflict
   | NotSupported;
+
 export type AppendError =
   | AppendBaseError
   | InvalidAppendRequest
@@ -131,6 +152,7 @@ export type AppendError =
   | StaleEpoch
   | ProducerGap
   | InvalidEpochSeq;
+
 /**
  * The append rejections that call options `O` make possible. `OffsetMismatch`
  * needs `expectedOffset`, and the producer rejections need `producer`. An option
@@ -140,6 +162,7 @@ export type AppendErrorFor<O> =
   | AppendBaseError
   | (true extends MaySet<O, "expectedOffset"> ? OffsetMismatch : never)
   | (true extends MaySet<O, "producer"> ? StaleEpoch | ProducerGap : never);
+
 /** Whether options `O` may hold a value for `K`. A union holds it if any member may. */
 type MaySet<O, K extends PropertyKey> = O extends unknown
   ? K extends keyof O
@@ -148,7 +171,9 @@ type MaySet<O, K extends PropertyKey> = O extends unknown
       : true
     : false
   : never;
+
 export type RemoveError = StreamNotFound | StreamGone | StreamBusy;
+
 export type ProtocolError = HeadError | ReadNextError | CreateError | AppendError | RemoveError;
 
 /** Exhaustive record of every protocol tag, checked against the union it must cover. */

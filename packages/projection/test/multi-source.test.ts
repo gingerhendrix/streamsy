@@ -14,7 +14,9 @@ import {
 import { memoryHost } from "./support/memory-host.ts";
 
 const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
+
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
+
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
 
 const run = <A, E>(
@@ -28,15 +30,18 @@ const run = <A, E>(
   Effect.runPromise(
     body.pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost({ readLimit })))),
   );
+
 const setup = Effect.gen(function* () {
   yield* Streams.create(a);
   yield* Streams.create(b);
   yield* Streams.append(a, [1, 2, 3]);
   yield* Streams.append(b, ["x"]);
 });
+
 /** Records every tagged item the handler saw, in order, with the unit it arrived in. */
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
+
   const projection = Projection.process({
     commit: Commit.atLeastOnce,
     params: {},
@@ -48,8 +53,10 @@ const recorder = (inputs: Inputs, id = "multi") => {
       }),
     ),
   }).at({});
+
   return { projection, seen };
 };
+
 const tags = (seen: ReadonlyArray<{ readonly entry: Entry<Inputs> }>) =>
   seen.map(({ entry }) => `${entry.input}:${String(entry.item)}#${entry.index}`);
 
@@ -93,8 +100,10 @@ test("one closed input stays in the batch while the other continues", () =>
     Effect.gen(function* () {
       yield* setup;
       yield* Streams.append(a, [], { close: true });
+
       const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
         [];
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "closing",
@@ -108,6 +117,7 @@ test("one closed input stays in the batch while the other continues", () =>
             });
           }),
       }).at({});
+
       const first = yield* Projection.run(projection);
       expect(first.status).toBe("caught-up");
       expect(batches).toEqual([{ a: { closed: true, items: 3 }, b: { closed: false, items: 1 } }]);
@@ -130,12 +140,14 @@ test("a missing second input fails the read naming that input", () =>
       const { projection, seen } = recorder({ a, b });
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure") {
         expect(result.failure).toBeInstanceOf(ProjectionFault);
         expect(result.failure.phase).toBe("read");
         expect(result.failure.reason).toBe("history-unavailable");
         expect(result.failure.input).toBe("b");
       }
+
       expect(seen).toHaveLength(0);
       const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.isNone(loaded.record)).toBe(true);
@@ -149,6 +161,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       const order: Array<string> = [];
       let active = 0;
       let overlapped = false;
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "sequenced",
@@ -165,6 +178,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
             yield* Projection.each<Inputs, never, never>((entry) =>
               Effect.gen(function* () {
                 active += 1;
+
                 if (active > 1) overlapped = true;
                 yield* Effect.yieldNow;
                 order.push(`${entry.input}:${String(entry.item)}`);
@@ -173,6 +187,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
             )(batch, unit);
           }),
       }).at({});
+
       yield* Projection.run(projection);
       expect(order).toEqual(["b:x", "a:1", "a:2", "a:3"]);
       expect(overlapped).toBe(false);

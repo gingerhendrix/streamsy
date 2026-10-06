@@ -6,6 +6,7 @@ import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts
 import { BunStorage } from "@streamsy/storage/bun";
 
 let host: TestHost | undefined;
+
 describe("Effect SQLite Bun host", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {

@@ -2,6 +2,7 @@ import { Effect, type Duration } from "effect";
 import { DenoHttpServer } from "@effect/platform-deno";
 
 export const DEFAULT_PORT = 3000;
+
 export const DEFAULT_HOSTNAME = "127.0.0.1";
 
 export interface ListenerOptions {
@@ -49,6 +50,7 @@ export const nodeSqliteCompat: Effect.Effect<void> = Effect.promise(
   Effect.flatMap(({ DatabaseSync }) =>
     Effect.sync(() => {
       const prototype: LoadExtensionPrototype = DatabaseSync.prototype;
+
       if (prototype.enableLoadExtension === undefined) {
         prototype.enableLoadExtension = () => {};
       }

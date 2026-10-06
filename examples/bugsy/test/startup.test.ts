@@ -14,8 +14,10 @@ import {
 test("a workspace fault at startup leaves HTTP and other workspaces available", async () => {
   const scratch = await scratchDirectory("tracker-startup-fault");
   let server: ReturnType<typeof startServer> | undefined;
+
   try {
     const producer = ManagedRuntime.make(applicationLayer(sqliteStorage(scratch.database)));
+
     try {
       await producer.runPromise(
         Effect.gen(function* () {
@@ -38,6 +40,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
     } finally {
       await producer.dispose();
     }
+
     const port = 20_000 + Math.floor(Math.random() * 20_000);
     const baseUrl = `http://127.0.0.1:${port}`;
     server = startServer(port, scratch.database);

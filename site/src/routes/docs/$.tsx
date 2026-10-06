@@ -15,6 +15,7 @@ export const Route = createFileRoute("/docs/$")({
   component: Page,
   beforeLoad: ({ params }) => {
     const moved = movedPages.get(params["_splat"]?.split("/").filter(Boolean).join("/") ?? "");
+
     if (moved !== undefined) {
       throw redirect({ to: "/docs/$", params: { _splat: moved }, statusCode: 308 });
     }
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/docs/$")({
     const slugs = params["_splat"]?.split("/").filter(Boolean) ?? [];
     const data = await serverLoader({ data: slugs });
     await clientLoader.preload(data.path);
+
     return data;
   },
   head: ({ loaderData }) => ({
@@ -52,11 +54,13 @@ const serverLoader = createServerFn({
   .inputValidator((slugs: string[]) => slugs)
   .handler(async ({ data: slugs }) => {
     const page = source.getPage(slugs);
+
     if (!page) throw notFound();
 
     // Absolute og:image URL (crawlers like X/Twitter require absolute URLs).
     const imagePath = getPageImage(page).url;
     let image = imagePath;
+
     try {
       image = new URL(imagePath, getRequestUrl().origin).href;
     } catch {

@@ -38,10 +38,15 @@ export type ReadFailure =
   | InvalidReadRequest
   | StreamsFault
   | DecodeFault;
+
 export type FollowFailure = ReadFailure | NotSupported;
+
 export type AppendFailure<O = AppendCallOptions> = AppendErrorFor<O> | StreamsFault | EncodeFault;
+
 export type CreateFailure = CreateError | StreamsFault;
+
 export type HeadFailure = HeadError | StreamsFault;
+
 export type RemoveFailure = RemoveError | StreamsFault;
 
 export interface Batch<A> {
@@ -60,6 +65,7 @@ export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
     contentType: address.contentType,
   });
 });
+
 /**
  * The items one append takes. An append carries at least one item, unless it
  * closes the stream. Caller-bug rejections from a host are defects.
@@ -67,6 +73,7 @@ export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
 export type AppendItems<A, O> = O extends { readonly close: true }
   ? ReadonlyArray<A>
   : NonEmptyReadonlyArray<A>;
+
 /** Whether these options can lead to this rejection. Any other rejection is a host bug. */
 const possibleFor = (options: AppendCallOptions, error: AppendError | StreamsFault): boolean =>
   Predicate.isTagged(error, "InvalidAppendRequest") || Predicate.isTagged(error, "InvalidEpochSeq")
@@ -76,6 +83,7 @@ const possibleFor = (options: AppendCallOptions, error: AppendError | StreamsFau
       : Predicate.isTagged(error, "StaleEpoch") || Predicate.isTagged(error, "ProducerGap")
         ? options.producer !== undefined
         : true;
+
 /**
  * Append items to one stream. The error type lists only the rejections that the
  * options make possible; a host that answers another one dies.
@@ -92,6 +100,7 @@ export const append = Effect.fn("Streams.append")(function* <
 ): Effect.fn.Return<AppendResult, AppendFailure<O>, StreamsWriter | RE> {
   const callOptions: AppendCallOptions = options ?? {};
   const list: ReadonlyArray<A> = items;
+
   const encoded = yield* Effect.forEach(list, (item) =>
     Schema.encodeEffect(address.codec)(item).pipe(
       Effect.mapError(
@@ -99,12 +108,14 @@ export const append = Effect.fn("Streams.append")(function* <
       ),
     ),
   );
+
   for (const item of encoded) {
     if (Predicate.isUint8Array(item) && item.byteLength === 0)
       return yield* Effect.die(
         new RangeError(`Cannot append an empty bytes item to ${address.id}`),
       );
   }
+
   const data =
     list.length === 0 && callOptions.close
       ? // A close-only append is the protocol's empty body. An empty JSON array is
@@ -113,24 +124,31 @@ export const append = Effect.fn("Streams.append")(function* <
       : Predicate.isTagged(address, "Json")
         ? new TextEncoder().encode(`[${encoded.join(",")}]`)
         : concatBytes(encoded);
+
   const possible = (error: AppendError | StreamsFault): error is AppendErrorFor<O> | StreamsFault =>
     possibleFor(callOptions, error);
+
   return yield* (yield* StreamsWriter)
     .append(address.id, { ...callOptions, data, contentType: address.contentType })
     .pipe(Effect.catch((error) => (possible(error) ? Effect.fail(error) : Effect.die(error))));
 });
+
 function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
   const arrays = parts.map((part) =>
     Predicate.isString(part) ? new TextEncoder().encode(part) : part,
   );
+
   const result = new Uint8Array(arrays.reduce((size, part) => size + part.byteLength, 0));
   let offset = 0;
+
   for (const part of arrays) {
     result.set(part, offset);
     offset += part.byteLength;
   }
+
   return result;
 }
+
 const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
   result: ReadResult | ReadNextResult,
@@ -148,6 +166,7 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
       ),
     ),
   );
+
   return {
     items,
     nextOffset: result.nextOffset,
@@ -155,6 +174,7 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
     closed: result.closed === true,
   } satisfies Batch<A>;
 });
+
 export function read<A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
   options: ReadOptions = {},
@@ -162,28 +182,33 @@ export function read<A, RD, RE>(
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
+
       return Stream.paginate(options.offset, (offset) =>
         Effect.gen(function* () {
           const batch = yield* decode(
             address,
             yield* reader.read(address.id, { ...options, offset }),
           );
+
           return [[batch], batch.upToDate ? Option.none() : Option.some(batch.nextOffset)] as const;
         }),
       );
     }),
   );
 }
+
 /** A folded value and the tail it was read up to. `offset` is this stream's CAS token. */
 export interface Folded<S> {
   readonly state: S;
   readonly offset: string;
 }
+
 /** Every item read and the tail they were read up to. */
 export interface Collected<A> {
   readonly items: ReadonlyArray<A>;
   readonly offset: string;
 }
+
 /**
  * Read the stream up to its tail and fold every item into one value. Pass
  * `options.offset` to fold on from a tail that an earlier fold returned.
@@ -200,12 +225,15 @@ export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
       (): Folded<S> => ({ state: initial(), offset: options.offset ?? ZERO_OFFSET }),
       (folded, batch): Folded<S> => {
         let state = folded.state;
+
         for (const item of batch.items) state = f(state, item);
+
         return { state, offset: batch.nextOffset };
       },
     ),
   );
 });
+
 /** Read the stream up to its tail and return its items. */
 export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
@@ -216,19 +244,24 @@ export const collect = Effect.fn("Streams.collect")(function* <A, RD, RE>(
     (): Array<A> => [],
     (items: Array<A>, item: A) => {
       items.push(item);
+
       return items;
     },
     options,
   );
+
   const collected: Collected<A> = { items: state, offset };
+
   return collected;
 });
+
 /** What one `decide` step answers: a value, and the items to append for it. */
 export interface Decision<B, A> {
   readonly value: B;
   /** Items to append. Empty means "no write": the call returns without a tail check. */
   readonly items: ReadonlyArray<A>;
 }
+
 /** The result of a read, decide, append loop. */
 export interface Decided<B> {
   readonly value: B;
@@ -236,6 +269,7 @@ export interface Decided<B> {
   readonly offset: string;
   readonly appended: boolean;
 }
+
 export interface DecideSpec<A, S, B, E, R> {
   /** The start value of the fold. Each call starts from a new value. */
   readonly initial: LazyArg<S>;
@@ -252,8 +286,10 @@ export interface DecideSpec<A, S, B, E, R> {
   /** Retries after `OffsetMismatch`. Default: `Schedule.recurs(3)`. Nothing else is retried. */
   readonly retry?: Schedule.Schedule<unknown, OffsetMismatch>;
 }
+
 /** Up to three retries after a lost race, so at most four appends per call. */
 const defaultDecideRetry = Schedule.recurs(3);
+
 /**
  * Read, decide, append. Fold the stream to its tail, decide from the state, and
  * append with `expectedOffset` set to the tail that was read. After an
@@ -270,6 +306,7 @@ export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E,
   StreamsReader | StreamsWriter | RD | RE | R
 > {
   let folded: Folded<S> | undefined;
+
   const attempt = Effect.gen(function* () {
     const last = folded;
     folded =
@@ -278,18 +315,25 @@ export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E,
         : yield* fold(address, () => last.state, spec.fold, { offset: last.offset });
     const { state, offset } = folded;
     const { value, items } = yield* spec.decide(state, { offset });
+
     if (!isReadonlyArrayNonEmpty(items)) {
       const unchanged: Decided<B> = { value, offset, appended: false };
+
       return unchanged;
     }
+
     const appended = yield* append(address, items, { expectedOffset: offset }).pipe(
       Effect.catchTag("OffsetMismatch", (mismatch) => Effect.fail(new LostRace(mismatch))),
     );
+
     const decided: Decided<B> = { value, offset: appended.offset, appended: true };
+
     return decided;
   });
+
   return yield* retryLostRace(attempt, spec.retry ?? defaultDecideRetry);
 });
+
 /**
  * Marks the `OffsetMismatch` of a decide loop's own append. Only this error is
  * retried: an `OffsetMismatch` that the caller's `decide` raises is its own
@@ -298,6 +342,7 @@ export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E,
 class LostRace {
   constructor(readonly mismatch: OffsetMismatch) {}
 }
+
 /**
  * Retry `attempt` after a `LostRace` while `schedule` allows, then fail with the
  * last `OffsetMismatch`. `retry` steps its schedule with every error it sees, so
@@ -318,8 +363,10 @@ const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
     }),
     Effect.retry(schedule),
   );
+
   return yield* Effect.fromResult(outcome);
 });
+
 export interface FollowOptions extends ReadOptions {
   /**
    * Schedule for retrying a failed read after a retryable `TransportFault` or `StorageFault`.
@@ -332,6 +379,7 @@ export interface FollowOptions extends ReadOptions {
 const capAt30Seconds = Schedule.modifyDelay(({ duration }: { duration: Duration.Duration }) =>
   Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
 );
+
 /** Same shape as `Projection.follow`'s default; kept as a copy until a third user appears. */
 const defaultFollowRetry = Schedule.exponential("200 millis").pipe(
   capAt30Seconds,
@@ -346,6 +394,7 @@ interface FollowState {
   /** Last `Stream-Cursor` from a live read; echoed on the next one for CDN collapsing. */
   readonly cursor: string | undefined;
 }
+
 /**
  * Catch up, then wait one readNext at a time, filtering empty open batches.
  * A read that fails with a retryable transport or storage fault is retried from the same
@@ -356,6 +405,7 @@ export function follow<A, RD, RE>(
   options: FollowOptions = {},
 ): Stream.Stream<Batch<A>, FollowFailure, StreamsReader | RD> {
   const { retry = defaultFollowRetry, ...readOptions } = options;
+
   const retrying = <T, E extends { readonly _tag: string }, R>(read: Effect.Effect<T, E, R>) =>
     read.pipe(
       Effect.tapError((error) =>
@@ -363,18 +413,22 @@ export function follow<A, RD, RE>(
       ),
       Effect.retry({ while: isRetryableFault, schedule: retry }),
     );
+
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
       const initial: FollowState = { offset: readOptions.offset, live: false, cursor: undefined };
+
       const live = (state: FollowState) =>
         reader
           .readNext(address.id, { offset: state.offset ?? "-1", cursor: state.cursor })
           .pipe(Effect.map((result) => [result, result.cursor] as const));
+
       const catchUp = (state: FollowState) =>
         reader
           .read(address.id, { ...readOptions, offset: state.offset })
           .pipe(Effect.map((result) => [result, state.cursor] as const));
+
       return Stream.paginate(initial, (state) =>
         Effect.gen(function* () {
           // Retry only this step's read. The offset in `state` is kept, so a retried
@@ -382,6 +436,7 @@ export function follow<A, RD, RE>(
           const [result, cursor] = yield* retrying(state.live ? live(state) : catchUp(state));
           const batch = yield* decode(address, result);
           const next: FollowState = { offset: batch.nextOffset, live: batch.upToDate, cursor };
+
           return [
             batch.items.length > 0 || batch.closed ? [batch] : [],
             batch.closed ? Option.none() : Option.some(next),
@@ -391,19 +446,23 @@ export function follow<A, RD, RE>(
     }),
   );
 }
+
 export const items = <A, E, R>(batches: Stream.Stream<Batch<A>, E, R>): Stream.Stream<A, E, R> =>
   batches.pipe(Stream.flatMap((batch) => Stream.fromIterable(batch.items)));
+
 export const session = Effect.fn("Streams.session")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
   options: ReadNextOptions,
 ) {
   return yield* (yield* StreamsReader).readNext(address.id, options);
 });
+
 export const head = Effect.fn("Streams.head")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
 ): Effect.fn.Return<HeadResult, HeadFailure, StreamsReader> {
   return yield* (yield* StreamsReader).head(address.id);
 });
+
 export const remove = Effect.fn("Streams.remove")(function* <A, RD, RE>(
   address: StreamAddress<A, RD, RE>,
 ): Effect.fn.Return<void, RemoveFailure, StreamsWriter> {

@@ -49,7 +49,9 @@ const stopHost = (host: TestHost): Promise<void> => Effect.runPromise(host.stop)
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
 const holderWorker = new URL("./support/contention-process-worker.ts", import.meta.url).pathname;
+
 const one = Offset.make("0000000000000001_0000000000000000");
 
 const record = (id: string) => ({
@@ -84,13 +86,16 @@ const startHolder = async (
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const reader = child.stdout.getReader();
   const ready = await reader.read();
   reader.releaseLock();
+
   if (ready.done || new TextDecoder().decode(ready.value).trim() !== "locked") {
     const stderr = await new Response(child.stderr).text();
     throw new Error(`Lock holder failed: ${stderr}`);
   }
+
   return child;
 };
 
@@ -99,6 +104,7 @@ const makeTestLayer = (
   options: { readonly disableWAL?: boolean; readonly repairIntervalMs?: number } = {},
 ) => {
   const probe = makeBoundaryTestProbe();
+
   const client = Layer.effectContext(
     sharedSqlClientLayer(
       SqliteClient.make({
@@ -108,6 +114,7 @@ const makeTestLayer = (
       }).pipe(Effect.orDie),
     ),
   );
+
   const storage = layerWithTestProbe(
     {
       repairIntervalMs: options.repairIntervalMs ?? 60_000,
@@ -116,11 +123,13 @@ const makeTestLayer = (
     },
     probe,
   ).pipe(Layer.provideMerge(client));
+
   return { storage, probe };
 };
 
 const waitFor = async (predicate: () => boolean, timeoutMs = 1_000) => {
   const deadline = performance.now() + timeoutMs;
+
   while (!predicate()) {
     if (performance.now() >= deadline) throw new Error("Timed out waiting for lifecycle state");
     await Bun.sleep(5);
@@ -145,13 +154,16 @@ const prepareRollbackFile = (filename: string) => {
 
 const streamsyTables = (filename: string) => {
   const database = new Database(filename, { readonly: true });
+
   const tables = database
     .query<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'streamsy_%' ORDER BY name",
     )
     .all()
     .map(({ name }) => name);
+
   database.close(false);
+
   return tables;
 };
 
@@ -180,6 +192,7 @@ test("public Bun acquisition bounds preflight and WAL preparation contention", a
     const exit = await buildPublicLayer(filename, disableWAL);
     const elapsedMs = performance.now() - started;
     await holder.exited;
+
     return { exit, elapsedMs };
   };
 
@@ -198,6 +211,7 @@ test("public Bun acquisition bounds preflight and WAL preparation contention", a
   const preflightExhausted = await measure(preflightExhaustion, "exclusive", 650, true);
   expect(Exit.isFailure(preflightExhausted.exit)).toBe(true);
   expect(preflightExhausted.elapsedMs).toBeLessThanOrEqual(750);
+
   if (Exit.isFailure(preflightExhausted.exit)) {
     const error = Option.getOrThrow(Cause.findErrorOption(preflightExhausted.exit.cause));
     expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
@@ -215,10 +229,12 @@ test("public Bun acquisition bounds preflight and WAL preparation contention", a
   const exhaustedWal = await measure(walExhaustion, "write", 650, false);
   expect(Exit.isFailure(exhaustedWal.exit)).toBe(true);
   expect(exhaustedWal.elapsedMs).toBeLessThanOrEqual(750);
+
   if (Exit.isFailure(exhaustedWal.exit)) {
     const error = Option.getOrThrow(Cause.findErrorOption(exhaustedWal.exit.cause));
     expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
   }
+
   expect(streamsyTables(walExhaustion)).toEqual([]);
 
   await Bun.write(
@@ -261,26 +277,34 @@ test("owned retries yield, progress after release, exhaust exactly, and preserve
         expect(progressElapsedMs).toBeLessThanOrEqual(750);
 
         const scope = yield* Scope.make();
+
         const pull = yield* Stream.toPull(storage.changes(StreamId.make("exhausted"))).pipe(
           Scope.provide(scope),
         );
+
         yield* pull;
         const pending = yield* pull.pipe(Effect.forkScoped, Scope.provide(scope));
         const held = yield* Effect.promise(() => startHolder(filename, "write", 650));
+
         const rawBusy = yield* sql
           .unsafe("UPDATE batch_c_lock SET value=value+1")
           .pipe(Effect.exit);
+
         expect(Exit.isFailure(rawBusy) && Option.isSome(Cause.findErrorOption(rawBusy.cause))).toBe(
           true,
         );
+
         if (Exit.isFailure(rawBusy)) {
           const error = Option.getOrThrow(Cause.findErrorOption(rawBusy.cause));
           expect(isSqlError(error) && error.isRetryable).toBe(true);
         }
+
         const beforeCallerOwned = probe.transactionAttempts;
+
         const callerOwned = yield* boundary
           .withTransaction(sql.unsafe("UPDATE batch_c_lock SET value=value+1"))
           .pipe(Effect.exit);
+
         expect(probe.transactionAttempts - beforeCallerOwned).toBe(1);
         expect(Exit.isFailure(callerOwned)).toBe(true);
         const beforeExhaustion = probe.transactionAttempts;
@@ -291,10 +315,12 @@ test("owned retries yield, progress after release, exhaust exactly, and preserve
         expect(exhaustionAttempts).toBe(16);
         expect(exhaustionElapsedMs).toBeLessThanOrEqual(750);
         expect(Exit.isFailure(exhausted)).toBe(true);
+
         if (Exit.isFailure(exhausted)) {
           const error = Option.getOrThrow(Cause.findErrorOption(exhausted.cause));
           expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
         }
+
         expect(Option.isNone(yield* storage.record(StreamId.make("exhausted")))).toBe(true);
         expect(pending.pollUnsafe()).toBeUndefined();
         expect([...probe.queues].map((queue) => Queue.sizeUnsafe(queue))).toEqual([0]);
@@ -308,10 +334,12 @@ test("owned retries yield, progress after release, exhaust exactly, and preserve
         const permanent = yield* storage.mutate(create("permanent")).pipe(Effect.exit);
         expect(probe.transactionAttempts - beforePermanent).toBe(1);
         expect(Exit.isFailure(permanent)).toBe(true);
+
         if (Exit.isFailure(permanent)) {
           const error = Option.getOrThrow(Cause.findErrorOption(permanent.cause));
           expect(error).toMatchObject({ _tag: "StorageFault", retryable: false });
         }
+
         yield* sql.unsafe("DROP TRIGGER reject_batch_c");
 
         const cancelHolder = yield* Effect.promise(() => startHolder(filename, "write", 650));
@@ -376,10 +404,12 @@ test("migration acquisition retries are bounded and never expose partial schema"
   expect(exhaustedLayer.probe.migrationAttempts).toBe(16);
   expect(exhaustionElapsedMs).toBeLessThanOrEqual(750);
   expect(Exit.isFailure(exhausted)).toBe(true);
+
   if (Exit.isFailure(exhausted)) {
     const error = Option.getOrThrow(Cause.findErrorOption(exhausted.cause));
     expect(error).toMatchObject({ _tag: "StorageFault", retryable: true });
   }
+
   await held.exited;
   expect(streamsyTables(exhaustedFile)).toEqual([]);
   const reopened = makeTestLayer(exhaustedFile);
@@ -441,17 +471,22 @@ test("commit contention defects once and is never replayed", async () => {
 test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-poll and client scope", async () => {
   const filename = `${scratch}/contention-host-${process.pid}-${crypto.randomUUID()}.sqlite`;
   const { storage: storageLayer, probe } = makeTestLayer(filename, { repairIntervalMs: 1_000 });
+
   const application = Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(
     Layer.provide(storageLayer),
   );
+
   const host = await startHost({ layer: application, port: 0 });
   const streamUrl = new URL("host", host.url);
+
   const created = await fetch(streamUrl, {
     method: "PUT",
     headers: { "content-type": "text/plain" },
   });
+
   expect(created.status).toBe(201);
   const tail = created.headers.get("stream-next-offset");
+
   if (tail === null) throw new Error("Missing tail");
 
   const longAbort = new AbortController();
@@ -463,6 +498,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   const longPending = fetch(longUrl, { signal: longAbort.signal }).catch(() => undefined);
   const sseResponse = await fetch(sseUrl, { signal: sseAbort.signal });
   const sseReader = sseResponse.body?.getReader();
+
   if (sseReader === undefined) throw new Error("Missing SSE body");
   await sseReader.read();
   const ssePending = sseReader.read().catch(() => undefined);
@@ -473,18 +509,22 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   await waitFor(() => probe.activeRegistrations === 0 && probe.activeRepairFibers === 0);
 
   const held = await startHolder(filename, "write", 650);
+
   const appendPending = fetch(streamUrl, {
     method: "POST",
     headers: { "content-type": "text/plain" },
     body: "blocked",
   });
+
   const samples: Array<number> = [];
+
   for (let index = 0; index < 40; index++) {
     const sampleStarted = performance.now();
     const response = await fetch(new URL("latency", host.url), { method: "OPTIONS" });
     expect(response.status).toBe(204);
     samples.push(performance.now() - sampleStarted);
   }
+
   const blocked = await appendPending;
   expect(blocked.status).toBe(500);
   const ordered = samples.toSorted((left, right) => left - right);
@@ -498,6 +538,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   const stopLongPending = fetch(longUrl).catch(() => undefined);
   const stopSseResponse = await fetch(sseUrl);
   const stopSseReader = stopSseResponse.body?.getReader();
+
   if (stopSseReader === undefined) throw new Error("Missing shutdown SSE body");
   await stopSseReader.read();
   const stopSsePending = stopSseReader.read().catch(() => undefined);
@@ -507,11 +548,13 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   const beforeShutdownRetry = probe.transactionAttempts;
   const beforeShutdownInvalidations = probe.invalidations;
   const beforeShutdownCompletions = probe.completedMutations;
+
   const retrying = fetch(streamUrl, {
     method: "POST",
     headers: { "content-type": "text/plain" },
     body: "shutdown",
   }).catch(() => undefined);
+
   await waitFor(() => probe.transactionAttempts > beforeShutdownRetry);
   const stopStarted = performance.now();
   await stopHost(host);
@@ -556,6 +599,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   );
 
   const rebound = await startHost({ layer: application, port: host.port });
+
   try {
     expect(rebound.port).toBe(host.port);
     expect((await fetch(new URL("rebound", rebound.url), { method: "PUT" })).status).toBe(201);
@@ -569,6 +613,7 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
   const { storage: storageLayer, probe } = makeTestLayer(filename);
   const trigger = Deferred.makeUnsafe<void>();
   const acquired = Deferred.makeUnsafe<void>();
+
   const transactionHolder = Layer.effectDiscard(
     Effect.gen(function* () {
       const boundary = yield* CommitBoundary;
@@ -582,10 +627,12 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
       );
     }),
   );
+
   const application = Layer.mergeAll(
     Protocol.layer({ longPollTimeoutMs: 30_000 }),
     transactionHolder,
   ).pipe(Layer.provide(storageLayer));
+
   const host = await startHost({ layer: application, port: 0 });
   expect((await fetch(new URL("held", host.url), { method: "PUT" })).status).toBe(201);
   await Effect.runPromise(Deferred.succeed(trigger, undefined));
@@ -602,16 +649,19 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
   database.run("ROLLBACK");
   database.close(false);
   const reboundStorage = makeTestLayer(filename).storage;
+
   const rebound = await startHost({
     layer: Protocol.layer().pipe(Layer.provide(reboundStorage)),
     port: host.port,
   });
+
   try {
     expect(rebound.port).toBe(host.port);
     expect((await fetch(new URL("rebound", rebound.url), { method: "PUT" })).status).toBe(201);
   } finally {
     await stopHost(rebound);
   }
+
   await Bun.write(
     `${scratch}/contention-held-shutdown-metrics-${process.pid}.json`,
     JSON.stringify({ stopElapsedMs, attempts: probe.transactionAttempts }, undefined, 2),

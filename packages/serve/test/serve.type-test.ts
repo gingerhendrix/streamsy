@@ -4,40 +4,57 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
+
 class stream extends Streamsy.json<stream>()("serve/serve.type-test/stream", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
+
 class state extends Streamsy.state<state>()("serve/serve.type-test/state", "rows/:seat", {
   params: { seat: Schema.String },
   collections: { rows: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
+
 Serve.mount(stream, "/feed/:seat");
+
 Serve.mount(state, "/rows/:seat");
+
 // @ts-expect-error wrong parameter
 Serve.mount(stream, "/feed/:wrong");
+
 // @ts-expect-error missing parameter
 Serve.mount(stream, "/feed");
+
 // @ts-expect-error extra parameter
 Serve.mount(stream, "/feed/:seat/:extra");
+
 // @ts-expect-error optional parameters are not supported
 Serve.mount(stream, "/feed/:seat?");
+
 // @ts-expect-error state requires collections
 void Serve.state(stream.at({ seat: "one" }));
+
 // @ts-expect-error NoInfer prevents params from widening the stream
 void Serve.stream(stream.at({ seat: 1 }));
+
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("Seat") {}
+
 const mine = Serve.route(
   "/me",
   Effect.flatMap(Seat, (p) => Serve.stream(stream.at(p))),
 );
+
 const protocol = MemoryStorage.layerProtocol();
+
 const storage = Protocol.bind(protocol, Streamsy.group(stream, state)).pipe(
   Layer.provideMerge(protocol),
 );
+
 const unsafe = HttpRouter.toWebHandler(mine.pipe(HttpRouter.provideRequest(storage)));
+
 // @ts-expect-error no auth supplied the seat; handler requires a context
 void unsafe.handler(new Request("http://host/me"));
+
 const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
     request.headers.authorization
@@ -45,12 +62,16 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
       : Effect.succeed(HttpServerResponse.empty({ status: 401 })),
   ),
 );
+
 const safe = HttpRouter.toWebHandler(
   mine.pipe(Layer.provide(auth.layer), HttpRouter.provideRequest(storage)),
 );
+
 void safe.handler(new Request("http://host/me"));
+
 const missingSeat = Layer.launch(
   HttpRouter.serve(mine).pipe(Layer.provide(storage), Layer.provide(listener({ port: 0 }))),
 );
+
 // @ts-expect-error a runnable server still needs the seat
 void Effect.runPromise(missingSeat);

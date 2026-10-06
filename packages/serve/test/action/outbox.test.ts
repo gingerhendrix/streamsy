@@ -49,6 +49,7 @@ const runSqlite = <A, E>(
   const runtime = ManagedRuntime.make(SqliteClient.layer({ filename, create: true }));
   const sql = runtime.runSync(SqlClient.SqlClient);
   const outbox = createSqlOutboxBacking(sql);
+
   return runtime.runPromise(effect({ outbox, sql })).finally(() => runtime.dispose());
 };
 
@@ -149,6 +150,7 @@ for (const [name, run] of cases) {
 describe("the SQLite outbox", () => {
   test("survives a reopen of the same database file", () => {
     const filename = sqliteFilename();
+
     return runSqlite(filename, ({ outbox }) =>
       Effect.gen(function* () {
         yield* outbox.enqueue([draft("a")]);
@@ -170,12 +172,14 @@ describe("the SQLite outbox", () => {
 
   test("a rolled-back first-operation migration is retried on the same backing", () => {
     const filename = sqliteFilename();
+
     return runSqlite(filename, ({ outbox, sql }) =>
       Effect.gen(function* () {
         const exit = yield* Effect.exit(
           sql.withTransaction(
             Effect.gen(function* () {
               yield* outbox.enqueue([draft("a")]);
+
               return yield* new OutboxUnavailable({
                 operation: "testRollback",
                 detail: "the caller's own write failed",
@@ -183,6 +187,7 @@ describe("the SQLite outbox", () => {
             }),
           ),
         );
+
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* outbox.list("test.sink", undefined)).toHaveLength(0);
         expect(yield* outbox.enqueue([draft("retry")])).toEqual({ enqueued: 1, absorbed: 0 });

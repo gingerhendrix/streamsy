@@ -6,6 +6,7 @@ export const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Sc
 export const Counter = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
 export const Range = Schema.Struct({ from: Schema.String, nextOffset: Schema.String });
+
 export interface Range extends Schema.Schema.Type<typeof Range> {}
 
 /** A range with the item count a retry must reproduce exactly. */
@@ -14,6 +15,7 @@ export const PinnedRange = Schema.Struct({
   nextOffset: Schema.String,
   count: Counter,
 });
+
 export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
 
 /** An outputs unit that was pinned before its append; settled by the next pass. */
@@ -21,6 +23,7 @@ export const PendingUnit = Schema.Struct({
   ranges: Schema.Record(Schema.String, PinnedRange),
   seqs: Schema.optionalKey(Schema.Record(Schema.String, Counter)),
 });
+
 export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}
 
 /** `params` holds the decoded values the declaration was bound with. Keys use the encoded strings. */
@@ -44,6 +47,7 @@ export const canonicalParams = (params: Record<string, string>): string =>
         .map((k) => [k, params[k]]),
     ),
   );
+
 export const canonicalRanges = (ranges: Record<string, Range>): string =>
   JSON.stringify(
     Object.fromEntries(

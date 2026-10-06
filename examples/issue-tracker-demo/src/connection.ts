@@ -12,9 +12,11 @@ export interface Connection {
 export function trackConnection(): Connection {
   let online = true;
   const listeners = new Set<() => void>();
+
   const set = (next: boolean) => {
     if (next === online) return;
     online = next;
+
     for (const listener of listeners) listener();
   };
 
@@ -24,6 +26,7 @@ export function trackConnection(): Connection {
     try {
       const response = await globalThis.fetch(input, init);
       set(true);
+
       return response;
     } catch (error) {
       if (!init?.signal?.aborted) set(false);
@@ -36,6 +39,7 @@ export function trackConnection(): Connection {
     isOnline: () => online,
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => listeners.delete(listener);
     },
   };

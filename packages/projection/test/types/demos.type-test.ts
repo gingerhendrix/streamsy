@@ -11,24 +11,30 @@ import {
 
 // The issue tracker and minimal declarations from the design spike, using the actual package API.
 const params = { workspaceId: Schema.String };
+
 class Events extends Streamsy.json<Events>()("demos/Events", "events/:workspaceId", {
   params,
   schema: Schema.Struct({ issueId: Schema.String }),
 }) {}
+
 class CatalogMismatch extends Schema.TaggedError<CatalogMismatch>()("CatalogMismatch", {}) {}
+
 class Catalog extends Context.Service<
   Catalog,
   { readonly check: (workspaceId: string) => Effect.Effect<void, CatalogMismatch> }
 >()("demos/Catalog") {}
+
 class Board extends Streamsy.state<Board>()("demos/Board", "board/:workspaceId", {
   params,
   collections: { board: { schema: Schema.Struct({ issueId: Schema.String }), key: "issueId" } },
 }) {}
+
 class Transitions extends Streamsy.json<Transitions>()(
   "demos/Transitions",
   "transitions/:workspaceId",
   { params, schema: Schema.String },
 ) {}
+
 const tracker = Projection.mapAccumBatch({
   id: "issue-tracker",
   params,
@@ -45,6 +51,7 @@ const tracker = Projection.mapAccumBatch({
   mapAccumBatch: (previous, batch) =>
     Effect.gen(function* () {
       yield* (yield* Catalog).check(previous.workspaceId);
+
       return [
         { ...previous, count: previous.count + batch.events.items.length },
         {
@@ -54,15 +61,19 @@ const tracker = Projection.mapAccumBatch({
       ] as const;
     }),
 });
+
 class Numbers extends Streamsy.json<Numbers>()("demos/Numbers", "numbers", {
   params: {},
   schema: Schema.Number,
 }) {}
+
 class Doubled extends Streamsy.json<Doubled>()("demos/Doubled", "doubled", {
   params: {},
   schema: Schema.Number,
 }) {}
+
 const outputs = { output: Doubled };
+
 const minimal = Projection.emit({
   id: "doubled",
   params: {},
@@ -71,16 +82,22 @@ const minimal = Projection.emit({
   commit: Commit.transaction,
   emit: ({ item }) => ({ output: [item * 2] }),
 });
+
 const trackerRun = Projection.run(tracker.at({ workspaceId: "a" }));
+
 const minimalRun = Projection.run(minimal.at({}));
+
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
 type Assert<T extends true> = T;
+
 export type Checks = [
   Assert<
     Same<Effect.Services<typeof minimalRun>, Numbers | Doubled | CheckpointStore | Transaction>
   >,
   Assert<Same<Effect.Error<typeof trackerRun>, CatalogMismatch | ProjectionFault>>,
 ];
+
 const invalid = () => {
   Projection.process({
     id: "wrong-process",
@@ -127,6 +144,7 @@ const invalid = () => {
     emit: () => ({}),
   });
 };
+
 void invalid;
 
 // prepare runs outside the Commit-provided SQL context. Its SQL requirement must remain.
@@ -139,6 +157,7 @@ const prepared = Projection.process({
     Effect.gen(function* () {
       yield* SqlClient.SqlClient;
       yield* (yield* Catalog).check(unit.key);
+
       return "prepared";
     }),
   process: (_batch, _unit, value) =>
@@ -148,7 +167,9 @@ const prepared = Projection.process({
       yield* sql`SELECT ${check}`;
     }),
 });
+
 const preparedRun = Projection.run(prepared.at({}));
+
 export type PreparedChecks = [
   Assert<
     Same<
@@ -168,10 +189,13 @@ const sqlFold = Projection.fold({
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO totals (value) VALUES (${previous + item})`;
+
       return previous + item;
     }),
 });
+
 const sqlFoldRun = Projection.run(sqlFold.at({}));
+
 export type SqlFoldChecks = [
   Assert<Same<Effect.Services<typeof sqlFoldRun>, Numbers | CheckpointStore | Transaction>>,
 ];

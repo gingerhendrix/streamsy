@@ -62,15 +62,18 @@ const servers: ReadonlyArray<ServerDialect> = [
 const freshDatabase = (dialect: ServerDialect, baseUrl: string) =>
   Effect.gen(function* () {
     const name = `streamsy_tracker_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
+
     const admin = Context.get(
       yield* Layer.build(SqlStorage.clientLayer(dialect.client(baseUrl))),
       SqlClient.SqlClient,
     );
+
     yield* Effect.acquireRelease(admin.unsafe(`CREATE DATABASE ${name}`), () =>
       admin.unsafe(dialect.drop(name)).pipe(Effect.ignore),
     );
     const url = new URL(baseUrl);
     url.pathname = `/${name}`;
+
     return url.toString();
   });
 
@@ -169,19 +172,25 @@ const scenario = Effect.gen(function* () {
     updatedAt: at,
     assigneeId: "bob",
   });
+
   const changes = yield* sql<{
     readonly event_id: string;
   }>`SELECT event_id FROM issue_changes ORDER BY id`;
+
   expect(changes.map((row) => row.event_id)).toEqual(["e1", "e2", "e3"]);
+
   const drafts = yield* sql<{
     readonly assignee_id: string;
   }>`SELECT assignee_id FROM notification_drafts`;
+
   expect(drafts.map((row) => row.assignee_id)).toEqual(["ada"]);
+
   const memberships = yield* sql<{
     readonly membership_id: string;
     readonly attached: number;
     readonly sequence: number;
   }>`SELECT membership_id, attached, sequence FROM issue_labels ORDER BY membership_id`;
+
   expect(memberships.map((row) => [row.membership_id, row.attached, row.sequence])).toEqual([
     ["i1.bug", 1, 2],
     ["i1.ui", 0, 3],
@@ -206,6 +215,7 @@ const scenario = Effect.gen(function* () {
     issueId: "i1",
     status: "todo",
   });
+
   expect(next.event.sequence).toBe(8);
 });
 

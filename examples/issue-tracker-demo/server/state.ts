@@ -68,6 +68,7 @@ export const commentUpsert = (comment: Comment, stamp: Stamp): WorkspaceChange =
 export const createProject =
   (input: Partial<Project>, stamp: Stamp) => (): Effect.Effect<Mutation<Project>> => {
     const project = newProject(input, stamp);
+
     return Effect.succeed({ change: projectUpsert(project, stamp), value: project });
   };
 
@@ -75,12 +76,15 @@ export const createIssue =
   (input: Partial<Issue>, stamp: Stamp) =>
   (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference | TooManyInProgress> => {
     const issue = newIssue(input, stamp);
+
     if (!state.getProject(issue.projectId)) {
       return Effect.fail(new UnknownReference({ field: "projectId", id: issue.projectId }));
     }
+
     if (startsWork(state, undefined, issue)) {
       return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
     }
+
     return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
   };
 
@@ -88,11 +92,14 @@ export const updateIssue =
   (issueId: string, input: Partial<Issue>, stamp: Stamp) =>
   (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound | TooManyInProgress> => {
     const previous = state.getIssue(issueId);
+
     if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
     const issue = nextIssue(previous, input, stamp);
+
     if (startsWork(state, previous, issue)) {
       return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
     }
+
     return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
   };
 
@@ -113,9 +120,11 @@ export const createComment =
   (input: Partial<Comment>, stamp: Stamp) =>
   (state: WorkspaceState): Effect.Effect<Mutation<Comment>, UnknownReference> => {
     const comment = newComment(input, stamp);
+
     if (!state.getIssue(comment.issueId)) {
       return Effect.fail(new UnknownReference({ field: "issueId", id: comment.issueId }));
     }
+
     return Effect.succeed({ change: commentUpsert(comment, stamp), value: comment });
   };
 
@@ -169,6 +178,7 @@ export function newComment(input: Partial<Comment>, stamp: Stamp): Comment {
 /** A blank display name is no name. */
 function writer(name: string | undefined): Pick<Issue, "updatedBy"> {
   const trimmed = name?.trim();
+
   return trimmed ? { updatedBy: trimmed } : {};
 }
 
@@ -189,6 +199,7 @@ export function starterProject(stamp: Stamp): Project {
  */
 export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
   const createdAt = stamp.now;
+
   const projects: Project[] = [
     {
       id: "proj_streamsy",
@@ -203,6 +214,7 @@ export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
       createdAt,
     },
   ];
+
   const issues: Issue[] = [
     {
       id: "issue_bootstrap",
@@ -245,6 +257,7 @@ export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
       updatedAt: createdAt,
     },
   ];
+
   const comments: Comment[] = [
     {
       id: "comment_welcome",
@@ -254,6 +267,7 @@ export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
       createdAt,
     },
   ];
+
   return [
     ...projects.map((project) => projectUpsert(project, stamp)),
     ...issues.map((issue) => issueUpsert(issue, stamp)),

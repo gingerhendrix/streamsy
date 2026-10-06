@@ -20,6 +20,7 @@ interface Draft {
   active: boolean;
   changed: boolean;
 }
+
 class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
@@ -29,6 +30,7 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
     const owner = {};
     const lock = yield* Semaphore.make(1);
     let committedRecords = new Map<string, string>();
+
     const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
       Effect.withFiber((fiber) => {
         if (
@@ -36,12 +38,15 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
           (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
         )
           return Effect.die(new Error("Memory boundary requires the active owner fiber"));
+
         return Effect.succeed(draft);
       }),
     );
+
     const withTransaction: WithTransaction = (body) =>
       Effect.flatMap(current, (ambient) => {
         if (Option.isSome(ambient)) return body;
+
         return Effect.withFiber((fiber) =>
           Effect.suspend(() => {
             const draft: Draft = {
@@ -52,6 +57,7 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
               active: true,
               changed: false,
             };
+
             return Effect.uninterruptibleMask((restore) =>
               restore(body.pipe(Effect.provideService(ActiveDraft, draft))).pipe(
                 Effect.tap(() =>
@@ -72,13 +78,17 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
           }).pipe(Semaphore.withPermit(lock)),
         );
       });
+
     const access = <A>(f: (state: State) => A) =>
       Effect.map(current, (draft) => f(Option.isSome(draft) ? draft.value.state : committed));
+
     const changed = Effect.map(current, (draft) => {
       if (Option.isNone(draft)) throw new Error("Memory mutation requires an owner");
       draft.value.changed = true;
     });
+
     const boundary = CommitBoundary.of({ withTransaction });
+
     const records = OwnerRecords.of({
       read: (key) =>
         Effect.map(current, (draft) =>
@@ -101,6 +111,7 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
           }),
         ),
     });
+
     return {
       boundary: attachOwner(boundary, owner),
       records: attachOwner(records, owner),

@@ -9,12 +9,14 @@ import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 
 export type RoutedMap = Inputs;
+
 export type Item<T> =
   AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
     ? DurableState.Change<C>
     : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
       ? A
       : never;
+
 export type Services<O extends RoutedMap> = {
   [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
 }[keyof O];
@@ -23,13 +25,17 @@ export type Services<O extends RoutedMap> = {
 export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs: InputMap) => {
   const streams = addressesOf(outputs, params);
   const ids = Object.values(streams).map((address) => address.id);
+
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
   const inputIds = new Set(Object.values(inputs).map((address) => address.id));
+
   if (ids.some((id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
+
   if (Object.values(streams).some((address) => !Predicate.isTagged(address, "Json")))
     throw new RangeError("Projection outputs require JSON or state routes");
+
   return streams;
 };
 
@@ -41,12 +47,14 @@ export const collect = (
   Effect.gen(function* () {
     for (const [name, entries] of Object.entries(emitted)) {
       const output = outputs[name];
+
       if (!Object.hasOwn(outputs, name) || output === undefined || !Array.isArray(entries))
         return yield* new ProjectionFault({
           phase: "process",
           reason: "invalid-output",
           message: `Invalid output array ${name}`,
         });
+
       const values = yield* Effect.try({
         try: () =>
           "collections" in output
@@ -66,6 +74,7 @@ export const collect = (
             cause,
           }),
       });
+
       (buffers[name] ??= []).push(...values);
     }
   });
@@ -79,6 +88,7 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
 ) {
   const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
     new ProjectionFault({ phase: "pin", reason, message, cause });
+
   return yield* Streams.append(output, items, { producer: position }).pipe(
     Effect.provideService(StreamsWriter, wire),
     Effect.catchTags({

@@ -3,13 +3,16 @@ import { type ProjectionKey } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 
 export type StateSchema<A, I = unknown> = Schema.Codec<A, I, never, never>;
+
 /** A value, or a function of the decoded params the projection was bound with. */
 export type Initial<A, P = Record<string, string>> = A | ((params: P) => A);
+
 /** The `state:` field of a declaration. */
 export interface StateDefinition<A, I = unknown, P = Record<string, string>> {
   readonly schema: StateSchema<A, I>;
   readonly initial: Initial<A, P>;
 }
+
 /** The state of a bound projection. `initial` runs only when stored state is absent. */
 export interface BoundState<A> {
   readonly schema: StateSchema<A>;
@@ -21,6 +24,7 @@ export const bindState = <A, P>(
   params: P,
 ): BoundState<A> => {
   const initial = definition.initial;
+
   return {
     schema: definition.schema,
     initial: () =>
@@ -62,6 +66,7 @@ export const currentState = <A>(
 ): Effect.Effect<A, ProjectionFault> =>
   Effect.gen(function* () {
     const stored = yield* decodeState(key, state.schema, Option.fromUndefinedOr(encoded));
+
     return Option.getOrElse(stored, state.initial);
   });
 

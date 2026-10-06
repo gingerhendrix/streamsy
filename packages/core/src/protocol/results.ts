@@ -4,6 +4,7 @@ import { Data } from "effect";
 export interface ReadMessage {
   readonly data: Uint8Array;
 }
+
 export type CreateResult =
   | {
       readonly _tag: "Created";
@@ -17,6 +18,7 @@ export type CreateResult =
       readonly contentType: string;
       readonly closed: boolean;
     };
+
 export type AppendResult =
   | {
       readonly _tag: "Appended";
@@ -32,9 +34,12 @@ export type AppendResult =
       readonly producerSeq: number;
       readonly closed: boolean;
     };
+
 /** Constructors and matchers for the protocol results above. */
 export const CreateResult = Data.taggedEnum<CreateResult>();
+
 export const AppendResult = Data.taggedEnum<AppendResult>();
+
 export interface ReadResult {
   readonly contentType: string;
   readonly messages: ReadonlyArray<ReadMessage>;
@@ -42,10 +47,12 @@ export interface ReadResult {
   readonly upToDate: boolean;
   readonly closed: boolean;
 }
+
 export interface ReadNextResult extends ReadResult {
   readonly cursor: string;
   readonly timedOut: boolean;
 }
+
 export interface HeadResult {
   readonly contentType: string;
   readonly nextOffset: string;

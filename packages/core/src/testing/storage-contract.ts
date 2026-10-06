@@ -31,12 +31,19 @@ export interface StorageContractOptions {
   /** The Layer also provides `CommitBoundary` and the internal owner records that projections need. */
   readonly ownerRecords?: boolean;
 }
+
 const id = StreamId.make("s");
+
 const child = StreamId.make("child");
+
 const producerId = ProducerId.make("p");
+
 const one = next(ZERO_OFFSET);
+
 const two = next(one);
+
 const encode = (text: string) => new TextEncoder().encode(text);
+
 const record = (streamId = id) =>
   ({
     id: streamId,
@@ -44,11 +51,13 @@ const record = (streamId = id) =>
     lifecycle: { closed: false, softDeleted: false },
     currentOffset: ZERO_OFFSET,
   }) satisfies StreamRecord;
+
 const create = (value: StreamRecord = record()): Operation => ({
   _tag: "Create",
   record: value,
   initialMessages: [],
 });
+
 const append = (extra: Partial<Extract<Operation, { _tag: "Append" }>> = {}): Operation => ({
   _tag: "Append",
   streamId: id,
@@ -56,23 +65,31 @@ const append = (extra: Partial<Extract<Operation, { _tag: "Append" }>> = {}): Op
   patch: { currentOffset: one },
   ...extra,
 });
+
 const remove = (streamId = id): Operation => ({ _tag: "Delete", streamId, reason: "delete" });
+
 const mutate = Effect.fn("Contract.mutate")(function* (operation: Operation) {
   const storage = yield* Storage;
+
   return yield* storage.mutate({ operations: [operation] });
 });
+
 function applied(out: MutationApplied, tag: string) {
   expect(out).toMatchObject({ _tag: "Applied" });
   expect(out.results[0]).toMatchObject({ _tag: tag });
 }
+
 function rejected(out: MutationRejected | StorageFault, reason: MutationRejected["reason"]) {
   expect(out).toBeInstanceOf(MutationRejected);
   expect(out).toMatchObject({ _tag: "MutationRejected", reason });
 }
+
 const current = Effect.gen(function* () {
   const storage = yield* Storage;
+
   return Option.getOrThrow(yield* storage.record(id));
 });
+
 const fork = Effect.fn("Contract.fork")(function* (
   sourceId = id,
   childId = child,
@@ -81,10 +98,12 @@ const fork = Effect.fn("Contract.fork")(function* (
   const storage = yield* Storage;
   const source = Option.getOrThrow(yield* storage.record(sourceId));
   const forkOffset = boundary ?? source.currentOffset;
+
   const messages =
     storage.capabilities.fork === "copy"
       ? yield* storage.messages(sourceId, { until: forkOffset })
       : [];
+
   const operation: Extract<Operation, { _tag: "Create" }> = {
     _tag: "Create",
     record: {
@@ -99,16 +118,19 @@ const fork = Effect.fn("Contract.fork")(function* (
     },
     initialMessages: messages,
   };
+
   return yield* mutate(
     storage.capabilities.fork === "chain"
       ? { ...operation, forkSource: { id: sourceId, liveAtOffset: forkOffset } }
       : operation,
   );
 });
+
 const observe = Effect.gen(function* () {
   const storage = yield* Storage;
   const queue = yield* Queue.unbounded<ChangeSnapshot>();
   const ready = yield* Deferred.make<void>();
+
   const fiber = yield* storage.changes(id).pipe(
     Stream.runForEach((value) =>
       Effect.gen(function* () {
@@ -118,10 +140,13 @@ const observe = Effect.gen(function* () {
     ),
     Effect.forkScoped,
   );
+
   yield* Deferred.await(ready);
   const initial = yield* Queue.take(queue);
+
   return { queue, fiber, initial };
 });
+
 const tick = TestClock.adjust(25);
 
 export const StorageContract = {
@@ -139,14 +164,17 @@ export const StorageContract = {
       ) => {
         if (!enabled) {
           it.skip(`${name} — ${reason}`, () => {});
+
           return;
         }
+
         it(name, () =>
           expect(
             Effect.gen(function* () {
               const context = yield* Layer.build(
                 options.layer.pipe(Layer.provideMerge(TestClock.layer())),
               );
+
               const storage = Context.get(context, Storage);
               expect(storage.capabilities).toEqual(options.expected);
               yield* body.pipe(Effect.provide(context));
@@ -154,6 +182,7 @@ export const StorageContract = {
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
       };
+
       const recordsTest = (
         name: string,
         body: (owner: {
@@ -167,8 +196,10 @@ export const StorageContract = {
       ) => {
         if (options.ownerRecords !== true) {
           it.skip(`${name} — owner records not provided`, () => {});
+
           return;
         }
+
         it(name, () =>
           expect(
             Effect.gen(function* () {
@@ -180,6 +211,7 @@ export const StorageContract = {
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
       };
+
       // Runtime conversion is confined to this exported test runner.
       recordsTest("R1 owner records write, overwrite, read and remove by key", ({ records }) =>
         Effect.gen(function* () {
@@ -200,6 +232,7 @@ export const StorageContract = {
         ({ boundary, records }) =>
           Effect.gen(function* () {
             const storage = yield* Storage;
+
             const both = boundary.withTransaction(
               Effect.gen(function* () {
                 yield* mutate(create());
@@ -207,9 +240,11 @@ export const StorageContract = {
                 expect(yield* records.read("checkpoint")).toEqual(Option.some("1"));
               }),
             );
+
             const failed = yield* Effect.exit(
               boundary.withTransaction(Effect.andThen(both, Effect.fail("rollback"))),
             );
+
             expect(Exit.isFailure(failed)).toBe(true);
             expect(yield* records.read("checkpoint")).toEqual(Option.none());
             expect(yield* storage.record(id)).toEqual(Option.none());
@@ -236,6 +271,7 @@ export const StorageContract = {
           expect((yield* storage.messages(id, {})).length).toBe(1);
         }),
       );
+
       for (const [number, reason] of [
         ["02", "offset"],
         ["03", "closed"],
@@ -252,6 +288,7 @@ export const StorageContract = {
               }),
             );
             const before = yield* current;
+
             const out = yield* Effect.flip(
               mutate(
                 append({
@@ -270,6 +307,7 @@ export const StorageContract = {
                 }),
               ),
             );
+
             rejected(out, reason === "absent producer" ? "producer" : reason);
             expect(yield* current).toEqual(before);
             const storage = yield* Storage;
@@ -277,11 +315,13 @@ export const StorageContract = {
             expect(yield* storage.producer(id, producerId)).toEqual(
               Option.some({ epoch: 1, lastSeq: 0 }),
             );
+
             if (Predicate.isTagged(out, "MutationRejected"))
               expect(out.record).toEqual(Option.some(before));
           }),
         );
       }
+
       test(
         "06 lifecycle-only TTL touch preserves tail",
         Effect.gen(function* () {
@@ -300,8 +340,10 @@ export const StorageContract = {
         "07 exclusive after, inclusive until, lexical order and limit",
         Effect.gen(function* () {
           yield* mutate(create());
+
           const three = next(two),
             four = next(three);
+
           yield* mutate(
             append({
               messages: [four, one, three, two].map((offset) => ({
@@ -344,6 +386,7 @@ export const StorageContract = {
         Effect.gen(function* () {
           yield* mutate(create());
           const { queue, initial } = yield* observe;
+
           const pending = yield* Stream.fromQueue(queue).pipe(
             Stream.filter(
               (s) =>
@@ -356,6 +399,7 @@ export const StorageContract = {
             Effect.timeoutOption(100),
             Effect.forkScoped,
           );
+
           yield* TestClock.adjust(100);
           expect(yield* Fiber.join(pending)).toEqual(Option.none());
           const storage = yield* Storage;
@@ -364,6 +408,7 @@ export const StorageContract = {
           );
         }),
       );
+
       for (const [number, action] of [
         ["10", "append"],
         ["11", "close"],
@@ -374,6 +419,7 @@ export const StorageContract = {
           `${number} parked changes subscriber wakes on ${action}`,
           Effect.gen(function* () {
             yield* mutate(create());
+
             if (action === "soft delete") yield* fork();
             const { queue } = yield* observe;
             yield* mutate(
@@ -385,15 +431,20 @@ export const StorageContract = {
             );
             yield* tick;
             const value = yield* Queue.take(queue);
+
             if (action === "append") expect(value.currentOffset).toBe(one);
+
             if (action === "close") expect(value.closed).toBe(true);
+
             if (action === "soft delete") expect(value.softDeleted).toBe(true);
+
             if (action === "purge") expect(value.present).toBe(false);
           }),
           action !== "soft delete" || options.expected.fork === "chain",
           "soft deletion requires chain fork",
         );
       }
+
       test(
         "14 purge then re-create lower offset is a change",
         Effect.gen(function* () {
@@ -429,6 +480,7 @@ export const StorageContract = {
           yield* mutate(create());
           const { queue } = yield* observe;
           const unchanged = yield* Deferred.make<void>();
+
           const result = yield* Stream.fromQueue(queue).pipe(
             Stream.tap((s) =>
               s.currentOffset === ZERO_OFFSET
@@ -440,6 +492,7 @@ export const StorageContract = {
             Stream.runCollect,
             Effect.forkScoped,
           );
+
           yield* mutate(append({ messages: [], patch: { lifecycle: { expiresAtMs: 100 } } }));
           yield* tick;
           yield* Deferred.await(unchanged);
@@ -455,6 +508,7 @@ export const StorageContract = {
           yield* mutate(create());
           const out = yield* Effect.flip(mutate(create()));
           rejected(out, "exists");
+
           if (Predicate.isTagged(out, "MutationRejected"))
             expect(out.record).toEqual(Option.some(record()));
         }),
@@ -484,6 +538,7 @@ export const StorageContract = {
           applied(yield* fork(), "Created");
           const exists = yield* Effect.flip(fork());
           rejected(exists, "exists");
+
           if (Predicate.isTagged(exists, "MutationRejected"))
             expect(exists.record).toEqual(yield* (yield* Storage).record(child));
           rejected(
@@ -582,6 +637,7 @@ export const StorageContract = {
           expect(
             (yield* storage.messages(child, {})).map((m) => new TextDecoder().decode(m.data)),
           ).toEqual(["a"]);
+
           if (options.expected.fork === "chain")
             rejected(yield* Effect.flip(mutate(remove())), "gone");
           yield* mutate(remove(child));
@@ -598,12 +654,14 @@ export const StorageContract = {
           const storage = yield* Storage;
           const ready = yield* Deferred.make<void>();
           const done = yield* Deferred.make<void>();
+
           const fiber = yield* storage.changes(id).pipe(
             Stream.tap(() => Deferred.succeed(ready, undefined)),
             Stream.runDrain,
             Effect.ensuring(Deferred.succeed(done, undefined)),
             Effect.forkScoped,
           );
+
           yield* Deferred.await(ready);
           yield* Fiber.interrupt(fiber);
           yield* Deferred.await(done);
@@ -618,12 +676,15 @@ export const StorageContract = {
         Effect.gen(function* () {
           yield* mutate(create());
           const storage = yield* Storage;
+
           const out = yield* Effect.flip(
             storage.mutate({
               operations: [create(record(child)), append({ expectedOffset: one })],
             }),
           );
+
           rejected(out, "offset");
+
           if (Predicate.isTagged(out, "MutationRejected")) expect(out.index).toBe(1);
           expect(yield* storage.record(child)).toEqual(Option.none());
           expect((yield* current).currentOffset).toBe(ZERO_OFFSET);
@@ -638,9 +699,11 @@ export const StorageContract = {
         "27 stream mutation rejects multiple targets as a defect",
         Effect.gen(function* () {
           const storage = yield* Storage;
+
           const exit = yield* Effect.exit(
             storage.mutate({ operations: [create(), create(record(child))] }),
           );
+
           expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
           expect(yield* storage.record(id)).toEqual(Option.none());
         }),
@@ -696,25 +759,30 @@ export const StorageContract = {
           const input = { ...record(), config: { contentType: "text/plain", createdAt: 0 } };
           const bytes = encode("a");
           const storage = yield* Storage;
+
           const outcome = yield* mutate({
             _tag: "Create",
             record: input,
             initialMessages: [{ offset: one, data: bytes, timestamp: 0 }],
           });
+
           const created = Option.getOrThrow(
             Option.fromUndefinedOr(
               Predicate.isTagged(outcome, "Applied") ? outcome.results[0]?.record : undefined,
             ),
           );
+
           expect(created).not.toBe(input);
           expect(created.config).not.toBe(input.config);
           expect(created.lifecycle).not.toBe(input.lifecycle);
           input.config.contentType = "changed";
+
           // SAFETY: this test deliberately mutates readonly API output to prove it cannot alias storage.
           const mutableCreated = created as {
             config: { contentType: string };
             lifecycle: { closed: boolean };
           };
+
           mutableCreated.config.contentType = "result-changed";
           mutableCreated.lifecycle.closed = true;
           bytes[0] = 98;
@@ -723,8 +791,10 @@ export const StorageContract = {
           expect((yield* current).config.contentType).toBe("text/plain");
           expect((yield* current).lifecycle.closed).toBe(false);
           expect(new TextDecoder().decode((yield* storage.messages(id, {}))[0]?.data)).toBe("a");
+
           const first = yield* current,
             second = yield* current;
+
           expect(first).not.toBe(second);
           expect(first.config).not.toBe(second.config);
           expect(first.lifecycle).not.toBe(second.lifecycle);
@@ -782,12 +852,14 @@ export const StorageContract = {
           );
           applied(yield* fork(child, grandchild), "Created");
           applied(yield* fork(id, sibling, one), "Created");
+
           const texts = (streamId: StreamId) =>
             storage
               .messages(streamId, {})
               .pipe(
                 Effect.map((messages) => messages.map((m) => new TextDecoder().decode(m.data))),
               );
+
           expect(yield* texts(grandchild)).toEqual(["a", "child"]);
           expect(yield* texts(sibling)).toEqual(["a"]);
           const deletion = options.expected.fork === "chain" ? "SoftDeleted" : "Purged";
@@ -799,6 +871,7 @@ export const StorageContract = {
           expect(Option.isSome(yield* storage.record(id))).toBe(options.expected.fork === "chain");
           expect(yield* texts(sibling)).toEqual(["a"]);
           applied(yield* mutate(remove(sibling)), "Purged");
+
           for (const streamId of [id, child, grandchild, sibling]) {
             expect(yield* storage.record(streamId)).toEqual(Option.none());
             expect(yield* storage.messages(streamId, {})).toEqual([]);
@@ -811,9 +884,11 @@ export const StorageContract = {
         "34 atomic fork and source deletion retain lineage in either operation order",
         Effect.gen(function* () {
           const storage = yield* Storage;
+
           for (const deleteFirst of [false, true]) {
             yield* mutate(create());
             yield* mutate(append());
+
             const creation: Operation = {
               _tag: "Create",
               initialMessages: [],
@@ -824,10 +899,13 @@ export const StorageContract = {
               },
               forkSource: { id, liveAtOffset: one },
             };
+
             const outcome = yield* storage.mutate({
               operations: deleteFirst ? [remove(), creation] : [creation, remove()],
             });
+
             expect(outcome).toMatchObject({ _tag: "Applied" });
+
             if (Predicate.isTagged(outcome, "Applied"))
               expect(outcome.results.map(({ _tag: tag }) => tag)).toEqual(
                 deleteFirst ? ["SoftDeleted", "Created"] : ["Created", "SoftDeleted"],

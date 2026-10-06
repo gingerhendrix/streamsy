@@ -12,6 +12,7 @@ export const HackerNewsStory = Schema.Struct({
   url: Schema.optionalKey(Schema.String),
   text: Schema.optionalKey(Schema.String),
 });
+
 export interface HnStory extends Schema.Schema.Type<typeof HackerNewsStory> {}
 
 export const HackerNewsItem = Schema.NullOr(
@@ -45,6 +46,7 @@ export const ApiStatus = Schema.Struct({
   lastDeletes: Schema.Finite,
   totalConflictsRetried: Schema.Finite,
 });
+
 export interface ApiStatus extends Schema.Schema.Type<typeof ApiStatus> {}
 
 export const ApiStatusSmokeView = ApiStatus;

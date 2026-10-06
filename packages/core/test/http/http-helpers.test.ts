@@ -19,17 +19,20 @@ describe("HTTP EtagBuilder", () => {
 
 const streamingRequest = (chunks: number, onCancel: () => void) => {
   let pulls = 0;
+
   const request = new Request("http://x/s", {
     method: "POST",
     body: new ReadableStream<Uint8Array>({
       pull: (controller) => {
         pulls += 1;
+
         if (pulls <= chunks) controller.enqueue(new Uint8Array([pulls]));
         else controller.close();
       },
       cancel: onCancel,
     }),
   });
+
   return { request, pulls: () => pulls };
 };
 
@@ -37,6 +40,7 @@ describe("HTTP discardRequestBody", () => {
   it("leaves a locked body alone", async () => {
     const { request } = streamingRequest(2, () => undefined);
     const reader = request.body?.getReader();
+
     if (!reader) throw new Error("expected a body reader");
     await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(request)));
     expect((await reader.read()).value).toEqual(new Uint8Array([1]));
@@ -46,12 +50,14 @@ describe("HTTP discardRequestBody", () => {
   it("succeeds when the body is absent or fails while reading", async () => {
     const empty = new Request("http://x/s", { method: "POST" });
     await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(empty)));
+
     const failing = new Request("http://x/s", {
       method: "POST",
       body: new ReadableStream<Uint8Array>({
         pull: () => Promise.reject(new Error("no")),
       }),
     });
+
     await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(failing)));
   });
 });

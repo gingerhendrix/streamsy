@@ -9,7 +9,9 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { createWorkerdRunnerLifecycle, type WorkerdDisposable } from "../src/workerd-harness.ts";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/worker/worker.js");
+
 const config = { baseUrl: "" };
+
 const lifecycle = createWorkerdRunnerLifecycle<WorkerdDisposable & Miniflare>({
   createRoot: () => mkdtempSync(join(tmpdir(), "streamsy-conformance-workerd-")),
   createInstance: (root) =>
@@ -30,6 +32,7 @@ const lifecycle = createWorkerdRunnerLifecycle<WorkerdDisposable & Miniflare>({
     process.stderr.write(
       `workerd conformance profile=single-object-chain instantiated-objects=${ids.length} ids=${ids.join(",")}\n`,
     );
+
     if (ids.length !== 1)
       throw new Error(`Expected one instantiated Durable Object, got ${ids.length}`);
   },
@@ -41,6 +44,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
     if (!(await Bun.file(workerPath).exists())) {
       throw new Error("Missing workerd artifact; run bun run build:worker first");
     }
+
     config.baseUrl = await lifecycle.beforeAll();
   });
   afterAll(() => lifecycle.afterAll());

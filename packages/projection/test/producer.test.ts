@@ -30,14 +30,18 @@ class In extends Streamsy.json<In>()("outputs-pass.test/In", "in/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class Out extends Streamsy.json<Out>()("outputs-pass.test/Out", "out/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
+
 const inputGraph = MemoryStorage.layerProtocol();
+
 class PagedReader extends Context.Service<PagedReader, Reader<StreamsFault>>()(
   "test/PagedReader",
 ) {}
+
 const host = Layer.mergeAll(
   inputGraph,
   CheckpointStore.layer.pipe(Layer.provide(inputGraph)),
@@ -45,6 +49,7 @@ const host = Layer.mergeAll(
     Layer.provide(Protocol.layer({ readLimit: 1 }).pipe(Layer.provide(inputGraph))),
   ),
 );
+
 type Services =
   | In
   | Out
@@ -53,19 +58,25 @@ type Services =
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;
+
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(body.pipe(Effect.provide(FamilyFixture.withFamilies(host, In, Out))));
 
 const fault = <A>(result: { readonly _tag: string; readonly failure?: A }): ProjectionFault => {
   if (result._tag !== "Failure") throw new Error("Expected a failure");
+
   if (!Schema.is(ProjectionFault)(result.failure)) throw new Error("Expected a ProjectionFault");
+
   return result.failure;
 };
+
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
+
 const stored = (projection: Identity) =>
   Effect.gen(function* () {
     const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
+
     return { token: loaded.token, record: Option.getOrUndefined(loaded.record) };
   });
 
@@ -76,22 +87,27 @@ const withWriter = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const writer = yield* StreamsWriter;
+
     return yield* body.pipe(provideWriter(StreamsWriter.of({ ...writer, ...patch(writer) })));
   });
+
 const withReader = <A, E, R>(
   body: Effect.Effect<A, E, R | StreamsReader>,
   patch: (reader: Reader<StreamsFault>) => Partial<Reader<StreamsFault>>,
 ) =>
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
+
     return yield* body.pipe(provideReader(StreamsReader.of({ ...reader, ...patch(reader) })));
   });
+
 const withCheckpointStore = <A, E, R>(
   body: Effect.Effect<A, E, R | CheckpointStore>,
   patch: (owner: typeof CheckpointStore.Service) => Partial<typeof CheckpointStore.Service>,
 ) =>
   Effect.gen(function* () {
     const owner = yield* CheckpointStore;
+
     return yield* body.pipe(
       Effect.provideService(CheckpointStore, CheckpointStore.of({ ...owner, ...patch(owner) })),
     );
@@ -100,6 +116,7 @@ const withCheckpointStore = <A, E, R>(
 /** Records the producer tuple of every append; the append itself goes through. */
 const recordingAppends = () => {
   const positions: Array<{ readonly epoch?: number; readonly seq?: number }> = [];
+
   const patch = (writer: Writer<StreamsFault>): Partial<Writer<StreamsFault>> => ({
     append: (id, options) =>
       Effect.sync(() => {
@@ -109,14 +126,17 @@ const recordingAppends = () => {
         });
       }).pipe(Effect.andThen(writer.append(id, options))),
   });
+
   return { positions, patch };
 };
 
 const appendFault = new StorageFault({ operation: "append", message: "lost", retryable: true });
+
 /** Fails the first `count` appends; later appends go through and their outcomes are recorded. */
 const failingAppends = (count: number) => {
   const outcomes: Array<string> = [];
   let failures = 0;
+
   const patch = (writer: Writer<StreamsFault>): Partial<Writer<StreamsFault>> => ({
     append: (id, options) =>
       failures < count
@@ -131,6 +151,7 @@ const failingAppends = (count: number) => {
             ),
           ),
   });
+
   return { outcomes, patch };
 };
 
@@ -139,6 +160,7 @@ const scenario = (name: string, version = 1) => {
   const input = In.at({ name });
   const output = Out.at({ name });
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
+
   const definition = {
     id: `doubled-${name}`,
     params: {},
@@ -146,6 +168,7 @@ const scenario = (name: string, version = 1) => {
     inputs: { input },
     outputs: { output: output },
   };
+
   const doubled = Projection.mapAccumBatch({
     commit: Commit.producer,
     ...definition,
@@ -153,18 +176,23 @@ const scenario = (name: string, version = 1) => {
     mapAccumBatch: (_state, batch, unit) =>
       Effect.sync(() => {
         seen.push({ items: batch.input.items, unit });
+
         return [null, { output: batch.input.items.map((n) => String(n * 2)) }] as const;
       }),
   }).at({});
+
   const initialize = Effect.gen(function* () {
     yield* Streams.create(input);
     yield* Streams.create(output);
     yield* Streams.append(input, [1, 2, 3]);
   });
+
   return { input, output, definition, doubled, seen, initialize };
 };
+
 const pinnedRecord = (record: CheckpointRecord | undefined) => {
   if (record?.pending === undefined) throw new Error("Expected a pinned unit");
+
   return {
     pending: record.pending,
     output: record.adapters.outputs?.output,
@@ -178,9 +206,11 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const s = scenario("settle-duplicate", 7);
       yield* s.initialize;
       let saves = 0;
+
       const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
         compareAndSet: (key, token, record) => {
           saves += 1;
+
           return saves === 2
             ? Effect.fail(
                 new ProjectionFault({
@@ -192,6 +222,7 @@ test("crash after append and before the checkpoint settles by Duplicate without 
             : owner.compareAndSet(key, token, record);
         },
       })).pipe(Effect.result);
+
       const failure = fault(crashed);
       expect(failure.phase).toBe("checkpoint");
       expect(failure.reason).toBe("storage-failure");
@@ -232,12 +263,15 @@ test("a competing save between the append and the settle fails in phase checkpoi
       yield* s.initialize;
       let saves = 0;
       let pinned: CheckpointRecord | undefined;
+
       // The competing writer re-saves the pinned record under the pin token, so the
       // kernel's settle save meets a real token conflict from the store.
       const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
         compareAndSet: (key, token, record) => {
           saves += 1;
+
           if (saves === 1) pinned = record;
+
           return saves === 2 && pinned !== undefined
             ? owner
                 .compareAndSet(key, token, pinned)
@@ -245,6 +279,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
             : owner.compareAndSet(key, token, record);
         },
       })).pipe(Effect.result);
+
       const failure = fault(crashed);
       expect(failure.phase).toBe("checkpoint");
       expect(failure.reason).toBe("token-conflict");
@@ -271,9 +306,11 @@ test("the first pin stores the stream epoch before the append; a crash there set
       const s = scenario("settle-appended");
       yield* s.initialize;
       const failing = failingAppends(1);
+
       const crashed = yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(
         Effect.result,
       );
+
       const failure = fault(crashed);
       expect(failure.phase).toBe("pin");
       expect(failure.reason).toBe("storage-failure");
@@ -303,6 +340,7 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
     Effect.gen(function* () {
       const input = In.at({ name: "evens" });
       const output = Out.at({ name: "evens" });
+
       const evens = Projection.emit({
         commit: Commit.producer,
         id: "evens",
@@ -312,6 +350,7 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
         emit: (entry) =>
           Effect.succeed({ output: entry.item % 2 === 0 ? [String(entry.item)] : [] }),
       }).at({});
+
       yield* Streams.create(input);
       yield* Streams.create(output);
       yield* Streams.append(input, [1, 3]);
@@ -345,15 +384,18 @@ test("a retry reproduces a pinned range across several pages", () =>
       fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
       const paged = yield* PagedReader;
       let reads = 0;
+
       const settled = yield* withReader(
         withWriter(Projection.pass(s.doubled), failing.patch),
         () => ({
           read: (id, options) => {
             reads += 1;
+
             return paged.read(id, options);
           },
         }),
       );
+
       expect(failing.outcomes).toEqual(["Appended"]);
       expect(settled.items).toBe(3);
       // Three one-message server pages reproduce the pin.
@@ -387,6 +429,7 @@ test("a short reproduction fails pin/range-unreproducible", () =>
       yield* s.initialize;
       const failing = failingAppends(1);
       fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
+
       const failure = fault(
         yield* withReader(Projection.run(s.doubled), (reader) => ({
           read: (id, options) =>
@@ -397,6 +440,7 @@ test("a short reproduction fails pin/range-unreproducible", () =>
               ),
         })).pipe(Effect.result),
       );
+
       expect(failure.phase).toBe("pin");
       expect(failure.reason).toBe("range-unreproducible");
       expect(failure.input).toBe("input");
@@ -410,6 +454,7 @@ test("two competing passes with one loaded token: the second pin fails before an
       yield* s.initialize;
       const gate = yield* Deferred.make<void>();
       const reading = yield* Deferred.make<void>();
+
       const late = Projection.emit({
         commit: Commit.producer,
         ...s.definition,
@@ -419,11 +464,14 @@ test("two competing passes with one loaded token: the second pin fails before an
             Effect.as({ output: [String(entry.item * 2)] }),
           ),
       }).at({});
+
       const appends = failingAppends(0);
+
       const second = yield* withWriter(Projection.pass(late), appends.patch).pipe(
         Effect.result,
         Effect.forkChild,
       );
+
       yield* Deferred.await(reading);
       const first = yield* withWriter(Projection.pass(s.doubled), appends.patch);
       expect(first.items).toBe(3);
@@ -451,6 +499,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const loaded = yield* Deferred.make<void>();
         const gate = yield* Deferred.make<void>();
         const outcomes: Array<string> = [];
+
         const runner = (name: string, role: "leads" | "follows") =>
           withWriter(
             Projection.pass(
@@ -476,11 +525,14 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
                 ),
             }),
           ).pipe(Effect.result);
+
         const leads = order === "first-then-second" ? "first" : "second";
         const follows = leads === "first" ? "second" : "first";
+
         const [a, b] = yield* Effect.all([runner(leads, "leads"), runner(follows, "follows")], {
           concurrency: 2,
         });
+
         expect(outcomes).toEqual([`${leads}:Appended`, `${follows}:Duplicate`]);
         const failed = [a, b].filter((r) => r._tag === "Failure");
         expect(failed.length).toBe(1);
@@ -503,12 +555,14 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       yield* s.initialize;
       const recording = recordingAppends();
       yield* withWriter(Projection.run(s.doubled), recording.patch);
+
       const second = Projection.emit({
         commit: Commit.producer,
         ...s.definition,
         generation: 2,
         emit: (entry) => Effect.succeed({ output: [String(entry.item * 2)] }),
       }).at({});
+
       const again = yield* withWriter(Projection.run(second), recording.patch);
       expect(again.items).toBe(3);
       expect(recording.positions).toEqual([
@@ -522,9 +576,11 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       });
 
       yield* Streams.append(s.input, [4]);
+
       const failure = fault(
         yield* withWriter(Projection.run(s.doubled), recording.patch).pipe(Effect.result),
       );
+
       expect(failure.phase).toBe("pin");
       expect(failure.reason).toBe("stale-epoch");
       expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
@@ -541,6 +597,7 @@ test("a stored stream epoch that is not the generation fails load/stale-epoch", 
       yield* s.initialize;
       yield* Projection.run(s.doubled);
       const current = yield* stored(s.doubled);
+
       if (current.record === undefined) throw new Error("Expected a record");
       yield* (yield* CheckpointStore).compareAndSet(Projection.key(s.doubled), current.token, {
         identity: current.record.identity,
@@ -559,11 +616,13 @@ test("a two-input pending unit reproduces both ranges", () =>
       const a = In.at({ name: "pair-a" });
       const b = In.at({ name: "pair-b" });
       const output = Out.at({ name: "pair" });
+
       const seen: Array<{
         readonly a: ReadonlyArray<number>;
         readonly b: ReadonlyArray<number>;
         readonly unit: Unit;
       }> = [];
+
       const pair = Projection.mapAccumBatch({
         commit: Commit.producer,
         id: "pair",
@@ -574,6 +633,7 @@ test("a two-input pending unit reproduces both ranges", () =>
         mapAccumBatch: (_state, batch, unit) =>
           Effect.sync(() => {
             seen.push({ a: batch.a.items, b: batch.b.items, unit });
+
             return [
               null,
               {
@@ -582,6 +642,7 @@ test("a two-input pending unit reproduces both ranges", () =>
             ] as const;
           }),
       }).at({});
+
       yield* Streams.create(a);
       yield* Streams.create(b);
       yield* Streams.create(output);
@@ -675,13 +736,16 @@ test("an over-long page whose log ends before the pin is unreproducible", () =>
       const s = scenario("short-pin-boundary");
       yield* s.initialize;
       const failing = failingAppends(1);
+
       const first = fault(
         yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result),
       );
+
       expect(first.cause).toBe(appendFault);
       const before = yield* stored(s.doubled);
       const owner = yield* CheckpointStore;
       const record = before.record;
+
       if (!record?.pending) throw new Error("Expected pin");
       yield* owner.compareAndSet(s.doubled, before.token, {
         identity: record.identity,
@@ -728,6 +792,7 @@ const provideWriter =
         Effect.provideService(StreamsWriter, writer),
       ),
     );
+
 const provideReader =
   (reader: Reader<StreamsFault>) =>
   <A, E, R>(body: Effect.Effect<A, E, R>) =>
@@ -744,12 +809,15 @@ test("output preparation reads the output stream wire", () =>
       const s = scenario("output-head-failure");
       yield* s.initialize;
       const output = yield* Out;
+
       const headFault = new StorageFault({
         operation: "head",
         message: "output unavailable",
         retryable: true,
       });
+
       let inspected = 0;
+
       const result = yield* Projection.pass(s.doubled).pipe(
         Effect.provideService(Out, {
           ...output,
@@ -757,12 +825,14 @@ test("output preparation reads the output stream wire", () =>
             ...output.wire,
             head: () => {
               inspected += 1;
+
               return Effect.fail(headFault);
             },
           },
         }),
         Effect.result,
       );
+
       expect(inspected).toBe(1);
       expect(fault(result).reason).toBe("storage-failure");
       expect((yield* stored(s.doubled)).record).toBeUndefined();

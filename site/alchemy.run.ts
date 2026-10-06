@@ -21,4 +21,5 @@ const site = await Website(target.resourceId, {
 });
 
 console.log({ url: site.url });
+
 await app.finalize();

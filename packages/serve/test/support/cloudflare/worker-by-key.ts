@@ -13,4 +13,5 @@ const app = router<Env>({
 });
 
 export default { fetch: app.fetch };
+
 export { ProbeByKeyObject as ProbeObject };

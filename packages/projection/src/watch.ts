@@ -23,12 +23,14 @@ const watchLoop = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
         capacity: 1,
         strategy: "dropping",
       });
+
       const closed = new Set<string>();
       const inputs = inputEntries(projection.inputs);
       yield* Effect.forEach(inputs, ([name, address]) =>
         Effect.gen(function* () {
           const { owner, wire: reader } = yield* address.stream;
           const feed = yield* Streamsy.ChangeFeed(address.stream);
+
           // Independent Layer overrides can replace a stream without replacing its feed.
           if (feed.owner !== owner)
             return yield* new ProjectionFault({
@@ -58,9 +60,11 @@ const watchLoop = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
                   }),
             ),
           );
+
           return undefined;
         }),
       );
+
       const subscriptions = inputs.map(([name, address]) =>
         EffectStream.unwrap(
           Effect.map(Streamsy.ChangeFeed(address.stream), (feed) => feed.changes(address.id)),
@@ -69,6 +73,7 @@ const watchLoop = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
           EffectStream.runForEach((snapshot) =>
             Effect.gen(function* () {
               if (snapshot.closed) closed.add(name);
+
               if (snapshot.present) yield* Queue.offer(wake, undefined);
             }),
           ),
@@ -85,14 +90,18 @@ const watchLoop = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
           Effect.andThen(Effect.never),
         ),
       );
+
       const runner = Effect.gen(function* () {
         while (true) {
           yield* Queue.take(wake);
           let result = yield* run(projection, options);
+
           while (result.status === "limit-reached") result = yield* run(projection, options);
+
           if (result.status === "source-closed" && closed.size === inputs.length) return result;
         }
       });
+
       return yield* Effect.raceAllFirst([runner, ...subscriptions]);
     }),
   );
@@ -117,5 +126,6 @@ export const watch = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
 > =>
   Effect.gen(function* () {
     yield* validateOptions(options);
+
     return yield* watchLoop(projection, options).pipe(Effect.forkScoped);
   });

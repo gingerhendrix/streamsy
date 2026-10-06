@@ -10,6 +10,7 @@ import { HttpOperation } from "../src/measurement.ts";
 import { runEvidence } from "../src/run.ts";
 
 const stage = "c-s4l6mo-abcdef";
+
 const workerName = `streamsy-conf-${stage}`;
 
 // Stands in for `alchemy deploy|destroy --stage <stage>` with the same state layout.
@@ -41,6 +42,7 @@ writeFileSync(output, JSON.stringify({
 `;
 
 let workspace: string | undefined;
+
 afterEach(() => {
   if (workspace !== undefined) rmSync(workspace, { recursive: true, force: true });
   delete process.env.FAKE_KEEP_STATE;
@@ -58,6 +60,7 @@ const setup = () => {
     join(suite, "package.json"),
     JSON.stringify({ scripts: { "test:deployed": "node suite.cjs" } }),
   );
+
   return livePaths(root);
 };
 

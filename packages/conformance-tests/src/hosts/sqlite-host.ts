@@ -17,6 +17,7 @@ export const HostConfig = Config.all({
   longPollTimeoutMs: Config.Int("LONG_POLL_TIMEOUT_MS").pipe(Config.withDefault(1500)),
   sseDeadlineMs: Config.Int("SSE_DEADLINE_MS").pipe(Config.option),
 });
+
 export type HostConfig = typeof HostConfig extends Config.Config<infer A> ? A : never;
 
 const streams = Streamsy.group(Streamsy.Wildcard);
@@ -50,10 +51,12 @@ export const hostLayer = <A, E>(options: HostOptions<A, E>) =>
           onSome: (sseDeadlineMs) => ({ sseDeadlineMs }),
         }),
       });
+
       const serve = Serve.layer(routes, { disableLogger: true, disableListenLog: true }).pipe(
         Layer.provide(SqlStorage.layer(streams, { longPollTimeoutMs: config.longPollTimeoutMs })),
         Layer.provide(clientLayer(config.filename, options.beforeOpen ?? Effect.void)),
       );
+
       return announce.pipe(Layer.provide(serve), Layer.provideMerge(options.listener(config)));
     }),
   );

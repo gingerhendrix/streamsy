@@ -142,7 +142,9 @@ interface Database {
 const redactUrl = (url: string): string => {
   if (!URL.canParse(url)) return "<not a URL>";
   const parsed = new URL(url);
+
   if (parsed.password !== "") parsed.password = "***";
+
   return parsed.toString();
 };
 
@@ -150,6 +152,7 @@ const redactUrl = (url: string): string => {
 const withDatabase = (url: string, name: string): string => {
   const parsed = new URL(url);
   parsed.pathname = `/${name}`;
+
   return parsed.toString();
 };
 
@@ -157,6 +160,7 @@ const withDatabase = (url: string, name: string): string => {
 const errorMessage = (error: SqlError.SqlError): string => {
   const driver = error.cause.cause;
   const detail = driver instanceof Error && driver.message !== "" ? `: ${driver.message}` : "";
+
   return `${error.message}${detail}`;
 };
 
@@ -202,8 +206,10 @@ const runtimes = (basePort: number): ReadonlyArray<Runtime> => [
 /** Reads the vitest summary line, for example `Tests  332 passed | 6 skipped (338)`. */
 const parseCounts = (output: string): Counts | null => {
   const line = /^\s*Tests\s+(.+)$/m.exec(stripVTControlCharacters(output))?.[1];
+
   if (line === undefined) return null;
   const count = (label: string) => Number(new RegExp(`(\\d+) ${label}`).exec(line)?.[1] ?? 0);
+
   return { passed: count("passed"), failed: count("failed"), skipped: count("skipped") };
 };
 
@@ -230,10 +236,12 @@ const program = Effect.gen(function* () {
   const packageDir = path.resolve(import.meta.dir, "..");
   const repoDir = path.resolve(packageDir, "../..");
   const stamp = DateTime.formatIso(yield* DateTime.now).replace(/[:.]/g, "-");
+
   const outDir = path.join(
     Option.getOrElse(config.out, () => path.join(packageDir, ".matrix")),
     stamp,
   );
+
   yield* fs.makeDirectory(outDir, { recursive: true });
   yield* Console.log(`platform matrix: writing results to ${outDir}`);
   // A database name part from the result folder name, for example `20261002t104535346z`.
@@ -247,6 +255,7 @@ const program = Effect.gen(function* () {
   const connect = (dialect: Dialect, url: Redacted.Redacted) =>
     Effect.gen(function* () {
       const shown = redactUrl(Redacted.value(url));
+
       const admin = yield* Layer.build(SqlStorage.clientLayer(dialect.client(url))).pipe(
         Effect.map(Context.get(SqlClient.SqlClient)),
         Effect.tap((sql) => sql.unsafe("SELECT 1")),
@@ -266,7 +275,9 @@ const program = Effect.gen(function* () {
             ),
         }),
       );
+
       yield* Console.log(`${dialect.backend}: ${shown} answers`);
+
       return { dialect, url, admin } satisfies Server;
     });
 
@@ -306,6 +317,7 @@ const program = Effect.gen(function* () {
           ),
       );
       yield* Console.log(`  ${server.dialect.backend}: created ${shown}`);
+
       return { dialect: server.dialect, url, shown } satisfies Database;
     });
 
@@ -322,6 +334,7 @@ const program = Effect.gen(function* () {
     Effect.scoped(
       Effect.gen(function* () {
         const [executable = "", ...args] = command;
+
         const handle = yield* spawner.spawn(
           ChildProcess.make(executable, args, {
             cwd: options.cwd,
@@ -330,9 +343,11 @@ const program = Effect.gen(function* () {
             forceKillAfter: "10 seconds",
           }),
         );
+
         const output = yield* handle.all.pipe(Stream.decodeText, Stream.mkString);
         const exitCode = yield* handle.exitCode;
         yield* fs.writeFileString(path.join(outDir, options.log), output);
+
         return { exitCode: Number(exitCode), output };
       }),
     );
@@ -345,6 +360,7 @@ const program = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const [executable = "", ...args] = command;
+
       const handle = yield* spawner.spawn(
         ChildProcess.make(executable, args, {
           cwd: packageDir,
@@ -362,6 +378,7 @@ const program = Effect.gen(function* () {
           forceKillAfter: "10 seconds",
         }),
       );
+
       yield* handle.all.pipe(
         Stream.run(fs.sink(path.join(outDir, `${runtime.name}.server.log`))),
         Effect.ignore,
@@ -371,6 +388,7 @@ const program = Effect.gen(function* () {
         Effect.ignore(handle.kill({ killSignal: "SIGTERM", forceKillAfter: "10 seconds" })),
       );
       const url = `http://127.0.0.1:${runtime.port}`;
+
       const healthy = HttpClient.get(`${url}/healthz`).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(Health)),
         // Node binds the port before the routes serve. A request in that gap
@@ -385,11 +403,13 @@ const program = Effect.gen(function* () {
         ),
         Effect.retry(Schedule.spaced("250 millis")),
       );
+
       const exitedEarly = handle.exitCode.pipe(
         Effect.flatMap((code) =>
           Effect.fail(new EntryStartError({ message: `exited with ${code} before it answered` })),
         ),
       );
+
       // A first `mise exec deno@2` can download Deno, so allow a minute.
       return yield* Effect.raceFirst(healthy, exitedEarly).pipe(
         Effect.timeoutOrElse({
@@ -425,6 +445,7 @@ const program = Effect.gen(function* () {
     Effect.scoped(
       Effect.gen(function* () {
         const database = yield* freshDatabase(server, "issues");
+
         const smoke = yield* check(
           ["bun", "run", "smoke:http"],
           path.join(repoDir, "examples/bugsy"),
@@ -436,6 +457,7 @@ const program = Effect.gen(function* () {
           ),
           `${name}.bugsy.log`,
         );
+
         return {
           status: smoke.status,
           exitCode: smoke.exitCode,
@@ -455,28 +477,33 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const baseUrl = `${url}/${backend}`;
       const name = `${runtime.name}-${backend}`;
+
       const conformance = yield* check(
         ["bun", "run", "test:deployed"],
         path.join(repoDir, "packages/conformance-tests"),
         { SERVER_BASE_URL: baseUrl },
         `${name}.conformance.log`,
       );
+
       const smoke = yield* check(
         ["bun", "run", "smoke:http"],
         path.join(repoDir, "examples/memory-server"),
         { BASE_URL: baseUrl },
         `${name}.smoke.log`,
       );
+
       const bugsy =
         runtime.name === BUGSY_RUNTIME && server !== undefined
           ? yield* bugsySmoke(server, name)
           : undefined;
+
       const status: Status =
         conformance.status === "pass" &&
         smoke.status === "pass" &&
         (bugsy === undefined || bugsy.status === "pass")
           ? "pass"
           : "fail";
+
       const cell: Cell = {
         runtime: runtime.name,
         backend,
@@ -492,7 +519,9 @@ const program = Effect.gen(function* () {
         smoke: { status: smoke.status, exitCode: smoke.exitCode, log: smoke.log },
         bugsy,
       };
+
       yield* Console.log(`  ${name}: ${describe(cell)}`);
+
       return cell;
     });
 
@@ -506,17 +535,23 @@ const program = Effect.gen(function* () {
         Effect.scoped(
           Effect.gen(function* () {
             yield* Console.log(`${runtime.name}: starting ${command.join(" ")}`);
+
             // Made before the entry starts, so the entry stops before they drop.
             const databases = yield* Effect.forEach(servers, (server) =>
               freshDatabase(server, runtime.name),
             );
+
             const started = yield* Effect.exit(start(runtime, command, databases));
+
             if (Exit.isFailure(started)) {
               const reason = `${runtime.name} entry did not start; see ${runtime.name}.server.log`;
               yield* Console.error(`${reason}\n${Cause.pretty(started.cause)}`);
+
               return BACKENDS.map((backend) => fail(runtime, backend, reason));
             }
+
             const { url, health } = started.value;
+
             return yield* Effect.forEach(BACKENDS, (backend) =>
               health.backends.includes(backend)
                 ? runCell(
@@ -542,6 +577,7 @@ const program = Effect.gen(function* () {
   const cells = (yield* Effect.forEach(runtimes(config.basePort), runRuntime)).flat();
 
   yield* Console.log(`\n${table(cells)}`);
+
   const result = {
     startedAt: stamp,
     backends: BACKENDS,
@@ -551,11 +587,14 @@ const program = Effect.gen(function* () {
     cells,
     ok: cells.every((cell) => cell.status !== "fail"),
   };
+
   const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
     result,
   );
+
   yield* fs.writeFileString(path.join(outDir, "result.json"), `${json}\n`);
   yield* Console.log(`\nresult: ${path.join(outDir, "result.json")}`);
+
   return yield* result.ok
     ? Effect.void
     : Effect.fail(new MatrixFailed({ message: "one or more matrix cells failed" }));
@@ -571,6 +610,7 @@ class MatrixFailed extends Schema.TaggedError<MatrixFailed>()("MatrixFailed", {
  */
 const describe = (cell: Cell): string => {
   const counts = cell.conformance?.counts;
+
   const details = [
     ...(counts === undefined || counts === null
       ? []
@@ -582,27 +622,34 @@ const describe = (cell: Cell): string => {
     ...(cell.smoke === undefined ? [] : [`smoke ${cell.smoke.status}`]),
     ...(cell.bugsy === undefined ? [] : [`bugsy ${cell.bugsy.status}`]),
   ];
+
   return details.length === 0 ? cell.status : `${cell.status} (${details.join("; ")})`;
 };
 
 const table = (cells: ReadonlyArray<Cell>): string => {
   const rows = [...new Set(cells.map((cell) => cell.runtime))];
   const header = ["runtime", ...BACKENDS];
+
   const body = rows.map((runtime) => [
     runtime,
     ...BACKENDS.map((backend) => {
       const cell = cells.find((c) => c.runtime === runtime && c.backend === backend);
+
       return cell === undefined ? "" : describe(cell);
     }),
   ]);
+
   const widths = header.map((_, i) =>
     Math.max(...[header, ...body].map((row) => (row[i] ?? "").length)),
   );
+
   const line = (row: ReadonlyArray<string>) =>
     `| ${row.map((value, i) => value.padEnd(widths[i] ?? 0)).join(" | ")} |`;
+
   const notes = cells
     .filter((cell) => cell.reason !== undefined)
     .map((cell) => `- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`);
+
   const databases = cells.flatMap((cell) => [
     ...(cell.database === undefined
       ? []
@@ -611,6 +658,7 @@ const table = (cells: ReadonlyArray<Cell>): string => {
       ? []
       : [`- ${cell.runtime} ${cell.backend}: Bugsy database ${cell.bugsy.database}`]),
   ]);
+
   return [
     line(header),
     line(widths.map((width) => "-".repeat(width))),

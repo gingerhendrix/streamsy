@@ -17,14 +17,19 @@ import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./su
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
 const APPENDS = 200;
+
 const POOL_SIZE = 20;
+
 const RACES = 20;
+
 const TIMEOUT_MS = 120_000;
+
 const contentType = "application/octet-stream";
 
 /** One host: protocol and storage over its own pool. The probe counts transactions. */
 const host = (dialect: SqlDialect, url: string) => {
   const probe = makeBoundaryTestProbe();
+
   return Layer.build(
     Protocol.layer().pipe(
       Layer.provideMerge(layerWithTestProbe({}, probe)),
@@ -55,6 +60,7 @@ const withHosts = <A, E>(
         // Build one host first, so the second finds the schema migrated.
         const left = yield* host(dialect, url);
         const right = yield* host(dialect, url);
+
         return yield* use(left, right);
       }).pipe(Effect.scoped),
     ),
@@ -103,11 +109,13 @@ for (const dialect of dialects) {
       async () => {
         if (url === undefined) return;
         const id = StreamId.make("race/appends");
+
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
               yield* left.writer.create(id, { contentType });
               let busy = 0;
+
               // A writer that loses every replan gets StreamBusy; a client retries.
               const append = (writer: Host["writer"], index: number) =>
                 writer.append(id, { data: payload(index), contentType }).pipe(
@@ -118,6 +126,7 @@ for (const dialect of dialects) {
                   ),
                   Effect.retry({ while: Predicate.isTagged("StreamBusy") }),
                 );
+
               const indexes = Array.from({ length: APPENDS }, (_, index) => index);
               yield* Effect.all(
                 [
@@ -136,10 +145,13 @@ for (const dialect of dialects) {
               );
               const messages = yield* left.storage.messages(id, {});
               const record = Option.getOrThrow(yield* left.storage.record(id));
+
               const gapFree = messages.every(
                 ({ offset }, index) => offset === nthOffset(index + 1),
               );
+
               const decoder = new TextDecoder();
+
               return {
                 count: messages.length,
                 unique: new Set(messages.map(({ offset }) => offset)).size,
@@ -152,6 +164,7 @@ for (const dialect of dialects) {
             }),
           ),
         );
+
         console.log(`${dialect.name} appends: ${APPENDS}, StreamBusy retries: ${result.busy}`);
         const sent = Array.from({ length: APPENDS }, (_, index) => payload(index));
         expect({ ...result, busy: undefined }).toEqual({
@@ -172,10 +185,12 @@ for (const dialect of dialects) {
       async () => {
         if (url === undefined) return;
         const id = StreamId.make("race/fused");
+
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
               yield* right.writer.create(id, { contentType });
+
               const outcome = yield* left.boundary
                 .withTransaction(
                   Effect.gen(function* () {
@@ -183,13 +198,16 @@ for (const dialect of dialects) {
                     yield* left.sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                     // Another process appends after that read.
                     yield* right.writer.append(id, { data: text("other"), contentType });
+
                     return yield* left.writer.append(id, { data: text("fused"), contentType });
                   }),
                 )
                 .pipe(Effect.result);
+
               const messages = yield* right.storage.messages(id, {});
               const record = Option.getOrThrow(yield* right.storage.record(id));
               const decoder = new TextDecoder();
+
               return {
                 outcome: tagOf(outcome),
                 offsets: messages.map(({ offset }) => String(offset)),
@@ -199,6 +217,7 @@ for (const dialect of dialects) {
             }),
           ),
         );
+
         expect(result).toEqual({
           outcome: "ok",
           offsets: [nthOffset(1), nthOffset(2)],
@@ -213,15 +232,18 @@ for (const dialect of dialects) {
       "a fork racing the delete of its source never leaves an orphan child",
       async () => {
         if (url === undefined) return;
+
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
               const outcomes: Array<string> = [];
+
               for (let race = 0; race < RACES; race++) {
                 const parent = StreamId.make(`fork-race/${race}/parent`);
                 const child = StreamId.make(`fork-race/${race}/child`);
                 yield* left.writer.create(parent, { contentType });
                 yield* left.writer.append(parent, { data: payload(race), contentType });
+
                 const [forked, removed] = yield* Effect.all(
                   [
                     left.writer.fork(child, parent).pipe(Effect.result),
@@ -229,17 +251,21 @@ for (const dialect of dialects) {
                   ],
                   { concurrency: 2 },
                 );
+
                 outcomes.push(`fork:${tagOf(forked)} remove:${tagOf(removed)}`);
               }
+
               // Every child must still reach its source row.
               const orphans = yield* left.sql<{ readonly stream_id: string }>`
 SELECT c.stream_id FROM streamsy_streams c
  LEFT JOIN streamsy_streams p ON p.stream_id = c.forked_from
  WHERE c.forked_from IS NOT NULL AND p.stream_id IS NULL`;
+
               return { outcomes, orphans: orphans.map(({ stream_id }) => stream_id) };
             }),
           ),
         );
+
         console.log(`${dialect.name} fork-and-delete outcomes: ${result.outcomes.join(", ")}`);
         expect(result.orphans).toEqual([]);
         // Either the fork wins and the delete soft-deletes the source, or the delete wins
@@ -257,10 +283,12 @@ SELECT c.stream_id FROM streamsy_streams c
       "two children purging at once remove their soft-deleted parent",
       async () => {
         if (url === undefined) return;
+
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
               const kept: Array<string> = [];
+
               for (let race = 0; race < RACES; race++) {
                 const parent = StreamId.make(`purge-race/${race}/parent`);
                 const first = StreamId.make(`purge-race/${race}/a`);
@@ -274,15 +302,19 @@ SELECT c.stream_id FROM streamsy_streams c
                   concurrency: 2,
                   discard: true,
                 });
+
                 if (Option.isSome(yield* left.storage.record(parent))) kept.push(parent);
               }
+
               const rows = yield* left.sql<{
                 readonly count: unknown;
               }>`SELECT COUNT(*) AS count FROM streamsy_streams`;
+
               return { kept, rows: Number(rows[0]?.count) };
             }),
           ),
         );
+
         expect(result).toEqual({ kept: [], rows: 0 });
       },
       TIMEOUT_MS,
@@ -292,11 +324,13 @@ SELECT c.stream_id FROM streamsy_streams c
       "concurrent creates give one stream per id and a clean exists rejection",
       async () => {
         if (url === undefined) return;
+
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
               const same: Array<string> = [];
               const distinct: Array<string> = [];
+
               for (let race = 0; race < RACES; race++) {
                 // On MySQL, the lock on an id that does not exist yet is a gap lock.
                 // Two creates in one gap can deadlock; the boundary retries them.
@@ -309,20 +343,25 @@ SELECT c.stream_id FROM streamsy_streams c
                   ],
                   { concurrency: 4 },
                 );
+
                 same.push([a, b].toSorted().join(" "));
                 distinct.push(`${c} ${d}`);
               }
+
               const retries = [left.probe, right.probe].reduce(
                 (total, probe) => total + probe.transactionAttempts - probe.completedMutations,
                 0,
               );
+
               const rows = yield* left.sql<{
                 readonly count: unknown;
               }>`SELECT COUNT(*) AS count FROM streamsy_streams`;
+
               return { same, distinct, retries, rows: Number(rows[0]?.count) };
             }),
           ),
         );
+
         console.log(
           `${dialect.name} create races: ${RACES * 4}, transaction retries: ${result.retries}`,
         );

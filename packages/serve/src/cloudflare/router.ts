@@ -25,6 +25,7 @@ export const resolvePlacement = (
   try {
     const candidate: unknown = placement.name(streamPath);
     const name = String(candidate);
+
     return candidate === name && name.length > 0
       ? { ok: true, name }
       : { ok: false, response: invalidPlacement() };
@@ -41,13 +42,16 @@ export const router = <Env>(options: RouterOptions<Env>): ExportedHandler<Env> =
     fetch(request, env) {
       const url = new URL(request.url);
       const streamPath = path.strip(url.pathname);
+
       if (!streamPath || streamPath === url.pathname)
         return badRequest(`Stream path required: ${path.requiredPathPattern()}`);
 
       const child = resolvePlacement(placement, streamPath);
+
       if (!child.ok) return child.response;
 
       const namespace = options.namespace(env);
+
       return namespace.get(namespace.idFromName(child.name)).fetch(request);
     },
   };

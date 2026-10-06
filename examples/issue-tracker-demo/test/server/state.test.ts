@@ -21,7 +21,9 @@ const stamp: Stamp = {
 };
 
 const projectInput = Schema.decodeUnknownSync(ProjectInput);
+
 const issueInput = Schema.decodeUnknownSync(IssueInput);
+
 const commentInput = Schema.decodeUnknownSync(CommentInput);
 
 describe("newProject", () => {
@@ -63,6 +65,7 @@ describe("newIssue", () => {
       issueInput({ createdAt: "1999-01-01T00:00:00.000Z", updatedAt: "1999-01-02T00:00:00.000Z" }),
       stamp,
     );
+
     expect(issue.createdAt).toBe(stamp.now);
     expect(issue.updatedAt).toBe(stamp.now);
   });
@@ -115,6 +118,7 @@ describe("newComment", () => {
 describe("mutation attempts", () => {
   const project = newProject(projectInput({ id: "proj_1", name: "P" }), stamp);
   const issue = newIssue(issueInput({ id: "issue_1", projectId: project.id }), stamp);
+
   /** A workspace whose project has `inProgress` issues in progress. */
   const stateWith = (inProgress: number, current: Issue = issue): WorkspaceState => ({
     getProject: (projectId) => (projectId === project.id ? project : undefined),
@@ -122,6 +126,7 @@ describe("mutation attempts", () => {
     hasProjects: () => true,
     countInProgress: (projectId) => (projectId === project.id ? inProgress : 0),
   });
+
   const state = stateWith(0);
 
   test("an issue under a known project becomes one upsert with the stamp's txid", () => {

@@ -23,6 +23,7 @@ const created: IssueEvent = {
 
 test("the fold keeps the newest sequence when an older fact arrives later", () => {
   const first = foldIssue(undefined, created);
+
   const older: IssueEvent = {
     type: "IssueStatusChanged",
     eventId: "e0",
@@ -32,11 +33,13 @@ test("the fold keeps the newest sequence when an older fact arrives later", () =
     sequence: 2,
     occurredAt: "2026-09-20T09:00:00.000Z",
   };
+
   expect(foldIssue(first, older)).toBe(first);
 });
 
 test("transact decides from the issueRows tables and appends at the events offset", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -44,24 +47,29 @@ test("transact decides from the issueRows tables and appends at the events offse
         const events = yield* Events;
         // A fact appended outside `transact`: the next command must see it.
         yield* events.append({ workspaceId: "live" }, [created]);
+
         const first = yield* transact("live", {
           type: "status",
           commandId: "c1",
           issueId: "i1",
           status: "done",
         });
+
         const assigned = yield* transact("live", {
           type: "assign",
           commandId: "c2",
           issueId: "i1",
           assigneeId: "ada",
         });
+
         expect(first.event).toMatchObject({ type: "IssueStatusChanged", sequence: 4 });
         expect(assigned.event).toMatchObject({ status: "done", assigneeId: "ada", sequence: 5 });
         expect(assigned.offset).toBe((yield* events.head({ workspaceId: "live" })).nextOffset);
+
         const unknown = yield* Effect.flip(
           transact("live", { type: "status", commandId: "c3", issueId: "nope", status: "done" }),
         );
+
         expect(unknown).toBeInstanceOf(UnknownIssue);
         const { items } = yield* events.collect({ workspaceId: "live" });
         expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2"]);
@@ -74,6 +82,7 @@ test("transact decides from the issueRows tables and appends at the events offse
 
 test("the change trigger stays alive beside the request trigger on one key", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:"), ["live"]));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -91,13 +100,17 @@ test("the change trigger stays alive beside the request trigger on one key", asy
           { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },
         ]);
         let count = 0;
+
         for (let attempt = 0; attempt < 20 && count !== 2; attempt++) {
           const rows = yield* sql.unsafe<{ readonly n: number }>(
             "SELECT COUNT(*) AS n FROM issues",
           );
+
           count = rows[0]?.n ?? 0;
+
           if (count !== 2) yield* Effect.sleep("10 millis");
         }
+
         expect(count).toBe(2);
         expect(yield* sql.unsafe("SELECT issue_id, status FROM issues ORDER BY issue_id")).toEqual([
           { issue_id: "both", status: "todo" },
@@ -114,11 +127,13 @@ test("an unknown workspace is a 404 and creates nothing", async () => {
   const scratch = await scratchDirectory("streamsy-issue-test");
   const port = 20_000 + Math.floor(Math.random() * 20_000);
   const server = startServer(port, scratch.database);
+
   try {
     const baseUrl = `http://127.0.0.1:${port}`;
     await waitForServer(baseUrl);
     const response = await fetch(`${baseUrl}/api/workspaces/missing/status`);
     expect(response.status).toBe(404);
+
     for (const path of [
       "/state/workspaces/missing/issues",
       "/state/workspaces/missing/label-counts",

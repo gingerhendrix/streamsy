@@ -24,7 +24,9 @@ const app = (env: Record<string, string> = {}) => {
     ),
     { disableLogger: true },
   );
+
   edges.push(edge);
+
   return edge.handler;
 };
 
@@ -44,12 +46,14 @@ test("/healthz lists the mounted backends and the reason for each other one", as
 
 test("an unknown prefix is 404", async () => {
   const handler = app();
+
   const response = await handler(
     new Request("http://matrix/nope/s", {
       method: "PUT",
       headers: { "content-type": "text/plain" },
     }),
   );
+
   expect(response.status).toBe(404);
   expect((await handler(new Request("http://matrix/nope"))).status).toBe(404);
 });
@@ -61,11 +65,13 @@ test.each(["sqlite", "pg", "mysql"])("%s without config is not mounted", async (
       headers: { "content-type": "text/plain" },
     }),
   );
+
   expect(response.status).toBe(404);
 });
 
 test("a stream under /memory can be created and read", async () => {
   const handler = app();
+
   const created = await handler(
     new Request("http://matrix/memory/orders/1", {
       method: "PUT",
@@ -73,6 +79,7 @@ test("a stream under /memory can be created and read", async () => {
       body: "hello",
     }),
   );
+
   expect(created.status).toBe(201);
   expect(created.headers.get("location")).toBe("http://matrix/memory/orders/1");
 

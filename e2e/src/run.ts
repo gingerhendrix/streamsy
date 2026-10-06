@@ -25,20 +25,24 @@ import {
 } from "./measurement.ts";
 
 export interface DeployInput extends RunIdentity {}
+
 export interface DestroyInput extends RunIdentity {
   readonly url?: string;
 }
+
 export interface ConformanceResult {
   readonly passed: number;
   readonly skipped: number;
   readonly status: string;
 }
+
 export interface MetadataResult {
   readonly reportedScriptSize: MetadataAvailability;
   readonly downloadedModuleBytes: MetadataAvailability;
   readonly actualUploadedCompressedBytes: MetadataAvailability;
   readonly startupCpuMs: MetadataAvailability;
 }
+
 export interface AuditResult {
   readonly complete: boolean;
   readonly workers: ReadonlyArray<string>;
@@ -93,27 +97,34 @@ const boundedPoll = (
     const http = yield* HttpOperation;
     const consecutive = yield* Ref.make(0);
     const attempts = yield* Ref.make(0);
+
     const pass = Effect.gen(function* () {
       yield* Ref.update(attempts, (count) => count + 1);
+
       const response = yield* Effect.exit(
         http.request({ method: "GET", url }).pipe(Effect.timeout("5 seconds")),
       );
+
       if (Exit.isSuccess(response) && expected(response.value)) {
         const count = yield* Ref.updateAndGet(consecutive, (value) => value + 1);
+
         if (count >= 5) return;
       } else {
         yield* Ref.set(consecutive, 0);
       }
+
       return yield* Effect.fail(
         new ContractError({ message: `${label} probe did not satisfy its marker` }),
       );
     });
+
     const retryPolicy = Schedule.spaced("2 seconds").pipe(Schedule.upTo({ times: 30 }));
     yield* pass.pipe(
       Effect.retry({ schedule: retryPolicy }),
       Effect.timeout("60 seconds"),
       Effect.catch(() => Effect.fail(new ContractError({ message: `${label} probe timed out` }))),
     );
+
     return { attempts: yield* Ref.get(attempts) };
   });
 
@@ -173,12 +184,14 @@ const exitStep = (
   label: string,
 ): ExitStep => {
   if (Exit.isSuccess(exit) && exit.value.code === 0) return { result: success(exit.value) };
+
   if (Exit.isSuccess(exit)) {
     return {
       result: failure(`${label} returned non-zero code ${exit.value.code}`, exit.value),
       error: `${label} returned non-zero code ${exit.value.code}`,
     };
   }
+
   return {
     result: failure(`${label}: ${errorMessage(exit.cause)}`),
     error: `${label}: ${errorMessage(exit.cause)}`,
@@ -192,22 +205,28 @@ const cleanup = (state: State): Effect.Effect<State, never, EvidenceOperations |
     const destroyInput: DestroyInput = { ...state.report, url: state.url };
     const first = yield* captureEffect(() => operations.destroy(destroyInput));
     const firstStep = exitStep(first, "destroy #1");
+
     if (firstStep.error !== undefined) nextFailures.push(firstStep.error);
     const second = yield* captureEffect(() => operations.destroy(destroyInput));
     const secondStep = exitStep(second, "destroy #2");
+
     if (secondStep.error !== undefined) nextFailures.push(secondStep.error);
     let gone = unavailable<{ readonly status: number }>("Validated worker URL was unavailable");
     const url = state.url;
+
     if (url !== undefined) {
       const goneExit = yield* captureEffect(() => awaitGone(url));
+
       if (Exit.isSuccess(goneExit)) gone = success({ status: 404 });
       else {
         gone = failure(`gone: ${errorMessage(goneExit.cause)}`);
         nextFailures.push(`gone: ${errorMessage(goneExit.cause)}`);
       }
     }
+
     const auditExit = yield* captureEffect(() => operations.auditExactWorker(state.report));
     let audit = unavailable<AuditResult>("Exact-worker audit was unavailable");
+
     if (Exit.isSuccess(auditExit)) {
       if (!auditExit.value.complete) {
         audit = failure("Exact-worker audit was incomplete", auditExit.value);
@@ -222,6 +241,7 @@ const cleanup = (state: State): Effect.Effect<State, never, EvidenceOperations |
       audit = failure(`audit: ${errorMessage(auditExit.cause)}`);
       nextFailures.push(`audit: ${errorMessage(auditExit.cause)}`);
     }
+
     return {
       ...state,
       report: {
@@ -237,9 +257,11 @@ const cleanup = (state: State): Effect.Effect<State, never, EvidenceOperations |
 
 const validateIdentity = (identity: RunIdentity): void => {
   if (!isValidStage(identity.stage)) throw new ContractError({ message: "Run stage was invalid" });
+
   if (identity.workerName !== expectedWorkerName(identity.stage)) {
     throw new ContractError({ message: "Run worker name did not match the stage" });
   }
+
   if (
     identity.cwd.length === 0 ||
     identity.sourceSha.length === 0 ||
@@ -261,10 +283,12 @@ export const runEvidence = (
         error instanceof ContractError ? error : new ContractError({ message: String(error) }),
       );
     }
+
     const stateRef = yield* Ref.make<State>({
       report: initialReport(identity, options.measurement !== undefined),
       started: false,
     });
+
     const scoped = Effect.scoped(
       Effect.gen(function* () {
         const operations = yield* EvidenceOperations;
@@ -272,8 +296,10 @@ export const runEvidence = (
         yield* Effect.addFinalizer((exit) =>
           Effect.gen(function* () {
             const before = yield* Ref.get(stateRef);
+
             if (!before.started) return;
             const cleanupExit = yield* captureEffect(() => cleanup(before));
+
             let current: State = Exit.isSuccess(cleanupExit)
               ? cleanupExit.value
               : {
@@ -286,13 +312,17 @@ export const runEvidence = (
                     ],
                   },
                 };
+
             const primaryFailure =
               current.report.primaryFailure ??
               (Exit.isFailure(exit) ? errorMessage(exit.cause) : undefined);
+
             if (primaryFailure !== undefined && current.report.primaryFailure === undefined) {
               current = { ...current, report: { ...current.report, primaryFailure } };
             }
+
             const writeExit = yield* captureEffect(() => persistence.write(current.report));
+
             if (Exit.isFailure(writeExit)) {
               current = {
                 ...current,
@@ -302,29 +332,36 @@ export const runEvidence = (
                 },
               };
             }
+
             yield* Ref.set(stateRef, current);
           }),
         );
         yield* Ref.update(stateRef, (state) => ({ ...state, started: true }));
         const deployedExit = yield* captureEffect(() => operations.deploy(identity));
+
         if (Exit.isFailure(deployedExit)) {
           const reason = errorMessage(deployedExit.cause);
           yield* Ref.update(stateRef, (state) => ({
             ...state,
             report: { ...state.report, primaryFailure: reason },
           }));
+
           return yield* Effect.failCause(deployedExit.cause);
         }
+
         const deployed = deployedExit.value;
         const target = decodeWorkerTarget(deployed, identity.workerName);
+
         if (!target.ok) {
           const current = yield* Ref.get(stateRef);
           yield* Ref.set(stateRef, {
             ...current,
             report: { ...current.report, primaryFailure: target.reason },
           });
+
           return yield* Effect.fail(new ContractError({ message: target.reason }));
         }
+
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           url: target.value.url,
@@ -338,6 +375,7 @@ export const runEvidence = (
           },
         }));
         const ready = yield* captureEffect(() => awaitReady(target.value.url));
+
         if (Exit.isFailure(ready)) {
           const reason = errorMessage(ready.cause);
           yield* Ref.update(stateRef, (state) => ({
@@ -348,8 +386,10 @@ export const runEvidence = (
               primaryFailure: reason,
             },
           }));
+
           return yield* Effect.failCause(ready.cause);
         }
+
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           report: { ...state.report, readiness: success(ready.value) },
@@ -361,12 +401,14 @@ export const runEvidence = (
             conformance: interruptedStep<ConformanceResult>("Official conformance"),
           },
         }));
+
         const conformanceExit = yield* captureEffect<ConformanceResult, EvidenceOperations>(() =>
           operations.runOfficialSuite({
             ...identity,
             url: target.value.url,
           }),
         );
+
         if (Exit.isFailure(conformanceExit)) {
           const reason = errorMessage(conformanceExit.cause);
           yield* Ref.update(stateRef, (state) => ({
@@ -377,9 +419,12 @@ export const runEvidence = (
               primaryFailure: reason,
             },
           }));
+
           return yield* Effect.failCause(conformanceExit.cause);
         }
+
         const conformance = conformanceExit.value;
+
         if (
           !Number.isInteger(conformance.passed) ||
           !Number.isInteger(conformance.skipped) ||
@@ -394,8 +439,10 @@ export const runEvidence = (
               primaryFailure: reason,
             },
           }));
+
           return yield* Effect.fail(new ContractError({ message: reason }));
         }
+
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           report: { ...state.report, conformance: success(conformance) },
@@ -407,9 +454,11 @@ export const runEvidence = (
             metadata: interruptedStep<MetadataResult>("Metadata capture"),
           },
         }));
+
         const metadataExit = yield* captureEffect<MetadataResult, EvidenceOperations>(() =>
           operations.captureMetadata({ ...identity, url: target.value.url }),
         );
+
         if (Exit.isFailure(metadataExit)) {
           const reason = errorMessage(metadataExit.cause);
           yield* Ref.update(stateRef, (state) => ({
@@ -420,13 +469,16 @@ export const runEvidence = (
               primaryFailure: reason,
             },
           }));
+
           return yield* Effect.failCause(metadataExit.cause);
         }
+
         const metadata = metadataExit.value;
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           report: { ...state.report, metadata: success(metadata) },
         }));
+
         if (options.measurement !== undefined) {
           const measurementOptions = options.measurement;
           yield* Ref.update(stateRef, (state) => ({
@@ -436,13 +488,16 @@ export const runEvidence = (
               measurement: interruptedStep<MeasurementEvidence>("Measurement"),
             },
           }));
+
           const measurementExit = yield* captureEffect<MeasurementEvidence, HttpOperation>(() =>
             Effect.gen(function* () {
               const latency = yield* measureLatency(measurementOptions.latency);
               const throughput = yield* measureThroughput(measurementOptions.throughput);
+
               return { latency, throughput } satisfies MeasurementEvidence;
             }),
           );
+
           if (Exit.isFailure(measurementExit)) {
             const reason = errorMessage(measurementExit.cause);
             yield* Ref.update(stateRef, (state) => ({
@@ -453,10 +508,13 @@ export const runEvidence = (
                 primaryFailure: reason,
               },
             }));
+
             return yield* Effect.failCause(measurementExit.cause);
           }
+
           const measurement = measurementExit.value;
           const valid = measurement.latency.valid && measurement.throughput.valid;
+
           if (!valid) {
             const reason = "Measurement contained invalid or incomplete samples";
             yield* Ref.update(stateRef, (state) => ({
@@ -467,28 +525,38 @@ export const runEvidence = (
                 primaryFailure: reason,
               },
             }));
+
             return yield* Effect.fail(new ContractError({ message: reason }));
           }
+
           yield* Ref.update(stateRef, (state) => ({
             ...state,
             report: { ...state.report, measurement: success(measurement) },
           }));
         }
+
         return yield* Effect.void;
       }),
     );
+
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const result = yield* Effect.exit(restore(scoped));
         const final = yield* Ref.get(stateRef);
         const reasons = new Set<string>();
+
         if (Exit.isFailure(result)) reasons.add(errorMessage(result.cause));
+
         if (final.report.primaryFailure !== undefined) reasons.add(final.report.primaryFailure);
+
         for (const reason of final.report.cleanupFailures) reasons.add(reason);
+
         if (final.report.reportWriteFailure !== undefined)
           reasons.add(final.report.reportWriteFailure);
+
         if (reasons.size > 0) {
           const message = [...reasons].join("; ");
+
           if (Exit.isFailure(result)) {
             // Keep the original Cause (including interruption) and add the
             // structured evidence as a second failure. Supervisors can still
@@ -496,10 +564,13 @@ export const runEvidence = (
             const secondary = Cause.hasInterrupts(result.cause)
               ? Cause.die(new ContractError({ message }))
               : Cause.fail(new ContractError({ message }));
+
             return yield* Effect.failCause(Cause.combine(result.cause, secondary));
           }
+
           return yield* Effect.fail(new ContractError({ message }));
         }
+
         return yield* Effect.void;
       }),
     );

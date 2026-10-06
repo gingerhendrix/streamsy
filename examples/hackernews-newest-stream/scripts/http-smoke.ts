@@ -71,6 +71,7 @@ const story = (id: number, time: number, title: string): FixtureStory => ({
 });
 
 const baseTime = 1_700_000_000;
+
 const fixtureById = new Map(
   [
     story(101, baseTime + 30, "Streamsy ships durable streams"),
@@ -78,16 +79,20 @@ const fixtureById = new Map(
     story(103, baseTime + 40, "Durable State lineage"),
   ].map((value) => [value.id, value]),
 );
+
 let newestIds = [101, 102];
 
 /** The HN API fixture: the newest id list and one item per id. */
 const fixtureApp = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const pathname = new URL(request.url, "http://fixture").pathname;
+
   if (pathname === "/newstories.json") return HttpServerResponse.jsonUnsafe(newestIds);
   const itemMatch = pathname.match(/^\/item\/(\d+)\.json$/);
+
   if (itemMatch)
     return HttpServerResponse.jsonUnsafe(fixtureById.get(Number(itemMatch[1])) ?? null);
+
   return HttpServerResponse.text("not found", { status: 404 });
 });
 
@@ -119,17 +124,21 @@ const smoke = Effect.gen(function* () {
     },
     isReady: (status: number) => status === 200,
   };
+
   const server = yield* spawnServer(serverOptions);
   const baseUrl = server.url;
 
   const waitForStatus = eventually(
     Effect.gen(function* () {
       const response = yield* HttpClient.get(`${baseUrl}/api/status`);
+
       if (response.status !== 200) {
         return yield* new Pending({ message: `HN status answered ${response.status}` });
       }
+
       const status = yield* HttpClientResponse.schemaBodyJson(ApiStatusSmokeView)(response);
       yield* check(!status.lastPollError, `poll reported an error: ${status.lastPollError}`);
+
       if (
         status.lastPollCompletedAt === undefined ||
         status.polling ||
@@ -139,6 +148,7 @@ const smoke = Effect.gen(function* () {
           message: `HN demo did not converge. Last status: ${Formatter.formatJson(status)}`,
         });
       }
+
       return status;
     }),
     "100 millis",
@@ -148,6 +158,7 @@ const smoke = Effect.gen(function* () {
     const response = yield* HttpClient.get(`${baseUrl}/state/newest?offset=-1`);
     yield* check(response.status === 200, `State stream read failed: ${response.status}`);
     yield* check(response.headers["x-streamsy-state-version"] === "1", "served state version");
+
     return yield* HttpClientResponse.schemaBodyJson(StoryEvents)(response);
   });
 
@@ -161,6 +172,7 @@ const smoke = Effect.gen(function* () {
 
   // Browser sessions close before the servers stop, as in a real page unload.
   const sessions: HnDb[] = [];
+
   const session = Effect.gen(function* () {
     const db = createHnDb(baseUrl);
     sessions.push(db);
@@ -168,6 +180,7 @@ const smoke = Effect.gen(function* () {
       try: () => db.preload(),
       catch: (cause) => new SmokeFailure({ message: `session preload failed: ${String(cause)}` }),
     });
+
     return db;
   });
 
@@ -175,6 +188,7 @@ const smoke = Effect.gen(function* () {
     eventually(
       Effect.suspend(() => {
         const rows = Array.from(db.collections.stories.values());
+
         const converged =
           rows.length === ids.split(",").length &&
           rows.some((row) => row.title === title) &&
@@ -182,6 +196,7 @@ const smoke = Effect.gen(function* () {
             .map((row) => String(row.id))
             .toSorted()
             .join(",") === ids;
+
         return converged
           ? Effect.void
           : Effect.fail(
@@ -205,9 +220,11 @@ const smoke = Effect.gen(function* () {
       "new session replays two current rows from -1",
     );
     const initialOffset = live.offset;
+
     const updated = yield* Effect.fromNullishOr(fixtureById.get(101)).pipe(
       Effect.mapError(() => new SmokeFailure({ message: "fixture story 101 should exist" })),
     );
+
     fixtureById.set(101, { ...updated, title: "Streamsy ships a complete projection", score: 43 });
     newestIds = [103, 101];
     yield* poll;

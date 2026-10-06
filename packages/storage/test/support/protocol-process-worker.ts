@@ -6,18 +6,23 @@ import { BunStorage } from "@streamsy/storage/bun";
 
 const argument = (index: number, name: string): string => {
   const value = Bun.argv[index + 2];
+
   if (value === undefined) throw new Error(`Missing ${name}`);
+
   return value;
 };
 
 const optional = (index: number): string | undefined => {
   const value = Bun.argv[index + 2];
+
   return value === "-" ? undefined : value;
 };
 
 const integer = (index: number, name: string): number => {
   const value = Number(argument(index, name));
+
   if (!Number.isSafeInteger(value)) throw new Error(`Invalid ${name}`);
+
   return value;
 };
 
@@ -29,16 +34,21 @@ const storageRecord = (id: StreamId) => ({
 });
 
 const mode = argument(0, "mode");
+
 const filename = argument(1, "filename");
+
 const applicationLayer = BunStorage.layerProtocol({ client: { filename }, longPollTimeoutMs: 500 });
+
 const runtime = ManagedRuntime.make(applicationLayer);
 
 const operation = Effect.gen(function* () {
   const reader = yield* StreamsReader;
   const writer = yield* StreamsWriter;
+
   switch (mode) {
     case "create": {
       const initial = optional(3);
+
       return yield* writer.create(StreamId.make(argument(2, "id")), {
         contentType: "text/plain",
         initialData: initial === undefined ? undefined : new TextEncoder().encode(initial),
@@ -46,6 +56,7 @@ const operation = Effect.gen(function* () {
         expiresAt: optional(5),
       });
     }
+
     case "fork":
       return yield* writer.fork(
         StreamId.make(argument(2, "id")),
@@ -58,8 +69,10 @@ const operation = Effect.gen(function* () {
     case "append": {
       const waitUntil = integer(9, "waitUntil");
       const now = yield* Clock.currentTimeMillis;
+
       if (waitUntil > now) yield* Effect.sleep(waitUntil - now);
       const producerId = optional(5);
+
       return yield* writer.append(StreamId.make(argument(2, "id")), {
         data: new TextEncoder().encode(argument(3, "data")),
         contentType: "text/plain",
@@ -74,8 +87,10 @@ const operation = Effect.gen(function* () {
               },
       });
     }
+
     case "read": {
       const result = yield* reader.read(StreamId.make(argument(2, "id")));
+
       return {
         ...result,
         messages: result.messages.map(({ data }) => ({
@@ -83,6 +98,7 @@ const operation = Effect.gen(function* () {
         })),
       };
     }
+
     case "head":
       return yield* reader.head(StreamId.make(argument(2, "id")));
     case "producer":
@@ -94,6 +110,7 @@ const operation = Effect.gen(function* () {
       const storage = yield* Storage;
       const fresh = StreamId.make(argument(2, "freshId"));
       const existing = StreamId.make(argument(3, "existingId"));
+
       const result = yield* Effect.flip(
         storage.mutate({
           operations: [
@@ -102,8 +119,10 @@ const operation = Effect.gen(function* () {
           ],
         }),
       );
+
       return { result, freshAbsent: Option.isNone(yield* storage.record(fresh)) };
     }
+
     default:
       return yield* Effect.die(new Error(`Unknown mode: ${mode}`));
   }

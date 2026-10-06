@@ -6,6 +6,7 @@ import { ZERO_OFFSET } from "@streamsy/core";
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
 const worker = new URL("./support/protocol-process-worker.ts", import.meta.url).pathname;
 
 const WorkerResult = Schema.Struct({
@@ -36,12 +37,15 @@ const run = async (args: ReadonlyArray<string>) => {
     stderr: "pipe",
     env: { ...Bun.env, STREAMSY_STORAGE_SCRATCH: scratch },
   });
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(childProcess.stdout).text(),
     new Response(childProcess.stderr).text(),
     childProcess.exited,
   ]);
+
   if (exitCode !== 0) throw new Error(stderr || stdout);
+
   return Schema.decodeSync(Schema.fromJsonString(WorkerResult))(stdout);
 };
 
@@ -69,10 +73,12 @@ const appendArgs = (options: {
 
 test("separate protocol processes preserve CAS, producer fencing, restart, lineage and TTL", async () => {
   const filename = `${scratch}/protocol-process-${process.pid}-${crypto.randomUUID()}.sqlite`;
+
   const concurrentCreates = await Promise.all([
     run(["create", filename, "create-race", "-", "-", "-"]),
     run(["create", filename, "create-race", "-", "-", "-"]),
   ]);
+
   expect(
     concurrentCreates
       .map(({ _tag }) => _tag)
@@ -85,6 +91,7 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   const created = await run(["create", filename, "race", "-", "-", "-"]);
   expect(created._tag).toBe("Created");
   const waitUntil = Effect.runSync(Clock.currentTimeMillis) + 250;
+
   const race = await Promise.all([
     run(
       appendArgs({
@@ -105,6 +112,7 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
       }),
     ),
   ]);
+
   expect(
     race
       .map(({ _tag }) => _tag)

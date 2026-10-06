@@ -28,19 +28,28 @@ const input = <
   }));
 
 export const ProjectInput = input(Project, ["createdAt"]);
+
 export type ProjectInput = typeof ProjectInput.Type;
+
 export const IssueInput = input(Issue, ["createdAt", "updatedAt"]);
+
 export type IssueInput = typeof IssueInput.Type;
+
 export const CommentInput = input(Comment, ["createdAt"]);
+
 export type CommentInput = typeof CommentInput.Type;
 
 /** Every accepted write returns the stream offset and txid to wait for. */
 export const Written = Schema.Struct({ awaitOffset: Schema.String, txid: Schema.String });
+
 export interface Written extends Schema.Schema.Type<typeof Written> {}
 
 export const ProjectWritten = Written.mapFields(Struct.assign({ project: Project }));
+
 export const IssueWritten = Written.mapFields(Struct.assign({ issue: Issue }));
+
 export const CommentWritten = Written.mapFields(Struct.assign({ comment: Comment }));
+
 export const WorkspaceCreated = Schema.Struct({ id: WorkspaceId });
 
 /** Error bodies keep the `{ "error": string }` field the browser shows. */

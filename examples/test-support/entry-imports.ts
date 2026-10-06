@@ -17,14 +17,17 @@ export const entryImports = (entry: string): ReadonlySet<string> => {
   const bare = new Set<string>();
   const seen = new Set<string>();
   const pending = [resolve(entry)];
+
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
     if (seen.has(file)) continue;
     seen.add(file);
+
     for (const { path } of transpiler.scanImports(readFileSync(file, "utf8"))) {
       if (isRelative(path)) pending.push(resolve(dirname(file), path));
       else bare.add(path);
     }
   }
+
   return bare;
 };
 

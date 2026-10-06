@@ -20,6 +20,7 @@ describe("Hex Domination board projection reducer", () => {
   ] as const) {
     it(`agrees with the aggregate at every prefix: ${name}`, () => {
       let board = initialProjection("game");
+
       for (const [index, event] of events.entries()) {
         board = Result.getOrThrow(projectEvent(board, event, String(index), index));
         expect(
@@ -32,6 +33,7 @@ describe("Hex Domination board projection reducer", () => {
         const state = { ordinal: index + 1, board };
         expect(Schema.decodeSync(codec)(Schema.encodeSync(codec)(state))).toStrictEqual(state);
         expect(board.moves.length).toBeLessThanOrEqual(MOVE_FEED_LIMIT);
+
         if (event.type === "GameStarted") {
           expect(board.hexes).toEqual([...event.map.tiles]);
           expect(board.territories.map((t) => t.adjacentTerritoryIds)).toEqual(
@@ -44,30 +46,38 @@ describe("Hex Domination board projection reducer", () => {
             event.map.continents.map((c) => [...c.territoryIds]),
           );
         }
+
         if (event.type === "AttackDeclared") {
           expect(board.combat).toMatchObject({
             status: "awaiting-defense",
             attackerRolls: event.attackerRolls,
           });
         }
+
         if (event.type === "AttackResolved" && event.territoryCaptured) {
           expect(board.combat?.status).toBe("awaiting-occupation");
         }
+
         if (event.type === "TerritoryOccupied") expect(board.combat).toBeNull();
+
         if (event.type === "TurnEnded") {
           expect(board.turn?.reinforcementsPlaced).toBe(0);
           expect(board.turn?.attacksDeclared).toBe(0);
         }
       }
+
       if (name === "victory") expect(board.game.status).toBe("finished");
     });
   }
+
   it("carries the pending defence interrupt and occupation bounds through capture", () => {
     let board = initialProjection("game");
     let declarations = 0;
     let captures = 0;
+
     for (const [index, event] of fullGame.entries()) {
       board = Result.getOrThrow(projectEvent(board, event, String(index), index));
+
       if (event.type === "AttackDeclared") {
         declarations += 1;
         expect(board.turn?.attacksDeclared).toBe(declarations);
@@ -77,11 +87,14 @@ describe("Hex Domination board projection reducer", () => {
           attackerRolls: event.attackerRolls,
         });
       }
+
       if (event.type === "AttackResolved" && event.territoryCaptured) {
         captures += 1;
+
         const declaration = fullGame.find(
           (declared) => declared.type === "AttackDeclared" && declared.attackId === event.attackId,
         );
+
         if (declaration?.type !== "AttackDeclared") throw new Error("capture has no declaration");
         expect(board.combat).toMatchObject({
           status: "awaiting-occupation",
@@ -90,12 +103,14 @@ describe("Hex Domination board projection reducer", () => {
           maxArmies: board.territories.find((t) => t.id === event.from)!.armies - 1,
         });
       }
+
       if (event.type === "TerritoryOccupied") {
         expect(board.combat).toBeNull();
         expect(board.turn?.captures).toBe(captures);
         expect(board.territories.find((t) => t.id === event.to)?.ownerId).toBe(event.playerId);
       }
     }
+
     expect(declarations).toBeGreaterThan(0);
     expect(captures).toBeGreaterThan(0);
   });
@@ -104,21 +119,25 @@ describe("Hex Domination board projection reducer", () => {
     let board = initialProjection("game");
     let placements = 0;
     let resets = 0;
+
     for (const [index, event] of longGame.entries()) {
       const previous = board.turn;
       board = Result.getOrThrow(projectEvent(board, event, String(index), index));
       const turn = board.turn;
+
       if (!turn) continue;
       expect(turn.reinforcement.total).toBe(
         turn.reinforcement.base +
           turn.reinforcement.continents.reduce((sum, c) => sum + c.bonus, 0),
       );
+
       if (event.type === "ArmiesReinforced") {
         placements += 1;
         expect(turn.reinforcementsPlaced).toBe(turn.reinforcement.total);
         expect(turn.reinforcement.remaining).toBe(0);
         expect(turn.phase).toBe("attack");
       }
+
       if (event.type === "TurnEnded") {
         resets += 1;
         expect(turn.turnId).not.toBe(previous?.turnId);
@@ -126,6 +145,7 @@ describe("Hex Domination board projection reducer", () => {
         expect(turn.reinforcement.remaining).toBe(turn.reinforcement.total);
       }
     }
+
     expect(placements).toBeGreaterThan(0);
     expect(resets).toBeGreaterThan(0);
   });
@@ -135,6 +155,7 @@ describe("Hex Domination board projection reducer", () => {
       (state, event, index) => Result.getOrThrow(projectEvent(state, event, "one-boundary", index)),
       initialProjection("game"),
     );
+
     expect(board.moves.map((move) => move.id)).toEqual(fullGame.map((_, i) => moveId(i)));
     const events = fullGame.filter((event) => event.commandId === "c-10");
     expect(events.map((event) => event.type)).toEqual([

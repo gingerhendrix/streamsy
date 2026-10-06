@@ -20,9 +20,11 @@
 export function frameMessages(data: Uint8Array, contentType: string): Uint8Array[] {
   if (!contentType.toLowerCase().startsWith("application/json")) return [data];
   const parsed = JSON.parse(new TextDecoder().decode(data));
+
   if (Array.isArray(parsed))
     return parsed.length === 0
       ? []
       : parsed.map((item) => new TextEncoder().encode(JSON.stringify(item)));
+
   return [new TextEncoder().encode(JSON.stringify(parsed))];
 }

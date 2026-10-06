@@ -42,6 +42,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
 > {
   const before = yield* restore(projection, projection.commit);
   const pending = before.record.pending;
+
   if (pending !== undefined && !isPinned(projection.commit))
     return yield* new ProjectionFault({
       phase: "load",
@@ -50,10 +51,13 @@ export const pass = Effect.fn("Projection.pass")(function* <
     });
   let batch: Slices<Inputs>;
   let count = 0;
+
   if (pending !== undefined) {
     const slices: Record<string, Slice<unknown>> = {};
+
     for (const [name, address] of inputEntries(projection.inputs)) {
       const range = pending.ranges[name];
+
       if (range === undefined) slices[name] = emptySlice(before.record.inputs[name] ?? "");
       else {
         const read = yield* reproduce(name, address, range);
@@ -61,12 +65,14 @@ export const pass = Effect.fn("Projection.pass")(function* <
         count += read.slice.items.length;
       }
     }
+
     // SAFETY: each slice is reproduced with its declared input codec.
     batch = slices as Slices<Inputs>;
   } else {
     const read = yield* readInputs(projection.inputs, before.record.inputs);
     batch = read.slices;
     count = read.items;
+
     if (count === 0)
       return {
         status: Object.values<Slice<unknown>>(batch).every((slice) => slice.closed)
@@ -77,7 +83,9 @@ export const pass = Effect.fn("Projection.pass")(function* <
         offsets: offsetsOf<Inputs>(before.record),
       };
   }
+
   const ranges = pending?.ranges ?? rangesOf(batch);
+
   const unit = unitOf(
     projection.id,
     projection.version,
@@ -85,14 +93,18 @@ export const pass = Effect.fn("Projection.pass")(function* <
     projection.params,
     ranges,
   );
+
   const { pending: _pending, ...record } = before.record;
   const next = { ...record, inputs: advance(record.inputs, ranges) };
   const outputs: Record<string, Details["outputs"][string]> = {};
+
   for (const [name, address] of Object.entries(projection.streams ?? {})) {
     const service = yield* address.stream;
     outputs[name] = { address, service };
   }
+
   let prepared: unknown;
+
   // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
   const run = Effect.suspend(() =>
     projection.process(batch, unit, before.record.state, prepared),
@@ -101,6 +113,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
     HandlerFailed,
     P
   >;
+
   const request: Pending<Result, P> = setDetails(
     { key: projection, unit, loaded: before.loaded, next, run },
     {
@@ -126,12 +139,14 @@ export const pass = Effect.fn("Projection.pass")(function* <
       ),
     },
   );
+
   yield* projection.commit.apply(request).pipe(
     Effect.catchTag("HandlerFailed", (failure) =>
       // SAFETY: this wrapper was made from this declaration's handler error immediately above.
       Effect.fail(failure.error as E),
     ),
   );
+
   return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(next) };
 });
 
@@ -161,12 +176,15 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
   let units = 0;
   let items = 0;
   let result: Progress<Inputs>;
+
   do {
     result = yield* pass(projection);
     units += result.units;
     items += result.items;
+
     if (result.status !== "progress") return { ...result, units, items };
   } while (units < cap);
+
   return { ...result, status: "limit-reached", units, items };
 });
 

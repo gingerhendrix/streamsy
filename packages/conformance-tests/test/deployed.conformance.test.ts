@@ -8,6 +8,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { describe } from "vitest";
 
 const baseUrl = Bun.env.SERVER_BASE_URL;
+
 if (baseUrl === undefined || baseUrl.length === 0) {
   throw new Error("SERVER_BASE_URL must name the deployed server; run it from e2e/");
 }

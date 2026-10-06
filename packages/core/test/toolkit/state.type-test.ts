@@ -7,6 +7,7 @@ const Entry = Schema.Struct({
   id: Schema.String,
   metadata: Schema.Struct({ source: Schema.String }),
 });
+
 const Note = Schema.Struct({ noteId: Schema.Finite, text: Schema.String });
 
 const workspace = StreamAddress.state("entries", {
@@ -21,9 +22,11 @@ DurableState.changes(workspace, { offset: "0" }, [
   DurableState.remove("note", 1, { oldValue: { noteId: 1, text: "t" } }),
   DurableState.remove("entry", "a"),
 ]);
+
 DurableState.changes(workspace, {}, [DurableState.upsert("note", { noteId: 2, text: "u" })]);
 
 const change: DurableState.Change<typeof workspace.collections> = DurableState.remove("note", 1);
+
 export const tag: "Upsert" | "Delete" = change._tag;
 
 // @ts-expect-error the old value must match the named collection's schema
@@ -42,5 +45,6 @@ StreamAddress.state("entries", { collections: { note: { schema: Note, key: "id" 
 DurableState.changes(workspace, { offset: "0" }, [DurableState.upsert("comment", { id: "c" })]);
 
 const noteWithoutFields = DurableState.upsert("note", { id: "a" });
+
 // @ts-expect-error the value must match the named collection's schema
 DurableState.changes(workspace, { offset: "0" }, [noteWithoutFields]);

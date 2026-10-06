@@ -16,6 +16,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
   "Streams",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
+
     return Effect.suspend(() =>
       Host.objectHandlers({
         app: Http.routes(streams, { prefix: "/streams", access: "full" }),
@@ -33,6 +34,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
 
 const worker = Effect.gen(function* () {
   const objects = yield* StreamsObject;
+
   return {
     fetch: Host.router({
       objects,

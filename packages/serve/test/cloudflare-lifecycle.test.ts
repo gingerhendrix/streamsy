@@ -51,23 +51,29 @@ const messageRowsFor = (observation: ProbeResult, streamId: string) =>
   observation.messages.filter((row) => row[0] === streamId);
 
 const zeroOffset = "0000000000000000_0000000000000000";
+
 const twoOffset = "0000000000000000_0000000000000002";
+
 const largeJson = (prefix: string) =>
   JSON.stringify(Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
 
 test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => {
   const harness = await makeHarness("worker-by-key.ts");
+
   const bun = await Effect.runPromise(
     testHost({ pathPrefix: "/streams", layer: MemoryStorage.layerProtocol(), port: 0 }),
   );
+
   closeAfterTest(() => Effect.runPromise(bun.stop));
   const bunRequest = (path: string, init?: RequestInit) => fetch(new URL(path, bun.url), init);
+
   const observe = async (response: Response) => {
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? null;
     const nextOffset = response.headers.get("stream-next-offset");
     const notSupported = response.headers.get("stream-not-supported");
     const rawLocation = response.headers.get("location");
     const location = rawLocation === null ? null : new URL(rawLocation).pathname;
+
     return {
       status: response.status,
       body: await response.text(),
@@ -77,6 +83,7 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
       location,
     };
   };
+
   const compare = async (path: string, init?: RequestInit) => {
     const cloudflare = await dispatch(harness, path, init);
     const memory = await bunRequest(path, init);
@@ -84,6 +91,7 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
     const observedMemory = await observe(memory);
     expect(observedCloudflare).toEqual(observedMemory);
   };
+
   const pairedSource = async (
     source: string,
     body: string,
@@ -128,6 +136,7 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
     ).status,
   ).toBe(204);
   const offsetTail = (await head(harness, "/streams/p/offset")).headers.get("stream-next-offset");
+
   if (offsetTail === null) throw new Error("B2 offset tail missing");
   await compare("/streams/p/explicit-offset", {
     method: "PUT",
@@ -221,9 +230,11 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
 test("B3 byKey same-object forks chain and retain a soft-deleted source", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await put(harness, "/streams/t1/x", "x")).status).toBe(201);
+
   const fork = await put(harness, "/streams/t1/y", "", "text/plain", {
     "stream-forked-from": "/streams/t1/x",
   });
+
   expect(fork.status).toBe(201);
   expect(await (await dispatch(harness, "/streams/t1/y")).text()).toBe("x");
   const observation = await probe(harness, "t1");
@@ -236,9 +247,11 @@ test("B3 byKey same-object forks chain and retain a soft-deleted source", async 
 
 test("B7 missing, soft-deleted, and expired source classifications are exact", async () => {
   const missing = await makeHarness();
+
   const missingResponse = await put(missing, "/streams/child", "", "text/plain", {
     "stream-forked-from": "/streams/nowhere",
   });
+
   expect(missingResponse.status).toBe(404);
   expect(await missingResponse.text()).toBe("Source stream not found: nowhere");
   await disposeHarness(missing);
@@ -253,9 +266,11 @@ test("B7 missing, soft-deleted, and expired source classifications are exact", a
     ).status,
   ).toBe(201);
   expect((await dispatch(deleted, "/streams/t1/x", { method: "DELETE" })).status).toBe(204);
+
   const deletedResponse = await put(deleted, "/streams/t1/z", "", "text/plain", {
     "stream-forked-from": "/streams/t1/x",
   });
+
   expect(deletedResponse.status).toBe(409);
   expect(await deletedResponse.text()).toBe("Source stream is soft-deleted: t1/x");
 
@@ -264,9 +279,11 @@ test("B7 missing, soft-deleted, and expired source classifications are exact", a
     (await put(expired, "/streams/e/expired", "x", "text/plain", { "stream-ttl": "1" })).status,
   ).toBe(201);
   await Bun.sleep(2_000);
+
   const expiredResponse = await put(expired, "/streams/e/expired-child", "", "text/plain", {
     "stream-forked-from": "/streams/e/expired",
   });
+
   expect(expiredResponse.status).toBe(404);
   expect(await expiredResponse.text()).toBe("Source stream not found: e/expired");
 });
@@ -275,9 +292,11 @@ test("B9 byKey rejects cross-stream forks without changing the source", async ()
   const harness = await makeHarness("worker-by-key.ts");
   expect((await put(harness, "/streams/t1/x", "x")).status).toBe(201);
   const before = await probe(harness, "t1");
+
   const fork = await put(harness, "/streams/t2/z", "", "text/plain", {
     "stream-forked-from": "/streams/t1/x",
   });
+
   expect(fork.status).toBe(404);
   expect(await fork.text()).toBe("Source stream not found: t1/x");
   expect((await probe(harness, "t2")).rows).toHaveLength(0);
@@ -290,9 +309,11 @@ test("B9 byKey rejects cross-stream forks without changing the source", async ()
 test("byStream returns 404 for a fork even when its source exists", async () => {
   const harness = await makeHarness();
   expect((await put(harness, "/streams/source", "source")).status).toBe(201);
+
   const fork = await put(harness, "/streams/child", "", "text/plain", {
     "stream-forked-from": "/streams/source",
   });
+
   expect(fork.status).toBe(404);
   expect(await fork.text()).toBe("Source stream not found: source");
   expect((await head(harness, "/streams/source")).status).toBe(200);
@@ -315,6 +336,7 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
   ).toBe(201);
   const child = await probe(harness, "t1");
   const expiry = rowFor(child, "t1/ttl-child")?.[1];
+
   if (!isFiniteNumber(expiry)) throw new Error("B11 inherited TTL was not persisted");
   expect(expiry - now).toBeGreaterThan(500);
   expect(expiry - now).toBeLessThan(2_500);
@@ -337,6 +359,7 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
   ).toBe(201);
   const override = await probe(harness, "t1");
   const overrideExpiry = rowFor(override, "t1/override-child")?.[1];
+
   if (!isFiniteNumber(overrideExpiry)) throw new Error("B11 override expiry was not persisted");
   expect(overrideExpiry - Date.now()).toBeGreaterThan(58_000);
 
@@ -357,6 +380,7 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
   ).toBe(201);
   const dateChild = await probe(harness, "t1");
   const dateExpiry = rowFor(dateChild, "t1/date-child")?.[1];
+
   if (!isFiniteNumber(dateExpiry))
     throw new Error("B11 inherited absolute expiry was not persisted");
   expect(dateExpiry).toBe(new Date(absolute).getTime());
@@ -370,6 +394,7 @@ test("B12 TTL zero uses the one-millisecond alarm floor", async () => {
   ).toBe(201);
   const observation = await probe(harness, "floor");
   const scheduled = observation.alarm ?? observation.alarmAfterMutation;
+
   if (scheduled === null) throw new Error("B12 floor alarm was not armed");
   expect(scheduled).toBeGreaterThanOrEqual(started + 1);
   await waitUntil(async () => (await probe(harness, "floor")).rows.length === 0, 1_500);
@@ -385,12 +410,14 @@ test("B13 a stale deadline re-arms after a sliding read without rebuilding the s
     (await put(harness, "/streams/stale", "x", "text/plain", { "stream-ttl": "2" })).status,
   ).toBe(201);
   const before = await probe(harness, "stale");
+
   if (before.alarm === null) throw new Error("B13 initial alarm was not armed");
   await Bun.sleep(1_000);
   expect((await dispatch(harness, "/streams/stale")).status).toBe(200);
   const renewed = await probe(harness, "stale");
   const renewedExpiry = renewed.rows[0]?.[1];
   const initialExpiry = before.rows[0]?.[1];
+
   if (!isFiniteNumber(renewedExpiry) || !isFiniteNumber(initialExpiry))
     throw new Error("B13 expiry rows missing");
   expect(renewedExpiry).toBeGreaterThan(initialExpiry);
@@ -407,6 +434,7 @@ const recreateB15Harnesses = async (
   byStream: Harness,
 ): Promise<{ readonly byKey: Harness; readonly byStream: Harness }> => {
   const retentionErrors: Array<unknown> = [];
+
   for (const retained of [byKey, byStream]) {
     try {
       await disposeHarness(retained, true);
@@ -414,8 +442,10 @@ const recreateB15Harnesses = async (
       retentionErrors.push(error);
     }
   }
+
   if (retentionErrors.length > 0)
     throw new AggregateError(retentionErrors, "B15 retention cleanup failed");
+
   return {
     byKey: await makeHarness("worker-by-key.ts", byKey.root),
     byStream: await makeHarness("worker.ts", byStream.root),
@@ -425,6 +455,7 @@ const recreateB15Harnesses = async (
 test("B15 recreation under load restores and purges alarms in both object layouts", async () => {
   const byKey = await makeHarness("worker-by-key.ts");
   const byStream = await makeHarness("worker.ts");
+
   for (let ttl = 1; ttl <= 3; ttl += 1)
     expect(
       (await put(byKey, `/streams/t1/ttl-${ttl}`, "x", "text/plain", { "stream-ttl": String(ttl) }))
@@ -440,10 +471,12 @@ test("B15 recreation under load restores and purges alarms in both object layout
       })
     ).status,
   ).toBe(201);
+
   const { byKey: recreatedByKey, byStream: recreatedByStream } = await recreateB15Harnesses(
     byKey,
     byStream,
   );
+
   await waitUntil(async () => (await probe(recreatedByKey, "t1")).rows.length === 0, 5_000);
   await waitUntil(async () => (await probe(recreatedByStream, "child")).rows.length === 0, 5_000);
   expect((await probe(recreatedByKey, "t1")).alarm).toBeNull();
@@ -481,10 +514,12 @@ test(
     const harness = await makeHarness("worker-by-key.ts");
     const first = largeJson("first");
     const second = largeJson("second");
+
     const concurrent = await Promise.all([
       put(harness, "/streams/t1/x", first, "application/json"),
       put(harness, "/streams/t1/y", second, "application/json"),
     ]);
+
     expect(concurrent.map((response) => response.status)).toEqual([201, 201]);
     const stream = await probe(harness, "t1");
     expect(messageRowsFor(stream, "t1/x")).toHaveLength(3_000);

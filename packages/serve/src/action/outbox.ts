@@ -110,9 +110,11 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
 
   const replace = (id: number, patch: Partial<OutboxEntry>): void => {
     const existing = entries.get(id);
+
     if (existing === undefined) throw new Error(`outbox entry ${id} does not exist`);
     entries.set(id, { ...existing, ...patch });
   };
+
   const ordered = (): readonly OutboxEntry[] =>
     [...entries.values()].toSorted((left, right) => left.id - right.id);
 
@@ -121,14 +123,18 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
       Effect.sync(() => {
         let enqueued = 0;
         let absorbed = 0;
+
         for (const draft of drafts) {
           const sinkIdentities = identities.get(draft.sink);
+
           if (sinkIdentities?.has(draft.idempotencyKey) === true) {
             absorbed += 1;
             continue;
           }
+
           const id = nextId;
           nextId += 1;
+
           if (sinkIdentities === undefined)
             identities.set(draft.sink, new Set([draft.idempotencyKey]));
           else sinkIdentities.add(draft.idempotencyKey);
@@ -148,6 +154,7 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
           });
           enqueued += 1;
         }
+
         return { enqueued, absorbed };
       }),
     claimDue: (sink, partitionId, nowMs, limit) =>

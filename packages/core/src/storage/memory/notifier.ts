@@ -11,11 +11,14 @@ export const createNotifier = Effect.gen(function* () {
         closed = true;
         const active = [...queues];
         queues.clear();
+
         return active;
       });
+
       for (const queue of detached) yield* Queue.shutdown(queue);
     }),
   );
+
   return {
     queues: subscriptions,
     get closed() {
@@ -24,15 +27,20 @@ export const createNotifier = Effect.gen(function* () {
     subscribe: Effect.acquireRelease(
       Effect.gen(function* () {
         const queue = yield* Queue.make<void>({ capacity: 1, strategy: "dropping" });
+
         const registered = yield* Effect.sync(() => {
           if (closed) return false;
           queues.add(queue);
+
           return true;
         });
+
         if (!registered) {
           yield* Queue.shutdown(queue);
+
           return yield* Effect.interrupt;
         }
+
         return queue;
       }),
       (queue) =>
@@ -48,4 +56,5 @@ export const createNotifier = Effect.gen(function* () {
     }),
   };
 });
+
 export type Notifier = Effect.Success<typeof createNotifier>;

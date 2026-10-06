@@ -8,6 +8,7 @@ import { HackerNewsStories } from "./stories.ts";
 
 const currentStats = Effect.gen(function* () {
   const poller = yield* NewestStoriesPoller;
+
   return yield* poller.stats;
 });
 
@@ -28,6 +29,7 @@ export const app = Layer.mergeAll(
     "/api/poll",
     Effect.gen(function* () {
       yield* (yield* NewestStoriesPoller).pollNow;
+
       return HttpServerResponse.jsonUnsafe({ ok: true, ...(yield* currentStats) });
     }),
   ),

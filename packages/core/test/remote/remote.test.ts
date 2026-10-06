@@ -21,9 +21,13 @@ import { HttpRouter } from "effect/http";
 import { RemoteStreams } from "@streamsy/core/remote";
 
 const id = StreamId.make("orders/nested");
+
 const bytes = new TextEncoder().encode('[{"id":1},{"id":2}]');
+
 const address = StreamAddress.json("orders", { schema: Schema.Struct({ id: Schema.Finite }) });
+
 const notes = StreamAddress.bytes("notes", { contentType: "text/plain" });
+
 const clock = Layer.effect(
   Clock.Clock,
   Effect.map(Clock.Clock, (live) => ({
@@ -36,9 +40,12 @@ const clock = Layer.effect(
     sleep: (duration) => live.sleep(duration),
   })),
 );
+
 const memory = () =>
   MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clock));
+
 const decoder = new TextDecoder();
+
 const asText = (item: Uint8Array) => decoder.decode(item);
 
 interface Batch<A> {
@@ -47,12 +54,14 @@ interface Batch<A> {
   readonly upToDate: boolean;
   readonly closed: boolean;
 }
+
 const summarize = <A>(batch: Batch<A>) => ({
   items: batch.items,
   nextOffset: batch.nextOffset,
   upToDate: batch.upToDate,
   closed: batch.closed,
 });
+
 const batches = <A, E, R>(stream: Stream.Stream<Batch<A>, E, R>) =>
   Stream.runCollect(stream).pipe(Effect.map((collected) => collected.map(summarize)));
 
@@ -99,9 +108,11 @@ const fixture = Effect.gen(function* () {
   results.push(yield* batches(Streams.follow(address)));
   results.push(yield* Streams.remove(address));
   const failure = yield* Streams.read(address).pipe(Stream.runCollect, Effect.flip);
+
   if (!Predicate.isTagged(failure, "StreamNotFound"))
     return yield* Effect.die("Expected a removed stream");
   results.push({ tag: "StreamNotFound", id: failure.id });
+
   return results;
 });
 
@@ -110,12 +121,15 @@ it("every operation stream returns the direct results over local HTTP", async ()
     protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
     { disableLogger: true },
   );
+
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+
   try {
     const remote = RemoteStreams.layerProtocol({
       baseUrl: `${server.url.href}streams`,
       capabilities: { expectedOffset: true, producer: true },
     }).pipe(Layer.provide(FetchHttpClient.layer));
+
     expect(
       JSON.parse(JSON.stringify(await Effect.runPromise(fixture.pipe(Effect.provide(remote))))),
     ).toEqual(
@@ -132,17 +146,22 @@ it("merges text messages into one payload over the public wire", async () => {
     protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
     { disableLogger: true },
   );
+
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+
   try {
     const remote = RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
       Layer.provide(FetchHttpClient.layer),
     );
+
     const program = Effect.gen(function* () {
       yield* Streams.create(notes);
       yield* Streams.append(notes, [new TextEncoder().encode("ab")]);
       yield* Streams.append(notes, [new TextEncoder().encode("cd")]);
+
       return yield* batches(Streams.read(notes));
     });
+
     const direct = await Effect.runPromise(program.pipe(Effect.provide(memory())));
     const overHttp = await Effect.runPromise(program.pipe(Effect.provide(remote)));
     expect(direct.map((batch) => batch.items.map(asText))).toEqual([["ab", "cd"]]);
@@ -162,34 +181,40 @@ function mock(response: () => Response) {
     ),
   );
 }
+
 const against = (response: () => Response, capabilities: { readonly producer?: boolean } = {}) =>
   RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams", capabilities }).pipe(
     Layer.provide(mock(response)),
   );
+
 const headOver = (response: () => Response) =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
     }).pipe(Effect.provide(against(response))),
   );
+
 const headFailure = (response: () => Response) =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
     }).pipe(Effect.flip, Effect.provide(against(response))),
   );
+
 const readOver = (response: () => Response) =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).read(id);
     }).pipe(Effect.provide(against(response))),
   );
+
 const readNextOver = (response: () => Response) =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
     }).pipe(Effect.provide(against(response))),
   );
+
 const appendFailure = (response: () => Response) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -321,6 +346,7 @@ it("splits a JSON read body into one payload per message", async () => {
         },
       }),
   );
+
   expect(result).toBeDefined();
   expect(result.messages.map((message) => asText(message.data))).toEqual(['{"a":1}', '{"b":2}']);
   expect(result.upToDate).toBe(true);
@@ -333,6 +359,7 @@ it("keeps a non-JSON read body as one merged payload", async () => {
         headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET },
       }),
   );
+
   expect(result).toBeDefined();
   expect(result.messages.map((message) => asText(message.data))).toEqual(["abcd"]);
   expect(result.upToDate).toBe(false);
@@ -391,6 +418,7 @@ it("keeps a bare append 400 generic without classifying its wording", async () =
       ),
     ),
   );
+
   expect(appended).toMatchObject({
     _tag: "InvalidAppendRequest",
     id,
@@ -401,22 +429,26 @@ it("keeps a bare append 400 generic without classifying its wording", async () =
 it("sends no Streamsy-specific request headers", async () => {
   let accept: string | undefined = "unset";
   let cacheControl: string | undefined;
+
   const capture = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() => {
         accept = request.headers.accept;
         cacheControl = request.headers["cache-control"];
+
         return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
       }),
     ),
   );
+
   const probe = (transport: Layer.Layer<StreamsReader | StreamsWriter, TransportFault>) =>
     Effect.runPromise(
       Effect.gen(function* () {
         return yield* (yield* StreamsReader).head(id);
       }).pipe(Effect.flip, Effect.provide(transport)),
     );
+
   await probe(
     RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
       Layer.provide(capture),
@@ -435,14 +467,17 @@ it("sends no Streamsy-specific request headers", async () => {
 
 it("unknown CAS and producer support fail before any HTTP request", async () => {
   let requests = 0;
+
   const transport = RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
     Layer.provide(
       mock(() => {
         requests++;
+
         return new Response(null);
       }),
     ),
   );
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const writer = yield* StreamsWriter;
@@ -473,6 +508,7 @@ it("connection failure stays in the typed fault channel", async () => {
   const server = Bun.serve({ port: 0, fetch: () => new Response(null) });
   const baseUrl = `${server.url.href}streams`;
   await server.stop(true);
+
   const failure = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id).pipe(Effect.flip);
@@ -482,6 +518,7 @@ it("connection failure stays in the typed fault channel", async () => {
       ),
     ),
   );
+
   expect(failure).toMatchObject({ _tag: "TransportFault", reason: "request" });
 });
 
@@ -490,6 +527,7 @@ for (const phase of ["request", "body"] as const) {
     let aborted = false;
     let cancelled = false;
     const entered = Promise.withResolvers<void>();
+
     const client = HttpClient.make((request, _url, signal) => {
       signal.addEventListener(
         "abort",
@@ -498,8 +536,10 @@ for (const phase of ["request", "body"] as const) {
         },
         { once: true },
       );
+
       if (phase === "request")
         return Effect.sync(() => entered.resolve()).pipe(Effect.andThen(Effect.never));
+
       return Effect.sync(() =>
         HttpClientResponse.fromWeb(
           request,
@@ -517,28 +557,34 @@ for (const phase of ["request", "body"] as const) {
         ),
       );
     });
+
     const runtime = ManagedRuntime.make(
       RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
       ),
     );
+
     const fiber = runtime.runFork(
       Effect.gen(function* () {
         return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
       }),
     );
+
     await entered.promise;
     await Effect.runPromise(Fiber.interrupt(fiber));
     const exit = await Effect.runPromise(Fiber.await(fiber));
     expect(Exit.isFailure(exit)).toBe(true);
     expect(aborted).toBe(true);
+
     if (phase === "body") expect(cancelled).toBe(true);
     await runtime.dispose();
   });
 }
+
 it("disposing the Layer interrupts active requests", async () => {
   let aborted = false;
   const entered = Promise.withResolvers<void>();
+
   const client = HttpClient.make((_request, _url, signal) =>
     Effect.sync(() => {
       signal.addEventListener("abort", () => {
@@ -547,16 +593,19 @@ it("disposing the Layer interrupts active requests", async () => {
       entered.resolve();
     }).pipe(Effect.andThen(Effect.never)),
   );
+
   const runtime = ManagedRuntime.make(
     RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
     ),
   );
+
   const fiber = runtime.runFork(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
     }),
   );
+
   await entered.promise;
   await runtime.dispose();
   expect(aborted).toBe(true);
@@ -576,21 +625,26 @@ for (const mode of ["direct", "remote"] as const) {
         protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
         { disableLogger: true },
       );
+
       const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+
       const modeTransport =
         mode === "direct"
           ? memory()
           : RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
               Layer.provide(FetchHttpClient.layer),
             );
+
       try {
         await Effect.runPromise(
           Effect.gen(function* () {
             const reader = yield* StreamsReader;
             const writer = yield* StreamsWriter;
+
             const data = contentType.startsWith("application/json")
               ? new TextEncoder().encode('{"n":1}')
               : new Uint8Array([0, 1, 65]);
+
             expect((yield* writer.create(id, { contentType }))._tag).toBe("Created");
             const empty = yield* reader.read(id);
             expect(empty).toMatchObject({ messages: [], upToDate: true });
@@ -610,6 +664,7 @@ for (const mode of ["direct", "remote"] as const) {
         await server.stop(true);
         await edge.dispose();
       }
+
       expect(server.pendingRequests).toBe(0);
     });
   }
@@ -617,21 +672,26 @@ for (const mode of ["direct", "remote"] as const) {
 
 it("resolves prefixes and application headers without letting IDs escape", async () => {
   const seen: string[] = [];
+
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       seen.push(url.href);
       expect(request.headers.authorization).toBe("Bearer fixture");
+
       return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
     }),
   );
+
   const transport = RemoteStreams.layerProtocol({
     baseUrl: "https://example.test/api/streams/",
     headers: { authorization: "Bearer fixture" },
   }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
       expect((yield* Effect.flip(reader.head(id)))._tag).toBe("StreamNotFound");
+
       for (const invalid of [
         "../escape",
         "/absolute",
@@ -660,6 +720,7 @@ it("keeps arbitrary append conflict bodies as typed conflicts", async () => {
     });
   }
 });
+
 it("keeps arbitrary append bad-request bodies as typed request errors", async () => {
   expect(
     await appendFailure(() => new Response("Empty body not allowed", { status: 400 })),
@@ -671,23 +732,28 @@ for (const retry of [false, true]) {
     const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(memory())), {
       disableLogger: true,
     });
+
     const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+
     try {
       const remote = RemoteStreams.layerProtocol({
         baseUrl: server.url.href,
         capabilities: { producer: true },
       }).pipe(Layer.provide(FetchHttpClient.layer));
+
       await Effect.runPromise(
         Effect.gen(function* () {
           yield* Streams.create(notes);
           yield* Streams.append(notes, [new TextEncoder().encode("a")], { producer });
           const close = { producer: { ...producer, producerSeq: 1 }, close: true as const };
+
           if (retry) {
             yield* Streams.append(notes, [], close);
             expect((yield* Streams.append(notes, [], close))._tag).toBe("Duplicate");
             close.producer.producerSeq = 2;
             yield* Streams.append(notes, [], close);
           }
+
           const result = yield* Streams.append(notes, [], close);
           expect(result).toMatchObject({ _tag: retry ? "Appended" : "Duplicate", closed: true });
           expect(result.producerEpoch).toBe(retry ? undefined : 0);

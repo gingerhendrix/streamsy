@@ -25,23 +25,32 @@ export function checkReadOptions(options: ReadOptions): void {
 /** Read an already resolved id using the protocol's HTTP framing and live modes. */
 export function read(id: StreamId, options: ReadOptions = {}) {
   checkReadOptions(options);
+
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const reader = yield* StreamsReader;
     const url = requestUrl(request);
+
     if (!url) return HttpServerResponse.text("Invalid request URL", { status: 400 });
+
     if (request.method === "HEAD") {
       const meta = yield* reader.head(id);
+
       const headers = new Headers({
         "content-type": meta.contentType,
         "stream-next-offset": meta.nextOffset,
         "cache-control": "no-store",
       });
+
       if (meta.closed) headers.set("stream-closed", "true");
+
       if (meta.ttlSeconds) headers.set("stream-ttl", String(meta.ttlSeconds));
+
       if (meta.expiresAt) headers.set("stream-expires-at", meta.expiresAt);
+
       return HttpServerResponse.empty({ status: 200, headers: Object.fromEntries(headers) });
     }
+
     const response = yield* readProtocol(
       reader,
       id,
@@ -50,6 +59,7 @@ export function read(id: StreamId, options: ReadOptions = {}) {
       cacheControlForVisibility(options.cacheVisibility ?? "private"),
       options.sseDeadlineMs,
     );
+
     return response instanceof Response ? fromWeb(response) : response;
   }).pipe(Effect.map(HttpServerResponse.setHeaders(securityHeaders)));
 }

@@ -7,6 +7,7 @@ import {
 } from "../../scripts/check-demo-excerpts.ts";
 
 const fence = "\x60\x60\x60";
+
 const source = [
   'import { Effect } from "effect";',
   "",
@@ -16,8 +17,11 @@ const source = [
   "  return a + b;",
   "});",
 ].join("\n");
+
 const files = new Map([["src/run.ts", source]]);
+
 const reader: SourceReader = (path) => files.get(path);
+
 const page = (info: string, body: string): string =>
   `# Page\n\n${fence}${info}\n${body}\n${fence}\n`;
 

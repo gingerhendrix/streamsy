@@ -8,14 +8,18 @@ class Input extends Streamsy.json<Input>()("atLeastOnce/Input", "at-least-once/i
   params: {},
   schema: Schema.Number,
 }) {}
+
 const host = Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input));
+
 const run = <A, E>(effect: Effect.Effect<A, E, Input | CheckpointStore>) =>
   Effect.runPromise(effect.pipe(Effect.provide(host), Effect.provide(CheckpointStore.layerMemory)));
+
 const seed = Effect.gen(function* () {
   const input = yield* Input;
   yield* input.create({});
   yield* input.append({}, [1]);
 });
+
 const fault = new ProjectionFault({
   phase: "checkpoint",
   reason: "storage-failure",
@@ -31,6 +35,7 @@ for (const failHandler of [true, false]) {
         const batches: number[][] = [];
         let failed = false;
         const compensations: string[] = [];
+
         const base = Projection.process({
           commit: Commit.atLeastOnce,
           id: "effect",
@@ -40,12 +45,15 @@ for (const failHandler of [true, false]) {
             Effect.gen(function* () {
               keys.push(unit.key);
               batches.push([...batch.input.items]);
+
               if (failHandler && !failed) {
                 failed = true;
+
                 return yield* Effect.fail("handler-error");
               }
             }),
         }).at({});
+
         const projection = {
           ...base,
           commit: Commit.atLeastOnce.pipe(
@@ -56,7 +64,9 @@ for (const failHandler of [true, false]) {
             ),
           ),
         };
+
         const store = yield* CheckpointStore;
+
         const first = yield* Projection.pass(projection).pipe(
           Effect.provideService(CheckpointStore, {
             ...store,
@@ -67,7 +77,9 @@ for (const failHandler of [true, false]) {
           }),
           Effect.result,
         );
+
         expect(first._tag).toBe("Failure");
+
         if (first._tag === "Failure")
           expect(first.failure).toEqual(failHandler ? "handler-error" : fault);
         const pinned = Option.getOrThrow((yield* store.load(projection)).record);
@@ -91,6 +103,7 @@ test("compensation observes successful void and preserves a store defect", () =>
       yield* seed;
       const defect = new Error("store defect");
       const observed: unknown[] = [];
+
       const base = Projection.process({
         commit: Commit.atLeastOnce,
         id: "defect",
@@ -98,6 +111,7 @@ test("compensation observes successful void and preserves a store defect", () =>
         inputs: { input: Input },
         process: () => Effect.void,
       }).at({});
+
       const projection = {
         ...base,
         commit: Commit.withCompensation(Commit.atLeastOnce, (result, cause) =>
@@ -106,7 +120,9 @@ test("compensation observes successful void and preserves a store defect", () =>
           }),
         ),
       };
+
       const store = yield* CheckpointStore;
+
       const exit = yield* Projection.run(projection).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -117,7 +133,9 @@ test("compensation observes successful void and preserves a store defect", () =>
         }),
         Effect.exit,
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
       expect(observed).toEqual([undefined, defect]);
     }),
@@ -128,6 +146,7 @@ test("a failed pin never runs the handler and a custom Commit cannot inherit pin
     Effect.gen(function* () {
       yield* seed;
       let calls = 0;
+
       const base = Projection.process({
         commit: Commit.atLeastOnce,
         id: "pin-first",
@@ -135,11 +154,14 @@ test("a failed pin never runs the handler and a custom Commit cannot inherit pin
         inputs: { input: Input },
         process: () => {
           calls += 1;
+
           return Effect.void;
         },
       }).at({});
+
       const projection = { ...base, commit: Commit.atLeastOnce };
       const store = yield* CheckpointStore;
+
       const blocked = yield* Projection.run(projection).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -147,17 +169,20 @@ test("a failed pin never runs the handler and a custom Commit cannot inherit pin
         }),
         Effect.result,
       );
+
       expect(blocked._tag).toBe("Failure");
       expect(calls).toBe(0);
       yield* Projection.run({ ...projection, process: () => Effect.fail("keep pin") }).pipe(
         Effect.result,
       );
+
       const custom = Commit.make({
         name: "custom",
         guarantee: "at-least-once",
         load: Commit.atLeastOnce.load,
         apply: Commit.atLeastOnce.apply,
       });
+
       const rejected = yield* Projection.run({ ...projection, commit: custom }).pipe(Effect.result);
       expect(rejected).toMatchObject({
         _tag: "Failure",

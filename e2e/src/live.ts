@@ -58,6 +58,7 @@ const exitCodeOf = (command: ChildProcess.Command, label: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const code = yield* spawner.exitCode(command).pipe(Effect.mapError(contractError(label)));
+
     return Number(code);
   });
 
@@ -76,6 +77,7 @@ const VitestReport = Schema.Struct({
 
 const decodeVitestReport = (text: string): ConformanceResult => {
   const report = Schema.decodeSync(Schema.fromJsonString(VitestReport))(text);
+
   return {
     passed: report.numPassedTests,
     skipped: report.numPendingTests + report.numTodoTests,
@@ -96,10 +98,12 @@ export const liveOperations = (paths: LivePaths) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
       const provide = <A, E>(
         effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,
       ): Effect.Effect<A, E> =>
         Effect.provideService(effect, ChildProcessSpawner.ChildProcessSpawner, spawner);
+
       const readText = (file: string, label: string) =>
         fs.readFileString(file).pipe(Effect.mapError(contractError(label)));
 
@@ -111,11 +115,14 @@ export const liveOperations = (paths: LivePaths) =>
                 alchemy(paths, ["deploy", "--stage", input.stage, "--yes", "--no-input"]),
                 "alchemy deploy",
               );
+
               if (code !== 0) {
                 return yield* new ContractError({ message: `alchemy deploy exited with ${code}` });
               }
+
               const file = `${stageDirectory(paths, input.stage)}/${STACK_OUTPUT_FILE}`;
               const text = yield* readText(file, "Stack output");
+
               return yield* Schema.decodeEffect(Schema.fromJsonString(StackOutput))(text).pipe(
                 Effect.mapError(
                   () => new ContractError({ message: "Stack output was missing or malformed" }),
@@ -158,6 +165,7 @@ export const liveOperations = (paths: LivePaths) =>
                 "official suite",
               );
               const text = yield* readText(output, "Official suite report");
+
               return yield* Effect.try({
                 try: () => decodeVitestReport(text),
                 catch: () => new ContractError({ message: "Official suite report was malformed" }),
@@ -176,11 +184,14 @@ export const liveOperations = (paths: LivePaths) =>
         auditExactWorker: (input) =>
           Effect.gen(function* () {
             const directory = stageDirectory(paths, input.stage);
+
             if (!(yield* fs.exists(directory))) return { complete: true, workers: [] };
             const entries = yield* fs.readDirectory(directory);
+
             const resources = entries.filter(
               (entry) => entry.endsWith(".json") && entry !== STACK_OUTPUT_FILE,
             );
+
             return { complete: true, workers: resources.length > 0 ? [input.workerName] : [] };
           }).pipe(Effect.mapError(contractError("State audit"))),
       };
@@ -210,6 +221,7 @@ export const liveReports = (paths: LivePaths) =>
     ReportPersistence,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+
       return {
         write: (report: EvidenceReport) =>
           fs.makeDirectory(paths.reports, { recursive: true }).pipe(
@@ -234,6 +246,7 @@ export const liveIdentity = (paths: LivePaths) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
     const artifact = yield* fs
       .readFile(paths.workerArtifact)
       .pipe(
@@ -241,18 +254,22 @@ export const liveIdentity = (paths: LivePaths) =>
           contractError("Missing worker artifact; run bun run build:worker in conformance-tests"),
         ),
       );
+
     const sourceSha = yield* spawner
       .string(ChildProcess.make("git", ["rev-parse", "HEAD"], { cwd: paths.root }))
       .pipe(
         Effect.map((text) => text.trim()),
         Effect.mapError(contractError("git rev-parse")),
       );
+
     const runId = randomBytes(3).toString("hex");
     const now = yield* Clock.currentTimeMillis;
+
     const stage = yield* Effect.try({
       try: () => stageName(Math.floor(now / 1000), runId),
       catch: (cause) => new ContractError({ message: String(cause) }),
     });
+
     return {
       runId,
       stage,

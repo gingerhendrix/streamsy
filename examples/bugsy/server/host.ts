@@ -28,6 +28,7 @@ export const hostLayer = <E>(storage: Layer.Layer<HostStorage, E>) => {
   const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(storage),
   );
+
   return Layer.effectContext(
     Effect.context<
       | CheckpointStore
@@ -82,6 +83,7 @@ export const applicationLayer = <E>(
     Effect.gen(function* () {
       yield* prepareSchema;
       yield* Effect.forEach(workspaces, createInputs, { discard: true });
+
       for (const workspaceId of workspaces) {
         const rows = issueRows.at({ workspaceId });
         const outputs = tracker.at({ workspaceId });
@@ -100,5 +102,6 @@ export const applicationLayer = <E>(
 export const createInputs = (workspaceId: string) =>
   Effect.gen(function* () {
     const inputs = yield* Effect.all(Object.values(routes));
+
     for (const stream of inputs) yield* stream.create({ workspaceId });
   });

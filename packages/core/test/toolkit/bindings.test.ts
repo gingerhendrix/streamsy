@@ -7,6 +7,7 @@ class Drafts extends Streamsy.json<Drafts>()("Bindings/Drafts", "drafts/:user", 
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
+
 class Journal extends Streamsy.json<Journal>()("Bindings/Journal", "journal/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
@@ -51,6 +52,7 @@ it("stream binding shares one storage graph with siblings in either merge order"
     const graph = Protocol.bind(protocol, Streamsy.group(Drafts));
     const sibling = Protocol.bind(protocol, Streamsy.group(Streamsy.Wildcard));
     const host = familyFirst ? Layer.merge(graph, sibling) : Layer.merge(sibling, graph);
+
     const seen = await Effect.runPromise(
       Effect.gen(function* () {
         const drafts = yield* Drafts;
@@ -58,11 +60,13 @@ it("stream binding shares one storage graph with siblings in either merge order"
         yield* drafts.append({ user: "ann" }, ["draft"]);
         const any = yield* Streamsy.Wildcard;
         const batches = yield* Stream.runCollect(any.read({ id: Drafts.at({ user: "ann" }).id }));
+
         return batches
           .flatMap((batch) => batch.items)
           .map((item) => new TextDecoder().decode(item));
       }).pipe(Effect.provide(host)),
     );
+
     expect(seen).toEqual(['"draft"']);
   }
 });

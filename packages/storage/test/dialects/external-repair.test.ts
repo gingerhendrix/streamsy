@@ -20,20 +20,24 @@ for (const dialect of dialects) {
   describe.skipIf(url === undefined)(`${dialect.name} external writes`, () => {
     test("a write from another pool wakes a parked pull through bounded repair", async () => {
       if (url === undefined) return;
+
       const result = await Effect.runPromise(
         Effect.gen(function* () {
           const fresh = yield* freshDatabase(dialect, url);
           const probe = makeBoundaryTestProbe();
+
           const context = yield* Layer.build(
             layerWithTestProbe({ repairIntervalMs: 100 }, probe).pipe(
               Layer.provideMerge(dialectClient(dialect, fresh)),
             ),
           );
+
           // A second pool with its own Reactivity stands in for another process.
           const external = Context.get(
             yield* Layer.build(dialectClient(dialect, fresh, { maxConnections: 1 })),
             SqlClient.SqlClient,
           );
+
           const externalWrite = external`INSERT INTO streamsy_streams ${external.insert({
             stream_id: "external",
             content_type: "text/plain",
@@ -42,9 +46,11 @@ for (const dialect of dialects) {
             closed: 0,
             soft_deleted: 0,
           })}`.pipe(Effect.orDie, Effect.asVoid);
+
           return yield* runExternalRepair(externalWrite, probe).pipe(Effect.provide(context));
         }).pipe(Effect.scoped),
       );
+
       expect(result).toMatchObject({ parkedAfterCommit: true, repaired: true });
       expect(result.repairPasses).toBeGreaterThan(0);
     }, 60_000);

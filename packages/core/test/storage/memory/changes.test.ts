@@ -19,32 +19,39 @@ for (const push of [true, false]) {
           const bus = yield* createNotifier;
           const id = StreamId.make("s");
           let reads = 0;
+
           class ObservedEntries extends Map<
             StreamId,
             import("../../../src/storage/memory/state.ts").Entry
           > {
             override get(key: StreamId) {
               reads++;
+
               return super.get(key);
             }
           }
+
           const state: State = {
             entries: new ObservedEntries(),
             children: new Map(),
             deadlines: [],
           };
+
           const ready = yield* Deferred.make<void>();
           const hold = yield* Deferred.make<void>();
+
           const fiber = yield* changes(state, bus, id, push, 25).pipe(
             Stream.runForEach(() =>
               Effect.gen(function* () {
                 yield* Deferred.succeed(ready, undefined);
+
                 // Keep a live subscription without draining its bus to make retention observable.
                 if (push) yield* Deferred.await(hold);
               }),
             ),
             Effect.forkScoped,
           );
+
           yield* Deferred.await(ready);
           yield* bus.publish;
           expect(pending(bus)).toBe(push ? 1 : 0);
@@ -79,6 +86,7 @@ it("a slow subscriber retains one coalesced wake and observes its latest authori
           const ready = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           let seen = 0;
+
           const fiber = yield* changes(state, bus, id, true, 25).pipe(
             Stream.tap(() =>
               Effect.gen(function* () {
@@ -92,6 +100,7 @@ it("a slow subscriber retains one coalesced wake and observes its latest authori
             Stream.runCollect,
             Effect.forkScoped,
           );
+
           yield* Deferred.await(ready);
           // The relevant update is followed by unrelated commits. Their coalesced wake
           // must still re-read this stream instead of being discarded by an id filter.
@@ -105,6 +114,7 @@ it("a slow subscriber retains one coalesced wake and observes its latest authori
             messages: [],
             producers: new Map(),
           });
+
           for (let i = 0; i < 1000; i++) yield* bus.publish;
           expect(pending(bus)).toBe(1);
           yield* Deferred.succeed(release, undefined);

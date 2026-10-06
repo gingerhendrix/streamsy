@@ -32,6 +32,7 @@ for (const sameId of [false, true]) {
               const storage = yield* Storage;
               const id = StreamId.make("fast");
               const other = StreamId.make("other");
+
               for (const key of [id, other]) {
                 yield* storage.mutate({
                   operations: [
@@ -52,17 +53,21 @@ for (const sameId of [false, true]) {
                   ],
                 });
               }
+
               const slowReady = yield* Deferred.make<void>();
               const hold = yield* Deferred.make<void>();
+
               const slow = storage.changes(sameId ? id : other).pipe(
                 Stream.runForEach(() =>
                   Effect.andThen(Deferred.succeed(slowReady, undefined), Deferred.await(hold)),
                 ),
                 Effect.forkScoped,
               );
+
               const initial = yield* Deferred.make<void>();
               const unchanged = yield* Deferred.make<void>();
               let snapshots = 0;
+
               const observed = Storage.of({
                 ...storage,
                 changes: (key) =>
@@ -70,6 +75,7 @@ for (const sameId of [false, true]) {
                     Stream.tap((value) =>
                       Effect.gen(function* () {
                         snapshots++;
+
                         if (snapshots > 2) return;
                         expect(value.currentOffset).toBe(ZERO_OFFSET);
                         yield* Deferred.succeed(snapshots === 1 ? initial : unchanged, undefined);
@@ -77,21 +83,27 @@ for (const sameId of [false, true]) {
                     ),
                   ),
               });
+
               const fast = readNext(observed, id, { offset: ZERO_OFFSET }, 30_000).pipe(
                 Effect.forkScoped,
               );
+
               if (slowFirst) {
                 yield* slow;
                 yield* Deferred.await(slowReady);
               }
+
               const reader = yield* fast;
               yield* Deferred.await(initial);
+
               if (!slowFirst) {
                 yield* slow;
                 yield* Deferred.await(slowReady);
               }
+
               if (wake === "ttl") {
                 const record = yield* storage.record(other);
+
                 if (Option.isNone(record)) throw new Error("missing fixture");
                 yield* touch(storage, record.value);
               } else {
@@ -100,6 +112,7 @@ for (const sameId of [false, true]) {
                   contentType: "text/plain",
                 });
               }
+
               yield* Deferred.await(unchanged);
               // Effect 4.0.1 adjust(0) yields through a child fiber; it is not a quiescence barrier.
               // The unchanged snapshot proves W1 was taken; a new wake now has room.
@@ -110,9 +123,11 @@ for (const sameId of [false, true]) {
                 data: new TextEncoder().encode("relevant"),
                 contentType: "text/plain",
               });
+
               for (let turns = 0; turns < 100 && reader.pollUnsafe() === undefined; turns++) {
                 yield* Effect.yieldNow;
               }
+
               expect(reader.pollUnsafe()).toMatchObject({
                 _tag: "Success",
                 value: {
@@ -144,9 +159,11 @@ it("memory layer shutdown ends pending and late changes outside the owner scope"
       yield* Scope.close(owner, Exit.void);
       const stopped = yield* Fiber.await(pending);
       expect(Exit.isFailure(stopped) && Cause.hasInterruptsOnly(stopped.cause)).toBe(true);
+
       const late = yield* storage
         .changes(StreamId.make("late"))
         .pipe(Stream.runCollect, Effect.exit);
+
       expect(Exit.isFailure(late) && Cause.hasInterruptsOnly(late.cause)).toBe(true);
     }).pipe(Effect.scoped, Effect.runPromiseExit),
   ).resolves.toEqual(Exit.succeed(undefined)));
@@ -159,13 +176,16 @@ it("a rejected mutation emits no wake while a subsequent commit does", () =>
       const id = StreamId.make("rejected");
       const pull = yield* Stream.toPull(storage.changes(id));
       expect((yield* pull)[0]).toMatchObject({ present: false });
+
       const rejected = yield* Effect.flip(
         storage.mutate({
           operations: [{ _tag: "Delete", streamId: id, reason: "delete" }],
         }),
       );
+
       expect(rejected).toMatchObject({ _tag: "MutationRejected", reason: "not-found" });
       const pending = yield* pull.pipe(Effect.forkScoped);
+
       for (let turns = 0; turns < 100; turns++) yield* Effect.yieldNow;
       expect(pending.pollUnsafe()).toBeUndefined();
       yield* storage.mutate({

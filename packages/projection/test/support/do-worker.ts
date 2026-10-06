@@ -4,17 +4,20 @@ import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Layer, ManagedRuntime } from "effect";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { composition } from "./scenarios.ts";
+
 interface Env {
   readonly PROJECTION: {
     readonly idFromName: (name: string) => DurableObjectId;
     readonly get: (id: DurableObjectId) => { readonly fetch: (input: string) => Promise<Response> };
   };
 }
+
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return env.PROJECTION.get(env.PROJECTION.idFromName("projection-proof")).fetch(request.url);
   },
 };
+
 export class ProjectionObject {
   readonly #ctx: DurableObjectState;
   constructor(ctx: DurableObjectState) {
@@ -29,7 +32,9 @@ export class ProjectionObject {
         }),
       ),
     );
+
     const runtime = ManagedRuntime.make(FamilyFixture.withFamilies(host));
+
     try {
       return Response.json(await runtime.runPromise(composition));
     } finally {

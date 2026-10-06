@@ -29,21 +29,28 @@ export const describeRuntimeHost = (runtime: Runtime) => {
 
   describe.skipIf(command === undefined)(`${runtime} listener live reads`, () => {
     let host: SpawnedHost | undefined;
+
     const url = (path: string) => {
       if (host === undefined) throw new Error("Expected a running host");
+
       return new URL(path, host.url);
     };
+
     const tail = async (path: string) => {
       const created = await fetch(url(path), {
         method: "PUT",
         headers: { "content-type": "text/plain" },
         body: "seed",
       });
+
       expect(created.status).toBe(201);
       const offset = created.headers.get("stream-next-offset");
+
       if (offset === null) throw new Error("Expected current tail");
+
       return offset;
     };
+
     beforeAll(async () => {
       if (command === undefined) return;
       host = await spawnHost(command, {

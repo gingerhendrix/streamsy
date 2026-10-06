@@ -68,6 +68,7 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
   const url = `http://127.0.0.1:${port}`;
   const label = `${options.command ?? "bun"} ${options.entry}`;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
   const handle = yield* spawner.spawn(
     ChildProcess.make(options.command ?? "bun", [options.entry], {
       cwd: options.cwd,
@@ -76,6 +77,7 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
       forceKillAfter: "10 seconds",
     }),
   );
+
   // Read both pipes from the start, so a chatty server never blocks on a full pipe.
   const stdout = yield* Effect.forkScoped(collect(handle.stdout));
   const stderr = yield* Effect.forkScoped(collect(handle.stderr));
@@ -86,8 +88,10 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
     const exitCode = Exit.isSuccess(exit) ? exit.value : null;
     const output = yield* Fiber.join(stdout);
     const errors = yield* Fiber.join(stderr);
+
     if (output.trim() !== "") yield* Console.log(output.trim());
     const clean = exitCode === 0 && errors.trim() === "";
+
     return yield* clean
       ? Effect.void
       : Effect.fail(
@@ -100,14 +104,19 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
           }),
         );
   });
+
   const stopOnce = yield* Effect.cached(stopProcess);
   let stopRequested = false;
+
   const stop = Effect.suspend(() => {
     stopRequested = true;
+
     return stopOnce;
   });
+
   yield* Effect.addFinalizer((exit) => {
     if (stopRequested) return Effect.void;
+
     // A failed program already exits non-zero; report the stop but keep the first error.
     return Exit.isSuccess(exit)
       ? Effect.orDie(stop)
@@ -115,6 +124,7 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
   });
 
   const isReady = options.isReady ?? (() => true);
+
   const ready = HttpClient.get(url).pipe(
     Effect.flatMap((response) =>
       Effect.flatMap(response.text, () =>
@@ -125,6 +135,7 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
     ),
     Effect.retry(Schedule.spaced("100 millis")),
   );
+
   // A server that exits before it answers failed to start; `stop` reads its exit code and stderr.
   const exitedEarly = Effect.ignore(handle.exitCode).pipe(
     Effect.andThen(stop),
@@ -136,6 +147,7 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
       ),
     ),
   );
+
   yield* Effect.raceFirst(ready, exitedEarly).pipe(
     Effect.timeoutOrElse({
       duration: "10 seconds",
@@ -145,5 +157,6 @@ export const spawnServer = Effect.fn("spawnServer")(function* (options: SpawnSer
   );
 
   const server: Server = { port, url, stop };
+
   return server;
 });

@@ -101,16 +101,20 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
   if (!Number.isInteger(spec.delivery.maxAttempts) || spec.delivery.maxAttempts < 1) {
     throw new TypeError(`action sink ${spec.name} must declare at least one delivery attempt`);
   }
+
   if (spec.delivery.backoffFactor < 1) {
     throw new TypeError(`action sink ${spec.name} must not shrink its backoff`);
   }
+
   if (
     spec.delivery.initialBackoffMs < 0 ||
     spec.delivery.maxBackoffMs < spec.delivery.initialBackoffMs
   ) {
     throw new TypeError(`action sink ${spec.name} declares an impossible backoff window`);
   }
+
   const key = spec.from.key;
+
   const fingerprint = contractFingerprint({
     name: spec.name,
     key,
@@ -122,6 +126,7 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
       ]),
     ),
   });
+
   return Object.freeze({ ...spec, kind: "checked-action-sink", key, fingerprint });
 }
 
@@ -129,6 +134,7 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
 export function backoffAfter(policy: ActionSinkDeliveryPolicy, attempts: number): number {
   const exponent = Math.max(0, attempts - 1);
   const raw = policy.initialBackoffMs * policy.backoffFactor ** exponent;
+
   return Math.min(policy.maxBackoffMs, Math.round(raw));
 }
 

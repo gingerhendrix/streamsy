@@ -12,12 +12,19 @@ import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
+
 const packageRoot = resolve(scriptDirectory, "..");
+
 const repositoryRoot = resolve(packageRoot, "../..");
+
 const workerSource = join(packageRoot, "src", "worker.ts");
+
 const outputRoot = join(packageRoot, "dist");
+
 const uploadDirectory = join(outputRoot, "worker");
+
 const workerPath = join(uploadDirectory, "worker.js");
+
 const reportPath = join(outputRoot, "bundle-report.json");
 
 const failPrerequisite = (message: string): never => {
@@ -45,7 +52,9 @@ const assertBuiltExports = (): void => {
 
 const assertOwnedDirectory = (path: string, label: string): void => {
   const stats = lstatIfExists(path);
+
   if (stats === undefined) return;
+
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new Error(`${label} must be an owned regular directory: ${path}`);
   }
@@ -55,16 +64,22 @@ const assertOwnedAncestors = (path: string, label: string): void => {
   const absolute = resolve(path);
   const repository = resolve(repositoryRoot);
   const outside = relative(repository, absolute);
+
   if (outside.startsWith("..") || isAbsolute(outside)) {
     throw new Error(`${label} escaped the repository output boundary: ${absolute}`);
   }
+
   let current = absolute;
+
   for (;;) {
     const stats = lstatIfExists(current);
+
     if (stats !== undefined && (!stats.isDirectory() || stats.isSymbolicLink())) {
       throw new Error(`${label} has an unowned ancestor: ${current}`);
     }
+
     const parent = dirname(current);
+
     if (parent === current) break;
     current = parent;
   }
@@ -72,10 +87,13 @@ const assertOwnedAncestors = (path: string, label: string): void => {
 
 const invalidateReport = (): void => {
   const stats = lstatIfExists(reportPath);
+
   if (stats === undefined) return;
+
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new Error(`Refusing to remove unexpected bundle report ${reportPath}`);
   }
+
   rmSync(reportPath);
 };
 
@@ -85,29 +103,37 @@ const cleanOwnedUploadDirectory = (): void => {
   assertOwnedDirectory(outputRoot, "Worker output root");
   assertOwnedDirectory(uploadDirectory, "Worker upload directory");
   mkdirSync(outputRoot, { recursive: true });
+
   if (lstatIfExists(uploadDirectory) === undefined) {
     mkdirSync(uploadDirectory);
+
     return;
   }
+
   for (const entry of readdirSync(uploadDirectory)) {
     if (entry !== "worker.js") {
       throw new Error(
         `Refusing to remove unexpected worker output ${join(uploadDirectory, entry)}`,
       );
     }
+
     rmSync(join(uploadDirectory, entry), { force: true });
   }
 };
 
 const inspectUploadDirectory = (): number => {
   const entries = readdirSync(uploadDirectory);
+
   if (entries.length !== 1 || entries[0] !== "worker.js") {
     throw new Error("Worker upload directory must contain exactly worker.js");
   }
+
   const published = lstatSync(workerPath);
+
   if (!published.isFile() || published.isSymbolicLink()) {
     throw new Error("Published worker.js is not a regular non-symlink file");
   }
+
   return 1;
 };
 
@@ -115,7 +141,9 @@ let outputRootValidated = false;
 
 const outputFile = (outputs: Array<Bun.BuildArtifact>, label: string): Bun.BuildArtifact => {
   const output = outputs.find((candidate) => candidate.path.endsWith("worker.js"));
+
   if (output === undefined) throw new Error(`${label} build did not produce worker.js`);
+
   return output;
 };
 
@@ -134,12 +162,15 @@ const spawnBytes = async (
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const [stdout, stderr, exitCode] = await Promise.all([
     process.stdout.bytes(),
     process.stderr.text(),
     process.exited,
   ]);
+
   if (exitCode !== 0) throw new Error(`${command.join(" ")} failed with ${exitCode}: ${stderr}`);
+
   return stdout;
 };
 
@@ -154,12 +185,14 @@ const build = async (): Promise<void> => {
   assertBuiltExports();
   cleanOwnedUploadDirectory();
   let temporaryRoot: string | undefined;
+
   try {
     temporaryRoot = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "streamsy-worker-build-"));
     const minifiedRoot = join(temporaryRoot, "minified");
     const rawRoot = join(temporaryRoot, "raw");
     mkdirSync(minifiedRoot);
     mkdirSync(rawRoot);
+
     const minified = await Bun.build({
       entrypoints: [workerSource],
       outdir: minifiedRoot,
@@ -171,10 +204,13 @@ const build = async (): Promise<void> => {
       external: ["cloudflare:workers"],
       metafile: true,
     });
+
     if (!minified.success || minified.metafile === undefined) {
       throw new Error(`Worker build failed: ${JSON.stringify(minified.logs)}`);
     }
+
     const minifiedOutput = outputFile(minified.outputs, "Minified");
+
     const raw = await Bun.build({
       entrypoints: [workerSource],
       outdir: rawRoot,
@@ -185,6 +221,7 @@ const build = async (): Promise<void> => {
       sourcemap: "none",
       external: ["cloudflare:workers"],
     });
+
     if (!raw.success) throw new Error(`Raw worker build failed: ${JSON.stringify(raw.logs)}`);
     const rawOutput = outputFile(raw.outputs, "Raw");
     const minifiedBytes = await readBytes(minifiedOutput.path);
@@ -198,11 +235,14 @@ const build = async (): Promise<void> => {
     const gzipBytesCliStdin = (await spawnBytes(["gzip", "-9", "-c"], publishedBytes)).byteLength;
     const gzipBytesBun = Bun.gzipSync(gzipInput, { level: 9 }).byteLength;
     const sourceSha = (await commandText(["git", "rev-parse", "HEAD"], repositoryRoot)).trim();
+
     const sourceStatus = await commandText(
       ["git", "status", "--porcelain=v1", "--untracked-files=all"],
       repositoryRoot,
     );
+
     const gzipVersion = (await commandText(["gzip", "--version"])).split("\n")[0] ?? "unknown";
+
     const report = {
       sourceSha,
       sourceDirty: sourceStatus.trim().length > 0,
@@ -239,6 +279,7 @@ const build = async (): Promise<void> => {
       hostedComparison:
         "Local bytes are not uploaded compressed bytes and do not establish hosted acceptance.",
     };
+
     await Bun.write(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   } finally {
     if (temporaryRoot !== undefined) rmSync(temporaryRoot, { recursive: true, force: true });
@@ -265,5 +306,6 @@ try {
       },
     );
   }
+
   throw error;
 }

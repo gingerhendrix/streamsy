@@ -19,6 +19,7 @@ interface FiniteFieldCase {
 }
 
 const id = StreamId.make("s");
+
 const bytes = new Uint8Array([1]);
 
 const cases: ReadonlyArray<FiniteFieldCase> = [

@@ -15,36 +15,50 @@ import { app } from "@streamsy/core/http";
 type Actual = ReturnType<typeof app>;
 
 type Success = Effect.Success<Actual>;
+
 type Failure = Effect.Error<Actual>;
+
 type Requirements = Effect.Services<Actual>;
 
 /** Success is narrowed to `HttpServerResponse`; raw Web responses are wrapped by `app`. */
 const response: Success = HttpServerResponse.empty({ status: 200 });
+
 void response;
 
 // @ts-expect-error the raw Web response is not part of the success type
 const raw: Success = new Response("x");
+
 void raw;
 
 // @ts-expect-error the error channel is closed, so no failure type is assignable to it
 const failure: Failure = new Error("closed");
+
 void failure;
 
 type Contains<Set, Address> = [Address] extends [Set] ? true : false;
+
 type Exactly<Set, All> = [All] extends [Set] ? ([Set] extends [All] ? true : false) : false;
 
 const requiresRequest: Contains<Requirements, HttpServerRequest.HttpServerRequest> = true;
+
 const requiresReader: Contains<Requirements, StreamsReader> = true;
+
 const requiresWriter: Contains<Requirements, StreamsWriter> = true;
+
 const exact: Exactly<
   Requirements,
   HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter
 > = true;
+
 void requiresRequest;
+
 void requiresReader;
+
 void requiresWriter;
+
 void exact;
 
 // @ts-expect-error the requirement set excludes anything that is not the request or the two services
 const extra: Exactly<Requirements, StreamsReader | StreamsWriter | URL> = true;
+
 void extra;

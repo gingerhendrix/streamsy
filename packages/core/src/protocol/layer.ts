@@ -8,6 +8,7 @@ import { append } from "./append.ts";
 import { head, read, readNext } from "./read.ts";
 import { StreamNotFound, StreamGone, type RemoveError } from "./errors.ts";
 import { expireIfNeeded } from "./expiry.ts";
+
 export { expireDue } from "./expiry.ts";
 
 export interface ProtocolOptions {
@@ -15,6 +16,7 @@ export interface ProtocolOptions {
   readonly readLimit?: number;
   readonly longPollTimeoutMs?: number;
 }
+
 export const layer = (
   options: ProtocolOptions = {},
 ): Layer.Layer<StreamsReader | StreamsWriter, never, Storage> =>
@@ -22,16 +24,20 @@ export const layer = (
     Effect.gen(function* () {
       const storage = yield* Storage;
       const timeout = options.longPollTimeoutMs ?? 30_000;
+
       if (!Number.isFinite(timeout) || timeout <= 0)
         return yield* Effect.die(new RangeError("longPollTimeoutMs must be positive"));
       const readLimit = options.readLimit ?? 1000;
+
       if (!Number.isSafeInteger(readLimit) || readLimit <= 0)
         return yield* Effect.die(new RangeError("readLimit must be a positive safe integer"));
+
       const reader = StreamsReader.of({
         head: (id) => head(storage, id),
         read: (id, opts) => read(storage, id, opts, readLimit),
         readNext: (id, opts) => readNext(storage, id, opts, timeout),
       });
+
       const writer = StreamsWriter.of({
         create: (id, opts) => create(storage, id, opts),
         fork: (id, source, opts) => create(storage, id, { ...opts, forkedFrom: source }),
@@ -50,13 +56,16 @@ export const layer = (
                 (rejection): Effect.Effect<never, RemoveError> => {
                   if (rejection.reason === "not-found")
                     return Effect.fail(new StreamNotFound({ id }));
+
                   if (rejection.reason === "gone") return Effect.fail(new StreamGone({ id }));
+
                   return Effect.die(new Error(`Unexpected delete rejection: ${rejection.reason}`));
                 },
               ),
             );
         }),
       });
+
       return Context.make(StreamsReader, attachStorage(reader, storage)).pipe(
         Context.add(StreamsWriter, attachStorage(writer, storage)),
       );

@@ -22,6 +22,7 @@ type StoredIssue = {
   readonly updated_at: string;
   readonly assignee_id: string | null;
 };
+
 const toIssue = (row: StoredIssue): typeof IssueRow.Type => ({
   workspaceId: row.workspace_id,
   issueId: row.issue_id,
@@ -54,7 +55,9 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
   Effect.gen(function* () {
     const before = yield* storedIssue(sql, event.workspaceId, event.issueId);
     const after = foldIssue(before, event);
+
     if (after === undefined || after === before) return;
+
     const issue = sql.insert({
       workspace_id: after.workspaceId,
       issue_id: after.issueId,
@@ -65,6 +68,7 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
       updated_at: after.updatedAt,
       assignee_id: after.assigneeId ?? null,
     });
+
     yield* sql.onDialectOrElse({
       mysql: () =>
         sql`INSERT INTO issues ${issue} ON DUPLICATE KEY UPDATE project_id = VALUES(project_id), title = VALUES(title), status = VALUES(status), sequence = VALUES(sequence), updated_at = VALUES(updated_at), assignee_id = VALUES(assignee_id)`,
@@ -84,6 +88,7 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
         status: after.status,
       }),
     );
+
     if (event.type === "IssueAssigned")
       yield* insertIgnore(
         sql,
@@ -115,6 +120,7 @@ const applyLabel = (sql: SqlClient.SqlClient, item: IssueLabelEvent) => {
     sequence: item.sequence,
     updated_at: item.occurredAt,
   });
+
   return sql.onDialectOrElse({
     mysql: () =>
       sql`INSERT INTO issue_labels ${row} ON DUPLICATE KEY UPDATE attached = IF(VALUES(sequence) > sequence, VALUES(attached), attached), updated_at = IF(VALUES(sequence) > sequence, VALUES(updated_at), updated_at), sequence = IF(VALUES(sequence) > sequence, VALUES(sequence), sequence)`,
@@ -147,6 +153,7 @@ const upsertCatalog = (
 ) => {
   const idColumn = catalogTables[table];
   const row = sql.insert({ workspace_id: workspaceId, [idColumn]: key, value });
+
   return sql.onDialectOrElse({
     mysql: () =>
       sql`INSERT INTO ${sql(table)} ${row} ON DUPLICATE KEY UPDATE value = VALUES(value)`,
@@ -169,6 +176,7 @@ export const issueRows = Projection.process({
   process: Projection.each((entry, unit) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+
       switch (entry.input) {
         case "events":
           yield* applyIssue(sql, entry.item);
@@ -181,6 +189,7 @@ export const issueRows = Projection.process({
         case "labels": {
           const item = entry.item;
           const workspaceId = unit.params.workspaceId;
+
           if (!("value" in item)) {
             yield* deleteCatalog(sql, entry.input, workspaceId, item.key);
           } else {
@@ -193,6 +202,7 @@ export const issueRows = Projection.process({
               JSON.stringify(item.value),
             );
           }
+
           break;
         }
       }

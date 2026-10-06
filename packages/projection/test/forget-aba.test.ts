@@ -29,12 +29,14 @@ const hosts: ReadonlyArray<
     ),
   ],
 ];
+
 for (const [name, host] of hosts) {
   for (const serialized of [true, false]) {
     test(`${name}: forget ${serialized ? "waits for the serialized runner, preventing ABA" : "cannot protect an internal kernel run simulating another process"}`, () =>
       Effect.runPromise(
         Effect.gen(function* () {
           const input = FamilyFixture.json("aba-input", { schema: Schema.Finite });
+
           const projection = Projection.fold({
             id: `aba-${name}-${serialized}`,
             params: {},
@@ -42,6 +44,7 @@ for (const [name, host] of hosts) {
             state: { schema: Schema.Finite, initial: 0 },
             fold: (sum, { item }) => sum + item,
           }).at({});
+
           yield* Streams.create(input);
           yield* Streams.append(input, [2, 3]);
           yield* Projection.run(projection);
@@ -50,6 +53,7 @@ for (const [name, host] of hosts) {
           const release = yield* Deferred.make<void>();
           const reader = yield* StreamsReader;
           let first = true;
+
           const slow = {
             ...reader,
             read: (
@@ -62,16 +66,20 @@ for (const [name, host] of hosts) {
                   yield* Deferred.succeed(reading, undefined);
                   yield* Deferred.await(release);
                 }
+
                 return yield* reader.read(id, options);
               }),
           };
+
           const a = yield* (serialized ? Projection.run(projection) : runKernel(projection)).pipe(
             FamilyFixture.provideReader(slow),
             Effect.forkChild,
           );
+
           yield* Deferred.await(reading);
           let forgotten = false;
           const started = yield* Deferred.make<void>();
+
           const forget = yield* Deferred.succeed(started, undefined).pipe(
             Effect.andThen(Projection.forget(projection)),
             Effect.tap(() =>
@@ -81,7 +89,9 @@ for (const [name, host] of hosts) {
             ),
             Effect.forkChild,
           );
+
           yield* Deferred.await(started);
+
           if (serialized) {
             for (let n = 0; n < 10; n += 1) yield* Effect.yieldNow;
             expect(forgotten).toBe(false);
@@ -118,6 +128,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
   Effect.runPromise(
     Effect.gen(function* () {
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "queued-forget",
@@ -125,6 +136,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
         inputs: { input },
         process: () => Effect.void,
       }).at({});
+
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       const reader = yield* StreamsReader;
@@ -132,6 +144,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
       const firstRelease = yield* Deferred.make<void>();
       const secondRead = yield* Deferred.make<void>();
       const secondRelease = yield* Deferred.make<void>();
+
       const gated = (read: Deferred.Deferred<void>, release: Deferred.Deferred<void>) => ({
         ...reader,
         read: (id: Parameters<typeof reader.read>[0], options: Parameters<typeof reader.read>[1]) =>
@@ -140,34 +153,41 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
             Effect.andThen(reader.read(id, options)),
           ),
       });
+
       const first = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader(gated(firstRead, firstRelease)),
         Effect.forkChild,
       );
+
       yield* Deferred.await(firstRead);
       const forget = yield* Projection.forget(projection).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
+
       const second = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader(gated(secondRead, secondRelease)),
         Effect.forkChild,
       );
+
       yield* Effect.yieldNow;
       yield* Deferred.succeed(firstRelease, undefined);
       yield* Fiber.join(first);
       yield* Fiber.join(forget);
       yield* Deferred.await(secondRead);
       let thirdReads = 0;
+
       const third = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader({
           ...reader,
           read: (id, options) =>
             Effect.suspend(() => {
               thirdReads += 1;
+
               return reader.read(id, options);
             }),
         }),
         Effect.forkChild,
       );
+
       for (let n = 0; n < 10; n += 1) yield* Effect.yieldNow;
       expect(thirdReads).toBe(0);
       yield* Deferred.succeed(secondRelease, undefined);

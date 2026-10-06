@@ -5,4 +5,5 @@
  * this module.
  */
 export { listener, type ListenerOptions } from "../../src/bun.ts";
+
 export { runMain } from "@effect/platform-bun/BunRuntime";

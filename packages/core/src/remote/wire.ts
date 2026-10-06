@@ -12,10 +12,13 @@ import { TransportFault } from "../fault.ts";
 import type { ReadMessage } from "../protocol/results.ts";
 
 export type HttpResponse = HttpClientResponse.HttpClientResponse;
+
 export type FaultReason = "request" | "response" | "decode" | "configuration";
 
 const INTEGER = /^(0|[1-9]\d*)$/;
+
 const OFFSET = /^\d{16}_\d{16}$/;
+
 const CONTENT_TYPE = /^[^\s/;]+\/[^\s;]+(?:;.*)?$/;
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Transport, UTF-8 and body failures are retained as diagnostic causes.
@@ -39,8 +42,10 @@ export const closedHeader = (
   response: HttpResponse,
 ): Effect.Effect<boolean, TransportFault> => {
   const value = header(response, "stream-closed");
+
   if (value === undefined || value === "true" || value === "false")
     return Effect.succeed(value === "true");
+
   return Effect.fail(
     failure(
       operation,
@@ -63,7 +68,9 @@ export const optionalOffset = (
   response: HttpResponse,
 ): Effect.Effect<string | undefined, TransportFault> => {
   const value = header(response, "stream-next-offset");
+
   if (value === undefined) return Effect.succeed(undefined);
+
   if (!OFFSET.test(value))
     return Effect.fail(
       failure(
@@ -74,6 +81,7 @@ export const optionalOffset = (
         response.status,
       ),
     );
+
   return Effect.succeed(value);
 };
 
@@ -102,10 +110,12 @@ export const contentType = (
   response: HttpResponse,
 ): Effect.Effect<string, TransportFault> => {
   const value = header(response, "content-type");
+
   if (value === undefined)
     return Effect.fail(
       failure(operation, "response", "Missing content-type header", undefined, response.status),
     );
+
   if (!CONTENT_TYPE.test(value))
     return Effect.fail(
       failure(
@@ -116,6 +126,7 @@ export const contentType = (
         response.status,
       ),
     );
+
   return Effect.succeed(value);
 };
 
@@ -125,8 +136,10 @@ export const integer = (
   value: string | undefined,
 ): Effect.Effect<number | undefined, TransportFault> => {
   if (value === undefined) return Effect.succeed(undefined);
+
   if (!INTEGER.test(value))
     return Effect.fail(failure(operation, "response", `Invalid ${name} header: ${value}`));
+
   return Effect.succeed(Number(value));
 };
 
@@ -139,10 +152,12 @@ export const body = (
     Effect.map((chunks) => {
       const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
       let position = 0;
+
       for (const chunk of chunks) {
         bytes.set(chunk, position);
         position += chunk.length;
       }
+
       return bytes;
     }),
     Effect.mapError((cause) =>
@@ -169,6 +184,7 @@ export const unexpectedWith = (
   detail: string,
 ): TransportFault => {
   const trimmed = detail.trim();
+
   return failure(
     operation,
     "response",
@@ -198,12 +214,14 @@ export const readMessages = (
   bytes: Uint8Array,
 ): Effect.Effect<ReadMessage[], TransportFault> => {
   if (bytes.byteLength === 0) return Effect.succeed([]);
+
   return contentType(operation, response).pipe(
     Effect.flatMap((value) => {
       if (value.split(";")[0]?.trim().toLowerCase() === "application/json")
         return text(operation, bytes).pipe(
           Effect.flatMap((decoded) => jsonMessages(operation, decoded)),
         );
+
       return Effect.succeed([{ data: bytes }]);
     }),
   );

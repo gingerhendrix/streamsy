@@ -17,6 +17,7 @@ export const scratchDatabase = (prefix: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: `${prefix}-` });
+
     return path.join(directory, "tracker.sqlite");
   });
 
@@ -27,6 +28,7 @@ export const scratchDatabase = (prefix: string) =>
  */
 export const serverDatabase = Effect.gen(function* () {
   const choice = yield* storageChoice(yield* ServerConfig);
+
   return choice.dialect === "pg" ? "Postgres" : choice.dialect === "mysql" ? "MySQL" : "SQLite";
 });
 
@@ -38,6 +40,7 @@ export const serverDatabase = Effect.gen(function* () {
 export const startServer = (database: string, port?: number) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
+
     return yield* spawnServer({
       cwd: path.resolve(import.meta.dir, ".."),
       entry: "server/index.ts",
@@ -89,19 +92,24 @@ export const readBoard = (baseUrl: string, workspaceId: string) =>
   Effect.gen(function* () {
     const rows = new Map<string, ProjectBoardCard>();
     let offset = "-1";
+
     for (;;) {
       const url = `${baseUrl}/state/workspaces/${workspaceId}/issues?offset=${offset}`;
       const response = yield* HttpClient.get(url).pipe(Effect.flatMap(ok("GET", url)));
       const changes = yield* HttpClientResponse.schemaBodyJson(BoardPage)(response);
+
       for (const change of changes) {
         if (change.headers.operation === "delete") rows.delete(change.key);
         else if (change.value !== undefined) rows.set(change.key, change.value);
       }
+
       if (response.headers["stream-up-to-date"] !== undefined) return { rows: [...rows.values()] };
       const next = response.headers["stream-next-offset"];
+
       if (next === undefined || next === offset) {
         return yield* new SmokeFailure({ message: "board replay made no progress" });
       }
+
       offset = next;
     }
   });

@@ -72,7 +72,9 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
         paths: ["/a"],
         concurrency: 1,
       }).pipe(Effect.forkChild);
+
       yield* TestClock.adjust("1 second");
+
       return yield* Fiber.join(fiber);
     }).pipe(
       Effect.provide(
@@ -88,6 +90,7 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
       ),
     ),
   );
+
   expect(exit.pairs[0]?.firstMinusWarmMs).toBe(7);
   expect(exit.deltas.status).toBe("success");
 });
@@ -99,6 +102,7 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
   let maximumHead = 0;
   let putsCompleted = 0;
   let headBeforeAllPuts = false;
+
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* measureLatency({
@@ -106,14 +110,17 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
         paths,
         concurrency: 3,
       }).pipe(Effect.forkChild);
+
       const ticker = yield* Effect.forever(
         Effect.gen(function* () {
           yield* TestClock.adjust("10 millis");
           yield* Effect.yieldNow;
         }),
       ).pipe(Effect.forkChild);
+
       const value = yield* Fiber.join(fiber);
       yield* Fiber.interrupt(ticker);
+
       return value;
     }).pipe(
       Effect.provide(
@@ -122,13 +129,18 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
             request: (request) =>
               Effect.gen(function* () {
                 active += 1;
+
                 if (request.method === "PUT") maximumPut = Math.max(maximumPut, active);
+
                 if (request.method === "HEAD") maximumHead = Math.max(maximumHead, active);
+
                 if (request.method === "HEAD" && putsCompleted !== paths.length)
                   headBeforeAllPuts = true;
                 yield* Effect.sleep("10 millis");
+
                 if (request.method === "PUT") putsCompleted += 1;
                 active -= 1;
+
                 return { status: 200, body: "" };
               }),
           }),
@@ -137,6 +149,7 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
       ),
     ),
   );
+
   expect(result.valid).toBe(true);
   expect(result.pairs).toHaveLength(paths.length);
   expect(maximumPut).toBe(3);
@@ -149,11 +162,13 @@ test("latency does not produce a valid aggregate after a failed response", async
     request: (request) =>
       Effect.succeed({ status: request.method === "PUT" ? 500 : 200, body: "failure" }),
   });
+
   const result = await Effect.runPromise(
     measureLatency({ baseUrl: "https://example.test", paths: ["/a"], concurrency: 1 }).pipe(
       Effect.provide(layer),
     ),
   );
+
   expect(result.valid).toBe(false);
   expect(result.first.status).toBe("failure");
   expect(result.deltas.status).toBe("failure");
@@ -172,6 +187,7 @@ test("latency rejects initial PUT, HEAD, and body failures", async () => {
       ),
     ),
   );
+
   expect(result.valid).toBe(false);
   expect(result.first.status).toBe("failure");
   expect(result.warm.status).toBe("failure");
@@ -180,6 +196,7 @@ test("latency rejects initial PUT, HEAD, and body failures", async () => {
 
 test("throughput records invalid create and POST responses", async () => {
   let postCalls = 0;
+
   const result = await Effect.runPromise(
     measureThroughput({
       baseUrl: "https://example.test",
@@ -193,6 +210,7 @@ test("throughput records invalid create and POST responses", async () => {
             if (request.method === "PUT")
               return Effect.succeed({ status: 500, body: "create failed" });
             postCalls += 1;
+
             return postCalls === 1
               ? Effect.fail(new ContractError({ message: "post body failed" }))
               : Effect.succeed({ status: 201, body: "" });
@@ -201,6 +219,7 @@ test("throughput records invalid create and POST responses", async () => {
       ),
     ),
   );
+
   expect(result.valid).toBe(false);
   expect(result.medianRate).toBeUndefined();
   expect(result.trials[0]?.errors).toEqual(["create: HTTP 500", "post 0: post body failed"]);
@@ -208,6 +227,7 @@ test("throughput records invalid create and POST responses", async () => {
 
 test("throughput runs its trials in order and reports the median rate", async () => {
   const methods: Array<string> = [];
+
   const result = await Effect.runPromise(
     measureThroughput({
       baseUrl: "https://example.test",
@@ -221,7 +241,9 @@ test("throughput runs its trials in order and reports the median rate", async ()
             request: (request) =>
               Effect.gen(function* () {
                 methods.push(request.method);
+
                 if (request.method === "POST") yield* TestClock.adjust("1 second");
+
                 return { status: request.method === "PUT" ? 201 : 204, body: "" };
               }),
           }),
@@ -230,6 +252,7 @@ test("throughput runs its trials in order and reports the median rate", async ()
       ),
     ),
   );
+
   expect(methods).toEqual([
     "PUT",
     "POST",
@@ -250,6 +273,7 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
   let activePosts = 0;
   let maximumPosts = 0;
   let trialOverlap = false;
+
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* measureThroughput({
@@ -258,14 +282,17 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
         postsPerTrial: 5,
         concurrency: 2,
       }).pipe(Effect.forkChild);
+
       const ticker = yield* Effect.forever(
         Effect.gen(function* () {
           yield* TestClock.adjust("10 millis");
           yield* Effect.yieldNow;
         }),
       ).pipe(Effect.forkChild);
+
       const value = yield* Fiber.join(fiber);
       yield* Fiber.interrupt(ticker);
+
       return value;
     }).pipe(
       Effect.provide(
@@ -274,12 +301,14 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
             request: (request) =>
               Effect.gen(function* () {
                 if (request.method === "PUT" && activePosts > 0) trialOverlap = true;
+
                 if (request.method === "POST") {
                   activePosts += 1;
                   maximumPosts = Math.max(maximumPosts, activePosts);
                   yield* Effect.sleep("10 millis");
                   activePosts -= 1;
                 }
+
                 return { status: request.method === "PUT" ? 201 : 204, body: "" };
               }),
           }),
@@ -288,6 +317,7 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
       ),
     ),
   );
+
   expect(result.valid).toBe(true);
   expect(maximumPosts).toBe(2);
   expect(trialOverlap).toBe(false);
@@ -299,51 +329,64 @@ const clockLayer = (
 
 test("readiness requires five consecutive exact full-body matches", async () => {
   let calls = 0;
+
   const program = Effect.gen(function* () {
     const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
     yield* TestClock.adjust("8 seconds");
+
     return yield* Fiber.join(fiber);
   });
+
   const result = await Effect.runPromise(
     program.pipe(
       Effect.provide(
         clockLayer(() => {
           calls += 1;
+
           return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
         }),
       ),
     ),
   );
+
   expect(result.attempts).toBe(5);
   expect(calls).toBe(5);
 });
 
 test("readiness resets on a transport failure and gone requires 404", async () => {
   let calls = 0;
+
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
+
       return yield* Fiber.join(fiber);
     }).pipe(
       Effect.provide(
         clockLayer(() => {
           calls += 1;
+
           if (calls === 3) return Effect.fail(new ContractError({ message: "transport" }));
+
           return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
         }),
       ),
     ),
   );
+
   expect(result.attempts).toBe(8);
   expect(calls).toBe(8);
+
   const gone = await Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* awaitGone("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("8 seconds");
+
       return yield* Fiber.join(fiber);
     }).pipe(Effect.provide(clockLayer(() => Effect.succeed({ status: 404, body: "" })))),
   );
+
   expect(gone.attempts).toBe(5);
 });
 
@@ -352,8 +395,10 @@ test("a body that never completes is bounded by the probe timeout", async () => 
     Effect.gen(function* () {
       const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("60 seconds");
+
       return yield* Fiber.join(fiber);
     }).pipe(Effect.provide(clockLayer(() => Effect.never))),
   );
+
   expect(Exit.isFailure(exit)).toBe(true);
 });

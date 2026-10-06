@@ -8,9 +8,13 @@ import * as Family from "./support/families.ts";
 import { readAll } from "./support/scenarios.ts";
 
 const input = Family.json("step-input", { schema: Schema.Number });
+
 const output = Family.json("step-output", { schema: Schema.Number });
+
 const other = Family.json("step-other", { schema: Schema.Number });
+
 const host = Family.withFamilies(memoryHost());
+
 const outputs = {
   output: output,
   other: other,
@@ -21,6 +25,7 @@ test("mapAccum threads the value and preserves entry and output order", () =>
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.append(input, [1, 2, 3]);
+
       const projection = Projection.mapAccum({
         id: "ordered",
         params: {},
@@ -33,6 +38,7 @@ test("mapAccum threads the value and preserves entry and output order", () =>
           { output: [previous, previous + item] },
         ],
       }).at({});
+
       yield* Projection.run(projection);
       expect(yield* readAll(output)).toEqual([0, 1, 1, 3, 3, 6]);
       expect((yield* Projection.read(projection)).state).toBe(6);
@@ -44,6 +50,7 @@ const emitLog = (split: boolean) =>
     yield* Streams.create(input);
     yield* Streams.create(output);
     yield* Streams.create(other);
+
     const projection = Projection.emit({
       id: "split",
       params: {},
@@ -53,10 +60,13 @@ const emitLog = (split: boolean) =>
       emit: ({ item }) =>
         item === 0 ? {} : item % 2 === 0 ? { output: [item, item * 10] } : { other: [item] },
     }).at({});
+
     yield* Streams.append(input, [0, 1, 2]);
+
     if (split) yield* Projection.run(projection);
     yield* Streams.append(input, [3, 4]);
     yield* Projection.run(projection);
+
     return { even: yield* readAll(output), odd: yield* readAll(other) };
   }).pipe(Effect.provide(host));
 
@@ -72,6 +82,7 @@ test("undeclared output keys fail at the adapter boundary", () =>
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
+
       const projection = Projection.emit({
         id: "invalid",
         params: {},
@@ -81,6 +92,7 @@ test("undeclared output keys fail at the adapter boundary", () =>
         // @ts-expect-error exercise the runtime check for untyped callers
         emit: () => ({ output: [], unexpected: [1] }),
       }).at({});
+
       expect(yield* Projection.run(projection).pipe(Effect.result)).toMatchObject({
         _tag: "Failure",
         failure: { phase: "process", reason: "invalid-output" },

@@ -41,6 +41,7 @@ export function IssuesPanel({
 
   const submitNewIssue = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
     if (!selectedProject || !issueTitle.trim()) return;
     const title = issueTitle.trim();
     setIssueTitle("");

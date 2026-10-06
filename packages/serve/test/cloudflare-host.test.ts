@@ -15,7 +15,9 @@ afterEach(cleanupHarnesses);
 
 const create = (harness: Harness, path: string, ttl?: number) => {
   const headers = { "content-type": "text/plain" };
+
   if (ttl !== undefined) Object.assign(headers, { "stream-ttl": String(ttl) });
+
   return dispatch(harness, path, { method: "PUT", body: "source", headers });
 };
 
@@ -31,11 +33,13 @@ test("byStream isolates objects and reuses the same object identity", async () =
 
 test("the configured prefix keeps raw encoded and slash paths distinct", async () => {
   const harness = await makeHarness();
+
   for (const path of ["/streams", "/streams/", "/other/x"]) {
     const response = await dispatch(harness, path);
     expect(response.status).toBe(400);
     expect(await response.text()).toBe("Stream path required: /streams/{path}");
   }
+
   expect((await dispatch(harness, "/streams/a/b?offset=-1")).status).toBe(404);
   expect((await create(harness, "/streams/a%2Fb")).status).toBe(201);
   expect((await create(harness, "/streams/a/b")).status).toBe(201);
@@ -45,16 +49,20 @@ test("the configured prefix keeps raw encoded and slash paths distinct", async (
 
 test("the alarm effect is unreachable through routes, stubs, and forged headers", async () => {
   const harness = await makeHarness();
+
   const routed = await dispatch(harness, "/streams/alarm", {
     method: "POST",
     headers: { "streamsy-host-command": "ExpireDue" },
   });
+
   // Empty POST validation precedes the missing-stream lookup.
   expect(routed.status).toBe(400);
+
   const directResponse = await direct(harness, "alarm", "/alarm", {
     method: "POST",
     headers: { "streamsy-expire-due": "true" },
   });
+
   expect([400, 404]).toContain(directResponse.status);
   expect((await probe(harness, "alarm")).alarmInvocations).toBe(0);
 });
@@ -62,14 +70,17 @@ test("the alarm effect is unreachable through routes, stubs, and forged headers"
 test("one object scope serves mixed requests and one real alarm turn", async () => {
   const harness = await makeHarness();
   expect((await create(harness, "/streams/reuse", 3)).status).toBe(201);
+
   for (let index = 0; index < 20; index += 1) {
     const response = await dispatch(
       harness,
       "/streams/reuse",
       index % 3 === 0 ? { method: "HEAD" } : index % 3 === 1 ? undefined : { method: "OPTIONS" },
     );
+
     expect([200, 204, 404]).toContain(response.status);
   }
+
   await waitUntil(async () => (await probe(harness, "reuse")).alarmInvocations > 0);
   const observation = await probe(harness, "reuse");
   expect(observation.layerAcquisitions).toBe(1);
@@ -87,6 +98,7 @@ test("mutating requests reconcile the minimum alarm and clearing the last TTL cl
   expect((await create(harness, "/streams/t1/fast", 1)).status).toBe(201);
   const fast = await probe(harness, "t1");
   expect(fast.alarm).not.toBeNull();
+
   if (fast.alarm === null || slow.alarm === null) throw new Error("TTL alarm was not armed");
   expect(fast.alarm).toBeLessThan(slow.alarm);
   expect((await dispatch(harness, "/streams/t1/fast", { method: "DELETE" })).status).toBe(204);
@@ -120,6 +132,7 @@ test("an append renews the deadline and the stream survives the original alarm",
   const harness = await makeHarness();
   expect((await create(harness, "/streams/renewed", 2)).status).toBe(201);
   const before = await probe(harness, "renewed");
+
   if (before.alarm === null) throw new Error("Initial TTL alarm was not armed");
   const initialAlarm = before.alarm;
   await Bun.sleep(1_000);
@@ -135,11 +148,13 @@ test("an append renews the deadline and the stream survives the original alarm",
   const after = await probe(harness, "renewed");
   const beforeExpiry = before.rows[0]?.[1];
   const afterExpiry = after.rows[0]?.[1];
+
   if (beforeExpiry !== Number(beforeExpiry) || afterExpiry !== Number(afterExpiry))
     throw new Error("TTL expiry was not recorded in the SQL probe");
   expect(afterExpiry).toBeGreaterThan(beforeExpiry);
   await waitUntil(async () => {
     const observation = await probe(harness, "renewed");
+
     return observation.alarm !== null && observation.alarm > initialAlarm;
   }, 3_000);
   expect((await dispatch(harness, "/streams/renewed", { method: "HEAD" })).status).toBe(200);
@@ -150,13 +165,17 @@ test("a failed alarm turn retries without rebuilding the object scope", async ()
   const harness = await makeHarness();
   await direct(harness, "failing-alarm", "/__probe?long-poll-timeout=25000");
   expect((await create(harness, "/streams/failing-alarm", 1)).status).toBe(201);
+
   const tail = (await dispatch(harness, "/streams/failing-alarm", { method: "HEAD" })).headers.get(
     "stream-next-offset",
   );
+
   if (tail === null) throw new Error("missing stream tail");
+
   const longPoll = dispatch(harness, `/streams/failing-alarm?offset=${tail}&live=long-poll`).catch(
     () => undefined,
   );
+
   await waitUntil(async () => (await probe(harness, "failing-alarm")).activeReads === 1);
   await direct(harness, "failing-alarm", "/__probe?fail-next-expiry=1");
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length > 0, 5_000);
@@ -180,17 +199,21 @@ test("a failed alarm turn retries without rebuilding the object scope", async ()
 test("an abandoned workerd long-poll releases at the configured protocol bound", async () => {
   const harness = await makeHarness();
   expect((await create(harness, "/streams/cancel")).status).toBe(201);
+
   const tail = (await dispatch(harness, "/streams/cancel", { method: "HEAD" })).headers.get(
     "stream-next-offset",
   );
+
   if (tail === null) throw new Error("missing stream tail");
   const longPollAbort = new AbortController();
+
   const longPoll = dispatchFetch(
     harness,
     new Request(`https://streams.test/streams/cancel?offset=${tail}&live=long-poll`, {
       signal: longPollAbort.signal,
     }),
   ).catch(() => undefined);
+
   await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 1);
   longPollAbort.abort();
   await longPoll;

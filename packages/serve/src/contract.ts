@@ -22,10 +22,14 @@ export type CanonicalValue =
 /** Encode a value with object keys sorted, recursively. Array order is preserved. */
 export function canonicalJson(value: CanonicalValue): string {
   if (isCanonicalArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+
   if (value === null) return "null";
+
   if (value instanceof Object) return canonicalObject(value);
+
   if (typeof value === "number" && !Number.isFinite(value))
     throw new TypeError("Expected finite JSON number");
+
   return JSON.stringify(value);
 }
 
@@ -39,16 +43,20 @@ function isCanonicalArray(value: CanonicalValue): value is readonly CanonicalVal
 
 function canonicalObject(value: { readonly [key: string]: CanonicalValue }): string {
   const entries: string[] = [];
+
   for (const key of Object.keys(value).toSorted(compareKeys)) {
     const member = value[key];
+
     if (member === undefined) continue;
     entries.push(`${JSON.stringify(key)}:${canonicalJson(member)}`);
   }
+
   return `{${entries.join(",")}}`;
 }
 
 function compareKeys(left: string, right: string): number {
   if (left === right) return 0;
+
   return left < right ? -1 : 1;
 }
 
@@ -71,10 +79,12 @@ export function valueEtag(canonical: string): string {
 
 function fnv1a(input: string, seed: number): number {
   let hash = seed;
+
   for (let index = 0; index < input.length; index += 1) {
     hash ^= input.charCodeAt(index);
     hash = Math.imul(hash, 0x01_00_01_93);
   }
+
   return hash >>> 0;
 }
 
@@ -83,13 +93,21 @@ function hex(value: number): string {
 }
 
 export const STATE_VERSION_HEADER = "x-streamsy-state-version";
+
 export const STATE_CONTRACT_HEADER = "x-streamsy-state-contract";
+
 export const STREAM_VERSION_HEADER = "x-streamsy-stream-version";
+
 export const STREAM_CONTRACT_HEADER = "x-streamsy-stream-contract";
+
 export const VALUE_CONTRACT_HEADER = "x-streamsy-value-contract";
+
 export const DURABLE_STATE_PROTOCOL = "https://durable-streams.dev/state-protocol/v1";
+
 export type ReplayRecovery = "replay-from-start";
+
 export type ResumeRejectedReason = "invalid-offset" | "history-unavailable" | "contract-changed";
+
 export type PublicError =
   | {
       readonly _tag: "InvalidParams";
@@ -116,6 +134,7 @@ export type PublicError =
       readonly route: string;
       readonly detail: string;
     };
+
 export const PUBLIC_ERROR_TAGS = [
   "InvalidParams",
   "ProtocolVersionUnsupported",
@@ -124,6 +143,7 @@ export const PUBLIC_ERROR_TAGS = [
   "TransportUnavailable",
   "WireEncodeFailed",
 ] as const;
+
 export type PublicErrorTag = PublicError["_tag"];
 
 /** The browser's JSON error boundary; unknown fields are discarded. */
@@ -131,19 +151,25 @@ export function decodePublicError(value: unknown): PublicError {
   if (value === null || !(value instanceof Object) || Array.isArray(value))
     throw new TypeError("Expected error object");
   const field = (key: string): unknown => Object.getOwnPropertyDescriptor(value, key)?.value;
+
   const string = (key: string): string => {
     const result = field(key);
+
     if (typeof result !== "string") throw new TypeError(`Expected string ${key}`);
+
     return result;
   };
+
   const _tag = string("_tag");
   const route = string("route");
+
   switch (_tag) {
     case "InvalidParams":
       return { _tag, route, parameter: string("parameter"), detail: string("detail") };
     case "ProtocolVersionUnsupported":
       if (field("supported") !== 1 || field("recovery") !== "replay-from-start")
         throw new TypeError("Invalid protocol recovery");
+
       return {
         _tag,
         route,
@@ -153,6 +179,7 @@ export function decodePublicError(value: unknown): PublicError {
       };
     case "ResumeRejected": {
       const reason = field("reason");
+
       if (
         (reason !== "invalid-offset" &&
           reason !== "history-unavailable" &&
@@ -160,10 +187,13 @@ export function decodePublicError(value: unknown): PublicError {
         field("recovery") !== "replay-from-start"
       )
         throw new TypeError("Invalid resume recovery");
+
       return { _tag, route, reason, recovery: "replay-from-start" };
     }
+
     case "ContractChanged":
       if (field("recovery") !== "refetch") throw new TypeError("Invalid refetch recovery");
+
       return { _tag, route, recovery: "refetch" };
     case "TransportUnavailable":
     case "WireEncodeFailed":

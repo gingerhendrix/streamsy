@@ -21,8 +21,11 @@ import { Placement, type Placement as PlacementType } from "./cloudflare/placeme
 import { resolvePlacement } from "./cloudflare/router.ts";
 
 export { alarm } from "./cloudflare/host-program.ts";
+
 export { Alarm, alarmLayer } from "./cloudflare/alarm.ts";
+
 export { Placement };
+
 export { rule } from "./cloudflare/placement.ts";
 
 /** An Alchemy HttpEffect; authenticate before evaluating this router. */
@@ -37,20 +40,25 @@ export const router = (options: {
 > => {
   const path = protocolPath(options.prefix);
   const placement = options.placement ?? Placement.byStream();
+
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const pathname = new URL(request.url, "https://streamsy.internal").pathname;
     const streamPath = path.strip(pathname);
+
     if (!streamPath || streamPath === pathname) {
       return HttpServerResponse.text(`Stream path required: ${path.requiredPathPattern()}`, {
         status: 400,
         headers: securityHeaders,
       });
     }
+
     const child = resolvePlacement(placement, streamPath);
+
     if (!child.ok) {
       return HttpServerResponse.fromWeb(child.response);
     }
+
     return yield* options.objects.getByName(child.name).fetch(request);
   });
 };
@@ -63,6 +71,7 @@ export type ObjectHandlers = {
   >;
   readonly alarm: () => Effect.Effect<void>;
 };
+
 export function objectHandlers<R = never>(options: {
   readonly app: ObjectApp<R>;
   readonly layer: Layer.Layer<ObjectServices<R>, StorageFault>;
@@ -71,12 +80,14 @@ export function objectHandlers<R = never>(options: {
     const get = yield* acquireObject(options.layer, (context) =>
       Effect.gen(function* () {
         const fetch = yield* HttpRouter.toHttpEffect(providedApp(options.app, context));
+
         return {
           fetch: fetch.pipe(Effect.scoped, Effect.catch(HttpServerRespondable.toResponse)),
           alarm: alarm.pipe(Effect.provide(context)),
         };
       }),
     );
+
     return {
       fetch: Effect.flatMap(
         get.pipe(

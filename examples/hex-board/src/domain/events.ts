@@ -214,9 +214,13 @@ export interface GameWon {
 }
 
 export const PlayerControllerSchema = Schema.Literals(["human", "bot", "external-agent"]);
+
 export const DefenseResolutionSourceSchema = Schema.Literals(["human", "bot", "agent", "timeout"]);
+
 const Text = Schema.String;
+
 const Int = Schema.Int;
+
 const CommandId = { commandId: Text };
 
 export const GameEvent = Schema.Union([
@@ -336,6 +340,7 @@ export const GameEvent = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("GameWon"), playerId: Text, ...CommandId }),
 ]);
+
 export type GameEvent = typeof GameEvent.Type;
 
 export type GameEventType = GameEvent["type"];

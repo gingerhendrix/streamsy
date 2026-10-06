@@ -39,7 +39,9 @@ import {
 } from "./transaction-retry.ts";
 
 export const DEFAULT_REPAIR_INTERVAL_MS = 1_000;
+
 export { DEFAULT_TRANSACTION_RETRY_ATTEMPTS, DEFAULT_TRANSACTION_RETRY_DELAY_MS };
+
 const STORAGE_KEY = "streamsy:storage";
 
 export interface SqlStorageOptions {
@@ -69,10 +71,13 @@ const RecordRow = Schema.Struct({
 });
 
 const ProducerRow = Schema.Struct({ epoch: Schema.Finite, last_seq: Schema.Finite });
+
 const ExpiryRow = Schema.Struct({ at: Schema.Finite, stream_id: StreamId });
+
 // `CASE` gives a `number` on every dialect today. Postgres gives `boolean` for a bare
 // `EXISTS` and `bigint` for an int8 result, so accept those shapes too.
 const DependentsRow = Schema.Struct({ present: Schema.Literals([0, 1, 0n, 1n, false, true]) });
+
 const SnapshotRow = Schema.Struct({
   current_offset: Schema.NullOr(Offset),
   closed: Schema.NullOr(Schema.Literals([0, 1])),
@@ -80,20 +85,29 @@ const SnapshotRow = Schema.Struct({
 });
 
 type RecordRow = typeof RecordRow.Type;
+
 type RecordDatabaseRow = typeof RecordRow.Encoded;
+
 type ProducerDatabaseRow = typeof ProducerRow.Encoded;
+
 type ExpiryDatabaseRow = typeof ExpiryRow.Encoded;
+
 type SnapshotDatabaseRow = typeof SnapshotRow.Encoded;
+
 type DependentsDatabaseRow = typeof DependentsRow.Encoded;
 
 const decodeRecordRow = (row: RecordDatabaseRow) =>
   Schema.decodeEffect(RecordRow)(row).pipe(Effect.orDie);
+
 const decodeProducerRow = (row: ProducerDatabaseRow) =>
   Schema.decodeEffect(ProducerRow)(row).pipe(Effect.orDie);
+
 const decodeExpiryRow = (row: ExpiryDatabaseRow) =>
   Schema.decodeEffect(ExpiryRow)(row).pipe(Effect.orDie);
+
 const decodeSnapshotRow = (row: SnapshotDatabaseRow) =>
   Schema.decodeEffect(SnapshotRow)(row).pipe(Effect.orDie);
+
 const decodeDependentsRow = (row: DependentsDatabaseRow) =>
   Schema.decodeEffect(DependentsRow)(row).pipe(Effect.orDie);
 
@@ -120,30 +134,45 @@ const toRecord = (row: RecordRow): StreamRecord => {
     contentType: row.content_type,
     createdAt: row.created_at,
   };
+
   if (row.ttl_seconds !== null) config.ttlSeconds = row.ttl_seconds;
+
   if (row.expires_at !== null) config.expiresAt = row.expires_at;
+
   const lifecycle: MutableLifecycle = {
     closed: row.closed === 1,
     softDeleted: row.soft_deleted === 1,
   };
+
   if (row.last_seq !== null) lifecycle.lastSeq = row.last_seq;
+
   if (row.closed_at !== null) lifecycle.closedAt = row.closed_at;
+
   if (row.forked_from !== null) lifecycle.forkedFrom = row.forked_from;
+
   if (row.fork_offset !== null) lifecycle.forkOffset = row.fork_offset;
+
   if (row.fork_sub_offset !== null) lifecycle.forkSubOffset = row.fork_sub_offset;
+
   if (row.expires_at_ms !== null) lifecycle.expiresAtMs = row.expires_at_ms;
+
   return { id: row.stream_id, config, lifecycle, currentOffset: row.current_offset };
 };
 
 const patchRecord = (record: StreamRecord, patch: RecordPatch): StreamRecord => {
   const config = { ...record.config, ...patch.config };
   const lifecycle = { ...record.lifecycle, ...patch.lifecycle };
+
   for (const field of patch.clear ?? []) {
     if (field === "ttlSeconds") delete config.ttlSeconds;
+
     if (field === "expiresAt") delete config.expiresAt;
+
     if (field === "expiresAtMs") delete lifecycle.expiresAtMs;
+
     if (field === "lastSeq") delete lifecycle.lastSeq;
   }
+
   return {
     id: record.id,
     config,
@@ -187,6 +216,7 @@ const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>)
 
 /** MySQL keys hold at most this many characters, so every dialect enforces it. */
 export const MAX_STREAM_ID_LENGTH = 512;
+
 /** The MySQL producer key holds a stream id and at most this many producer id characters. */
 export const MAX_PRODUCER_ID_LENGTH = 255;
 
@@ -199,6 +229,7 @@ const tooLong = (
   // MySQL VARCHAR counts code points, which is what the spread yields.
   // oxlint-disable-next-line typescript/no-misused-spread -- code points are the intended unit
   const length = [...value].length;
+
   return length > limit
     ? Option.some(
         new StorageFault({
@@ -222,8 +253,10 @@ const oversizedKey = (mutation: Mutation): Option.Option<StorageFault> => {
             MAX_PRODUCER_ID_LENGTH,
           )
         : Option.none();
+
     if (Option.isSome(fault)) return fault;
   }
+
   return Option.none();
 };
 
@@ -235,6 +268,7 @@ const oversizedKey = (mutation: Mutation): Option.Option<StorageFault> => {
  */
 const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => {
   const sorted = [...new Set(ids)].toSorted();
+
   return sql.onDialectOrElse({
     sqlite: () => Effect.void,
     orElse: () =>
@@ -297,6 +331,7 @@ const readRecord = (sql: SqlClient.SqlClient, id: StreamId, lock?: RowLock) =>
   ).pipe(
     Effect.flatMap((rows) => {
       const row = rows[0];
+
       return row === undefined
         ? Effect.succeed(Option.none<StreamRecord>())
         : decodeRecordRow(row).pipe(Effect.map((decoded) => Option.some(toRecord(decoded))));
@@ -380,6 +415,7 @@ const upsertProducer = (
     epoch: next.epoch,
     last_seq: next.lastSeq,
   });
+
   return execute(
     "mutate.producer",
     sql.onDialectOrElse({
@@ -401,11 +437,14 @@ const preflight = (
     for (const [index, operation] of mutation.operations.entries()) {
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
       const current = yield* readRecord(sql, id, "update");
+
       if (Predicate.isTagged(operation, "Create")) {
         if (Option.isSome(current))
           return yield* new MutationRejected({ index, reason: "exists", record: current });
+
         if (operation.forkSource !== undefined) {
           const source = yield* readRecord(sql, operation.forkSource.id, "share");
+
           if (
             Option.isNone(source) ||
             source.value.lifecycle.softDeleted ||
@@ -417,13 +456,17 @@ const preflight = (
               record: Option.none(),
             });
         }
+
         continue;
       }
+
       if (Option.isNone(current))
         return yield* new MutationRejected({ index, reason: "not-found", record: Option.none() });
       const record = current.value;
+
       if (record.lifecycle.softDeleted)
         return yield* new MutationRejected({ index, reason: "gone", record: current });
+
       if (Predicate.isTagged(operation, "Delete")) {
         if (
           operation.reason === "expiry" &&
@@ -433,16 +476,19 @@ const preflight = (
           return yield* new MutationRejected({ index, reason: "expiry-mismatch", record: current });
         continue;
       }
+
       if (
         operation.expectedOffset !== undefined &&
         operation.expectedOffset !== record.currentOffset
       )
         return yield* new MutationRejected({ index, reason: "offset", record: current });
+
       if (
         operation.expectedClosed !== undefined &&
         operation.expectedClosed !== record.lifecycle.closed
       )
         return yield* new MutationRejected({ index, reason: "closed", record: current });
+
       if (operation.producer !== undefined) {
         const actual = yield* readProducer(
           sql,
@@ -451,7 +497,9 @@ const preflight = (
           operation.producer.producerId,
           "update",
         );
+
         const expected = operation.producer.expected;
+
         if (
           Option.isSome(actual) !== Option.isSome(expected) ||
           (Option.isSome(actual) &&
@@ -462,6 +510,7 @@ const preflight = (
           return yield* new MutationRejected({ index, reason: "producer", record: current });
       }
     }
+
     return undefined;
   });
 
@@ -479,6 +528,7 @@ const hasDependents = (sql: SqlClient.SqlClient, id: StreamId) =>
 const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
   Effect.gen(function* () {
     let current: StreamRecord | undefined = start;
+
     while (current !== undefined) {
       const parentId: StreamId | undefined = current.lifecycle.forkedFrom;
       // Keep cleanup explicit instead of depending on a host connection PRAGMA.
@@ -494,11 +544,13 @@ const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
         "mutate.purge",
         sql`DELETE FROM streamsy_streams WHERE stream_id = ${current.id}`,
       );
+
       if (parentId === undefined) return;
       // Two children of one soft-deleted parent can purge at once. Each waits here
       // for the other, so the last one sees no dependents and removes the parent.
       yield* lockStreams(sql, [parentId]);
       const parent: Option.Option<StreamRecord> = yield* readRecord(sql, parentId, "update");
+
       if (
         Option.isNone(parent) ||
         !parent.value.lifecycle.softDeleted ||
@@ -523,6 +575,7 @@ const applyMutation = (
     for (const operation of mutation.operations) {
       if (!Predicate.isTagged(operation, "Create")) continue;
       yield* insertRecord(sql, operation.record);
+
       for (const message of operation.initialMessages)
         yield* insertMessage(sql, "mutate.create-message", operation.record.id, message);
       records.set(operation.record.id, operation.record);
@@ -531,21 +584,25 @@ const applyMutation = (
     for (const operation of mutation.operations) {
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
       const current = records.get(id) ?? Option.getOrThrow(yield* readRecord(sql, id, "update"));
+
       if (Predicate.isTagged(operation, "Create")) {
         results.push(OperationResults.Created({ record: copyRecord(current) }));
         continue;
       }
+
       if (Predicate.isTagged(operation, "Append")) {
         for (const message of operation.messages)
           yield* insertMessage(sql, "mutate.append-message", id, message);
         const next = patchRecord(current, operation.patch);
         yield* updateRecord(sql, next);
+
         if (operation.producer !== undefined)
           yield* upsertProducer(sql, id, operation.producer.producerId, operation.producer.next);
         records.set(id, next);
         results.push(OperationResults.Appended({ record: next }));
         continue;
       }
+
       if (yield* hasDependents(sql, id)) {
         const next = patchRecord(current, { lifecycle: { softDeleted: true } });
         yield* updateRecord(sql, next);
@@ -555,8 +612,11 @@ const applyMutation = (
         yield* purge(sql, current);
       }
     }
+
     const [first, ...rest] = results;
+
     if (first === undefined) return yield* Effect.die(new Error("Empty mutation"));
+
     return Mutations.Applied({ results: [first, ...rest] });
   });
 
@@ -575,6 +635,7 @@ const directMessage = (row: MessageDatabaseRow): StoredMessage => {
     !Predicate.isUint8Array(row.data)
   )
     throw new Error("Corrupt persisted message row");
+
   return {
     offset: Offset.make(row.msg_offset),
     timestamp: row.timestamp,
@@ -585,32 +646,42 @@ const directMessage = (row: MessageDatabaseRow): StoredMessage => {
 const readMessages = (sql: SqlClient.SqlClient, id: StreamId, window: MessageWindow) =>
   Effect.gen(function* () {
     let remaining = window.limit === undefined ? undefined : Math.max(0, Math.trunc(window.limit));
+
     if (remaining === 0) return [];
     const visited = new Set<StreamId>();
     const chain: Array<{ readonly id: StreamId; readonly until?: Offset }> = [];
     let cursor: StreamId | undefined = id;
     let until: Offset | undefined;
+
     while (cursor !== undefined) {
       if (visited.has(cursor)) return yield* Effect.die(new Error("Corrupt cyclic stream lineage"));
       visited.add(cursor);
       chain.push(until === undefined ? { id: cursor } : { id: cursor, until });
       const record: Option.Option<StreamRecord> = yield* readRecord(sql, cursor);
+
       if (Option.isNone(record)) break;
       cursor = record.value.lifecycle.forkedFrom;
       until = record.value.lifecycle.forkOffset;
     }
+
     const messages: Array<StoredMessage> = [];
+
     for (const segment of chain.toReversed()) {
       if (remaining === 0) break;
+
       const upper =
         segment.until === undefined
           ? window.until
           : window.until === undefined || segment.until < window.until
             ? segment.until
             : window.until;
+
       const predicates = [sql`stream_id = ${segment.id}`];
+
       if (window.after !== undefined) predicates.push(sql`msg_offset > ${window.after}`);
+
       if (upper !== undefined) predicates.push(sql`msg_offset <= ${upper}`);
+
       const rows = yield* attempt(
         "messages",
         sql<MessageDatabaseRow>`SELECT msg_offset, timestamp, data FROM streamsy_messages
@@ -618,10 +689,13 @@ const readMessages = (sql: SqlClient.SqlClient, id: StreamId, window: MessageWin
    remaining === undefined ? sql.literal("") : sql` LIMIT ${remaining}`
  }`,
       );
+
       for (const row of rows)
         messages.push(yield* Effect.try(() => directMessage(row)).pipe(Effect.orDie));
+
       if (remaining !== undefined) remaining -= rows.length;
     }
+
     return messages;
   });
 
@@ -658,10 +732,13 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
       const ids = mutation.operations.map((operation) =>
         Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId,
       );
+
       if (ids.length === 0 || new Set(ids).size !== ids.length)
         return Effect.die(new Error("Mutation requires distinct streams within atomicScope"));
       const oversized = oversizedKey(mutation);
+
       if (Option.isSome(oversized)) return Effect.fail(oversized.value);
+
       return boundary
         .mutation({
           keys: [STORAGE_KEY],
@@ -710,6 +787,7 @@ const OWNER_RECORD_CONFLICT = "records.conflict";
 const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
   // Each transaction or savepoint has its own connection tuple in Effect SQL.
   const absentKeys = new WeakMap<object, Set<string>>();
+
   const select = (key: string, forUpdate: boolean) =>
     attempt(
       "records.read",
@@ -717,6 +795,7 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
         readonly owner_value: string;
       }>`SELECT owner_value FROM streamsy_owner_records WHERE owner_key = ${key}${sql.literal(forUpdate ? " FOR UPDATE" : "")}`,
     ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.owner_value)));
+
   // SQLite has one writer and no FOR UPDATE.
   const lockFound = (key: string, found: Option.Option<string>) =>
     Option.isNone(found)
@@ -725,8 +804,10 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
           sqlite: () => Effect.succeed(found),
           orElse: () => select(key, true),
         });
+
   const upsert = (key: string, encoded: string) => {
     const row = sql.insert({ owner_key: key, owner_value: encoded });
+
     return execute(
       "records.write",
       sql.onDialectOrElse({
@@ -739,6 +820,7 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       }),
     );
   };
+
   const insert = (key: string, encoded: string) =>
     sql`INSERT INTO streamsy_owner_records ${sql.insert({ owner_key: key, owner_value: encoded })}`.pipe(
       Effect.mapError((error) =>
@@ -753,20 +835,25 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       ),
       Effect.asVoid,
     );
+
   return OwnerRecords.of({
     read: Effect.fn("SqlStorage.records.read")(function* (key: string) {
       const transaction = yield* Effect.serviceOption(sql.transactionService);
+
       if (Option.isNone(transaction)) return yield* select(key, false);
       const found = yield* Effect.flatMap(select(key, false), (first) => lockFound(key, first));
       const absent = absentKeys.get(transaction.value) ?? new Set<string>();
       absentKeys.set(transaction.value, absent);
+
       if (Option.isNone(found)) absent.add(key);
       else absent.delete(key);
+
       return found;
     }),
     write: Effect.fn("SqlStorage.records.write")(function* (key: string, encoded: string) {
       const transaction = yield* Effect.serviceOption(sql.transactionService);
       const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
+
       if (absent?.has(key) === true) {
         yield* insert(key, encoded);
         absent.delete(key);
@@ -784,6 +871,7 @@ const makeLayer = (
   transactionMaxOpsBeforeYield?: number,
 ) => {
   const transactionRetry = transactionRetryPolicy(options);
+
   const services = Layer.effectContext(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -801,6 +889,7 @@ const makeLayer = (
       );
       const boundary = yield* BoundaryRuntimeService;
       const owner = ownerOf(boundary);
+
       return Context.empty().pipe(
         Context.add(Storage, attachOwner(makeStorage(sql, boundary), owner)),
         Context.add(CommitBoundary, CommitBoundary.of(boundary)),
@@ -808,6 +897,7 @@ const makeLayer = (
       );
     }),
   );
+
   return services.pipe(
     Layer.provide(
       boundaryLayer(
@@ -855,5 +945,6 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 export function layer(group: Streamsy.Group, options: Options = {}) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
+
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

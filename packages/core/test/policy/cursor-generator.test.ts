@@ -6,9 +6,11 @@
  */
 
 import { describe, it, expect } from "bun:test";
+
 interface Clock {
   now(): number;
 }
+
 import {
   CURSOR_EPOCH_MS,
   CURSOR_INTERVAL_MS,

@@ -21,6 +21,7 @@ const inTempFolder = <A, E>(
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const folder = yield* fs.makeTempDirectoryScoped({ prefix: "streamsy-sqlite-file-" });
+
         return yield* body(folder, fs, path);
       }),
     ).pipe(Effect.provide(Platform)),
@@ -34,6 +35,7 @@ const open = (client: {
 
 const failure = (exit: Exit.Exit<unknown, unknown>) => {
   if (Exit.isSuccess(exit)) throw new Error("Expected the SQLite open to fail");
+
   return Option.getOrThrow(Cause.findErrorOption(exit.cause));
 };
 
@@ -53,6 +55,7 @@ test("a read-only or no-create open does not create the folder", async () => {
   await inTempFolder((folder, fs, path) =>
     Effect.gen(function* () {
       const filename = path.join(folder, "x", "y", "db.sqlite");
+
       for (const mode of [{ readonly: true }, { create: false }]) {
         const exit = yield* open({ filename, ...mode });
         expect(failure(exit)).toMatchObject({

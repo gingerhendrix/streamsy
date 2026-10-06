@@ -9,7 +9,9 @@ import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../proto
 import { requests, type Options } from "./request.ts";
 import * as Response from "./response.ts";
 import { header, type HttpResponse } from "./wire.ts";
+
 export type { Options } from "./request.ts";
+
 export { TransportFault } from "../fault.ts";
 
 type Decoder<A, E> = (operation: Response.Operation, response: HttpResponse) => Effect.Effect<A, E>;
@@ -20,6 +22,7 @@ export const layerProtocol = (options: Options) =>
     Effect.gen(function* () {
       const client = HttpClient.withScope(yield* HttpClient.HttpClient);
       const owner = yield* Scope.Scope;
+
       const request = yield* Effect.try({
         try: () => requests(options),
         catch: (cause) =>
@@ -30,6 +33,7 @@ export const layerProtocol = (options: Options) =>
             cause,
           }),
       });
+
       const execute = <A, E>(
         operation: Response.Operation,
         make: () => HttpClientRequest.HttpClientRequest,
@@ -46,6 +50,7 @@ export const layerProtocol = (options: Options) =>
                 cause,
               }),
           });
+
           const response = yield* client.execute(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -57,6 +62,7 @@ export const layerProtocol = (options: Options) =>
                 }),
             ),
           );
+
           return yield* decode(operation, response);
         }).pipe(
           Effect.scoped,
@@ -65,6 +71,7 @@ export const layerProtocol = (options: Options) =>
             Fiber.join(fiber).pipe(Effect.ensuring(Fiber.interrupt(fiber))),
           ),
         );
+
       const reader: Reader<TransportFault> = {
         head: (id) =>
           execute(
@@ -88,10 +95,12 @@ export const layerProtocol = (options: Options) =>
                   response.status === 204 && header(response, "content-type") === undefined
                     ? (yield* reader.head(id)).contentType
                     : undefined;
+
                 return yield* Response.readNext(operation, response, { id, contentType });
               }),
           ),
       };
+
       const writer: Writer<TransportFault> = {
         create: (id, input) =>
           execute(
@@ -113,8 +122,10 @@ export const layerProtocol = (options: Options) =>
         append: (id, input) => {
           if (input.expectedOffset !== undefined && options.capabilities?.expectedOffset !== true)
             return Effect.fail(new NotSupported({ id, feature: "expected-offset" }));
+
           if (input.producer !== undefined && options.capabilities?.producer !== true)
             return Effect.fail(new NotSupported({ id, feature: "producer" }));
+
           return execute(
             "append",
             () => request.append(id, input),
@@ -133,6 +144,7 @@ export const layerProtocol = (options: Options) =>
             (operation, response) => Response.remove(operation, response, { id }),
           ),
       };
+
       return Context.make(StreamsReader, reader).pipe(Context.add(StreamsWriter, writer));
     }),
   );
@@ -144,5 +156,6 @@ export function layer<const Keys extends ReadonlyArray<Any>>(
 ): Layer.Layer<Identifiers<Keys>, TransportFault, HttpClient.HttpClient>;
 export function layer(group: Group.Group, options: Options) {
   const protocol = layerProtocol(options);
+
   return bind(protocol, group);
 }

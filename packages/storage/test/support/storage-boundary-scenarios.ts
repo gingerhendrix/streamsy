@@ -46,6 +46,7 @@ const exists = (sql: SqlClient.SqlClient, table: string, id: string) =>
 const drain = <A, E, R>(pull: Effect.Effect<ReadonlyArray<A>, E, R>) =>
   Effect.flatMap(pull, (values) => {
     const value = values[0];
+
     return value === undefined ? Effect.die(new Error("empty stream pull")) : Effect.succeed(value);
   });
 
@@ -72,16 +73,20 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       const id = StreamId.make("fused-sink");
       yield* writer.create(id, { contentType: "text/plain" });
       yield* sql.unsafe("INSERT INTO application_state VALUES ('state','0'),('checkpoint','0')");
+
       const read = Effect.gen(function* () {
         const output = yield* reader.read(id);
+
         const rows = yield* sql.unsafe<{ readonly id: string; readonly value: string }>(
           "SELECT id,value FROM application_state WHERE id IN ('state','checkpoint') ORDER BY id",
         );
+
         return {
           output: output.messages.map((message) => new TextDecoder().decode(message.data)),
           records: rows.map((row) => [row.id, row.value]),
         };
       });
+
       const write = (value: string) =>
         boundary.withTransaction(
           Effect.gen(function* () {
@@ -94,21 +99,28 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
             yield* sql.unsafe("UPDATE application_state SET value=? WHERE id='checkpoint'", [
               value,
             ]);
+
             return undefined;
           }),
         );
+
       const beforeWakes = probe.invalidations;
+
       const insideWakes = yield* boundary.withTransaction(
         Effect.gen(function* () {
           yield* write("1");
+
           return probe.invalidations - beforeWakes;
         }),
       );
+
       const committed = yield* read;
       const commitWakes = probe.invalidations - beforeWakes;
+
       const failure = yield* boundary
         .withTransaction(write("2").pipe(Effect.andThen(Effect.fail("after-sink"))))
         .pipe(Effect.exit);
+
       return {
         committed,
         restored: yield* read,
@@ -120,6 +132,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     }).pipe(Effect.provide(Protocol.layer()));
 
     let rawBodyRan = false;
+
     const rawBoundary = yield* sql
       .withTransaction(
         boundary.withTransaction(
@@ -131,11 +144,14 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       .pipe(Effect.exit);
 
     const rawScope = yield* Scope.make();
+
     const rawPull = yield* Stream.toPull(storage.changes(StreamId.make("raw"))).pipe(
       Scope.provide(rawScope),
     );
+
     yield* drain(rawPull);
     const rawPending = yield* drain(rawPull).pipe(Effect.forkScoped, Scope.provide(rawScope));
+
     const rawMutation = yield* sql
       .withTransaction(
         Effect.gen(function* () {
@@ -147,18 +163,23 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
         }),
       )
       .pipe(Effect.exit);
+
     yield* turns;
     const rawAmbientWakes = rawPending.pollUnsafe() === undefined ? 0 : 1;
+
     const rawRejectedByOwnership =
       Exit.isFailure(rawMutation) &&
       Cause.pretty(rawMutation.cause).includes("Ambient SQL transaction is not owned");
+
     yield* Scope.close(rawScope, Exit.void);
 
     yield* storage.mutate(create("base"));
+
     const rejection = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
           yield* sql.unsafe("INSERT INTO application_state VALUES ('rejected','before-reject')");
+
           return yield* storage.mutate(create("base"));
         }),
       )
@@ -175,6 +196,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     const recovered = yield* boundary.withTransaction(
       Effect.gen(function* () {
         yield* sql.unsafe("INSERT INTO application_state VALUES ('recovered','commits')");
+
         return yield* storage
           .mutate(create("base"))
           .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
@@ -182,26 +204,33 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     );
 
     const nestedScope = yield* Scope.make();
+
     const nestedPull = yield* Stream.toPull(storage.changes(StreamId.make("nested"))).pipe(
       Scope.provide(nestedScope),
     );
+
     yield* drain(nestedPull);
+
     const nestedPending = yield* drain(nestedPull).pipe(
       Effect.forkScoped,
       Scope.provide(nestedScope),
     );
+
     const nestedApplied = yield* Deferred.make<void>();
     const releaseRollback = yield* Deferred.make<void>();
+
     const nestedTransaction = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
           yield* boundary.withTransaction(storage.mutate(create("nested")));
           yield* Deferred.succeed(nestedApplied, undefined);
           yield* Deferred.await(releaseRollback);
+
           return yield* Effect.fail("rollback" as const);
         }),
       )
       .pipe(Effect.forkScoped);
+
     yield* Deferred.await(nestedApplied);
     yield* turns;
     const nestedRollbackWakesBeforeRelease = nestedPending.pollUnsafe() === undefined ? 0 : 1;
@@ -213,14 +242,18 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     yield* Scope.close(nestedScope, Exit.void);
 
     const rollbackScope = yield* Scope.make();
+
     const rollbackPull = yield* Stream.toPull(
       storage.changes(StreamId.make("outer-rollback")),
     ).pipe(Scope.provide(rollbackScope));
+
     yield* drain(rollbackPull);
+
     const rollbackPending = yield* drain(rollbackPull).pipe(
       Effect.forkScoped,
       Scope.provide(rollbackScope),
     );
+
     const outerRollback = yield* boundary
       .withTransaction(
         storage
@@ -228,32 +261,41 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
           .pipe(Effect.andThen(Effect.fail("outer-rollback" as const))),
       )
       .pipe(Effect.exit);
+
     yield* turns;
     const outerRollbackWakes = rollbackPending.pollUnsafe() === undefined ? 0 : 1;
+
     const failureAfterMutation = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
           yield* sql.unsafe("INSERT INTO application_state VALUES ('failure','rolls-back')");
           yield* storage.mutate(create("failure-after-mutation"));
+
           return yield* Effect.fail("failure-after-mutation" as const);
         }),
       )
       .pipe(Effect.exit);
+
     yield* turns;
     const failureAfterMutationWakes = rollbackPending.pollUnsafe() === undefined ? 0 : 1;
     yield* Scope.close(rollbackScope, Exit.void);
 
     const delayedScope = yield* Scope.make();
+
     const delayedPull = yield* Stream.toPull(storage.changes(StreamId.make("delayed"))).pipe(
       Scope.provide(delayedScope),
     );
+
     yield* drain(delayedPull);
+
     const delayedPending = yield* drain(delayedPull).pipe(
       Effect.forkScoped,
       Scope.provide(delayedScope),
     );
+
     const delayedApplied = yield* Deferred.make<void>();
     const releaseCommit = yield* Deferred.make<void>();
+
     const delayedTransaction = yield* boundary
       .withTransaction(
         Effect.gen(function* () {
@@ -273,6 +315,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
         }),
       )
       .pipe(Effect.forkScoped);
+
     yield* Deferred.await(delayedApplied);
     yield* turns;
     const wakesBeforeDelayedCommit = delayedPending.pollUnsafe() === undefined ? 0 : 1;
@@ -283,12 +326,15 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
 
     const fanoutScope = yield* Scope.make();
     const fanoutId = StreamId.make("fanout");
+
     const fastPull = yield* Stream.toPull(storage.changes(fanoutId)).pipe(
       Scope.provide(fanoutScope),
     );
+
     const slowPull = yield* Stream.toPull(storage.changes(fanoutId)).pipe(
       Scope.provide(fanoutScope),
     );
+
     yield* drain(fastPull);
     yield* drain(slowPull);
     yield* boundary.withTransaction(
@@ -299,6 +345,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     );
     const coalescedRetainedWakes = retainedWakes(probe);
     const fastSnapshot = yield* drain(fastPull);
+
     for (let ttl = 101; ttl <= 200; ttl++) yield* storage.mutate(touch("fanout", ttl));
     const burstRetainedWakes = retainedWakes(probe);
     const slowSnapshot = yield* drain(slowPull);
@@ -310,6 +357,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     yield* drain(slowPull);
     const ttlRecord = Option.getOrThrow(yield* storage.record(fanoutId));
     yield* Scope.close(fanoutScope, Exit.void);
+
     const subscriberCleanupCounts = [
       probe.queues.size,
       probe.activeRegistrations,
@@ -321,9 +369,11 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     probe.afterRegister = Deferred.succeed(raceRegistered, undefined).pipe(
       Effect.andThen(Deferred.await(releaseRaceRead)),
     );
+
     const racing = yield* storage
       .changes(StreamId.make("initial-race"))
       .pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
+
     yield* Deferred.await(raceRegistered);
     probe.afterRegister = undefined;
     yield* storage.mutate(create("initial-race"));
@@ -385,6 +435,7 @@ export const runExternalRepair = (externalWrite: Effect.Effect<void>, probe: Bou
     yield* externalWrite;
     const parkedAfterCommit = pending.pollUnsafe() === undefined;
     const value = yield* Fiber.join(pending).pipe(Effect.timeout("5 seconds"));
+
     return {
       parkedAfterCommit,
       repaired: value.present,
@@ -404,12 +455,15 @@ export const prepareOwnerCleanupProof = (probe: BoundaryTestProbe) =>
   Effect.gen(function* () {
     const storage = yield* Storage;
     const subscriberScope = yield* Scope.make();
+
     const pull = yield* Stream.toPull(storage.changes(StreamId.make("owner-cleanup"))).pipe(
       Scope.provide(subscriberScope),
     );
+
     yield* drain(pull);
     const pending = yield* drain(pull).pipe(Effect.forkScoped, Scope.provide(subscriberScope));
     yield* turns;
+
     return {
       subscriberScope,
       pending,
@@ -429,21 +483,26 @@ export const finishOwnerCleanupProof = (
 ) =>
   Effect.gen(function* () {
     const pendingExit = yield* Fiber.await(pending.pending);
+
     const afterOwnerClose = [
       probe.queues.size,
       probe.activeRegistrations,
       probe.activeRepairFibers,
     ] as const;
+
     yield* Scope.close(pending.subscriberScope, Exit.void);
     yield* Scope.close(pending.subscriberScope, Exit.void);
+
     const afterIdempotentSubscriberClose = [
       probe.queues.size,
       probe.activeRegistrations,
       probe.activeRepairFibers,
     ] as const;
+
     const late = yield* pending.storage
       .changes(StreamId.make("late"))
       .pipe(Stream.runCollect, Effect.scoped, Effect.exit);
+
     return {
       pendingBeforeClose: pending.pendingBeforeClose,
       pendingInterrupted: Exit.isFailure(pendingExit) && Cause.hasInterrupts(pendingExit.cause),

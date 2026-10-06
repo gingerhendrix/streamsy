@@ -18,17 +18,22 @@ export type StreamDeclaration = StreamRoute.StreamRoute<any, any, never, never> 
   Streamsy.Any & {
     readonly at: (params: any) => Streamsy.Address<any, any>;
   };
+
 /** A stream declaration, or a fixed address that `.at` does not rebind. */
 export type Input = StreamDeclaration | Streamsy.Address<any, any>;
+
 export type Inputs = Readonly<Record<string, Input>>;
+
 export type AddressOf<X> = X extends StreamDeclaration
   ? ReturnType<X["at"]>
   : X extends Streamsy.Address<any, any>
     ? X
     : never;
+
 export type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+
 type Invalid<C extends StreamRoute.ParamCodecs, P> = {
   readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
     ? P[Name] extends StreamRoute.Params<C>[Name]
@@ -38,15 +43,19 @@ type Invalid<C extends StreamRoute.ParamCodecs, P> = {
       : Name
     : Name;
 }[keyof P];
+
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
   : never;
+
 /** Every declaration's params must be projection params with the same type. */
 export type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
+
 export type OneWithin<C extends StreamRoute.ParamCodecs, X> =
   InvalidInput<C, X> extends never ? X : never;
+
 export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
 
 /** Inert: `at` binds the params and returns the value runners take. */
@@ -80,11 +89,14 @@ const encodeParams = <C extends StreamRoute.ParamCodecs>(
   params: StreamRoute.Params<C>,
 ): Record<string, string> => {
   const values: Readonly<Record<string, unknown>> = params;
+
   return Object.fromEntries(
     Object.entries(codecs).map(([name, codec]) => {
       const encoded = Schema.encodeOption(codec)(values[name]);
+
       if (Option.isNone(encoded))
         throw new RangeError(`Cannot encode projection ${id} parameter ${name}`);
+
       return [name, encoded.value];
     }),
   );
@@ -97,6 +109,7 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
       isDeclaration(input) ? input.at(params) : input,
     ]),
   );
+
   // Each entry is resolved under its own key, so the record has the mapped shape.
   return built as Addresses<I>;
 };
@@ -119,6 +132,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
 ): Declaration<C, Bound> => {
   const version = definition.version ?? 1;
   const generation = definition.generation ?? 1;
+
   return {
     id: definition.id,
     version,
@@ -136,8 +150,10 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
       for (const input of Object.values<Input>(definition.inputs)) {
         if (!isDeclaration(input)) continue;
         const parsed = input.parse(id);
+
         if (Option.isSome(parsed)) return Option.some(parsed.value);
       }
+
       return Option.none();
     },
   };
@@ -146,6 +162,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
 export interface Committing<Result, P, Q> {
   readonly commit: Commit.Commit<Result, P, Q>;
 }
+
 export type RunningDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -169,6 +186,7 @@ export type RunningDeclaration<
     ) => Effect.Effect<Result, E | ProjectionFault, R>;
   }
 >;
+
 export type StatefulDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -179,6 +197,7 @@ export type StatefulDeclaration<
   P,
   Q,
 > = RunningDeclaration<C, I, E, R, Result, P, Q, A>;
+
 export type OutputDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -196,6 +215,7 @@ export type OutputDeclaration<
     readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
   };
 };
+
 export type AccumulatingDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -208,6 +228,7 @@ export type AccumulatingDeclaration<
 > = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A>;
 
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
+
 /** Public constructors check all mapped types before this shared binding boundary. */
 export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs> {
   readonly commit?: Commit.Commit<any, any, any>;
@@ -223,12 +244,15 @@ export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs>
 
 export const build = (kind: Kind, definition: BuildDefinition) => {
   const commit = definition.commit ?? Commit.checkpoint;
+
   if (definition.prepare !== undefined && !supportsPrepare(commit))
     throw new RangeError("prepare requires Commit.transaction");
+
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
     const inputs = addressesOf(definition.inputs, decoded);
     const streams = resolveOutputs(definition.outputs ?? {}, decoded, inputs);
+
     return {
       ...key,
       inputs,
@@ -254,5 +278,6 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
         ),
     };
   });
+
   return declaration;
 };

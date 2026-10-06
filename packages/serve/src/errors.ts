@@ -109,8 +109,10 @@ export function withHeaders<E extends ServeError>(
   headers: Readonly<Record<string, string>>,
 ): E {
   error.responseHeaders = headers;
+
   return error;
 }
+
 function errorResponse(
   error: PublicError,
   status: number,

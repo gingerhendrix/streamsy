@@ -30,6 +30,7 @@ test("stripTwoslash keeps only the code that readers see", () => {
     "// ---cut-after---",
     "const assertion: true = true;",
   ].join("\n");
+
   expect(stripTwoslash(code)).toBe('import { Orders } from "./streams.ts";\nconst shown = Orders;');
 });
 
@@ -70,6 +71,7 @@ test("a block that type-checks against the shared streams passes", () => {
   const result = highlight(
     `${header}import { Orders } from "./streams.ts";\nexport const orders = Orders;\n`,
   );
+
   expect(result.stderr).toBe("");
   expect(result.status).toBe(0);
 }, 60_000);

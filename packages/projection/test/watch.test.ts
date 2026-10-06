@@ -17,6 +17,7 @@ class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
     schema: Schema.Finite,
   },
 ) {}
+
 class WatchRoute1 extends Streamsy.json<WatchRoute1>()(
   "on-change.test/WatchRoute1",
   "change-stream/:workspaceId",
@@ -38,6 +39,7 @@ type Services =
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;
+
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
     body.pipe(
@@ -45,6 +47,7 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
       Effect.provide(FamilyFixture.withFamilies(memoryHost(), WatchRoute1, WatchRoute2)),
     ),
   );
+
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
@@ -54,13 +57,16 @@ test("an append runs an transactional projection and commits its write with the 
       const input = FamilyFixture.json("change-transactional-input", {
         schema: Schema.Finite,
       });
+
       const output = FamilyFixture.json("change-transactional-output", {
         schema: Schema.Finite,
       });
+
       yield* Streams.create(input);
       yield* Streams.create(output);
       const handled = yield* Deferred.make<void>();
       let calls = 0;
+
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "change-transactional",
@@ -69,11 +75,13 @@ test("an append runs an transactional projection and commits its write with the 
         process: (batch) =>
           Effect.gen(function* () {
             const items = batch.input.items;
+
             if (Array.isReadonlyArrayNonEmpty(items)) yield* Streams.append(output, items);
             calls += 1;
             yield* Deferred.succeed(handled, undefined);
           }),
       }).at({});
+
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(handled);
@@ -93,14 +101,17 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
       const input = FamilyFixture.json("change-coalesce-input", {
         schema: Schema.Finite,
       });
+
       const output = FamilyFixture.json("change-coalesce-output", {
         schema: Schema.Finite,
       });
+
       yield* Streams.create(input);
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const second = yield* Deferred.make<void>();
       let calls = 0;
+
       const projection = Projection.mapAccumBatch({
         commit: Commit.producer,
         id: "change-coalesce",
@@ -111,13 +122,16 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
         mapAccumBatch: (_state, batch) =>
           Effect.gen(function* () {
             calls += 1;
+
             if (calls === 1) {
               yield* Deferred.succeed(entered, undefined);
               yield* Deferred.await(release);
             } else yield* Deferred.succeed(second, undefined);
+
             return [null, { output: batch.input.items }] as const;
           }),
       }).at({});
+
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(entered);
@@ -142,10 +156,12 @@ test("a limited wake drains the backlog before waiting for another change", () =
       const input = FamilyFixture.json("change-limit-input", {
         schema: Schema.Finite,
       });
+
       yield* Streams.create(input);
       yield* Streams.append(input, [1, 2, 3]);
       const seen: number[] = [];
       const drained = yield* Deferred.make<void>();
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "change-limit",
@@ -154,9 +170,11 @@ test("a limited wake drains the backlog before waiting for another change", () =
         process: (batch) =>
           Effect.gen(function* () {
             seen.push(...batch.input.items);
+
             if (seen.length === 3) yield* Deferred.succeed(drained, undefined);
           }),
       }).at({});
+
       const fiber = yield* Projection.watch(projection, { limit: 1 });
       yield* Deferred.await(drained);
       yield* Projection.run(projection);
@@ -177,6 +195,7 @@ test("an invalid limit fails before a watcher fiber is created", () =>
       const input = FamilyFixture.json("change-invalid-limit", {
         schema: Schema.Finite,
       });
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "change-invalid-limit",
@@ -184,8 +203,10 @@ test("an invalid limit fails before a watcher fiber is created", () =>
         inputs: { input },
         process: () => Effect.void,
       }).at({});
+
       const result = yield* Projection.watch(projection, { limit: 0 }).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure") {
         expect(result.failure.phase).toBe("load");
         expect(result.failure.reason).toBe("invalid-options");
@@ -197,6 +218,7 @@ test("an ownership probe reports a gone input as unavailable history", () =>
   run(
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-probe-failure", { schema: Schema.Finite });
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "change-probe-failure",
@@ -204,15 +226,19 @@ test("an ownership probe reports a gone input as unavailable history", () =>
         inputs: { input },
         process: () => Effect.void,
       }).at({});
+
       const reader = yield* StreamsReader;
+
       const fiber = yield* Projection.watch(projection).pipe(
         FamilyFixture.provideReader({
           ...reader,
           head: (id) => Effect.fail(new StreamGone({ id })),
         }),
       );
+
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure") {
         expect(result.failure.phase).toBe("read");
         expect(result.failure.reason).toBe("history-unavailable");
@@ -227,13 +253,16 @@ test("watch and a serialized request share the same key lock", () =>
       const input = FamilyFixture.json("change-request-input", {
         schema: Schema.Finite,
       });
+
       const output = FamilyFixture.json("change-request-output", {
         schema: Schema.Finite,
       });
+
       yield* Streams.create(input);
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       let calls = 0;
+
       const projection = Projection.emit({
         commit: Commit.producer,
         id: "change-request",
@@ -247,6 +276,7 @@ test("watch and a serialized request share the same key lock", () =>
             Effect.as({ output: [entry.item] }),
           ),
       }).at({});
+
       const watcher = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(entered);
@@ -266,6 +296,7 @@ test("a stream watches its fixed address set independently", () =>
       const seen: string[] = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
+
       const declared = Projection.process({
         commit: Commit.atLeastOnce,
         id: "change-stream",
@@ -278,13 +309,16 @@ test("a stream watches its fixed address set independently", () =>
             yield* Deferred.succeed(workspaceId === "a" ? a : b, undefined);
           }),
       });
+
       const aRef = WatchRoute1.at({ workspaceId: "a" });
       const bRef = WatchRoute1.at({ workspaceId: "b" });
       yield* Streams.create(aRef);
       yield* Streams.create(bRef);
+
       const fibers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
         Projection.watch(declared.at({ workspaceId })),
       );
+
       yield* Streams.append(aRef, [1]);
       yield* Deferred.await(a);
       expect(seen).toEqual(["a"]);
@@ -305,9 +339,11 @@ test("closing the caller scope interrupts every stream address fiber", () =>
         inputs: { facts: WatchRoute2 },
         process: () => Effect.void,
       });
+
       const fibers = yield* Effect.scoped(
         Effect.forEach(["a", "b"], (workspaceId) => Projection.watch(declared.at({ workspaceId }))),
       );
+
       for (const fiber of fibers) expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
     }),
   ));
@@ -317,6 +353,7 @@ test("a closed and drained input ends its watcher", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("change-closed", { schema: Schema.Finite });
       yield* Streams.create(input);
+
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
         id: "change-closed",
@@ -324,6 +361,7 @@ test("a closed and drained input ends its watcher", () =>
         inputs: { input },
         process: () => Effect.void,
       }).at({});
+
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Streams.append(input, [], { close: true });

@@ -44,13 +44,16 @@ export const read = Effect.fn("Projection.read")(function* <
   const declared = projection.state;
   const restored = yield* restore(projection, projection.commit);
   const encoded = Option.fromUndefinedOr(restored.record.state);
+
   const stored =
     declared === undefined
       ? Option.none()
       : yield* decodeState(projection, declared.schema, encoded);
+
   // SAFETY: the state is undefined exactly when the declaration has no state.
   const state = (
     declared === undefined ? undefined : Option.getOrElse(stored, declared.initial)
   ) as StateValue<S>;
+
   return { state, offsets: offsetsOf<Inputs>(restored.record) };
 });

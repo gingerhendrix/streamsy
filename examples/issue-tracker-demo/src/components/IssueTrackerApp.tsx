@@ -31,8 +31,10 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
   const writer = name.trim() || undefined;
 
   const projects = useProjects(db);
+
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0];
+
   const projectId = selectedProject?.id ?? "";
   const issueCountByProject = useIssueCountByProject(db);
   const visibleIssues = useVisibleIssues(db, projectId, filter);
@@ -46,9 +48,11 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
   const run = async <T,>(action: OptimisticAction<T>, variables: T) => {
     try {
       await awaitOptimisticAction(action, variables);
+
       return true;
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
+
       return false;
     }
   };
@@ -60,13 +64,16 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
       description,
       createdAt: new Date().toISOString(),
     };
+
     const txid = crypto.randomUUID();
+
     if (await run(db.actions.createProject, { project, txid })) setSelectedProjectId(project.id);
   };
 
   const createIssue = async (title: string) => {
     if (!selectedProject) return;
     const now = new Date().toISOString();
+
     const unnamed: Issue = {
       id: newId("issue"),
       projectId: selectedProject.id,
@@ -75,6 +82,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
       createdAt: now,
       updatedAt: now,
     };
+
     const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
     await run(db.actions.createIssue, { issue, txid: crypto.randomUUID() });
   };
@@ -90,6 +98,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
       body,
       createdAt: new Date().toISOString(),
     };
+
     await run(db.actions.createComment, { comment, txid: crypto.randomUUID() });
   };
 

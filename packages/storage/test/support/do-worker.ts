@@ -41,6 +41,7 @@ export class StorageObject {
     const client = Layer.effectContext(
       sharedSqlClientLayer(SqliteClient.make({ storage: this.#ctx.storage })),
     );
+
     return layerWithTestProbe({ repairIntervalMs }, probe).pipe(Layer.provideMerge(client));
   }
 
@@ -48,19 +49,24 @@ export class StorageObject {
     const boundaryProbe = makeBoundaryTestProbe();
     boundaryProbe.repairsPaused = true;
     const boundaryRuntime = ManagedRuntime.make(this.#layer(60_000, boundaryProbe));
+
     const boundary = await boundaryRuntime.runPromise(
       runBoundaryScenarios(boundaryProbe).pipe(Effect.scoped),
     );
+
     const pendingCleanup = await boundaryRuntime.runPromise(
       prepareOwnerCleanupProof(boundaryProbe),
     );
+
     await boundaryRuntime.dispose();
+
     const ownerCleanup = await Effect.runPromise(
       finishOwnerCleanupProof(boundaryProbe, pendingCleanup),
     );
 
     const repairProbe = makeBoundaryTestProbe();
     const repairRuntime = ManagedRuntime.make(this.#layer(100, repairProbe));
+
     const repair = await repairRuntime.runPromise(
       runExternalRepair(
         Effect.sync(() => {
@@ -71,14 +77,17 @@ export class StorageObject {
         repairProbe,
       ).pipe(Effect.scoped),
     );
+
     await repairRuntime.dispose();
 
     const entryRuntime = ManagedRuntime.make(
       DurableObjectStorage.layerProtocol({ client: { storage: this.#ctx.storage } }),
     );
+
     const entry = await entryRuntime.runPromise(
       Effect.gen(function* () {
         const storage = yield* Storage;
+
         const outcome = yield* storage.mutate({
           operations: [
             {
@@ -93,6 +102,7 @@ export class StorageObject {
             },
           ],
         });
+
         return {
           outcome: outcome._tag,
           present: Option.isSome(yield* storage.record(StreamId.make("exported-entry"))),
@@ -100,7 +110,9 @@ export class StorageObject {
         };
       }),
     );
+
     await entryRuntime.dispose();
+
     return Response.json({ boundary, ownerCleanup, repair, entry });
   }
 }

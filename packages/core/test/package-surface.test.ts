@@ -12,6 +12,7 @@ test("public root exposes fault schemas, guards and result matchers", () => {
   ]) {
     expect(Object.keys(Root)).toContain(name);
   }
+
   expect(
     Root.CreateResult.$is("Exists")(
       Root.CreateResult.Exists({

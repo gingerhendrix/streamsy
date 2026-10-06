@@ -36,8 +36,10 @@ export interface MigrationHooks {
 
 /** Fixed `pg_advisory_xact_lock` key: "streamsy" in ASCII, read as a 64-bit integer. */
 const PG_MIGRATION_LOCK_KEY = "8319400191411975033";
+
 /** Named lock that serialises MySQL migrations, whose DDL cannot share one transaction. */
 const MYSQL_MIGRATION_LOCK = STORAGE_VERSION_TABLE;
+
 const MYSQL_MIGRATION_LOCK_TIMEOUT_SECONDS = 30;
 
 const fault = (operation: string, error: SqlError): StorageFault =>
@@ -56,9 +58,11 @@ export const inspectFormat = (
   tables: ReadonlySet<string>,
 ): Effect.Effect<boolean, StorageFault> => {
   const ownsFormat = tables.has(STORAGE_VERSION_TABLE);
+
   const legacy =
     LEGACY_VERSION_TABLES.some((name) => tables.has(name)) ||
     (!ownsFormat && STORAGE_TABLES.some((name) => tables.has(name)));
+
   return legacy
     ? Effect.fail(
         new StorageFault({
@@ -95,6 +99,7 @@ const listTables = (sql: SqlClient, dialect: StorageDialect) =>
 const migrateVersions = (sql: SqlClient, dialect: StorageDialect, hooks: MigrationHooks) =>
   Effect.gen(function* () {
     const ownsFormat = yield* inspectFormat(yield* listTables(sql, dialect));
+
     if (!ownsFormat)
       yield* sqlAttempt(
         "migration.create-version-table",
@@ -107,12 +112,15 @@ const migrateVersions = (sql: SqlClient, dialect: StorageDialect, hooks: Migrati
         Effect.map((rows) => Number(rows[0]?.version ?? 0)),
       ),
     );
+
     if (current > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(current);
 
     for (let version = current + 1; version <= STORAGE_SCHEMA_VERSION; version++) {
       if (hooks.beforeVersion !== undefined) yield* hooks.beforeVersion(version);
       const statements = STORAGE_MIGRATIONS[version - 1]?.[dialect];
+
       if (statements === undefined) return yield* Effect.die(new Error("Missing migration"));
+
       for (const statement of statements)
         yield* sqlAttempt(`migration.apply.${version}`, sql.unsafe(statement).pipe(Effect.asVoid));
       const appliedAtMs = yield* Clock.currentTimeMillis;
@@ -126,6 +134,7 @@ const migrateVersions = (sql: SqlClient, dialect: StorageDialect, hooks: Migrati
         ).pipe(Effect.asVoid),
       );
     }
+
     return undefined;
   });
 
@@ -138,6 +147,7 @@ const migrateMysql = (sql: SqlClient, hooks: MigrationHooks) =>
   Effect.scoped(
     Effect.gen(function* () {
       const connection = yield* sqlAttempt("migration.connection", sql.reserve);
+
       // GET_LOCK belongs to one session. Statements use the transaction connection
       // when one is provided, so this pins every statement below to `connection`.
       return yield* Effect.provideService(
@@ -184,7 +194,9 @@ export const migrate = (
     retryWithPolicy(
       Effect.suspend(() => {
         hooks.onTransactionAttempt?.();
+
         if (dialect === "mysql") return migrateMysql(sql, hooks);
+
         return sql.withTransaction(
           dialect === "pg"
             ? sqlAttempt(

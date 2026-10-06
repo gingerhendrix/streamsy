@@ -25,6 +25,7 @@ const created = {
 
 test("key-only catalog deletes stay in the address workspace and advance both checkpoints", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -46,6 +47,7 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
           yield* Projection.run(issueRows.at({ workspaceId }));
           yield* Projection.run(tracker.at({ workspaceId }));
         }
+
         const owner = yield* CheckpointStore;
         const rows = issueRows.at({ workspaceId: "live" });
         const outputs = tracker.at({ workspaceId: "live" });
@@ -81,6 +83,7 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
 
 test("catalog values cannot write another workspace in either projection", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -99,6 +102,7 @@ test("catalog values cannot write another workspace in either projection", async
             headers: { operation: "upsert" },
           },
         ]);
+
         for (const [address, run] of [
           [
             issueRows.at({ workspaceId: "live" }),
@@ -121,6 +125,7 @@ test("catalog values cannot write another workspace in either projection", async
           });
           expect(yield* owner.load(address)).toEqual(before);
         }
+
         const sql = yield* SqlClient.SqlClient;
         expect(yield* sql.unsafe("SELECT * FROM issues")).toEqual([]);
         expect(yield* sql.unsafe("SELECT * FROM users")).toEqual([]);
@@ -133,12 +138,14 @@ test("catalog values cannot write another workspace in either projection", async
 
 test("named output replay survives a lost append reply beside the SQL projection", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs("live");
         yield* (yield* Events).append({ workspaceId: "live" }, [created]);
         const bound = tracker.at({ workspaceId: "live" });
+
         const failed = yield* Projection.run(bound).pipe(
           Addresses.patchOutputAppends(
             (append) => (id, options) =>
@@ -156,6 +163,7 @@ test("named output replay survives a lost append reply beside the SQL projection
           ),
           Effect.result,
         );
+
         expect(failed._tag).toBe("Failure");
         // Advancing SQL and input history must not change reproduction of the pinned range.
         yield* (yield* Events).append({ workspaceId: "live" }, [
@@ -185,6 +193,7 @@ test("named output replay survives a lost append reply beside the SQL projection
 /** Serves the output routes from a new in-memory application runtime. */
 const serveOutputs = () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   return runtime.runPromise(Effect.context()).then((services) => ({
     runtime,
     web: HttpRouter.toWebHandler(
@@ -200,6 +209,7 @@ const serveOutputs = () => {
 test("served route fingerprints are stable across runtimes, differ per workspace, and reject incompatible contracts without creating data", async () => {
   const { runtime, web } = await serveOutputs();
   const fresh = await serveOutputs();
+
   try {
     for (const [kind, suffix] of [
       ["state", "issues"],
@@ -220,6 +230,7 @@ test("served route fingerprints are stable across runtimes, differ per workspace
       expect(rejected.status).toBe(409);
       expect(await rejected.json()).toMatchObject({ _tag: "ResumeRejected" });
     }
+
     const summaryUrl = "http://host/workspaces/live/summary";
     const value = await web.handler(new Request(summaryUrl));
     expect(value.status).toBe(200);
@@ -235,9 +246,11 @@ test("served route fingerprints are stable across runtimes, differ per workspace
     expect(
       (await fresh.web.handler(new Request(summaryUrl))).headers.get("x-streamsy-value-contract"),
     ).toBe(fingerprint);
+
     const rejected = await web.handler(
       new Request(summaryUrl, { headers: { "x-streamsy-value-contract": "outdated" } }),
     );
+
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toMatchObject({ _tag: "ContractChanged" });
     await runtime.runPromise(
@@ -259,6 +272,7 @@ test("served route fingerprints are stable across runtimes, differ per workspace
 test("compact summary excludes fold rows and keeps its ETag across a count-neutral assignment", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
   const services = await runtime.runPromise(Effect.context());
+
   const web = HttpRouter.toWebHandler(
     outputRoutes.pipe(
       Layer.provide(Layer.succeedContext(services)),
@@ -266,6 +280,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     ),
     { disableLogger: true },
   );
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {

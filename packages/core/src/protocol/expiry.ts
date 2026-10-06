@@ -10,6 +10,7 @@ export const expireIfNeeded = Effect.fn("Protocol.expireIfNeeded")(function* (
 ) {
   const record = yield* storage.record(id);
   const now = yield* Clock.currentTimeMillis;
+
   if (
     Option.isSome(record) &&
     !record.value.lifecycle.softDeleted &&
@@ -30,8 +31,10 @@ export const expireIfNeeded = Effect.fn("Protocol.expireIfNeeded")(function* (
         // A concurrent renewal or deletion wins; reread the record below.
         Effect.catchTag("MutationRejected", () => Effect.void),
       );
+
     return yield* storage.record(id);
   }
+
   return record;
 });
 
@@ -63,8 +66,10 @@ export const touch = Effect.fn("Protocol.touch")(function* (
 export const expireDue = Effect.fn("Protocol.expireDue")(function* () {
   const storage = yield* Storage;
   const now = yield* Clock.currentTimeMillis;
+
   while (true) {
     const deadline = yield* storage.nextExpiry;
+
     if (Option.isNone(deadline) || deadline.value.at > now) return;
     yield* storage
       .mutate({

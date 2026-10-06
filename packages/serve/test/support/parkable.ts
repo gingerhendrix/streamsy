@@ -16,6 +16,7 @@ export const parkableLayer = (
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
       const writer = yield* StreamsWriter;
+
       return Context.make(StreamsWriter, writer).pipe(
         Context.add(
           StreamsReader,
@@ -24,6 +25,7 @@ export const parkableLayer = (
             readNext: (id, readOptions) =>
               Effect.suspend(() => {
                 Deferred.doneUnsafe(readStarted, Exit.void);
+
                 return Deferred.await(hold).pipe(Effect.andThen(reader.readNext(id, readOptions)));
               }),
           }),

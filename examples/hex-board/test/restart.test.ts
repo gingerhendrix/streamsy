@@ -19,14 +19,20 @@ import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
 
 const board = hexBoard.at({ gameId: "game" });
+
 const params = { gameId: "game" };
+
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
+
 const resolution = fullGame[split];
+
 if (resolution?.type !== "AttackResolved") throw new Error("fixture has no AttackResolved");
+
 const sqlite = (filename: string) =>
   CheckpointStore.layer.pipe(
     Layer.provideMerge(BunStorage.layer(Streamsy.group(GameEvents), { client: { filename } })),
   );
+
 /**
  * Runs `program` as one process on `layer`: it opens the Layer, runs, and closes it.
  * Two calls on the same SQLite file are a restart.
@@ -36,6 +42,7 @@ const asProcess =
   <A, E, R>(program: Effect.Effect<A, E, R>) =>
     // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
     Effect.provide(program, layer);
+
 /** A SQLite file in a temporary folder. The folder is removed when the scope closes. */
 const tempFile = (prefix: string) =>
   Effect.acquireRelease(
@@ -46,17 +53,21 @@ const tempFile = (prefix: string) =>
 /** Each half of a split game has events; an append needs at least one. */
 const nonEmpty = <A>(events: ReadonlyArray<A>): NonEmptyReadonlyArray<A> => {
   if (!isReadonlyArrayNonEmpty(events)) throw new Error("expected events");
+
   return events;
 };
+
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
     yield* (yield* GameEvents).create(params);
     yield* (yield* GameEvents).append(params, nonEmpty(events.slice(0, cut)));
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
+
 const snapshot = Effect.gen(function* () {
   const { state, offsets } = yield* Projection.read(board);
   const checkpoint = yield* (yield* CheckpointStore).load(board);
+
   return {
     state,
     offsets,
@@ -64,14 +75,17 @@ const snapshot = Effect.gen(function* () {
     encoded: Option.flatMap(checkpoint.record, (record) => Option.fromUndefinedOr(record.state)),
   };
 });
+
 const read = Effect.gen(function* () {
   const { state, offsets, checkpoint, encoded } = yield* snapshot;
   const tail = (yield* (yield* GameEvents).head(params)).nextOffset;
   expect(offsets.input).toBe(tail);
   expect(Option.getOrThrow(checkpoint.record).inputs.input).toBe(tail);
   expect(state.board.sourceThroughOffset).toBe(tail);
+
   return { state, checkpoint, tail, encoded };
 });
+
 const advance = (
   before: { state: BoardState; tail: string },
   events: readonly GameEvent[] = fullGame,
@@ -81,13 +95,16 @@ const advance = (
     yield* (yield* GameEvents).append(params, nonEmpty(events.slice(cut)));
     expect((yield* Projection.run(board)).items).toBe(events.length - cut);
     const after = yield* read;
+
     const pure = events.reduce(
       (state, event, index) =>
         Result.getOrThrow(stepBoard(state, event, index < cut ? before.tail : after.tail)),
       initialBoard({ gameId: "game" }),
     );
+
     expect(after.state).toEqual(pure);
     expect(after.state.ordinal).toBe(events.length);
+
     if (events === fullGame) expect(after.state.board.game.status).toBe("finished");
     expect(after.state.board.moves.map((move) => move.id)).toEqual(
       Array.from({ length: Math.min(events.length, MOVE_FEED_LIMIT) }, (_, i) =>
@@ -109,6 +126,7 @@ for (const [name, events, cut] of [
       const file = yield* tempFile("hex-board-");
       const before = yield* seed(events, cut).pipe(Effect.andThen(read), asProcess(sqlite(file)));
       expect(before.state.ordinal).toBe(cut);
+
       if (events === fullGame) expect(before.state.board.combat?.status).toBe("awaiting-defense");
       else
         expect(before.state.board.moves.map((move) => move.id)).toEqual(

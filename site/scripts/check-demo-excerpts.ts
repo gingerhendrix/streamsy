@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { codeFences, fenceTitle } from "./mdx-code.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
+
 const demos = fileURLToPath(new URL("../content/docs/demos/", import.meta.url));
 
 /**
@@ -33,14 +34,17 @@ const isElision = (line: string): boolean => line.trim().startsWith("// ...");
  */
 export const excerptSegments = (body: string): ReadonlyArray<ReadonlyArray<string>> => {
   const segments: Array<Array<string>> = [[]];
+
   for (const line of body.split("\n").map((text) => text.trimEnd())) {
     if (isElision(line)) segments.push([]);
     else segments.at(-1)?.push(line);
   }
+
   return segments
     .map((segment) => {
       const first = segment.findIndex((line) => line !== "");
       const last = segment.findLastIndex((line) => line !== "");
+
       return first === -1 ? [] : segment.slice(first, last + 1);
     })
     .filter((segment) => segment.length > 0);
@@ -60,17 +64,21 @@ const findSegment = (
   indent: string,
 ): { readonly at: number } | { readonly missing: string } => {
   let longest = 0;
+
   for (let start = from; start < sourceLines.length; start++) {
     let matched = 0;
+
     while (
       matched < segment.length &&
       sourceLines[start + matched] === indented(segment[matched] ?? "", indent)
     ) {
       matched++;
     }
+
     if (matched === segment.length) return { at: start };
     longest = Math.max(longest, matched);
   }
+
   return { missing: segment[longest] ?? "" };
 };
 
@@ -80,11 +88,14 @@ const missingWithIndent = (
   indent: string,
 ): string | undefined => {
   let position = 0;
+
   for (const segment of segments) {
     const found = findSegment(segment, sourceLines, position, indent);
+
     if ("missing" in found) return found.missing;
     position = found.at + segment.length;
   }
+
   return undefined;
 };
 
@@ -102,11 +113,14 @@ export const firstMissingLine = (body: string, source: string): string | undefin
   const sourceLines = source.split("\n").map((line) => line.trimEnd());
   const segments = excerptSegments(body);
   const unshifted = missingWithIndent(segments, sourceLines, "");
+
   if (unshifted === undefined) return undefined;
   const shifts = new Set(sourceLines.map(leadingSpaces).filter((spaces) => spaces > 0));
+
   for (const shift of shifts) {
     if (missingWithIndent(segments, sourceLines, " ".repeat(shift)) === undefined) return undefined;
   }
+
   return unshifted;
 };
 
@@ -119,28 +133,36 @@ const isInsideExample = (path: string): boolean =>
 /** The problems in one demo page. An empty list means the page passes. */
 export const checkDemoPage = (text: string, readSource: SourceReader): ReadonlyArray<string> => {
   const problems: Array<string> = [];
+
   for (const fence of codeFences(text)) {
     if (fence.lang === null || !excerptLanguages.has(fence.lang)) continue;
     const title = fenceTitle(fence.meta);
+
     if (title === undefined) {
       problems.push(`line ${fence.line}: ${fence.lang} fence has no title="<path>"`);
       continue;
     }
+
     if (!isInsideExample(title)) {
       problems.push(`line ${fence.line}: title ${title} is not a path inside the example`);
       continue;
     }
+
     const source = readSource(title);
+
     if (source === undefined) {
       problems.push(`line ${fence.line}: ${title} does not exist in the example`);
       continue;
     }
+
     const missing = firstMissingLine(fence.value, source);
+
     if (missing !== undefined) {
       const shown = missing.trim() === "" ? "(a blank line)" : missing.trim();
       problems.push(`line ${fence.line}: ${title} drifts from the source at: ${shown}`);
     }
   }
+
   return problems;
 };
 
@@ -148,33 +170,42 @@ const exampleReader =
   (example: string): SourceReader =>
   (path) => {
     const file = join(repo, example, path);
+
     return existsSync(file) ? readFileSync(file, "utf8") : undefined;
   };
 
 export const checkDemoExcerpts = async (): Promise<void> => {
   const failures: Array<string> = [];
+
   for (const example of demoExamples.values()) {
     if (!existsSync(join(repo, example))) failures.push(`missing example folder ${example}`);
   }
+
   const pages = (await readdir(demos))
     .filter((name) => name.endsWith(".mdx"))
     .map((name) => name.slice(0, -".mdx".length))
     .toSorted();
+
   for (const page of pages) {
     if (page === "index") continue;
     const example = demoExamples.get(page);
+
     if (example === undefined) {
       failures.push(`${page}: no example folder in demoExamples`);
       continue;
     }
+
     const text = await readFile(join(demos, `${page}.mdx`), "utf8");
     const problems = checkDemoPage(text, exampleReader(example));
+
     if (problems.length === 0) {
       console.log(`ok demo excerpts ${page} ← ${example}`);
       continue;
     }
+
     for (const problem of problems) failures.push(`${page}.mdx ${problem}`);
   }
+
   if (failures.length > 0) {
     for (const failure of failures) console.error(failure);
     throw new Error(`Demo excerpt check failed with ${failures.length} problems`);

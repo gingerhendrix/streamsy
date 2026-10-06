@@ -11,25 +11,31 @@ import { HackerNewsStories, storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 
 const a = story(101, 30, "first");
+
 const b = story(102, 20, "second");
+
 const fetched = { newestIds: new Set([101]), stories: [a] };
 
 test("diff adds a new story", () => {
   expect(diffNewest({}, fetched)).toEqual([DurableState.upsert("hn-story", a)]);
 });
+
 test("diff replaces a changed story", () => {
   expect(diffNewest({ "101": { ...a, title: "old" } }, fetched)).toEqual([
     DurableState.upsert("hn-story", a),
   ]);
 });
+
 test("diff suppresses unchanged stories", () => {
   expect(diffNewest({ "101": a }, fetched)).toEqual([]);
 });
+
 test("diff deletes departed stories", () => {
   expect(diffNewest({ "102": b }, { newestIds: new Set(), stories: [] })).toEqual([
     DurableState.remove("hn-story", b.id, { oldValue: b }),
   ]);
 });
+
 test("diff preserves a failed fetch while its id remains newest, and sorts changes", () => {
   expect(diffNewest({ "101": a }, { newestIds: new Set([101]), stories: [] })).toEqual([]);
   expect(diffNewest({}, { newestIds: new Set([101, 102]), stories: [b, a] })).toEqual([
@@ -45,10 +51,12 @@ const api: HackerNewsApiService = {
 
 test("unchanged polls append nothing; a fresh poller deletes a downtime departure", async () => {
   const h = await demoHarness();
+
   try {
     const poller = await h.runtime.runPromise(
       makeNewestStoriesPoller({ limit: 2, intervalMs: 60_000, api }),
     );
+
     await h.runtime.runPromise(poller.pollNow);
     const before = await h.read();
     await h.runtime.runPromise(poller.pollNow);
@@ -58,6 +66,7 @@ test("unchanged polls append nothing; a fresh poller deletes a downtime departur
       lastUpserts: 0,
       lastDeletes: 0,
     });
+
     // Existing checkpoint and fold state survive poller orchestration restart.
     const restarted = await h.runtime.runPromise(
       makeNewestStoriesPoller({
@@ -69,6 +78,7 @@ test("unchanged polls append nothing; a fresh poller deletes a downtime departur
         },
       }),
     );
+
     await h.runtime.runPromise(restarted.pollNow);
     expect(await h.runtime.runPromise(restarted.stats)).toMatchObject({
       lastStoryCount: 1,
@@ -94,6 +104,7 @@ for (const exhaust of [false, true]) {
       let storiesFetched = 0;
       const service = Context.get(h.context, HackerNewsStories);
       const expectedOffsets: (string | undefined)[] = [];
+
       // `Projection.decide` appends through the stream's wire, so the race sits there.
       const raced = Context.add(h.context, HackerNewsStories, {
         ...service,
@@ -103,6 +114,7 @@ for (const exhaust of [false, true]) {
             Effect.gen(function* () {
               appends++;
               expectedOffsets.push(options.expectedOffset);
+
               if (exhaust || appends === 1) {
                 yield* service
                   .append(
@@ -113,10 +125,12 @@ for (const exhaust of [false, true]) {
                   )
                   .pipe(Effect.orDie);
               }
+
               return yield* service.wire.append(id, options);
             }),
         },
       });
+
       try {
         const poller = await Effect.runPromise(
           makeNewestStoriesPoller({
@@ -126,16 +140,19 @@ for (const exhaust of [false, true]) {
               fetchNewestStoryIds: () =>
                 Effect.sync(() => {
                   idsFetched++;
+
                   return [101];
                 }),
               fetchStoriesById: () =>
                 Effect.sync(() => {
                   storiesFetched++;
+
                   return [a];
                 }),
             },
           }).pipe(Effect.provide(raced)),
         );
+
         await h.runtime.runPromise(poller.pollNow);
         const stats = await h.runtime.runPromise(poller.stats);
         expect(idsFetched).toBe(1);
@@ -146,6 +163,7 @@ for (const exhaust of [false, true]) {
         expect(appends).toBe(exhaust ? 4 : 2);
         expect(stats.polling).toBe(false);
         expect(stats.lastPollCompletedAt).toBeDefined();
+
         if (exhaust) {
           expect(stats.lastPollError).toContain("not at the expected");
           expect(await h.read()).toHaveLength(4);
@@ -173,12 +191,14 @@ for (const exhaust of [false, true]) {
 
 test("pollNow coalesces concurrent callers into one fetch", async () => {
   const h = await demoHarness();
+
   try {
     await h.runtime.runPromise(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         let fetches = 0;
+
         const poller = yield* makeNewestStoriesPoller({
           limit: 2,
           intervalMs: 60_000,
@@ -188,11 +208,13 @@ test("pollNow coalesces concurrent callers into one fetch", async () => {
                 fetches++;
                 yield* Deferred.succeed(started, undefined);
                 yield* Deferred.await(release);
+
                 return [101];
               }),
             fetchStoriesById: api.fetchStoriesById,
           },
         });
+
         const first = yield* Effect.forkChild(poller.pollNow);
         yield* Deferred.await(started);
         const second = yield* Effect.forkChild(poller.pollNow);

@@ -23,15 +23,18 @@ type Operation<A, Type extends string> = Data.TaggedEnum<{
     readonly headers?: ChangeHeaders;
   };
 }>;
+
 interface Operations extends Data.TaggedEnum.WithGenerics<2> {
   readonly taggedEnum: Operation<this["A"], this["B"] & string>;
 }
+
 const operations = Data.taggedEnum<Operations>();
 
 export type Upsert<A, Type extends string = string> = Data.TaggedEnum.Value<
   Operation<A, Type>,
   "Upsert"
 >;
+
 export type Delete<A, Type extends string = string> = Data.TaggedEnum.Value<
   Operation<A, Type>,
   "Delete"
@@ -63,6 +66,7 @@ const checkKey = <Raw>(type: string, source: string, raw: Raw): string => {
       `Invalid state key for type "${type}": ${source} must not be null, undefined, or empty`,
     );
   }
+
   return String(raw);
 };
 
@@ -90,22 +94,30 @@ export function changes<C extends Collections, RD, RE>(
   entries: ReadonlyArray<Change<C>>,
 ): ReadonlyArray<CollectionsChange<C>> {
   const { offset } = options;
+
   return entries.map((entry, index): CollectionsChange<C> => {
     const collection = Object.hasOwn(address.collections, entry.type)
       ? address.collections[entry.type]
       : undefined;
+
     if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
     // Only the three overridable fields are read from the entry, so a wider
     // value cannot replace `offset` and an explicit `undefined` cannot drop `txid`.
     const override = entry.headers ?? {};
     const txid = override.txid ?? (offset === undefined ? undefined : `${offset}:${index}`);
     const headers: Types.Mutable<Omit<StateHeaders, "operation">> = {};
+
     if (offset !== undefined) headers.offset = offset;
+
     if (txid !== undefined) headers.txid = txid;
+
     if (override.timestamp !== undefined) headers.timestamp = override.timestamp;
+
     if (override.from !== undefined) headers.from = override.from;
+
     if (Predicate.isTagged(entry, "Upsert")) {
       const key = readKey(entry.type, collection.key, entry.value);
+
       return {
         type: entry.type,
         key,
@@ -113,7 +125,9 @@ export function changes<C extends Collections, RD, RE>(
         headers: { operation: "upsert", ...headers },
       };
     }
+
     const key = checkKey(entry.type, "key", entry.key);
+
     return entry.oldValue === undefined
       ? { type: entry.type, key, headers: { operation: "delete", ...headers } }
       : {

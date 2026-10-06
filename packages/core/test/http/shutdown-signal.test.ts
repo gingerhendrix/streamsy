@@ -15,6 +15,7 @@ const decoder = new TextDecoder();
 /** Routes over memory storage with a signal the test can drain. */
 const drainableEdge = () => {
   const signal = Effect.runSync(makeShutdownSignal);
+
   const edge = HttpRouter.toWebHandler(
     protocolRoutes({}).pipe(
       Layer.provideMerge(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })),
@@ -22,12 +23,14 @@ const drainableEdge = () => {
     ),
     { disableLogger: true },
   );
+
   return { edge, signal };
 };
 
 /** Wait until `n` live reads are running, so the drain has something to end. */
 const liveReads = async (signal: ShutdownSignalService, n: number) => {
   const deadline = performance.now() + 2000;
+
   while ((await Effect.runPromise(signal.active)) !== n) {
     if (performance.now() > deadline) throw new Error(`Expected ${n} live reads`);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -42,18 +45,24 @@ const seed = async (edge: ReturnType<typeof drainableEdge>["edge"]) => {
       body: "seed",
     }),
   );
+
   const tail = created.headers.get("stream-next-offset");
+
   if (!tail) throw new Error("Expected current tail");
+
   return tail;
 };
 
 it("a drain answers a parked long poll with a 204 that looks like a timeout", async () => {
   const { edge, signal } = drainableEdge();
+
   try {
     const tail = await seed(edge);
+
     const pending = edge.handler(
       new Request(`http://x/s?offset=${tail}&live=long-poll&cursor=1000`),
     );
+
     await liveReads(signal, 1);
     await Effect.runPromise(signal.drain(1000));
     const response = await pending;
@@ -70,6 +79,7 @@ it("a drain answers a parked long poll with a 204 that looks like a timeout", as
 
 it("a drain answers offset=now with the current tail", async () => {
   const { edge, signal } = drainableEdge();
+
   try {
     const tail = await seed(edge);
     const pending = edge.handler(new Request("http://x/s?offset=now&live=long-poll"));
@@ -85,10 +95,12 @@ it("a drain answers offset=now with the current tail", async () => {
 
 it("a drain ends an open SSE body after a whole batch and its control event", async () => {
   const { edge, signal } = drainableEdge();
+
   try {
     await seed(edge);
     const response = await edge.handler(new Request("http://x/s?offset=-1&live=sse"));
     expect(response.status).toBe(200);
+
     if (!response.body) throw new Error("Expected SSE body");
     const reader = response.body.getReader();
     const first = await reader.read();
@@ -96,6 +108,7 @@ it("a drain ends an open SSE body after a whole batch and its control event", as
     await liveReads(signal, 1);
     await Effect.runPromise(signal.drain(1000));
     let text = decoder.decode(first.value);
+
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())
       text += decoder.decode(chunk.value);
     expect(await reader.closed).toBeUndefined();
@@ -108,6 +121,7 @@ it("a drain ends an open SSE body after a whole batch and its control event", as
 
 it("a long poll that arrives after the drain started gets the same 204 at once", async () => {
   const { edge, signal } = drainableEdge();
+
   try {
     const tail = await seed(edge);
     await Effect.runPromise(signal.drain(1000));
@@ -126,6 +140,7 @@ it("drain stops waiting at its timeout when a live read does not end", async () 
   const signal = Effect.runSync(makeShutdownSignal);
   const stuck = signal.track(Effect.never);
   const fiber = Effect.runFork(stuck);
+
   try {
     await liveReads(signal, 1);
     const startedAt = performance.now();

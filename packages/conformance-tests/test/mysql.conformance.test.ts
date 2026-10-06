@@ -11,15 +11,19 @@ import { freshDatabase, sqlDialects } from "../../storage/test/dialects/support.
 const url = sqlDialects.mysql.url;
 
 let database: Scope.Closeable | undefined;
+
 let host: TestHost | undefined;
+
 describe.skipIf(url === undefined)("Effect SQL Bun host on MySQL", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {
     if (url === undefined) return;
     database = await Effect.runPromise(Scope.make());
+
     const fresh = await Effect.runPromise(
       freshDatabase(sqlDialects.mysql, url).pipe(Scope.provide(database)),
     );
+
     host = await Effect.runPromise(
       testHost({
         layer: SqlStorage.layerProtocol({ longPollTimeoutMs: 1_500 }).pipe(
@@ -34,6 +38,7 @@ describe.skipIf(url === undefined)("Effect SQL Bun host on MySQL", () => {
   });
   afterAll(async () => {
     if (host !== undefined) await Effect.runPromise(host.stop);
+
     if (database !== undefined) await Effect.runPromise(Scope.close(database, Exit.void));
   });
   runConformanceTests(config);

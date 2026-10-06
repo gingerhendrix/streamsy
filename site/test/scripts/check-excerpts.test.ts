@@ -8,6 +8,7 @@ import { assertExcerpt, runExcerpt } from "../../scripts/check-excerpts.ts";
 const exists = async (path: string): Promise<boolean> => {
   try {
     await access(path);
+
     return true;
   } catch {
     return false;
@@ -16,6 +17,7 @@ const exists = async (path: string): Promise<boolean> => {
 
 const waitForFile = async (path: string, timeoutMs = 1_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
+
   while (!(await exists(path))) {
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path}`);
     await delay(10);
@@ -30,12 +32,14 @@ const rejection = async (execution: Promise<void>): Promise<Error> => {
     if (error instanceof Error) return error;
     throw new Error("The excerpt run rejected with a non-Error value", { cause: error });
   }
+
   throw new Error("Expected the excerpt run to reject");
 };
 
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
@@ -44,10 +48,14 @@ const isAlive = (pid: number): boolean => {
 };
 
 const pair = { doc: "guide.mdx", source: "src/example.ts", execute: false } as const;
+
 const code = "export const answer = 42;";
+
 const repositorySourcePrefix =
   "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
+
 const citation = `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).`;
+
 const citedDocument = `${citation}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`;
 
 test("excerpt validation requires a citation outside the code fence", () => {
@@ -76,6 +84,7 @@ test("excerpt validation requires a rendered source destination", () => {
     `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}.bak).`,
     `Compiled source: [${pair.source}](${repositorySourcePrefix.replace("effect-first-live-perimeter", "unrelated")}${pair.source}).`,
   ];
+
   for (const bypass of bypasses) {
     expect(() =>
       assertExcerpt(pair, `${bypass}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
@@ -87,6 +96,7 @@ test("excerpt validation accepts only the exact repository path with an optional
   const withLineAnchor =
     `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}#L12-L18).\n\n` +
     `\x60\x60\x60ts\n${code}\n\x60\x60\x60`;
+
   expect(() => assertExcerpt(pair, withLineAnchor, code)).not.toThrow();
 });
 
@@ -102,6 +112,7 @@ test("excerpt validation rejects ambiguous multiline Markdown context", () => {
     citation.replace(`${pair.source})`, `src/ex<!--x-->ample.ts)`),
     citation.replace(`${pair.source})`, `src/ex\x60x\x60ample.ts)`),
   ];
+
   for (const candidate of multilineCases) {
     expect(() =>
       assertExcerpt(pair, `${candidate}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
@@ -111,6 +122,7 @@ test("excerpt validation rejects ambiguous multiline Markdown context", () => {
 
 test("excerpt validation rejects parser-only code, image and raw HTML contexts", () => {
   const nbsp = "\u00a0";
+
   const parserContexts = [
     `~~~\x60\x60\x60\n${citation}\n~~~`,
     `\x60\x60\x60~~~\n${citation}\n\x60\x60\x60`,
@@ -123,6 +135,7 @@ test("excerpt validation rejects parser-only code, image and raw HTML contexts",
     `<script>\n\n${citation}\n\n</script>`,
     `<style>\n\n${citation}\n\n</style>`,
   ];
+
   for (const candidate of parserContexts) {
     expect(() =>
       assertExcerpt(pair, `${candidate}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
@@ -166,6 +179,7 @@ test("hung excerpt descendants and owned state are reaped before root removal", 
   );
 
   let ownedRoot = "";
+
   try {
     const execution = runExcerpt(source, "hung excerpt", {
       timeoutMs: 300,
@@ -176,6 +190,7 @@ test("hung excerpt descendants and owned state are reaped before root removal", 
         ownedRoot = path;
       },
     });
+
     await waitForFile(pidFile);
     expect((await rejection(execution)).message).toContain("exceeded 300 ms");
     const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
@@ -214,6 +229,7 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
   let execution: Promise<void> | undefined;
   const timeoutMs = 300;
   const startedAt = Date.now();
+
   try {
     execution = runExcerpt(source, "resistant excerpt", {
       timeoutMs,

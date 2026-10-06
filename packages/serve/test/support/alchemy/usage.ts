@@ -11,6 +11,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
   "Streams",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
+
     return Effect.suspend(() =>
       Host.objectHandlers({
         app: protocolRoutes({ prefix: "/streams" }),
@@ -25,17 +26,21 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
 
 export const worker = Effect.gen(function* () {
   const objects = yield* StreamsObject;
+
   const routed: HttpEffect = Host.router({
     objects,
     prefix: "/streams",
     placement: Host.Placement.byStream(),
   });
+
   return {
     fetch: Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
+
       if (request.headers.authorization !== "Bearer fixture") {
         return HttpServerResponse.text("Unauthorized", { status: 401 });
       }
+
       return yield* routed;
     }),
   };

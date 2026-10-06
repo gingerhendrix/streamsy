@@ -6,6 +6,7 @@ import { MemoryStorage } from "@streamsy/core";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
 let host: TestHost | undefined;
+
 describe("Effect memory Bun host", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {

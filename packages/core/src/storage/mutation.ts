@@ -8,6 +8,7 @@ import {
   ProducerState,
   RecordPatch,
 } from "../schema/index.ts";
+
 export const ProducerPrecondition = Schema.Struct({
   producerId: ProducerId,
   expected: Schema.Option(ProducerState), // None = insert only if absent

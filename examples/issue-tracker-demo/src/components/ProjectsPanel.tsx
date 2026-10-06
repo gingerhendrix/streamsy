@@ -19,6 +19,7 @@ export function ProjectsPanel({
 
   const submitNewProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
     if (!projectName.trim()) return;
     await onCreate(projectName.trim(), projectDescription.trim());
     setProjectName("");

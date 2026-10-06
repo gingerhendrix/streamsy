@@ -21,6 +21,7 @@ export const hackerNewsApiLayer = Layer.effect(
   Effect.gen(function* () {
     const { hnApiBase: apiBase } = yield* DemoConfig;
     const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+
     const getJson = <S extends Schema.Top>(path: string, schema: S) =>
       client
         .get(`${apiBase}${path}`)
@@ -41,12 +42,14 @@ export const hackerNewsApiLayer = Layer.effect(
         const ids = yield* getJson("/newstories.json", NewestStoryIds).pipe(
           Effect.mapError(pollFailure("fetchNewestStoryIds")),
         );
+
         return ids.slice(0, limit);
       }),
       fetchStoriesById: Effect.fn("HackerNewsApi.fetchStoriesById")(function* (
         ids: readonly number[],
       ) {
         const stories = yield* Effect.forEach(ids, fetchStory, { concurrency: "unbounded" });
+
         return Array.getSomes(stories).toSorted(newestStorySort);
       }),
     });

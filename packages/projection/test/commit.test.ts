@@ -15,6 +15,7 @@ class Input extends Streamsy.json<Input>()("bucket/Input", "bucket/input", {
   params: {},
   schema: Schema.Number,
 }) {}
+
 class Bucket extends Context.Service<
   Bucket,
   {
@@ -28,14 +29,18 @@ class Bucket extends Context.Service<
     ) => Effect.Effect<void, ProjectionFault>;
   }
 >()("test/Bucket") {}
+
 const json = Schema.fromJsonString(CheckpointRecord);
+
 const bucket = Commit.make({
   name: "bucketSnapshot",
   guarantee: "exactly-once",
   load: (key) =>
     Effect.gen(function* () {
       const found = yield* (yield* Bucket).get(recordKey(key));
+
       if (found === undefined) return { record: Option.none<CheckpointRecord>(), token: "0" };
+
       const record = yield* Schema.decodeEffect(json)(found.body).pipe(
         Effect.mapError(
           (cause) =>
@@ -47,11 +52,13 @@ const bucket = Commit.make({
             }),
         ),
       );
+
       return { record: Option.some(record), token: found.etag };
     }),
   apply: (pending: Commit.Pending<Folded<unknown>>) =>
     Effect.gen(function* () {
       const result = yield* pending.run;
+
       // oxlint-disable-next-line typescript/no-misused-spread -- CheckpointRecord is plain Schema.Struct data.
       const body = yield* Schema.encodeEffect(json)({
         // oxlint-disable-next-line typescript/no-misused-spread -- CheckpointRecord is plain Schema.Struct data.
@@ -68,9 +75,11 @@ const bucket = Commit.make({
             }),
         ),
       );
+
       yield* (yield* Bucket).put(recordKey(pending.key), body, pending.loaded.token);
     }),
 });
+
 const declaration = Projection.fold({
   id: "bucket",
   commit: bucket,
@@ -79,15 +88,18 @@ const declaration = Projection.fold({
   state: { schema: Schema.Number, initial: 0 },
   fold: (sum, { item }) => sum + item,
 });
+
 const bind = () => declaration.at({});
 
 test("a bucket Commit runs, restarts and reads through its own load without CheckpointStore", () => {
   const objects = new Map<string, { body: string; etag: string }>();
+
   const api: typeof Bucket.Service = {
     get: (key) => Effect.sync(() => objects.get(key)),
     put: (key, body, token) =>
       Effect.gen(function* () {
         const current = objects.get(key)?.etag ?? "0";
+
         if (current !== token)
           return yield* new ProjectionFault({
             phase: "checkpoint",
@@ -97,6 +109,7 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
         objects.set(key, { body, etag: String(Number(token) + 1) });
       }),
   };
+
   return Effect.runPromise(
     Effect.gen(function* () {
       const input = yield* Input;
@@ -110,6 +123,7 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
       expect((yield* Projection.read(declaration.at({}))).state).toBe(12);
       const before = [...objects.values()];
       yield* input.append({}, [11]);
+
       const conflict = yield* Projection.run(bind()).pipe(
         Effect.provideService(Bucket, {
           ...api,
@@ -117,7 +131,9 @@ test("a bucket Commit runs, restarts and reads through its own load without Chec
         }),
         Effect.result,
       );
+
       expect(conflict._tag).toBe("Failure");
+
       if (conflict._tag === "Failure") expect(conflict.failure.reason).toBe("token-conflict");
       expect([...objects.values()]).toEqual(before);
       const broken = { ...bind(), process: () => Effect.fail("step failed") };

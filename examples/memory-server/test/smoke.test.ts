@@ -9,6 +9,7 @@ test("serves the HTTP walkthrough and starts empty after restart", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),

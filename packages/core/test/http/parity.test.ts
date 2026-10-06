@@ -16,6 +16,7 @@ interface WireFixture {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly bytes: ReadonlyArray<number>;
 }
+
 const expiryFixtures: Readonly<Record<string, ReadonlyArray<WireFixture>>> = fixtures;
 
 async function assertWire(response: Response, expected: WireFixture, bytes?: Uint8Array) {
@@ -28,10 +29,12 @@ async function assertWire(response: Response, expected: WireFixture, bytes?: Uin
 }
 
 const fixedTime = 1_780_000_000_000;
+
 const clockLayer = Layer.effect(
   Clock.Clock,
   Effect.gen(function* () {
     const live = yield* Clock.Clock;
+
     return {
       currentTimeMillis: Effect.succeed(fixedTime),
       currentTimeMillisUnsafe: () => fixedTime,
@@ -49,6 +52,7 @@ for (const visibility of ["private", "public"] as const) {
     const layer = MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(
       Layer.provideMerge(clockLayer),
     );
+
     const edge = HttpRouter.toWebHandler(
       Layer.mergeAll(
         protocolRoutes({ prefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 }),
@@ -62,15 +66,20 @@ for (const visibility of ["private", "public"] as const) {
       ).pipe(Layer.provideMerge(layer)),
       { disableLogger: true },
     );
+
     let position = 0;
+
     const compare = async (path: string, init?: RequestInit) => {
       const expected = fixtures[visibility][position++];
+
       if (expected === undefined) throw new Error("Missing frozen HTTP response");
       expect(expected.label).toBe(`${init?.method ?? "GET"} ${path}`);
       const right = await edge.handler(new Request(`http://example.test${path}`, init));
       await assertWire(right, expected);
+
       return right;
     };
+
     try {
       expect((await edge.handler(new Request("http://example.test/unmatched"))).status).toBe(404);
       await compare("/wrong");
@@ -91,9 +100,11 @@ for (const visibility of ["private", "public"] as const) {
       await compare("/api.v1/s", { method: "HEAD" });
       const catchUp = await compare("/api.v1/s?offset=-1");
       const etag = catchUp.headers.get("etag");
+
       if (!etag) throw new Error("Expected catch-up ETag");
       // An unknown live mode reads as a plain catch-up, byte for byte.
       const catchUpFixture = fixtures[visibility][position - 1];
+
       if (catchUpFixture === undefined) throw new Error("Missing frozen catch-up response");
       await assertWire(
         await edge.handler(new Request("http://example.test/api.v1/s?offset=-1&live=other")),
@@ -102,6 +113,7 @@ for (const visibility of ["private", "public"] as const) {
       await compare("/api.v1/s?offset=-1", { headers: { "if-none-match": etag } });
       await compare("/api.v1/s?offset=now");
       await compare("/api.v1/s?offset=bad");
+
       for (const body of ["", "[]", "{", "x".repeat(65)])
         await compare("/api.v1/s", {
           method: "POST",
@@ -134,20 +146,24 @@ for (const visibility of ["private", "public"] as const) {
         },
         body: '{"c":3}',
       });
+
       const staleOffset = await compare("/api.v1/s", {
         method: "POST",
         headers: { "content-type": "application/json", "stream-expected-offset": ZERO_OFFSET },
         body: "1",
       });
+
       expect(staleOffset.status).toBe(409);
       expect(staleOffset.headers.get("stream-next-offset")).toBe(
         "0000000000000003_0000000000000000",
       );
+
       const mismatch = await compare("/api.v1/s", {
         method: "POST",
         headers: { "content-type": "text/plain" },
         body: "x",
       });
+
       expect(mismatch.status).toBe(409);
       await compare("/api.v1/s", {
         method: "POST",
@@ -160,12 +176,15 @@ for (const visibility of ["private", "public"] as const) {
         },
         body: "1",
       });
+
       const sequence = await compare("/api.v1/s", {
         method: "POST",
         headers: { "content-type": "application/json", "stream-seq": "a" },
         body: "1",
       });
+
       expect(sequence.status).toBe(409);
+
       for (const [epoch, seq, status, expectedHeaders] of [
         ["0", "1", 403, { "producer-epoch": "1" }],
         ["1", "2", 409, { "producer-expected-seq": "1", "producer-received-seq": "2" }],
@@ -181,23 +200,28 @@ for (const visibility of ["private", "public"] as const) {
           },
           body: "1",
         });
+
         expect(conflict.status).toBe(status);
         expect(Object.fromEntries(conflict.headers)).toMatchObject(expectedHeaders);
       }
+
       await compare("/api.v1/s?offset=-1&live=long-poll");
       // Fixed wall time makes timeout cursor bytes reproducible; timers remain live.
       await compare("/api.v1/s?offset=now&live=long-poll");
       await compare("/api.v1/s", { method: "POST", headers: { "stream-closed": "true" } });
+
       const closed = await compare("/api.v1/s", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "1",
       });
+
       expect(closed.status).toBe(409);
       expect(closed.headers.get("stream-next-offset")).toBe("0000000000000004_0000000000000000");
       expect(closed.headers.get("stream-closed")).toBe("true");
       await compare("/api.v1/s?offset=-1&live=sse");
       await compare("/api.v1/s?offset=now&live=long-poll");
+
       for (const type of ["text/plain", "application/octet-stream"]) {
         const path = `/api.v1/${type.split("/")[0]}`;
         await compare(path, {
@@ -208,6 +232,7 @@ for (const visibility of ["private", "public"] as const) {
         await compare(path);
         await compare(`${path}?offset=-1&live=sse`);
       }
+
       await compare("/api.v1/child", {
         method: "PUT",
         headers: { "stream-forked-from": "/api.v1/s" },
@@ -229,7 +254,9 @@ for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
       protocolRoutes({ prefix }).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
       { disableLogger: true },
     );
+
     const mount = prefix.replace(/\/$/, "");
+
     try {
       if (mount !== "") {
         // The prefix registers once, with or without its trailing slash.
@@ -239,6 +266,7 @@ for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
           (await edge.handler(new Request(`http://example.test${mount}-other/x`))).status,
         ).toBe(404);
       }
+
       const created = await edge.handler(
         new Request(`http://example.test${mount}/v1/stream/source`, {
           method: "PUT",
@@ -246,8 +274,10 @@ for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
           body: "a",
         }),
       );
+
       expect(created.status).toBe(201);
       const sources = [`${mount}/v1/stream/source`, "/v1/stream/source", "v1/stream/source"];
+
       for (const [index, source] of sources.entries()) {
         const fork = await edge.handler(
           new Request(`http://example.test${mount}/fork/${index}`, {
@@ -255,10 +285,13 @@ for (const prefix of ["/api.v1", "/api.v1/", "/"] as const) {
             headers: { "stream-forked-from": source },
           }),
         );
+
         expect(fork.status).toBe(201);
+
         const read = await edge.handler(
           new Request(`http://example.test${mount}/fork/${index}?offset=-1`),
         );
+
         expect(await read.text()).toBe("a");
       }
     } finally {
@@ -336,11 +369,13 @@ for (const fixture of expiryCases) {
       ),
       { disableLogger: true },
     );
+
     try {
       for (const method of ["PUT", "HEAD"] as const) {
         const init = { method, headers: fixture.headers };
         const right = await edge.handler(new Request("http://example.test/expiry", init));
         const expected = expiryFixtures["expiry: " + fixture.name]?.[method === "PUT" ? 0 : 1];
+
         if (expected === undefined) throw new Error("Missing frozen expiry response");
         expect(expected.label).toBe(method);
         expect(right.status).toBe(
@@ -353,9 +388,11 @@ for (const fixture of expiryCases) {
               : fixture.head,
         );
         await assertWire(right, expected);
+
         if (method === "HEAD" && fixture.head === 200 && !fixture.effectRejects) {
           const expectedHeader =
             fixture.headers["stream-ttl"] ?? fixture.headers["stream-expires-at"];
+
           if (expectedHeader === undefined) throw new Error("Missing fixture expiry header");
           expect(
             right.headers.get(fixture.headers["stream-ttl"] ? "stream-ttl" : "stream-expires-at"),
@@ -374,19 +411,24 @@ async function firstEvents(response: Response, count: number): Promise<Uint8Arra
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let text = "";
+
   try {
     while (true) {
       const next = await reader.read();
+
       if (next.done) throw new Error("SSE ended before expected events");
       text += decoder.decode(next.value, { stream: true });
       let end = 0;
       let events = 0;
+
       while (events < count) {
         const boundary = text.indexOf("\n\n", end);
+
         if (boundary < 0) break;
         end = boundary + 2;
         events++;
       }
+
       if (events === count) return new TextEncoder().encode(text.slice(0, end));
     }
   } finally {
@@ -400,12 +442,14 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
       contentType === "application/json"
         ? new TextEncoder().encode('[{"x":1},2]')
         : new Uint8Array([0, 255, 10, 128]);
+
     // Put the timeout cursor in the next interval to avoid random collision jitter on either stack.
     const readers = Layer.effect(
       StreamsReader,
       Effect.gen(function* () {
         const reader = yield* StreamsReader;
         const clock = yield* Clock.Clock;
+
         const timeoutClock = {
           currentTimeNanos: clock.currentTimeNanos,
           currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
@@ -415,6 +459,7 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
           currentTimeMillis: Effect.succeed(fixedTime + 20_000),
           currentTimeMillisUnsafe: () => fixedTime + 20_000,
         };
+
         return StreamsReader.of({
           ...reader,
           readNext: (id, options) =>
@@ -426,10 +471,13 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
         MemoryStorage.layerProtocol({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clockLayer)),
       ),
     );
+
     const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(readers)), {
       disableLogger: true,
     });
+
     let right: Response | undefined;
+
     try {
       await edge.handler(
         new Request("http://example.test/open", {
@@ -440,6 +488,7 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
       );
       right = await edge.handler(new Request("http://example.test/open?offset=-1&live=sse"));
       const expected = expiryFixtures["sse: " + contentType]?.[0];
+
       if (expected === undefined) throw new Error("Missing frozen SSE response");
       const newBytes = await firstEvents(right, 3);
       await assertWire(right, expected, newBytes);

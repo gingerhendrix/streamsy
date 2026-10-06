@@ -25,6 +25,7 @@ export class Transaction extends Context.Service<
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const boundary = yield* CommitBoundary;
+
         return {
           owner: ownerOf(boundary),
           sql,

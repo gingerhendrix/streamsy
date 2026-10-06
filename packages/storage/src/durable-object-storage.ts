@@ -20,6 +20,7 @@ export interface Options extends DurableObjectStorageOptions, Protocol.ProtocolO
 /** Official local/host Durable Object SQLite layer with commit-boundary support. */
 const storageLayer = (options: DurableObjectStorageOptions) => {
   const clientLayer = Layer.effectContext(sharedSqlClientLayer(SqliteClient.make(options.client)));
+
   return layerWithDurableObjectTransactions(options).pipe(Layer.provideMerge(clientLayer));
 };
 
@@ -40,9 +41,11 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 >;
 export function layer(group: Streamsy.Group, options: Options) {
   const storage = storageLayer(options);
+
   const protocol = Protocol.layer({
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
   }).pipe(Layer.provideMerge(storage));
+
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

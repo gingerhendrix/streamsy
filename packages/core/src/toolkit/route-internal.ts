@@ -28,6 +28,7 @@ export interface TemplateGrammar<Template extends string = string> {
 /** Ids are canonical relative paths, the same rule the remote Layer enforces. */
 export function isCanonicalIdSegment(value: string): boolean {
   if (value.length === 0 || value === "." || value === "..") return false;
+
   return !/[%?#/\\]/.test(value);
 }
 
@@ -36,15 +37,19 @@ export function compileSegments<const Template extends string>(
 ): TemplateGrammar<Template> {
   if (template.length === 0)
     throw new RangeError("a stream route template must name at least one segment");
+
   if (template.startsWith("/"))
     throw new RangeError("a stream route template is relative and cannot start with a slash");
+
   if (/[?#*]/.test(template))
     throw new RangeError("a stream route template cannot contain a query, fragment, or wildcard");
   const names: Array<string> = [];
   const segments: Array<Segment> = [];
+
   for (const part of template.split("/")) {
     if (part.length === 0)
       throw new RangeError("a stream route template cannot contain an empty segment");
+
     if (!part.startsWith(":")) {
       if (!isCanonicalIdSegment(part))
         throw new RangeError(
@@ -53,12 +58,16 @@ export function compileSegments<const Template extends string>(
       segments.push({ kind: "literal", value: part });
       continue;
     }
+
     const name = part.slice(1);
+
     if (name.length === 0) throw new RangeError("a stream route parameter needs a name");
+
     if (names.includes(name)) throw new RangeError(`duplicate stream route parameter: ${name}`);
     names.push(name);
     segments.push({ kind: "parameter", name });
   }
+
   return { template, segments: Object.freeze(segments), names: Object.freeze(names) };
 }
 
@@ -75,11 +84,16 @@ export function templatesOverlap(left: string, right: string): boolean {
   if (left.length === 0 || right.length === 0) return false;
   const a = compileSegments(left).segments;
   const b = compileSegments(right).segments;
+
   if (a.length !== b.length) return false;
+
   for (const [index, segment] of a.entries()) {
     const other = b[index];
+
     if (!other || segment.kind === "parameter" || other.kind === "parameter") continue;
+
     if (segment.value !== other.value) return false;
   }
+
   return true;
 }

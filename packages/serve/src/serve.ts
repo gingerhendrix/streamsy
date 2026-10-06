@@ -12,6 +12,7 @@ import {
   WireEncodeFailed,
   withHeaders,
 } from "./errors.ts";
+
 export {
   InvalidParams,
   ProtocolVersionUnsupported,
@@ -21,6 +22,7 @@ export {
   WireEncodeFailed,
   type ServeError,
 } from "./errors.ts";
+
 export { layer, teardown, type LayerOptions } from "./host.ts";
 
 type Names<S extends string> = S extends `${string}:${infer N}/${infer Tail}`
@@ -28,11 +30,13 @@ type Names<S extends string> = S extends `${string}:${infer N}/${infer Tail}`
   : S extends `${string}:${infer N}`
     ? N
     : never;
+
 type ExactPath<Path extends string, P> = `/${string}` extends Path
   ? unknown
   : [Exclude<Names<Path>, keyof P>, Exclude<keyof P, Names<Path>>] extends [never, never]
     ? unknown
     : never;
+
 export interface ReadOptions extends Http.ReadOptions {
   readonly contract?: Contract.CanonicalValue;
 }
@@ -42,6 +46,7 @@ export const params = Effect.fn("Serve.params")(function* <P>(stream: {
   readonly paramSchema: StreamRoute.PathSchema<P>;
 }) {
   const { route } = yield* HttpRouter.RouteContext;
+
   return yield* HttpRouter.schemaPathParams(stream.paramSchema).pipe(
     Effect.mapError(
       () =>
@@ -88,6 +93,7 @@ export function mount<P, A, K, RD, RE, const Path extends `/${string}`>(
     path,
     Effect.gen(function* () {
       const p = yield* params(declaration);
+
       const address = yield* Effect.try({
         try: () => declaration.at(p),
         catch: () =>
@@ -97,6 +103,7 @@ export function mount<P, A, K, RD, RE, const Path extends `/${string}`>(
             detail: "Parameters cannot form a canonical stream id",
           }),
       });
+
       return yield* read(
         address,
         options ?? {},
@@ -114,6 +121,7 @@ export function stream<A, K, RD, RE>(
 ) {
   return read(address, options, "stream", Effect.succeed(null));
 }
+
 /** Durable State change response with replay-from-start recovery. */
 export function state<C extends StreamAddress.Collections, K, RD, RE>(
   address: StreamAddress.StateAddress<C, RD, RE> &
@@ -127,6 +135,7 @@ export function state<C extends StreamAddress.Collections, K, RD, RE>(
 function collectionDescriptor(value: unknown) {
   return Effect.gen(function* () {
     const { route } = yield* HttpRouter.RouteContext;
+
     const collections = yield* Schema.decodeUnknownEffect(
       Schema.Record(
         Schema.String,
@@ -137,6 +146,7 @@ function collectionDescriptor(value: unknown) {
         () => new WireEncodeFailed({ route: route.path, detail: "Invalid collection metadata" }),
       ),
     );
+
     return Object.fromEntries(
       Object.entries(collections).map(([type, collection]) => [type, collection.key]),
     );
@@ -152,15 +162,20 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
   const request = yield* HttpServerRequest.HttpServerRequest;
   const { route } = yield* HttpRouter.RouteContext;
   const path = route.path;
+
   const versionHeader =
     kind === "state" ? Contract.STATE_VERSION_HEADER : Contract.STREAM_VERSION_HEADER;
+
   const contractHeader =
     kind === "state" ? Contract.STATE_CONTRACT_HEADER : Contract.STREAM_CONTRACT_HEADER;
+
   const source =
     "template" in address.stream && Schema.is(Schema.String)(address.stream.template)
       ? address.stream.template
       : "";
+
   const collections = yield* descriptor;
+
   const fingerprint = Contract.contractFingerprint({
     kind,
     route: path,
@@ -176,7 +191,9 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
     recovery: "replay-from-start",
     contract: options.contract ?? null,
   });
+
   const headers = { [versionHeader]: "1", [contractHeader]: fingerprint };
+
   const reject = (reason: Contract.ResumeRejectedReason) =>
     Effect.fail(
       withHeaders(
@@ -184,7 +201,9 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
         headers,
       ),
     );
+
   const received = request.headers[versionHeader] ?? "1";
+
   if (received !== "1")
     return yield* withHeaders(
       new ProtocolVersionUnsupported({
@@ -195,21 +214,26 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
       }),
       headers,
     );
+
   if (
     request.headers[contractHeader] !== undefined &&
     request.headers[contractHeader] !== fingerprint
   )
     return yield* reject("contract-changed");
+
   if (kind === "state" && request.headers["x-streamsy-state-reset"] === "snapshot")
     return HttpServerResponse.text("Snapshot reset is unsupported; replay from -1", {
       status: 400,
       headers: { ...headers, ...Http.securityHeaders },
     });
   const offset = new URL(request.url, "http://streamsy.internal").searchParams.get("offset");
+
   const resume =
     offset !== null && offset !== "-1" && offset !== "now" && request.method !== "HEAD";
+
   if (resume && !Schema.is(Offset)(offset)) return yield* reject("invalid-offset");
   const service = yield* address.stream;
+
   return yield* Http.read(address.id, options).pipe(
     Effect.provideService(StreamsReader, service.wire),
     Effect.map(HttpServerResponse.setHeaders(headers)),
@@ -266,6 +290,7 @@ export interface ValueOptions {
   };
   readonly contract?: Contract.CanonicalValue;
 }
+
 /** Canonical JSON response for any computation, including mapped projection state. */
 export const value = Effect.fn("Serve.value")(function* <
   A,
@@ -283,19 +308,23 @@ export const value = Effect.fn("Serve.value")(function* <
   const path = route.path;
   const cache = options.cache ?? { visibility: "private", maxAgeSeconds: 0, mustRevalidate: true };
   const cacheControl = `${cache.visibility}, max-age=${cache.maxAgeSeconds}${cache.mustRevalidate ? ", must-revalidate" : ""}`;
+
   const fingerprint = Contract.contractFingerprint({
     kind: "value",
     route: path,
     cache: cacheControl,
     contract: options.contract ?? null,
   });
+
   const headers = { ...Http.securityHeaders, [Contract.VALUE_CONTRACT_HEADER]: fingerprint };
+
   if (
     request.headers[Contract.VALUE_CONTRACT_HEADER] !== undefined &&
     request.headers[Contract.VALUE_CONTRACT_HEADER] !== fingerprint
   )
     return yield* withHeaders(new ContractChanged({ route: path, recovery: "refetch" }), headers);
   const computed = yield* compute;
+
   const encoded = yield* Schema.encodeEffect(schema)(computed).pipe(
     Effect.mapError(() =>
       withHeaders(
@@ -304,6 +333,7 @@ export const value = Effect.fn("Serve.value")(function* <
       ),
     ),
   );
+
   const canonical = yield* Effect.try({
     try: () => Contract.canonicalJson(encoded),
     catch: () =>
@@ -312,12 +342,16 @@ export const value = Effect.fn("Serve.value")(function* <
         headers,
       ),
   });
+
   const etag = Contract.valueEtag(canonical);
   const responseHeaders = { ...headers, "cache-control": cacheControl, etag };
+
   const conditional = request.headers["if-none-match"]
     ?.split(",")
     .some((tag) => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag);
+
   if (conditional) return HttpServerResponse.empty({ status: 304, headers: responseHeaders });
+
   return HttpServerResponse.text(request.method === "HEAD" ? "" : canonical, {
     headers: { ...responseHeaders, "content-type": "application/json" },
   });

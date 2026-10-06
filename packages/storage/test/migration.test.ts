@@ -17,15 +17,18 @@ import {
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
 const filename = (label: string) =>
   `${scratch}/${label}-${process.pid}-${crypto.randomUUID()}.sqlite`;
 
 const acquire = (path: string) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
+
     const context = yield* Layer.build(
       BunStorage.layerProtocol({ client: { filename: path, busyTimeout: "50 millis" } }),
     ).pipe(Scope.provide(scope));
+
     return { scope, storage: Context.get(context, Storage) };
   });
 
@@ -51,12 +54,15 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   ) => {
     const missing = filename(label);
     expect(await Bun.file(missing).exists()).toBe(false);
+
     const exit = await Effect.runPromise(
       Effect.scoped(
         Layer.build(BunStorage.layerProtocol({ client: { filename: missing, ...options } })),
       ).pipe(Effect.exit),
     );
+
     expect(Exit.isFailure(exit)).toBe(true);
+
     if (Exit.isSuccess(exit)) throw new Error("Expected missing-file acquisition to fail");
     expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
       _tag: "StorageFault",
@@ -64,6 +70,7 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
     });
     expect(await Bun.file(missing).exists()).toBe(false);
   };
+
   await expectTypedMissing("create-false", { create: false });
   await expectTypedMissing("readonly-missing", { readonly: true });
   await expectTypedMissing("create-false-no-wal", { create: false, disableWAL: true });
@@ -77,11 +84,13 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   ).toBe("delete");
   writable.close(false);
   const before = new Uint8Array(await Bun.file(readonly).arrayBuffer());
+
   const readonlyExit = await Effect.runPromise(
     Effect.scoped(
       Layer.build(BunStorage.layerProtocol({ client: { filename: readonly, readonly: true } })),
     ).pipe(Effect.exit),
   );
+
   expect(Exit.isSuccess(readonlyExit)).toBe(true);
   const after = new Uint8Array(await Bun.file(readonly).arrayBuffer());
   expect(after).toEqual(before);
@@ -98,6 +107,7 @@ test("reopens a nonempty current-format v1 database", async () => {
   db.run(
     `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
   );
+
   for (const statement of STORAGE_MIGRATIONS[0]?.sqlite ?? []) db.run(statement);
   db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (1, 1)`);
   db.run(
@@ -115,12 +125,15 @@ test("reopens a nonempty current-format v1 database", async () => {
 test("an injected migration failure rolls back schema and version rows", async () => {
   const path = filename("rollback");
   const owner = await Effect.runPromise(Scope.make());
+
   const clientContext = await Effect.runPromise(
     Layer.build(
       Layer.effectContext(sharedSqlClientLayer(SqliteClient.make({ filename: path }))),
     ).pipe(Scope.provide(owner)),
   );
+
   const sql = Context.get(clientContext, SqlClientTag.SqlClient);
+
   const failed = await Effect.runPromise(
     migrate(sql, {
       beforeVersion: (version) =>
@@ -135,6 +148,7 @@ test("an injected migration failure rolls back schema and version rows", async (
           : Effect.void,
     }).pipe(Effect.exit),
   );
+
   expect(Exit.isFailure(failed)).toBe(true);
   await Effect.runPromise(Scope.close(owner, Exit.void));
   const db = new Database(path, { readonly: true });
@@ -149,6 +163,7 @@ test("legacy and too-new files reject without changing retained bytes", async ()
   for (const kind of ["legacy", "legacy-0.4", "owner-v3", "owner-only", "newer"] as const) {
     const path = filename(kind);
     const db = new Database(path, { create: true });
+
     if (kind === "legacy") {
       db.run(
         "CREATE TABLE streamsy_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
@@ -178,10 +193,12 @@ test("legacy and too-new files reject without changing retained bytes", async ()
       );
       db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (?, 1)`, [STORAGE_SCHEMA_VERSION + 1]);
     }
+
     db.close(false);
     const before = await Bun.file(path).arrayBuffer();
     const exit = await Effect.runPromise(acquire(path).pipe(Effect.exit));
     expect(Exit.isFailure(exit)).toBe(true);
+
     if (kind !== "legacy" && kind !== "newer" && Exit.isFailure(exit))
       expect(Option.getOrThrow(Cause.findErrorOption(exit.cause)).message).toContain(
         "use a fresh database path",
@@ -193,10 +210,12 @@ test("legacy and too-new files reject without changing retained bytes", async ()
 
 test("concurrent initialization exposes a complete schema", async () => {
   const path = filename("concurrent");
+
   const [left, right] = await Promise.all([
     Effect.runPromise(acquire(path)),
     Effect.runPromise(acquire(path)),
   ]);
+
   expect(await Effect.runPromise(left.storage.record(StreamId.make("x")))).toMatchObject({
     _tag: "None",
   });

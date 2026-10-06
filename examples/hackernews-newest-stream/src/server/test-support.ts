@@ -14,7 +14,9 @@ export async function demoHarness(readLimit = 1000) {
   const runtime = ManagedRuntime.make(
     createStoriesLayer.pipe(Layer.provideMerge(host("memory", { readLimit }))),
   );
+
   const context = await runtime.runPromise(Effect.context<CheckpointStore | HackerNewsStories>());
+
   return {
     runtime,
     context,

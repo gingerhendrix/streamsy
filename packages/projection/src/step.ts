@@ -34,28 +34,36 @@ export const adapt = (
   Effect.gen(function* () {
     if (kind === "process") return yield* Effect.asVoid(handler(batch, unit, prepared));
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
+
     const buffers: Record<string, unknown[]> = Object.fromEntries(
       Object.keys(streams).map((name) => [name, []]),
     );
+
     const steps = kind === "mapAccumBatch" ? [batch] : items(batch);
+
     for (const entry of steps) {
       const step = kind === "emit" ? handler(entry, unit) : handler(value, entry, unit);
       const result = Effect.isEffect(step) ? yield* step : step;
+
       if (kind === "fold") value = result;
       else {
         const emitted = kind === "emit" ? result : result[1];
+
         if (kind !== "emit") value = result[0];
         yield* collect(streams, buffers, emitted);
       }
     }
+
     const batchOutputs = Object.fromEntries(
       Object.entries(streams).map(([name, address]) => [
         name,
         { address, items: buffers[name] ?? [] },
       ]),
     );
+
     if (state === undefined) return Emitted({ outputs: batchOutputs });
     const next = yield* encodeState(key, state.schema, value);
+
     return kind === "fold"
       ? Folded({ value, encoded: next })
       : Accumulated({ value, encoded: next, outputs: batchOutputs });

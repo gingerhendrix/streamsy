@@ -10,6 +10,7 @@ import { Alarm, reconcileAlarm } from "./alarm.ts";
 import { withMutationReconciliation } from "./host-program.ts";
 
 export type ObjectServices<R = never> = Storage | Alarm | R;
+
 export type ObjectApp<R = never> = Layer.Layer<
   never,
   never,
@@ -24,9 +25,11 @@ function objectApp<R>(app: ObjectApp<R>, context: Context.Context<ObjectServices
     (handler) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
+
         const guarded = ["PUT", "POST", "DELETE"].includes(request.method)
           ? withMutationReconciliation(handler, reconcileAlarm())
           : handler;
+
         return yield* guarded.pipe(
           Effect.catchDefect(() =>
             Effect.succeed(
@@ -40,6 +43,7 @@ function objectApp<R>(app: ObjectApp<R>, context: Context.Context<ObjectServices
       }).pipe(Effect.provide(context)),
     { global: true },
   );
+
   return Layer.merge(app, middleware);
 }
 
@@ -56,10 +60,13 @@ export function acquireObject<A, R>(
 ): Effect.Effect<Effect.Effect<A, StorageFault>, never, Scope.Scope> {
   return Effect.gen(function* () {
     const owner = yield* Scope.Scope;
+
     return yield* Effect.gen(function* () {
       const attempt = yield* Scope.fork(owner);
+
       return yield* Effect.gen(function* () {
         const context = yield* Layer.buildWithScope(layer, attempt);
+
         return yield* compile(context).pipe(Effect.provideService(Scope.Scope, attempt));
       }).pipe(
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(attempt, exit) : Effect.void)),

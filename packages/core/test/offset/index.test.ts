@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Schema } from "effect";
 import { Offset } from "../../src/schema/index.ts";
 import { ZERO_OFFSET, next, isValid, compare } from "../../src/offset/index.ts";
+
 describe("fixed offsets", () => {
   it("preserves the 33-character two-field wire format", () => {
     expect(ZERO_OFFSET).toBe(Offset.make("0000000000000000_0000000000000000"));

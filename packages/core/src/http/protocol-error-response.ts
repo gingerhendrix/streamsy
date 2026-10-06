@@ -1,6 +1,7 @@
 import { Match } from "effect";
 import type { ProtocolError } from "../protocol/errors.ts";
 import * as Responses from "./responses.ts";
+
 const responses = Responses;
 
 /** The sole protocol rejection mapping at the HTTP edge. */
@@ -10,6 +11,7 @@ export function protocolErrorResponse(
 ): Response {
   const conflict = ({ message }: { readonly message: string }) => responses.conflict(message);
   const badRequest = ({ message }: { readonly message: string }) => responses.badRequest(message);
+
   return Match.valueTags(error, {
     StreamNotFound: () =>
       context.method === "HEAD" ? responses.noStore(responses.notFound()) : responses.notFound(),

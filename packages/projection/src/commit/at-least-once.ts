@@ -14,6 +14,7 @@ export const atLeastOnce = pin(
       Effect.gen(function* () {
         const store = yield* CheckpointStore;
         const before = beforeRecord(pending);
+
         const token =
           before.pending === undefined
             ? yield* store.compareAndSet(pending.key, pending.loaded.token, {
@@ -21,6 +22,7 @@ export const atLeastOnce = pin(
                 pending: { ranges: detailsOf(pending).ranges },
               })
             : pending.loaded.token;
+
         yield* pending.run;
         yield* store.compareAndSet(pending.key, token, pending.next);
       }),

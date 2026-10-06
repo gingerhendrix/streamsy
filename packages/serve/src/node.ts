@@ -4,6 +4,7 @@ import { HttpServer, HttpServerResponse } from "effect/http";
 import { NodeHttpServer } from "@effect/platform-node";
 
 export const DEFAULT_PORT = 3000;
+
 export const DEFAULT_HOSTNAME = "127.0.0.1";
 
 export interface ListenerOptions {
@@ -40,7 +41,9 @@ const writableOnNode = (
   response: HttpServerResponse.HttpServerResponse,
 ): HttpServerResponse.HttpServerResponse => {
   const body = response.body;
+
   if (!("body" in body) || !(body.body instanceof Response)) return response;
+
   return HttpServerResponse.fromWeb(body.body).pipe(
     HttpServerResponse.setStatus(response.status, response.statusText),
     HttpServerResponse.setHeaders(response.headers),
@@ -53,6 +56,7 @@ const nodeServer = Layer.effect(
   HttpServer.HttpServer,
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
+
     return HttpServer.make({
       address: server.address,
       serve: (httpEffect, middleware) =>

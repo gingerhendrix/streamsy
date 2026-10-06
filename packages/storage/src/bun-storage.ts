@@ -22,12 +22,17 @@ const SqliteOpenError = Schema.Struct({
   code: Schema.optional(Schema.String),
   errno: Schema.optional(Schema.Finite),
 });
+
 type SqliteOpenError = typeof SqliteOpenError.Type;
+
 const decodeSqliteOpenError = Schema.decodeUnknownOption(SqliteOpenError);
+
 const isBusy = ({ code, errno }: SqliteOpenError): boolean =>
   code === "SQLITE_BUSY" || code === "SQLITE_LOCKED" || errno === 5 || errno === 6;
+
 const isSqliteOperationalError = ({ code, errno }: SqliteOpenError): boolean =>
   (code?.startsWith("SQLITE_") ?? false) || errno !== undefined;
+
 const openFault = (error: SqliteOpenError, rendered: string) =>
   new StorageFault({
     operation: "migration.open",
@@ -84,10 +89,12 @@ const BunPlatform = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
 /** Official Bun SQLite host layer with one shared SqlClient/Reactivity graph. */
 const storageLayer = (options: BunStorageOptions) => {
   const retryPolicy = transactionRetryPolicy(options);
+
   const preparesJournal =
     options.client.filename !== ":memory:" &&
     options.client.readonly !== true &&
     options.client.disableWAL !== true;
+
   const clientLayer = Layer.effectContext(
     sharedSqlClientLayer(
       normalizeSqliteDefect(
@@ -99,6 +106,7 @@ const storageLayer = (options: BunStorageOptions) => {
       ),
     ),
   );
+
   return Layer.unwrap(
     SqliteFile.prepare(bunDriver, options.client, retryPolicy).pipe(
       Effect.as(sqlLayer(options).pipe(Layer.provideMerge(clientLayer))),
@@ -120,5 +128,6 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 export function layer(group: Streamsy.Group, options: Options) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
+
   return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

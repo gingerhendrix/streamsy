@@ -18,11 +18,14 @@
  */
 export function toArrayBuffer(view: Uint8Array): ArrayBuffer {
   const { buffer, byteOffset, byteLength } = view;
+
   if (buffer instanceof ArrayBuffer && byteOffset === 0 && byteLength === buffer.byteLength) {
     return buffer;
   }
+
   const copy = new ArrayBuffer(byteLength);
   new Uint8Array(copy).set(view);
+
   return copy;
 }
 
@@ -57,8 +60,10 @@ function isReferenceValue<Value>(candidate: Value): candidate is Value & object 
 
 function isCallable<Value>(candidate: Value): candidate is Value & Function {
   if (!isReferenceValue(candidate)) return false;
+
   try {
     Function.prototype.toString.call(candidate);
+
     return true;
   } catch {
     return false;
@@ -76,17 +81,23 @@ function isNodeBufferGlobal<Value>(candidate: Value): candidate is Value & NodeB
 
 function parseBase64Encoder(result: NodeBufferResult): Base64Encoder | undefined {
   const { value } = result;
+
   if (!isReferenceValue(value)) return undefined;
   let owner: object | null = value;
+
   while (owner !== null) {
     const descriptor = Object.getOwnPropertyDescriptor(owner, "toString");
+
     if (descriptor !== undefined) {
       const method: HostValue =
         "value" in descriptor ? descriptor.value : descriptor.get?.call(value);
+
       return isCallable(method) ? (encoding) => method.call(value, encoding) : undefined;
     }
+
     owner = Object.getPrototypeOf(owner);
   }
+
   return undefined;
 }
 
@@ -94,16 +105,19 @@ export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   if (!("Buffer" in globalThis)) return undefined;
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the preceding own-or-inherited property check establishes that this host global has a Buffer member; the value is still validated below.
   const bufferGlobal: HostValue = (globalThis as typeof globalThis & { Buffer: HostValue }).Buffer;
+
   if (!isReferenceValue(bufferGlobal) || !isNodeBufferGlobal(bufferGlobal)) return undefined;
 
   // `Buffer` stays the receiver: `Buffer.from` is a static method and a host
   // implementation may rely on `this`.
   const view = bufferGlobal.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const encode = parseBase64Encoder({ value: view });
+
   if (encode === undefined) return undefined;
 
   // The produced value stays the receiver, so `toString` sees its own bytes.
   const encoded = encode("base64");
+
   if (
     encoded === null ||
     encoded === undefined ||
@@ -112,5 +126,6 @@ export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   ) {
     return undefined;
   }
+
   return String.prototype.valueOf.call(encoded);
 }

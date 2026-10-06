@@ -15,8 +15,10 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
     protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
+
   try {
     await edge.handler(new Request("http://x/s", { method: "PUT" }));
+
     for (const cursor of [
       "",
       "NaN",
@@ -31,9 +33,11 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
       const response = await edge.handler(
         new Request(`http://x/s?offset=-1&live=long-poll&cursor=${cursor}`),
       );
+
       expect(response.status).toBe(400);
       expect(await response.text()).toBe("Invalid cursor");
     }
+
     for (const field of ["producer-epoch", "producer-seq"]) {
       for (const value of ["-1", "1.5", "01", "NaN", "9007199254740992"]) {
         const response = await edge.handler(
@@ -48,6 +52,7 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
             body: "x",
           }),
         );
+
         expect(response.status).toBe(400);
         expect(await response.text()).toBe("Invalid producer headers");
       }
@@ -62,21 +67,26 @@ it("reads the unread body to its end when an append is rejected at ingress", asy
     protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
+
   try {
     await edge.handler(new Request("http://x/s", { method: "PUT" }));
+
     const rejected: ReadonlyArray<Record<string, string>> = [
       { "producer-id": "p", "producer-epoch": "x", "producer-seq": "0" },
       { "stream-expected-offset": "nope" },
     ];
+
     for (const headers of rejected) {
       let pulls = 0;
       let cancelled = false;
+
       const request = new Request("http://x/s", {
         method: "POST",
         headers,
         body: new ReadableStream<Uint8Array>({
           pull: (controller) => {
             pulls += 1;
+
             if (pulls < 3) controller.enqueue(new Uint8Array([pulls]));
             else controller.close();
           },
@@ -85,6 +95,7 @@ it("reads the unread body to its end when an append is rejected at ingress", asy
           },
         }),
       });
+
       const response = await edge.handler(request);
       expect(response.status).toBe(400);
       expect(request.bodyUsed).toBe(true);
@@ -101,13 +112,16 @@ for (const when of ["before", "after"] as const) {
     const layer = Protocol.layer().pipe(
       Layer.provide(faultyStorage(memoryStorage(), { failOn: 2, when })),
     );
+
     const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(layer)), {
       disableLogger: true,
     });
+
     try {
       await edge.handler(
         new Request("http://x/s", { method: "PUT", headers: { "content-type": "text/plain" } }),
       );
+
       const failed = await edge.handler(
         new Request("http://x/s", {
           method: "POST",
@@ -115,6 +129,7 @@ for (const when of ["before", "after"] as const) {
           body: "once",
         }),
       );
+
       expect(failed.status).toBe(500);
       expect(await failed.text()).toBe("Internal server error");
       expect(failed.headers.get("x-content-type-options")).toBe("nosniff");
@@ -130,6 +145,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       let observed: import("../../src/protocol/options.ts").ReadNextOptions | undefined;
+
       const reader = StreamsReader.of({
         head: () =>
           Effect.succeed({ closed: false, contentType: "text/plain", nextOffset: ZERO_OFFSET }),
@@ -137,6 +153,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
         readNext: (_id, options) =>
           Effect.sync(() => {
             observed = options;
+
             return {
               contentType: "text/plain",
               timedOut: true,
@@ -148,6 +165,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
             };
           }),
       });
+
       const response = yield* read(
         reader,
         StreamId.make("s"),
@@ -155,8 +173,10 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
         new Headers(),
         "private",
       );
+
       expect(observed).toEqual({ offset: ZERO_OFFSET, cursor: "12" });
       expect(response.status).toBe(204);
+
       if (!(response instanceof Response)) throw new Error("Expected empty Web response");
       expect(response.headers.get("stream-cursor")).toBe("42");
       expect(response.headers.get("cache-control")).toBe("no-store");
@@ -231,6 +251,7 @@ it("caps catch-up pages while live reads return the entire available burst", () 
       const live = yield* reader.readNext(id, { offset: ZERO_OFFSET });
 
       expect(live.messages).toHaveLength(3);
+
       return undefined;
     }).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test owns the memory runtime.
@@ -243,6 +264,7 @@ it("HTTP catch-up omits up-to-date until the server page reaches the tail", asyn
     protocolRoutes({}).pipe(Layer.provideMerge(MemoryStorage.layerProtocol({ readLimit: 1 }))),
     { disableLogger: true },
   );
+
   try {
     await edge.handler(
       new Request("http://example.test/pages", {
@@ -254,9 +276,11 @@ it("HTTP catch-up omits up-to-date until the server page reaches the tail", asyn
     const first = await edge.handler(new Request("http://example.test/pages?offset=-1"));
     expect(await first.json()).toEqual([1]);
     expect(first.headers.has("stream-up-to-date")).toBe(false);
+
     const second = await edge.handler(
       new Request(`http://example.test/pages?offset=${first.headers.get("stream-next-offset")}`),
     );
+
     expect(await second.json()).toEqual([2]);
     expect(second.headers.get("stream-up-to-date")).toBe("true");
   } finally {
@@ -293,14 +317,18 @@ it("SSE closes its body normally at the configured deadline", async () => {
     protocolRoutes({ sseDeadlineMs: 20 }).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
     { disableLogger: true },
   );
+
   try {
     await edge.handler(new Request("http://example.test/deadline", { method: "PUT" }));
+
     const response = await edge.handler(
       new Request("http://example.test/deadline?offset=-1&live=sse"),
     );
+
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
     let chunks = 0;
+
     while (!(await reader.read()).done) chunks++;
     expect(await reader.closed).toBeUndefined();
     expect(chunks).toBeGreaterThan(0);
@@ -311,22 +339,27 @@ it("SSE closes its body normally at the configured deadline", async () => {
 
 it("GET, POST and DELETE use their protocol call without extra HEAD requests", async () => {
   let heads = 0;
+
   const readers = Layer.effect(
     StreamsReader,
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
+
       return StreamsReader.of({
         ...reader,
         head: (id) => {
           heads++;
+
           return reader.head(id);
         },
       });
     }),
   ).pipe(Layer.provideMerge(MemoryStorage.layerProtocol()));
+
   const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(readers)), {
     disableLogger: true,
   });
+
   try {
     await edge.handler(
       new Request("http://example.test/round-trips", {
@@ -335,12 +368,14 @@ it("GET, POST and DELETE use their protocol call without extra HEAD requests", a
         body: "a",
       }),
     );
+
     for (const suffix of ["?offset=-1", "?offset=now", "?offset=-1&live=long-poll"]) {
       const response = await edge.handler(new Request(`http://example.test/round-trips${suffix}`));
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("text/plain");
       await response.text();
     }
+
     expect(
       (
         await edge.handler(

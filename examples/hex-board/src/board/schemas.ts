@@ -3,9 +3,13 @@ import { PlayerControllerSchema, DefenseResolutionSourceSchema } from "../domain
 import { AxialSchema, ContinentPaletteSchema, TerrainSchema } from "../domain/map.ts";
 
 const Int = Schema.Int;
+
 const Text = Schema.String;
+
 const OptionalText = Schema.optionalKey(Text);
+
 const ArrayOf = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
+
 const Reinforcement = Schema.Struct({
   base: Int,
   continents: ArrayOf(Schema.Struct({ continentId: Text, bonus: Int })),
@@ -25,6 +29,7 @@ export const ProjectedGameSchema = Schema.Struct({
   phase: Schema.optionalKey(Schema.Literals(["reinforce", "attack", "fortify"])),
   winnerId: OptionalText,
 });
+
 export const ProjectedPlayerSchema = Schema.Struct({
   id: Text,
   name: Text,
@@ -34,6 +39,7 @@ export const ProjectedPlayerSchema = Schema.Struct({
   territoryCount: Int,
   armyCount: Int,
 });
+
 export const ProjectedHexSchema = Schema.Struct({
   id: Text,
   q: Int,
@@ -41,6 +47,7 @@ export const ProjectedHexSchema = Schema.Struct({
   territoryId: Text,
   terrain: TerrainSchema,
 });
+
 export const ProjectedTerritorySchema = Schema.Struct({
   id: Text,
   name: Text,
@@ -51,6 +58,7 @@ export const ProjectedTerritorySchema = Schema.Struct({
   adjacentTerritoryIds: ArrayOf(Text),
   labelAnchor: AxialSchema,
 });
+
 export const ProjectedContinentSchema = Schema.Struct({
   id: Text,
   name: Text,
@@ -59,6 +67,7 @@ export const ProjectedContinentSchema = Schema.Struct({
   controllerId: OptionalText,
   palette: ContinentPaletteSchema,
 });
+
 const ProjectedDice = Schema.Struct({
   attackId: Text,
   from: Text,
@@ -70,6 +79,7 @@ const ProjectedDice = Schema.Struct({
   territoryCaptured: Schema.Boolean,
   resolutionSource: DefenseResolutionSourceSchema,
 });
+
 export const ProjectedTurnSchema = Schema.Struct({
   id: Text,
   turnId: Text,
@@ -84,6 +94,7 @@ export const ProjectedTurnSchema = Schema.Struct({
   eliminations: Int,
   latestDice: Schema.optionalKey(ProjectedDice),
 });
+
 export const ProjectedCombatSchema = Schema.Struct({
   id: Text,
   attackId: Text,
@@ -106,6 +117,7 @@ export const ProjectedCombatSchema = Schema.Struct({
   minArmies: Schema.optionalKey(Int),
   maxArmies: Schema.optionalKey(Int),
 });
+
 const GameEventType = Schema.Literals([
   "GameCreated",
   "PlayerJoined",
@@ -122,6 +134,7 @@ const GameEventType = Schema.Literals([
   "TurnEnded",
   "GameWon",
 ]);
+
 export const ProjectedMoveSchema = Schema.Struct({
   id: Text,
   commandId: Text,
@@ -143,6 +156,7 @@ export const ProjectedMoveSchema = Schema.Struct({
   resolutionSource: Schema.optionalKey(DefenseResolutionSourceSchema),
   nextPlayerId: OptionalText,
 });
+
 export const ProjectionStateSchema = Schema.Struct({
   game: ProjectedGameSchema,
   players: ArrayOf(ProjectedPlayerSchema),

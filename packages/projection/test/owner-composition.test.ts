@@ -12,14 +12,18 @@ class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/output/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 const memory = memoryHost();
+
 const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
+
 const host = Layer.merge(
   Protocol.bind(memory, Streamsy.group(Source)),
   Protocol.bind(sqlite, Streamsy.group(Output)),
@@ -34,6 +38,7 @@ test("an transactional projection reads remote input and writes on its SQLite ch
       yield* source.create(params);
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
+
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "mixed-double",
@@ -42,9 +47,11 @@ test("an transactional projection reads remote input and writes on its SQLite ch
         process: (batch) =>
           Effect.gen(function* () {
             const doubled = batch.input.items.map((n) => n * 2);
+
             if (Array.isReadonlyArrayNonEmpty(doubled)) yield* output.append(params, doubled);
           }),
       }).at({});
+
       const first = yield* Projection.run(projection);
       expect(first.items).toBe(3);
       expect(
@@ -62,6 +69,7 @@ test("watch watches the input's feed even when checkpoints have a different owne
       const params = { name: "watch" };
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
+
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "mixed-watch",
@@ -69,6 +77,7 @@ test("watch watches the input's feed even when checkpoints have a different owne
         inputs: { input: Source.at(params) },
         process: () => Effect.void,
       }).at({});
+
       const fiber = yield* Projection.watch(projection);
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
     }).pipe(Effect.provide(host), Effect.scoped),
@@ -79,6 +88,7 @@ test("watch rejects a stream rebound without its matching feed", async () => {
   const alternate = Protocol.bind(memoryHost(), Streamsy.group(Source)).pipe(
     Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
   );
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const projection = Projection.process({
@@ -88,9 +98,11 @@ test("watch rejects a stream rebound without its matching feed", async () => {
         inputs: { input: Source.at({ name: "watch" }) },
         process: () => Effect.void,
       }).at({});
+
       const fiber = yield* Projection.watch(projection).pipe(Effect.provide(alternate));
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure")
         expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
     }).pipe(Effect.provide(host), Effect.scoped),
@@ -98,11 +110,13 @@ test("watch rejects a stream rebound without its matching feed", async () => {
 });
 
 const memoryGraph = memoryHost();
+
 // A custom adapter that copies protocol methods loses private storage-owner metadata.
 const unowned = Layer.effectContext(
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
     const writer = yield* StreamsWriter;
+
     return Context.make(StreamsReader, { ...reader }).pipe(
       Context.add(StreamsWriter, { ...writer }),
     );
@@ -113,6 +127,7 @@ test("a custom stream wire cannot establish the owner of an transactional write"
   const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
     Layer.provideMerge(sqlite),
   );
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -121,6 +136,7 @@ test("a custom stream wire cannot establish the owner of an transactional write"
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
+
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "unowned-write",
@@ -128,12 +144,15 @@ test("a custom stream wire cannot establish the owner of an transactional write"
         inputs: { input: Source.at(params) },
         process: () => output.append(params, [2]),
       }).at({});
+
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure") {
         expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
         expect(result.failure.message).toContain("Cannot establish a storage owner");
       }
+
       expect(
         (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
       ).toEqual([]);

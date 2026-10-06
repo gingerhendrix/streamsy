@@ -60,14 +60,17 @@ export const freshDatabase = (
 ): Effect.Effect<string, SqlError, Scope.Scope> =>
   Effect.gen(function* () {
     const name = yield* Effect.sync(databaseName);
+
     const admin = Context.get(
       yield* Layer.build(dialectClient(dialect, baseUrl, { maxConnections: 1 })),
       SqlClient.SqlClient,
     );
+
     yield* Effect.acquireRelease(admin.unsafe(`CREATE DATABASE ${name}`), () =>
       admin.unsafe(dialect.dropDatabase(name)).pipe(Effect.ignore),
     );
     const url = new URL(baseUrl);
     url.pathname = `/${name}`;
+
     return url.toString();
   });

@@ -17,17 +17,22 @@ class Input extends Streamsy.json<Input>()("transaction/Input", "transaction/inp
   params: {},
   schema: Schema.Number,
 }) {}
+
 class Sink extends Streamsy.json<Sink>()("transaction/Sink", "transaction/sink", {
   params: {},
   schema: Schema.Number,
 }) {}
+
 const graph = layerSqlite();
+
 const sqlite = Protocol.bind(graph, Streamsy.group(Input, Sink)).pipe(Layer.provideMerge(graph));
+
 const seed = Effect.gen(function* () {
   const input = yield* Input;
   yield* input.create({});
   yield* input.append({}, [1]);
 });
+
 const sqlProcess = Projection.process({
   commit: Commit.transaction,
   id: "sql",
@@ -48,27 +53,32 @@ test("non-foreign-owner defects remain defects on SQLite", () =>
       const broken = { ...sqlProcess, process: () => Effect.die(defect) };
       const exit = yield* Projection.run(broken).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
     }).pipe(Effect.provide(sqlite)),
   ));
 
 test("SQL from Transaction is sufficient and rolls back with the checkpoint", () => {
   const sqlLayer = BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } });
+
   const host = Layer.merge(
     Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(Layer.provideMerge(sqlLayer)),
     Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input)),
   );
+
   return Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
       const sql = yield* SqlClient.SqlClient;
       yield* sql.unsafe("CREATE TABLE effects (value INTEGER NOT NULL)");
       const store = yield* CheckpointStore;
+
       const failure = new ProjectionFault({
         phase: "checkpoint",
         reason: "storage-failure",
         message: "before checkpoint",
       });
+
       const result = yield* Projection.run(sqlProcess).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -76,6 +86,7 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
         }),
         Effect.result,
       );
+
       expect(result).toMatchObject({ _tag: "Failure", failure });
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([]);
       expect((yield* store.load(sqlProcess)).token).toBe("0");
@@ -86,6 +97,7 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
         ),
       );
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }]);
+
       const folded = Projection.fold({
         id: "sql-fold",
         params: {},
@@ -96,9 +108,11 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
           Effect.gen(function* () {
             const client = yield* SqlClient.SqlClient;
             yield* client`INSERT INTO effects (value) VALUES (${previous + item})`;
+
             return previous + item;
           }),
       }).at({});
+
       const failedFold = yield* Projection.run(folded).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -106,6 +120,7 @@ test("SQL from Transaction is sufficient and rolls back with the checkpoint", ()
         }),
         Effect.result,
       );
+
       expect(failedFold).toMatchObject({ _tag: "Failure", failure });
       expect((yield* Projection.read(folded)).state).toBe(10);
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }]);
@@ -121,6 +136,7 @@ test("transaction checks all declared outputs before running the handler", () =>
     Effect.gen(function* () {
       yield* seed;
       let calls = 0;
+
       const base = Projection.emit({
         commit: Commit.producer,
         id: "owner",
@@ -130,14 +146,18 @@ test("transaction checks all declared outputs before running the handler", () =>
         emit: () =>
           Effect.sync(() => {
             calls += 1;
+
             return { output: [2] };
           }),
       }).at({});
+
       const tx = yield* Transaction;
+
       const result = yield* Projection.run({ ...base, commit: Commit.transaction }).pipe(
         Effect.provideService(Transaction, { ...tx, owner: {} }),
         Effect.result,
       );
+
       expect(result).toMatchObject({
         _tag: "Failure",
         failure: { phase: "load", reason: "unsupported-composition" },
@@ -153,6 +173,7 @@ test("transaction commits declared outputs and state together and rolls both bac
       yield* seed;
       const sink = yield* Sink;
       yield* sink.create({});
+
       const base = Projection.mapAccumBatch({
         commit: Commit.producer,
         id: "transaction-outputs",
@@ -166,8 +187,10 @@ test("transaction commits declared outputs and state together and rolls both bac
             { output: batch.input.items },
           ] as const),
       }).at({});
+
       const projection = { ...base, commit: Commit.transaction };
       const store = yield* CheckpointStore;
+
       const failed = yield* Projection.run(projection).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -182,6 +205,7 @@ test("transaction commits declared outputs and state together and rolls both bac
         }),
         Effect.result,
       );
+
       expect(failed).toMatchObject({ _tag: "Failure", failure: { reason: "token-conflict" } });
       expect((yield* Projection.read(projection)).state).toBe(0);
       expect((yield* Stream.runCollect(sink.read({}))).flatMap((batch) => batch.items)).toEqual([]);

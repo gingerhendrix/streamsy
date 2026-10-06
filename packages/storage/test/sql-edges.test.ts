@@ -17,7 +17,9 @@ import { storageLayer as sqlLayer } from "../src/storage.ts";
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
 let nextFixture = 0;
+
 const died = <A, E>(exit: Exit.Exit<A, E>): boolean =>
   Exit.isFailure(exit) && Cause.hasDies(exit.cause);
 
@@ -29,7 +31,9 @@ interface FixtureLifecycle {
 
 const record = (id: string, expiresAtMs?: number): StreamRecord => {
   const lifecycle: FixtureLifecycle = { closed: false, softDeleted: false };
+
   if (expiresAtMs !== undefined) lifecycle.expiresAtMs = expiresAtMs;
+
   return {
     id: StreamId.make(id),
     config: { contentType: "text/plain", createdAt: 0 },
@@ -44,12 +48,15 @@ const withStore = <A, E>(
 ) =>
   Effect.gen(function* () {
     const filename = `${scratch}/${label}-${process.pid}-${nextFixture++}.sqlite`;
+
     const client = Layer.effectContext(
       sharedSqlClientLayer(SqliteClient.make({ filename, busyTimeout: "50 millis" })),
     );
+
     const context = yield* Layer.build(
       sqlLayer({ repairIntervalMs: 1_000 }).pipe(Layer.provideMerge(client)),
     );
+
     return yield* use(Context.get(context, Storage), Context.get(context, SqlClient.SqlClient));
   }).pipe(Effect.scoped);
 
@@ -94,18 +101,22 @@ test("persisted record, producer, and expiry corruption defects at decoded edges
         const badMessage = yield* storage.messages(StreamId.make("bad"), {}).pipe(Effect.exit);
         yield* sql.unsafe("DELETE FROM streamsy_messages WHERE stream_id='bad'");
         yield* sql.unsafe("UPDATE streamsy_producers SET epoch='invalid' WHERE stream_id='bad'");
+
         const badProducer = yield* storage
           .producer(StreamId.make("bad"), ProducerId.make("p"))
           .pipe(Effect.exit);
+
         yield* sql.unsafe("DELETE FROM streamsy_producers WHERE stream_id='bad'");
         yield* sql.unsafe(
           "UPDATE streamsy_streams SET expires_at_ms='invalid' WHERE stream_id='bad'",
         );
         const badExpiry = yield* storage.nextExpiry.pipe(Effect.exit);
+
         return [died(badRecord), died(badMessage), died(badProducer), died(badExpiry)];
       }),
     ),
   );
+
   expect(result).toEqual([true, true, true, true]);
 });
 
@@ -132,6 +143,7 @@ test("message SQL excludes rows outside the window and performs no row read for 
         const included = yield* storage.messages(StreamId.make("bounded"), { until: one });
         const zero = yield* storage.messages(StreamId.make("bounded"), { limit: 0 });
         const full = yield* storage.messages(StreamId.make("bounded"), {}).pipe(Effect.exit);
+
         return {
           included: included.map(({ offset }) => offset),
           zero,
@@ -140,6 +152,7 @@ test("message SQL excludes rows outside the window and performs no row read for 
       }),
     ),
   );
+
   expect(result).toEqual({
     included: [Offset.make("0000000000000001_0000000000000000")],
     zero: [],
@@ -169,6 +182,7 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
             },
           ],
         });
+
         const write = (lastSeq: number) =>
           storage.mutate({
             operations: [
@@ -185,14 +199,17 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
               },
             ],
           });
+
         const outcomes = yield* Effect.all(
           [write(1), write(2)].map((effect) =>
             effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
           ),
           { concurrency: 2 },
         );
+
         yield* sql.unsafe("DROP TABLE streamsy_streams");
         const fault = yield* storage.record(StreamId.make("race")).pipe(Effect.exit);
+
         return {
           tags: outcomes.map(({ _tag }) => _tag).toSorted(),
           typedFault: Exit.isFailure(fault)
@@ -206,6 +223,7 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
       }),
     ),
   );
+
   expect(result).toEqual({ tags: ["Applied", "MutationRejected"], typedFault: true });
 });
 
@@ -217,13 +235,16 @@ test("stream ids longer than 512 characters fail before any insert", async () =>
           storage.mutate({
             operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
           });
+
         // 512 code points pass, even when they take 1024 UTF-16 units.
         yield* create("a".repeat(512));
         yield* create("\u{1F600}".repeat(512));
         const tooLong = yield* create("b".repeat(513)).pipe(Effect.flip);
+
         const rows = yield* sql.unsafe<{ readonly count: number }>(
           "SELECT COUNT(*) count FROM streamsy_streams",
         );
+
         return {
           fault: Predicate.isTagged(tooLong, "StorageFault")
             ? { operation: tooLong.operation, retryable: tooLong.retryable }
@@ -233,6 +254,7 @@ test("stream ids longer than 512 characters fail before any insert", async () =>
       }),
     ),
   );
+
   expect(result).toEqual({
     fault: { operation: "mutate.stream-id", retryable: false },
     count: 2,
@@ -247,6 +269,7 @@ test("producer ids longer than 255 characters fail before any write", async () =
           operations: [{ _tag: "Create", record: record("producers"), initialMessages: [] }],
         });
         const one = Offset.make("0000000000000001_0000000000000000");
+
         const write = (producerId: string) =>
           storage.mutate({
             operations: [
@@ -263,15 +286,20 @@ test("producer ids longer than 255 characters fail before any write", async () =
               },
             ],
           });
+
         const tooLong = yield* write("p".repeat(256)).pipe(Effect.flip);
+
         const producers = yield* sql.unsafe<{ readonly count: number }>(
           "SELECT COUNT(*) count FROM streamsy_producers",
         );
+
         const messages = yield* sql.unsafe<{ readonly count: number }>(
           "SELECT COUNT(*) count FROM streamsy_messages",
         );
+
         // 255 code points pass, even when they take 510 UTF-16 units.
         yield* write("\u{1F600}".repeat(255));
+
         return {
           fault: Predicate.isTagged(tooLong, "StorageFault")
             ? { operation: tooLong.operation, retryable: tooLong.retryable }
@@ -282,6 +310,7 @@ test("producer ids longer than 255 characters fail before any write", async () =
       }),
     ),
   );
+
   expect(result).toEqual({
     fault: { operation: "mutate.producer-id", retryable: false },
     before: [0, 0],

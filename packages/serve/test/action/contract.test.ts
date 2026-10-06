@@ -74,15 +74,18 @@ describe("an action-sink declaration", () => {
     expect([1, 2, 3, 4, 5].map((attempt) => backoffAfter(delivery, attempt))).toEqual([
       100, 200, 400, 800, 1_000,
     ]);
+
     // An infinite cap keeps growing and is a different fingerprint from a finite one.
     const uncapped = defineActionSink({
       ...define(),
       delivery: { ...delivery, maxBackoffMs: Infinity },
     });
+
     const capped = defineActionSink({
       ...define(),
       delivery: { ...delivery, maxBackoffMs: 30_000 },
     });
+
     expect(backoffAfter(uncapped.delivery, 20)).toBe(52_428_800);
     expect(uncapped.fingerprint).not.toBe(capped.fingerprint);
   });

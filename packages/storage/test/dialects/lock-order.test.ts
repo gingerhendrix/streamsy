@@ -30,42 +30,54 @@ const LOCK =
 /** Records every span. Statement spans carry their SQL text as `db.query.text`. */
 const recorder = () => {
   const spans: Array<Tracer.NativeSpan> = [];
+
   const tracer = Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options);
       spans.push(span);
+
       return span;
     },
   });
+
   /** Statements of each outermost transaction, in the order they ran. */
   const transactions = () => {
     const grouped = new Map<Tracer.AnySpan, Array<string>>();
+
     for (const span of spans) {
       if (span.name !== "sql.execute") continue;
       let outer: Tracer.AnySpan | undefined;
+
       for (let parent = span.parent; Option.isSome(parent);) {
         const value: Tracer.AnySpan = parent.value;
+
         if (!(value instanceof Tracer.NativeSpan)) break;
+
         if (value.name === "sql.transaction") outer = value;
         parent = value.parent;
       }
+
       if (outer === undefined) continue;
       const statements = grouped.get(outer) ?? [];
       statements.push(String(span.attributes.get("db.query.text")));
       grouped.set(outer, statements);
     }
+
     return [...grouped.values()];
   };
+
   return { tracer, transactions };
 };
 
 const offset = (n: number) => Offset.make(`${String(n).padStart(16, "0")}_${"0".repeat(16)}`);
+
 const record = (id: string, lifecycle: Partial<StreamLifecycle> = {}) => ({
   id: StreamId.make(id),
   config: { contentType: "text/plain", createdAt: 0 },
   lifecycle: { closed: false, softDeleted: false, ...lifecycle },
   currentOffset: ZERO_OFFSET,
 });
+
 const message = (n: number) => ({
   offset: offset(n),
   timestamp: n,
@@ -137,6 +149,7 @@ for (const dialect of dialects) {
     test("the row lock is the first statement of every mutation transaction", async () => {
       if (url === undefined) return;
       const { tracer, transactions } = recorder();
+
       const result = await Effect.runPromise(
         freshDatabase(dialect, url).pipe(
           Effect.flatMap((fresh) =>
@@ -144,6 +157,7 @@ for (const dialect of dialects) {
               const context = yield* Layer.build(
                 storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
               );
+
               const storage = Context.get(context, Storage);
               const outcomes: Array<string> = [];
               yield* Effect.gen(function* () {
@@ -157,12 +171,14 @@ for (const dialect of dialects) {
                     ),
                   );
               }).pipe(Effect.withTracer(tracer));
+
               return outcomes;
             }).pipe(Effect.scoped),
           ),
           Effect.scoped,
         ),
       );
+
       expect(result).toEqual([
         "Created",
         "Appended",
@@ -194,6 +210,7 @@ for (const dialect of dialects) {
               const context = yield* Layer.build(
                 storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
               );
+
               const storage = Context.get(context, Storage);
               const boundary = Context.get(context, CommitBoundary);
               const sql = Context.get(context, SqlClient.SqlClient);
@@ -220,6 +237,7 @@ for (const dialect of dialects) {
     test("a fused commit that reads first still sees commits made after its read", async () => {
       if (url === undefined) return;
       const stream = StreamId.make("stream");
+
       const append = (expectedOffset: Offset, n: number): Mutation => ({
         operations: [
           {
@@ -231,6 +249,7 @@ for (const dialect of dialects) {
           },
         ],
       });
+
       const result = await Effect.runPromise(
         freshDatabase(dialect, url).pipe(
           Effect.flatMap((fresh) =>
@@ -238,6 +257,7 @@ for (const dialect of dialects) {
               const open = Layer.build(
                 storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
               );
+
               const context = yield* open;
               const storage = Context.get(context, Storage);
               const boundary = Context.get(context, CommitBoundary);
@@ -258,6 +278,7 @@ for (const dialect of dialects) {
                   },
                 ],
               });
+
               const outcome = (mutation: Mutation) =>
                 storage.mutate(mutation).pipe(
                   Effect.map(({ results }) => results.map(({ _tag }) => _tag).join("+")),
@@ -265,6 +286,7 @@ for (const dialect of dialects) {
                     Effect.succeed(`rejected:${reason}`),
                   ),
                 );
+
               const outcomes = yield* boundary.withTransaction(
                 Effect.gen(function* () {
                   // On MySQL this plain read fixes the transaction's snapshot.
@@ -276,6 +298,7 @@ for (const dialect of dialects) {
                       { _tag: "Delete", streamId: StreamId.make("child"), reason: "delete" },
                     ],
                   });
+
                   return [
                     // Planned from the old tail, so storage must reject it.
                     yield* outcome(append(ZERO_OFFSET, 1)),
@@ -289,6 +312,7 @@ for (const dialect of dialects) {
                   ];
                 }),
               );
+
               return {
                 outcomes,
                 messages: (yield* other.messages(stream, {})).map((stored) => stored.offset),
@@ -299,6 +323,7 @@ for (const dialect of dialects) {
           Effect.scoped,
         ),
       );
+
       expect(result).toEqual({
         outcomes: ["rejected:offset", "Appended", "Purged"],
         messages: [offset(1), offset(2)],

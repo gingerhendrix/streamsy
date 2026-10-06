@@ -10,18 +10,22 @@ import {
   Transaction,
   type ProjectionFault,
 } from "@streamsy/projection";
+
 class Input extends Streamsy.json<Input>()("ProjectionTypes/Input", "types/input/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class Other extends Streamsy.json<Other>()("ProjectionTypes/Other", "types/other/:id", {
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
+
 class Result extends Streamsy.json<Result>()("ProjectionTypes/Result", "types/result/:id", {
   schema: Schema.Finite,
   params: { id: Schema.String },
 }) {}
+
 const transactional = Projection.process({
   commit: Commit.transaction,
   id: "types/transactional",
@@ -29,6 +33,7 @@ const transactional = Projection.process({
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
 }).at({});
+
 const declared = Projection.emit({
   commit: Commit.producer,
   id: "types/named",
@@ -37,12 +42,19 @@ const declared = Projection.emit({
   outputs: { result: Result },
   emit: (entry) => Effect.succeed({ result: entry.input === "input" ? [entry.item] : [] }),
 });
+
 const named = declared.at({ id: "a" });
+
 const processRun = Projection.run(transactional);
+
 const namedRun = Projection.run(named);
+
 const namedWatch = Projection.watch(named);
+
 const namedFollow = Projection.follow(named);
+
 const Totals = Schema.Struct({ sum: Schema.Finite, words: Schema.Array(Schema.String) });
+
 const folded = Projection.fold({
   id: "types/folded",
   params: { id: Schema.String },
@@ -53,7 +65,9 @@ const folded = Projection.fold({
       ? { ...totals, sum: totals.sum + entry.item }
       : { ...totals, words: [...totals.words, entry.item] },
 });
+
 const foldedRead = Projection.read(folded.at({ id: "a" }));
+
 const statefulOutputs = Projection.mapAccumBatch({
   commit: Commit.producer,
   id: "types/stateful-outputs",
@@ -64,11 +78,17 @@ const statefulOutputs = Projection.mapAccumBatch({
   mapAccumBatch: (count, batch) =>
     Effect.succeed([count + batch.input.items.length, { result: batch.input.items }] as const),
 });
+
 const statefulRead = Projection.read(statefulOutputs.at({ id: "a" }));
+
 const statelessRead = Projection.read(named);
+
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
 type Assert<T extends true> = T;
+
 type SuccessOf<T> = T extends Effect.Effect<infer A, any, any> ? A : never;
+
 export type Checks = [
   Assert<Same<SuccessOf<typeof foldedRead>["state"], typeof Totals.Type>>,
   Assert<Same<keyof SuccessOf<typeof foldedRead>["offsets"], "input" | "other">>,
@@ -96,13 +116,17 @@ export type Checks = [
   >,
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
 ];
+
 const missing = namedRun.pipe(
   Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input, Other))),
 );
+
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
 // @ts-expect-error the declared output stream must be provided.
 const incomplete: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Transaction> = missing;
+
 void incomplete;
+
 // oxlint-enable effecttsgo/missing-effect-context
 Projection.process({
   commit: Commit.transaction,
@@ -116,6 +140,7 @@ Projection.process({
 // Widening loses the exact keys, but must not erase the unresolved requirement.
 // oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context -- These negative tests deliberately widen declarations.
 const widenedInputs: import("@streamsy/projection").InputMap = { input: Input.at({ id: "a" }) };
+
 const widened = Projection.run(
   Projection.process({
     commit: Commit.transaction,
@@ -125,7 +150,9 @@ const widened = Projection.run(
     process: () => Effect.void,
   }).at({}),
 );
+
 const widenedOutput: Streamsy.Address<number, unknown> = Result.at({ id: "a" });
+
 const widenedNamed = Projection.run(
   Projection.emit({
     commit: Commit.producer,
@@ -136,15 +163,20 @@ const widenedNamed = Projection.run(
     emit: () => Effect.succeed({ result: [1] }),
   }).at({}),
 );
+
 export type WidenedChecks = [
   Assert<Same<Effect.Services<typeof widened>, unknown>>,
   Assert<Same<Effect.Services<typeof widenedNamed>, unknown>>,
 ];
+
 // @ts-expect-error a widened input map retains an unsatisfied requirement
 const cannotRunWidened: Effect.Effect<unknown, ProjectionFault> = widened;
+
 // @ts-expect-error a widened output declaration retains an unsatisfied requirement
 const cannotRunWidenedOutput: Effect.Effect<unknown, ProjectionFault> = widenedNamed;
+
 void cannotRunWidened;
+
 void cannotRunWidenedOutput;
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context
 
@@ -152,23 +184,28 @@ void cannotRunWidenedOutput;
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   MemoryStorage.layerProtocol();
+
 const withoutFeed = Projection.watch(transactional).pipe(
   Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
 );
+
 // @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
 const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Scope.Scope> =
   withoutFeed;
+
 void missingFeed;
 
 const fetchWatch = Projection.watch(transactional).pipe(
   Effect.provide(RemoteStreams.layer(Streamsy.group(Input), { baseUrl: "https://example.test" })),
 );
+
 // @ts-expect-error RemoteStreams supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
 const missingFetchFeed: Effect.Effect<
   unknown,
   ProjectionFault | import("@streamsy/core").TransportFault,
   CheckpointStore | Scope.Scope | import("effect/http/HttpClient").HttpClient
 > = fetchWatch;
+
 void missingFetchFeed;
 
 // oxlint-enable effecttsgo/missing-effect-context
@@ -200,6 +237,7 @@ Projection.process({
   input: Input.at({ id: "a" }),
   process: () => Effect.void,
 }).at({});
+
 Projection.emit({
   commit: Commit.producer,
   id: "single-outputs-input-removed",
@@ -217,10 +255,13 @@ Projection.process({
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
 });
+
 // @ts-expect-error at requires the declared params.
 declared.at({});
+
 // @ts-expect-error at checks the decoded param types.
 declared.at({ id: 1 });
+
 // oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/floating-effect -- This negative test deliberately passes an unbound declaration.
 // @ts-expect-error runners take the bound value, not the declaration.
 Projection.run(declared);
@@ -233,6 +274,7 @@ Projection.fold({
   inputs: { input: Input.at({ id: "a" }) },
   fold: () => 0,
 });
+
 Projection.fold({
   id: "state-without-fold",
   params: {},
@@ -241,6 +283,7 @@ Projection.fold({
   // @ts-expect-error fold takes fold, not process
   process: () => Effect.void,
 });
+
 Projection.fold({
   id: "fold-returns-wrong-state",
   params: {},
@@ -249,6 +292,7 @@ Projection.fold({
   // @ts-expect-error the step returns the declared state type
   fold: () => "wrong",
 });
+
 Projection.emit({
   commit: Commit.producer,
   id: "state-arg-without-state",
@@ -258,5 +302,6 @@ Projection.emit({
   // @ts-expect-error without state: the handler gets no state argument
   emit: (_state: number, _batch: string) => Effect.succeed({}),
 });
+
 // @ts-expect-error a stateless declaration has no state source
 void declared.state;

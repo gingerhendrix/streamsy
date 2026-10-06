@@ -14,6 +14,7 @@ export const withPermit = <A, E, R>(
     const entry = locks.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0, retire: false };
     locks.set(key, entry);
     entry.users += 1;
+
     return entry.semaphore
       .withPermits(1)(
         body.pipe(
@@ -28,6 +29,7 @@ export const withPermit = <A, E, R>(
         Effect.ensuring(
           Effect.sync(() => {
             entry.users -= 1;
+
             if (entry.retire && entry.users === 0) locks.delete(key);
           }),
         ),

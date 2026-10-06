@@ -22,5 +22,6 @@ export function layer<const Keys extends ReadonlyArray<Any>>(
 export function layer(group: Group.Group, options: Options = {}) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
+
   return bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

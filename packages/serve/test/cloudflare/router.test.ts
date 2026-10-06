@@ -14,22 +14,26 @@ type FakeNamespace = DurableObjectNamespace & {
 const makeNamespace = (): FakeNamespace => {
   const names: Array<string> = [];
   const requests: Array<Request> = [];
+
   const namespace = {
     names,
     requests,
     idFromName(name: string) {
       names.push(name);
+
       return { name };
     },
     get(id: { readonly name: string }) {
       return {
         fetch(request: Request) {
           requests.push(request);
+
           return Promise.resolve(new Response(id.name, { status: 200 }));
         },
       };
     },
   };
+
   // SAFETY: The router only uses idFromName, get and the returned stub's fetch;
   // the fake deliberately leaves unrelated Cloudflare namespace methods out.
   return namespace as FakeNamespace;
@@ -41,6 +45,7 @@ const invoke = (handler: ExportedHandler<unknown>, request: Request) =>
 test("router uses the raw stripped stream path and forwards the unchanged request", async () => {
   const namespace = makeNamespace();
   const handler = router({ namespace: () => namespace });
+
   const request = new Request("https://streams.test/a%2Fb?offset=-1", {
     method: "POST",
     body: "payload",
@@ -54,6 +59,7 @@ test("router uses the raw stripped stream path and forwards the unchanged reques
 
 test("byKey routes a fork request to the child object without consulting the source key", async () => {
   const namespace = makeNamespace();
+
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byKey((streamPath) => streamPath.split("/", 1)[0] ?? ""),
@@ -66,6 +72,7 @@ test("byKey routes a fork request to the child object without consulting the sou
       headers: { "stream-forked-from": "/t1/x" },
     }),
   );
+
   expect(same?.status).toBe(200);
   expect(namespace.names).toEqual(["t1"]);
 
@@ -76,6 +83,7 @@ test("byKey routes a fork request to the child object without consulting the sou
       headers: { "stream-forked-from": "/t1/x" },
     }),
   );
+
   expect(cross?.status).toBe(200);
   expect(cross?.headers.get("stream-not-supported")).toBeNull();
   expect(await cross?.text()).toBe("t2");
@@ -85,6 +93,7 @@ test("byKey routes a fork request to the child object without consulting the sou
 test("router follows the core prefix grammar and reports every invalid placement path", async () => {
   const namespace = makeNamespace();
   const handler = router({ namespace: () => namespace, prefix: "/streams" });
+
   for (const path of ["/streams", "/streams/", "/other/x"]) {
     const response = await invoke(handler, new Request(`https://streams.test${path}`));
     expect(response?.status).toBe(400);
@@ -103,6 +112,7 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
       throw new Error("defect");
     }),
   });
+
   const defect = await invoke(throwing, new Request("https://streams.test/a"));
   expect(defect?.status).toBe(500);
 
@@ -110,6 +120,7 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
     namespace: () => makeNamespace(),
     placement: Placement.byKey(() => ""),
   });
+
   const empty = await invoke(invalid, new Request("https://streams.test/a"));
   expect(empty?.status).toBe(400);
   expect(await empty?.text()).toBe("Invalid placement key");
@@ -122,20 +133,24 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
         /* SAFETY: This intentionally violates Placement's type to exercise the runtime boundary. */ 7 as never,
     ),
   });
+
   const number = await invoke(nonString, new Request("https://streams.test/a"));
   expect(number?.status).toBe(400);
   expect(await number?.text()).toBe("Invalid placement key");
 });
 
 const Note = Schema.Struct({ text: Schema.String });
+
 const journal = StreamRoute.json("journal/:user", {
   params: { user: Schema.String },
   schema: Note,
 });
+
 const totals = StreamRoute.json("totals/:user", {
   params: { user: Schema.String },
   schema: Note,
 });
+
 const orders = StreamRoute.json("orders/:orderId", {
   params: { orderId: Schema.NumberFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
   schema: Note,
@@ -143,6 +158,7 @@ const orders = StreamRoute.json("orders/:orderId", {
 
 test("byRoute names the object from the route parameters", async () => {
   const namespace = makeNamespace();
+
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byRoute([
@@ -166,6 +182,7 @@ test("byRoute names the object from the route parameters", async () => {
 
 test("a constrained codec reaches the owner as its decoded type", async () => {
   const namespace = makeNamespace();
+
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byRoute([
@@ -185,10 +202,12 @@ test("a constrained codec reaches the owner as its decoded type", async () => {
 
 test("an unmatched path is 400 and a throwing owner is 500", async () => {
   const namespace = makeNamespace();
+
   const unmatched = router({
     namespace: () => namespace,
     placement: Placement.byRoute([rule({ stream: journal, owner: ({ user }) => user })]),
   });
+
   const missing = await invoke(unmatched, new Request("https://streams.test/drafts/ann"));
   expect(missing?.status).toBe(400);
   expect(await missing?.text()).toBe("Invalid placement key");
@@ -205,12 +224,14 @@ test("an unmatched path is 400 and a throwing owner is 500", async () => {
       }),
     ]),
   });
+
   const defect = await invoke(throwing, new Request("https://streams.test/journal/ann"));
   expect(defect?.status).toBe(500);
 });
 
 test("byRoute routes a fork to the child's stream object", async () => {
   const namespace = makeNamespace();
+
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byRoute([rule({ stream: journal, owner: ({ user }) => `user/${user}` })]),
@@ -223,6 +244,7 @@ test("byRoute routes a fork to the child's stream object", async () => {
       headers: { "stream-forked-from": "/journal/ann" },
     }),
   );
+
   expect(response?.status).toBe(200);
   expect(await response?.text()).toBe("user/bo");
   expect(namespace.names).toEqual(["user/bo"]);

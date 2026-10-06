@@ -9,7 +9,9 @@ import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker, Board, LabelCounts, Transitions } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels } from "../server/streams.ts";
+
 const at = "2026-09-23T10:00:00Z";
+
 const seed = Effect.gen(function* () {
   yield* createInputs("live");
   yield* (yield* Labels).append(
@@ -50,6 +52,7 @@ const seed = Effect.gen(function* () {
     },
   ]);
 });
+
 const more = Effect.flatMap(Events, (events) =>
   events.append({ workspaceId: "live" }, [
     {
@@ -63,6 +66,7 @@ const more = Effect.flatMap(Events, (events) =>
     },
   ]),
 );
+
 const collect = Effect.gen(function* () {
   return {
     board: yield* Addresses.readOutput(Board, "live"),
@@ -73,13 +77,16 @@ const collect = Effect.gen(function* () {
     ),
   };
 });
+
 const run = (failOn: number | undefined) =>
   Effect.gen(function* () {
     yield* seed;
     const bound = tracker.at({ workspaceId: "live" });
+
     if (failOn === undefined) yield* Projection.run(bound);
     else {
       let calls = 0;
+
       const r = yield* Projection.run(bound).pipe(
         Addresses.patchOutputAppends(
           (append) => (id, o) =>
@@ -91,22 +98,29 @@ const run = (failOn: number | undefined) =>
         ),
         Effect.result,
       );
+
       expect(r._tag).toBe("Failure");
     }
+
     yield* more;
     yield* Projection.run(bound);
+
     return yield* collect;
   });
+
 test("stop between outputs recovers to the same outputs as a clean run", async () => {
   const results = [];
+
   for (const failOn of [undefined, 2, 3]) {
     const rt = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
     try {
       results.push(await rt.runPromise(run(failOn)));
     } finally {
       await rt.dispose();
     }
   }
+
   expect(results[1]).toEqual(results[0]);
   expect(results[2]).toEqual(results[0]);
 });

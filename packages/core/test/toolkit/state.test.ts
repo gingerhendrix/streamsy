@@ -6,10 +6,13 @@ import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 
 const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
+
 const stories = StreamAddress.state("stories", {
   collections: { story: { schema: Story, key: "id" } },
 });
+
 const Slug = Schema.Struct({ slug: Schema.String, title: Schema.String });
+
 const slugs = StreamAddress.state("slugs", {
   collections: { slug: { schema: Slug, key: "slug" } },
 });
@@ -19,6 +22,7 @@ it("state changes round trip with Durable State wire fields and source headers",
     Effect.gen(function* () {
       const first = { id: 7, title: "first" };
       const second = { id: 8, title: "second" };
+
       const facts = DurableState.changes(stories, { offset: "source:4" }, [
         DurableState.upsert("story", first),
         DurableState.remove("story", second.id, { oldValue: second }),
@@ -39,6 +43,7 @@ it("state changes round trip with Durable State wire fields and source headers",
         Streams.items,
         Stream.runCollect,
       );
+
       expect(raw.map((item) => new TextDecoder().decode(item))).toEqual([
         '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","offset":"source:4","txid":"source:4:0"}}',
         '{"type":"story","key":"8","old_value":{"id":8,"title":"second"},"headers":{"operation":"delete","offset":"source:4","txid":"source:4:1"}}',
@@ -48,12 +53,15 @@ it("state changes round trip with Durable State wire fields and source headers",
 
 it("encodes the row with the collection codec and a string key", () => {
   const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+
   const cards = StreamAddress.state("cards", {
     collections: { card: { schema: Card, key: "id" } },
   });
+
   const [event] = DurableState.changes(cards, {}, [
     DurableState.upsert("card", { id: "a", total: 2 }),
   ]);
+
   // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
   expect(JSON.parse(Schema.encodeSync(cards.codec)(event!) as string)).toEqual({
     type: "card",
@@ -88,12 +96,14 @@ it("rejects an omitted optional key at runtime", () => {
     slug: Schema.optionalKey(Schema.String),
     title: Schema.String,
   });
+
   const optionalSlugs = StreamAddress.state("optional-slugs", {
     collections: {
       // SAFETY: bypass the compile-time key constraint to cover the runtime boundary.
       slug: { schema: OptionalSlug, key: "slug" as never },
     },
   });
+
   expect(() =>
     DurableState.changes(optionalSlugs, { offset: "source:7" }, [
       DurableState.upsert("slug", { title: "missing" }),
@@ -112,6 +122,7 @@ it("lets a change override txid and add source headers without replacing offset"
     ),
     DurableState.upsert("story", { id: 8, title: "second" }),
   ]);
+
   expect(facts.map((fact) => fact.headers)).toEqual([
     {
       operation: "upsert",
@@ -133,6 +144,7 @@ it("stamps no offset and no default txid when the batch has no source offset", (
     DurableState.upsert("story", { id: 8, title: "second" }, { headers: { txid: "client-uuid" } }),
     DurableState.remove("story", 9),
   ]);
+
   expect(facts).toEqual([
     {
       type: "story",
@@ -164,17 +176,20 @@ it("writes and reads several collections through one state address", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
+
       const workspace = StreamAddress.state("workspace", {
         collections: {
           project: { schema: Project, key: "id" },
           story: { schema: Story, key: "id" },
         },
       });
+
       const facts = DurableState.changes(workspace, { offset: "source:9" }, [
         DurableState.upsert("project", { id: "p1", name: "Streamsy" }),
         DurableState.upsert("story", { id: 7, title: "first" }),
         DurableState.remove("project", "p1"),
       ]);
+
       expect(facts.map((fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
         ["project", "p1", "upsert"],
         ["story", "7", "upsert"],
@@ -186,9 +201,11 @@ it("writes and reads several collections through one state address", () =>
 
       const items = yield* Streams.read(workspace).pipe(Streams.items, Stream.runCollect);
       expect(items).toEqual([...facts]);
+
       const names = items.flatMap((item) =>
         item.type === "project" && "value" in item ? [item.value.name] : [],
       );
+
       expect(names).toEqual(["Streamsy"]);
     }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
   ));
@@ -199,6 +216,7 @@ it("fails to decode an event whose type is not a declared collection", () =>
       const result = yield* Schema.decodeEffect(stories.codec)(
         '{"type":"comment","key":"1","value":{"id":1,"title":"x"},"headers":{"operation":"upsert"}}',
       ).pipe(Effect.result);
+
       expect(result._tag).toBe("Failure");
     }),
   ));
@@ -248,6 +266,7 @@ it("normalizes Durable State insert, update, and upsert operations", () => {
         headers: { operation },
       }),
     );
+
     expect(decoded.headers.operation).toBe("upsert");
   }
 
@@ -257,6 +276,7 @@ it("normalizes Durable State insert, update, and upsert operations", () => {
     value: { id: 7, title: "canonical" },
     headers: { operation: "upsert" },
   });
+
   // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
   expect(JSON.parse(encoded as string).headers.operation).toBe("upsert");
 });

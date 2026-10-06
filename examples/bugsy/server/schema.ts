@@ -63,11 +63,13 @@ const statements = {
  */
 export const prepareSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
   const dialect = sql.onDialectOrElse({
     pg: () => "pg" as const,
     mysql: () => "mysql" as const,
     orElse: () => "sqlite" as const,
   });
+
   yield* Effect.forEach(statements[dialect], (statement) => sql.unsafe(statement), {
     discard: true,
   });

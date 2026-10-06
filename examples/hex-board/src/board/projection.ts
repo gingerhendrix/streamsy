@@ -183,6 +183,7 @@ export const MOVE_FEED_LIMIT = 40;
 
 /** Singleton row keys for the zero-or-one collections. */
 export const TURN_ROW_KEY = "turn";
+
 export const COMBAT_ROW_KEY = "combat";
 
 export interface ProjectionState {
@@ -232,8 +233,10 @@ function findTerritory(
   id: string,
 ): Result.Result<ProjectedTerritory, ProjectionIntegrityError> {
   const territory = state.territories.find((t) => t.id === id);
+
   if (!territory)
     return Result.fail(new ProjectionIntegrityError({ message: `unknown territory ${id}` }));
+
   return Result.succeed(territory);
 }
 
@@ -244,11 +247,14 @@ function refreshDerivedTotals(state: ProjectionState): void {
     player.territoryCount = owned.length;
     player.armyCount = owned.reduce((sum, t) => sum + t.armies, 0);
   }
+
   for (const continent of state.continents) {
     const owners = new Set(
       continent.territoryIds.map((id) => state.territories.find((t) => t.id === id)?.ownerId),
     );
+
     const [only] = [...owners];
+
     if (owners.size === 1 && only) continent.controllerId = only;
     else delete continent.controllerId;
   }
@@ -262,10 +268,13 @@ function refreshDerivedTotals(state: ProjectionState): void {
  */
 function reinforcementFor(state: ProjectionState, playerId: string): ReinforcementState {
   const base = baseReinforcement(state.territories.filter((t) => t.ownerId === playerId).length);
+
   const continents: ContinentBonus[] = state.continents
     .filter((continent) => continent.controllerId === playerId)
     .map((continent) => ({ continentId: continent.id, bonus: continent.reinforcementBonus }));
+
   const total = continents.reduce((sum, c) => sum + c.bonus, base);
+
   return { base, continents, total, remaining: total };
 }
 
@@ -299,6 +308,7 @@ function requirePendingCombat(
   attackId: string,
 ): Result.Result<ProjectedCombat, ProjectionIntegrityError> {
   const combat = state.combat;
+
   if (!combat || combat.attackId !== attackId || combat.status !== "awaiting-defense") {
     return Result.fail(
       new ProjectionIntegrityError({
@@ -306,6 +316,7 @@ function requirePendingCombat(
       }),
     );
   }
+
   return Result.succeed(combat);
 }
 
@@ -332,6 +343,7 @@ function applyEvent(
         });
         break;
       }
+
       case "PlayerJoined": {
         state.players.push({
           id: event.playerId,
@@ -344,28 +356,36 @@ function applyEvent(
         });
         break;
       }
+
       case "PlayerControllerChanged": {
         const player = state.players.find((candidate) => candidate.id === event.playerId);
+
         if (player) player.controller = event.controller;
         break;
       }
+
       case "PlayerRenamed": {
         const player = state.players.find((candidate) => candidate.id === event.playerId);
+
         if (player) player.name = event.name;
         break;
       }
+
       case "PlayerLeft": {
         // Drop the seat from `players`. The move feed keeps its name (see `moveDetail`).
         state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
         break;
       }
+
       case "GameStarted": {
         state.game.status = "playing";
         state.game.round = event.round;
         insertMapRows(state, event.map);
         const armiesById = new Map(event.initialTerritories.map((t) => [t.territoryId, t]));
+
         for (const territory of state.territories) {
           const initial = armiesById.get(territory.id);
+
           if (!initial) {
             return yield* Result.fail(
               new ProjectionIntegrityError({
@@ -373,27 +393,34 @@ function applyEvent(
               }),
             );
           }
+
           territory.ownerId = initial.ownerId;
           territory.armies = initial.armies;
         }
+
         refreshDerivedTotals(state);
         const first = event.turnOrder[0]!;
         beginTurn(state, first, turnIdOf(event.round, first));
         break;
       }
+
       case "ArmiesReinforced": {
         (yield* findTerritory(state, event.territoryId)).armies += event.armies;
+
         if (state.turn) {
           state.turn.reinforcement.remaining -= event.armies;
           state.turn.reinforcementsPlaced += event.armies;
+
           if (state.turn.reinforcement.remaining <= 0) {
             state.game.phase = "attack";
             state.turn.phase = "attack";
           }
         }
+
         refreshDerivedTotals(state);
         break;
       }
+
       case "AttackDeclared": {
         state.combat = {
           id: COMBAT_ROW_KEY,
@@ -410,9 +437,11 @@ function applyEvent(
           declaredAt: event.declaredAt,
           defenseDeadlineAt: event.defenseDeadlineAt,
         };
+
         if (state.turn) state.turn.attacksDeclared += 1;
         break;
       }
+
       case "AttackResolved": {
         const combat = yield* requirePendingCombat(state, event.attackId);
         yield* assertResolutionMatches(combat, event);
@@ -442,6 +471,7 @@ function applyEvent(
           state.combat = null;
           break;
         }
+
         state.combat = {
           ...combat,
           status: "awaiting-occupation",
@@ -457,6 +487,7 @@ function applyEvent(
         };
         break;
       }
+
       case "TerritoryOccupied": {
         const from = yield* findTerritory(state, event.from);
         const to = yield* findTerritory(state, event.to);
@@ -464,44 +495,55 @@ function applyEvent(
         to.ownerId = event.playerId;
         to.armies = event.armies;
         refreshDerivedTotals(state);
+
         if (state.turn) state.turn.captures += 1;
         // The canonical projection clears combat immediately; a client may keep the
         // last resolved throw locally for its reveal animation.
         state.combat = null;
         break;
       }
+
       case "ArmiesFortified": {
         (yield* findTerritory(state, event.from)).armies -= event.armies;
         (yield* findTerritory(state, event.to)).armies += event.armies;
         state.game.phase = "fortify";
+
         if (state.turn) state.turn.phase = "fortify";
         refreshDerivedTotals(state);
         break;
       }
+
       case "PlayerEliminated": {
         const eliminated = findPlayer(state, event.playerId);
+
         if (eliminated) eliminated.eliminated = true;
+
         if (state.turn) state.turn.eliminations += 1;
         break;
       }
+
       case "TurnEnded": {
         state.game.round = event.round;
         beginTurn(state, event.nextPlayerId, turnIdOf(event.round, event.nextPlayerId));
         break;
       }
+
       case "GameWon": {
         state.game.status = "finished";
         state.game.winnerId = event.playerId;
         delete state.game.activePlayerId;
         delete state.game.phase;
         state.combat = null;
+
         if (state.turn) {
           delete state.turn.phase;
           state.turn.reinforcement = { base: 0, continents: [], total: 0, remaining: 0 };
         }
+
         break;
       }
     }
+
     return undefined;
   });
 }
@@ -517,7 +559,9 @@ function assertResolutionMatches(
   const sameRolls =
     combat.attackerRolls.length === event.attackerRolls.length &&
     combat.attackerRolls.every((roll, i) => roll === event.attackerRolls[i]);
+
   const { attackerLosses, defenderLosses } = compareRolls(event.attackerRolls, event.defenderRolls);
+
   if (
     !sameRolls ||
     combat.turnId !== event.turnId ||
@@ -535,6 +579,7 @@ function assertResolutionMatches(
       }),
     );
   }
+
   return Result.succeed(undefined);
 }
 
@@ -591,8 +636,10 @@ function moveDetail(event: GameEvent, before: ProjectionState): Partial<Projecte
       return { name: event.name };
     case "PlayerLeft": {
       const departing = before.players.find((player) => player.id === event.playerId);
+
       return departing ? { name: departing.name } : {};
     }
+
     case "ArmiesReinforced":
       return { turnId: event.turnId, territoryId: event.territoryId, armies: event.armies };
     case "AttackDeclared":
@@ -658,6 +705,7 @@ export function projectEvent(
     yield* applyEvent(state, event);
 
     const playerId = movePlayerId(event);
+
     const move: ProjectedMove = {
       id: moveId(ordinal),
       commandId: event.commandId,
@@ -665,12 +713,16 @@ export function projectEvent(
       sourceOffset,
       ...moveDetail(event, previous),
     };
+
     if (playerId !== undefined) move.playerId = playerId;
     state.moves.push(move);
+
     if (state.moves.length > MOVE_FEED_LIMIT) {
       state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);
     }
+
     state.sourceThroughOffset = sourceOffset;
+
     return state;
   });
 }
@@ -685,9 +737,11 @@ export function projectEvents(
 ): Result.Result<ProjectionState, ProjectionIntegrityError> {
   return Result.gen(function* () {
     let state = initialProjection();
+
     for (let index = 0; index < events.length; index += 1) {
       state = yield* projectEvent(state, events[index]!, String(index), index);
     }
+
     return state;
   });
 }
@@ -761,11 +815,13 @@ function continentControllerOf(
 ): string | undefined {
   const owners = new Set(territoryIds.map(ownerOf));
   const [only] = [...owners];
+
   return owners.size === 1 && only ? only : undefined;
 }
 
 export function aggregateBoardView(state: AggregateViewSource): BoardView {
   const ownerOf = (id: string): string | undefined => state.territories[id]?.ownerId;
+
   return {
     status: state.status,
     phase: state.phase,
@@ -808,6 +864,7 @@ export function aggregateBoardView(state: AggregateViewSource): BoardView {
  */
 export function projectionBoardView(state: ProjectionState): BoardView {
   const combat = state.combat;
+
   const pending: PendingInteraction | undefined =
     combat?.status === "awaiting-defense"
       ? {

@@ -10,6 +10,7 @@ export default Alchemy.Stack(
   { providers: Cloudflare.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
+
     const server = yield* Cloudflare.Worker("Server", {
       name: `${STACK_NAME}-${stage}`,
       main: "../packages/conformance-tests/dist/worker/worker.js",
@@ -18,6 +19,7 @@ export default Alchemy.Stack(
       workersDev: true,
       env: { STREAMS: Streams },
     });
+
     return { url: server.url, workerName: server.workerName };
   }),
 );

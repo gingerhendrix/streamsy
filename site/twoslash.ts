@@ -55,6 +55,7 @@ export const isCheckedFence = (lang: string, meta: string, title?: string): bool
   !/(?:^|\s)no-twoslash(?:\s|$)/.test(meta);
 
 const includeMarker = /\/\/ @include: (.*)$/gm;
+
 const compilerError = /^\[\d+\] [\w.-]+:(\d+) - .*$/gm;
 
 /**
@@ -68,10 +69,12 @@ export const describeError = (
   includes: ReadonlyMap<string, string>,
 ): string => {
   const expanded = code.replaceAll(includeMarker, (line, key: string) => includes.get(key) ?? line);
+
   return message.replaceAll(compilerError, (whole, offset: string) => {
     const start = expanded.lastIndexOf("\n", Number(offset) - 1) + 1;
     const end = expanded.indexOf("\n", start);
     const line = expanded.slice(start, end === -1 ? undefined : end).trim();
+
     return `${whole}\n    at: ${line}`;
   });
 };
@@ -82,6 +85,7 @@ export const describeError = (
  */
 export const twoslash = (): ShikiTransformer => {
   const includesMap = new Map<string, string>();
+
   return transformerTwoslash({
     // fumadocs parses `title` out of the meta string, so `__raw` no longer holds it.
     filter: (lang, _code, options) =>
@@ -96,7 +100,9 @@ export const twoslash = (): ShikiTransformer => {
 };
 
 const flagLine = /^\/\/\s?@\w+(?::.*)?$/;
+
 const queryLine = /^\s*\/\/\s*\^(?:\?|\||\^+)(?: .*)?$/;
+
 const cutLine = (line: string, kind = ""): boolean => line.trim() === `// ---cut${kind}---`;
 
 /**
@@ -107,16 +113,20 @@ const cutLine = (line: string, kind = ""): boolean => line.trim() === `// ---cut
 export const stripTwoslash = (code: string): string => {
   let lines = code.split("\n");
   const lastCut = lines.findLastIndex((line) => cutLine(line) || cutLine(line, "-before"));
+
   if (lastCut !== -1) lines = lines.slice(lastCut + 1);
   const cutAfter = lines.findIndex((line) => cutLine(line, "-after"));
+
   if (cutAfter !== -1) lines = lines.slice(0, cutAfter);
   const shown: Array<string> = [];
   let hidden = 0;
+
   for (const line of lines) {
     if (cutLine(line, "-start")) hidden++;
     else if (cutLine(line, "-end")) hidden--;
     else if (hidden === 0 && !flagLine.test(line) && !queryLine.test(line)) shown.push(line);
   }
+
   return shown.join("\n");
 };
 
@@ -126,12 +136,15 @@ export const stripTwoslash = (code: string): string => {
  */
 export const processedMarkdownCode: Handle = (node: Code, parent, state, info) => {
   const meta = node.meta ?? "";
+
   if (!isCheckedFence(node.lang ?? "", meta))
     return defaultHandlers.code(node, parent, state, info);
+
   const shown: Code = {
     ...node,
     value: stripTwoslash(node.value),
     meta: meta.replace(/(?:^|\s)include\s+[\w-]+/, "").trim() || null,
   };
+
   return defaultHandlers.code(shown, parent, state, info);
 };

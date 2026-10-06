@@ -8,5 +8,7 @@ export class HackerNewsStories extends Streamsy.state<HackerNewsStories>()(
 ) {}
 
 export const storiesAddress = HackerNewsStories.at({});
+
 export type StoryChange = DurableState.Change<typeof storiesAddress.collections>;
+
 export type StoryEvent = StreamAddress.CollectionsChange<typeof storiesAddress.collections>;

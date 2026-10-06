@@ -1,4 +1,5 @@
 export type { CreateOptions } from "../policy/options.ts";
+
 export interface ProducerOptions {
   readonly producerId: string;
   readonly producerEpoch: number;

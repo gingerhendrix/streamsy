@@ -31,6 +31,7 @@ import type { ContinentDef, GeneratedMap, MapIndex } from "./map.ts";
 import { baseReinforcement, indexMap } from "./map.ts";
 
 export type GamePhase = "reinforce" | "attack" | "fortify";
+
 export type GameStatus = "lobby" | "playing" | "finished";
 
 export interface PlayerState {
@@ -172,6 +173,7 @@ export function buildTurnId(round: number, playerId: string): string {
 
 export function currentTurnId(state: AggregateState): string | undefined {
   if (state.status !== "playing" || !state.activePlayerId) return undefined;
+
   return buildTurnId(state.round, state.activePlayerId);
 }
 
@@ -197,6 +199,7 @@ export function controlledContinents(
   playerId: string,
 ): readonly ContinentDef[] {
   if (!state.map) return [];
+
   return state.map.continents.filter((continent) =>
     continent.territoryIds.every((id) => state.territories[id]?.ownerId === playerId),
   );
@@ -211,11 +214,14 @@ export function controlledContinents(
  */
 export function computeReinforcement(state: AggregateState, playerId: string): ReinforcementState {
   const base = baseReinforcement(ownedBy(state, playerId).length);
+
   const continents = controlledContinents(state, playerId).map((continent) => ({
     continentId: continent.id,
     bonus: continent.reinforcementBonus,
   }));
+
   const total = continents.reduce((sum, c) => sum + c.bonus, base);
+
   return { base, continents, total, remaining: total };
 }
 
@@ -224,6 +230,7 @@ function beginTurn(state: AggregateState, playerId: string): void {
   state.phase = "reinforce";
   state.pendingInteraction = undefined;
   state.reinforcement = computeReinforcement(state, playerId);
+
   // A player who owes no reinforcements (impossible under the current floor of 3,
   // but a rule change should not strand a turn) proceeds straight to attacking.
   if (state.reinforcement.remaining <= 0) state.phase = "attack";
@@ -235,9 +242,11 @@ function requireDefense(
   context: string,
 ): Extract<PendingInteraction, { type: "defense" }> {
   const pending = state.pendingInteraction;
+
   if (!pending || pending.type !== "defense" || pending.attackId !== attackId) {
     throw new AggregateIntegrityError(`${context} does not match a pending declaration`);
   }
+
   return pending;
 }
 
@@ -257,6 +266,7 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       });
       break;
     }
+
     case "PlayerJoined": {
       state.players.push({
         id: event.playerId,
@@ -267,22 +277,28 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       });
       break;
     }
+
     case "PlayerControllerChanged": {
       const currentPlayer = state.players.find((candidate) => candidate.id === event.playerId);
+
       if (currentPlayer) currentPlayer.controller = event.controller;
       break;
     }
+
     case "PlayerRenamed": {
       const renamed = state.players.find((candidate) => candidate.id === event.playerId);
+
       if (renamed) renamed.name = event.name;
       break;
     }
+
     case "PlayerLeft": {
       // Lobby-only, so there is no turn order or territory to repair: the seat is
       // simply no longer on the roster the game will start with.
       state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
       break;
     }
+
     case "GameStarted": {
       state.status = "playing";
       state.map = event.map;
@@ -290,6 +306,7 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       state.turnOrder = event.turnOrder.slice();
       state.round = event.round;
       state.territories = {};
+
       for (const t of event.initialTerritories) {
         state.territories[t.territoryId] = {
           id: t.territoryId,
@@ -297,16 +314,21 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
           armies: t.armies,
         };
       }
+
       beginTurn(state, event.turnOrder[0]!);
       break;
     }
+
     case "ArmiesReinforced": {
       const territory = state.territories[event.territoryId];
+
       if (territory) territory.armies += event.armies;
       state.reinforcement.remaining -= event.armies;
+
       if (state.reinforcement.remaining <= 0) state.phase = "attack";
       break;
     }
+
     case "AttackDeclared": {
       state.pendingInteraction = {
         type: "defense",
@@ -329,13 +351,16 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       };
       break;
     }
+
     case "AttackResolved": {
       const pending = requireDefense(state, event.attackId, "AttackResolved");
+
       // The repeated attacker rolls and the whole combat framing must match the
       // declaration; a divergence would silently rewrite a recorded throw.
       const sameRolls =
         pending.attackerRolls.length === event.attackerRolls.length &&
         pending.attackerRolls.every((roll, i) => roll === event.attackerRolls[i]);
+
       if (
         !sameRolls ||
         pending.turnId !== event.turnId ||
@@ -377,8 +402,10 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       } else {
         state.pendingInteraction = undefined;
       }
+
       break;
     }
+
     case "TerritoryOccupied": {
       const from = state.territories[event.from]!;
       const to = state.territories[event.to]!;
@@ -386,28 +413,36 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       to.ownerId = event.playerId;
       to.armies = event.armies;
       const record = state.attacks[event.attackId];
+
       if (record) record.status = "occupied";
       state.pendingInteraction = undefined;
       break;
     }
+
     case "ArmiesFortified": {
       const from = state.territories[event.from];
       const to = state.territories[event.to];
+
       if (from) from.armies -= event.armies;
+
       if (to) to.armies += event.armies;
       state.phase = "fortify";
       break;
     }
+
     case "PlayerEliminated": {
       const eliminated = player(state, event.playerId);
+
       if (eliminated) eliminated.eliminated = true;
       break;
     }
+
     case "TurnEnded": {
       state.round = event.round;
       beginTurn(state, event.nextPlayerId);
       break;
     }
+
     case "GameWon": {
       state.status = "finished";
       state.winnerId = event.playerId;
@@ -422,11 +457,13 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
 
 export function foldAggregate(events: readonly GameEvent[]): AggregateState {
   const state = initialState();
+
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index]!;
     applyEvent(state, event);
     state.eventCount = index + 1;
     const record = state.commandIndex[event.commandId];
+
     if (record) {
       record.events.push(event);
       record.lastOffset = index;
@@ -434,6 +471,7 @@ export function foldAggregate(events: readonly GameEvent[]): AggregateState {
       state.commandIndex[event.commandId] = { events: [event], lastOffset: index };
     }
   }
+
   return state;
 }
 
@@ -453,6 +491,7 @@ export function nextTurn(state: AggregateState, finishingPlayerId: string): Next
   const nextIndex = (fromIndex + 1) % order.length;
   const nextPlayerId = order[nextIndex]!;
   const wrapped = nextIndex <= fromIndex;
+
   return { nextPlayerId, round: wrapped ? state.round + 1 : state.round };
 }
 
@@ -470,6 +509,7 @@ export function friendlyReachable(state: AggregateState, playerId: string, from:
   const seen = new Set([from]);
   const queue = [from];
   const reachable: string[] = [];
+
   for (let head = 0; head < queue.length; head += 1) {
     for (const next of state.index.territoryById.get(queue[head]!)?.adjacentTerritoryIds ?? []) {
       if (seen.has(next) || state.territories[next]?.ownerId !== playerId) continue;
@@ -478,6 +518,7 @@ export function friendlyReachable(state: AggregateState, playerId: string, from:
       reachable.push(next);
     }
   }
+
   return reachable.toSorted();
 }
 

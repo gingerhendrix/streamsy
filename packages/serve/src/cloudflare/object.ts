@@ -11,14 +11,17 @@ export interface ObjectConfiguration<Env, R = never> {
   readonly app: ObjectApp<R>;
   readonly layer: (state: DurableObjectState, env: Env) => Layer.Layer<Storage | R, StorageFault>;
 }
+
 export interface ObjectInstance {
   fetch(request: Request): Promise<Response>;
   alarm(info?: AlarmInvocationInfo): Promise<void>;
 }
+
 interface Compiled {
   readonly handler: (request: Request) => Promise<Response>;
   readonly alarm: Effect.Effect<void, StorageFault>;
 }
+
 class ObjectOwner extends Context.Service<
   ObjectOwner,
   { readonly get: Effect.Effect<Compiled, StorageFault> }
@@ -41,7 +44,9 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
                 const web = HttpRouter.toWebHandler(providedApp(configuration.app, context), {
                   disableLogger: true,
                 });
+
                 yield* Effect.addFinalizer(() => Effect.promise(web.dispose));
+
                 return { handler: web.handler, alarm: alarm.pipe(Effect.provide(context)) };
               }),
           ),
@@ -54,12 +59,15 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
     return this.#runtime.runPromise(
       Effect.gen(function* () {
         const owner = yield* ObjectOwner;
+
         const compiled = yield* owner.get.pipe(
           Effect.map(Option.some),
           Effect.catch(() => Effect.succeed(Option.none())),
           Effect.catchDefect(() => Effect.succeed(Option.none())),
         );
+
         if (Option.isNone(compiled)) return HttpServerResponse.toWeb(unavailable());
+
         return yield* Effect.promise(() => compiled.value.handler(request));
       }),
     );
@@ -74,6 +82,7 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
     );
   }
 }
+
 export const StreamsyObject = {
   make: <Env = unknown, R = never>(
     configuration: ObjectConfiguration<Env, R>,

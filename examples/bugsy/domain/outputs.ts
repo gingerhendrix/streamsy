@@ -8,16 +8,21 @@ export const ProjectBoardCard = Schema.Struct({
   projectName: Schema.NullOr(Schema.String),
   assigneeName: Schema.NullOr(Schema.String),
 });
+
 export type ProjectBoardCard = typeof ProjectBoardCard.Type;
+
 export const LabelCountRow = Schema.Struct({
   workspaceId: Identifier,
   labelId: Identifier,
   name: Schema.String,
   count: Sequence,
 });
+
 export type LabelCountRow = typeof LabelCountRow.Type;
+
 // Accepted issue facts retain their stable event identity in the transition feed.
 export const IssueTransition = IssueEvent;
+
 export const WorkspaceState = Schema.Struct({
   workspaceId: Identifier,
   issueCount: Sequence,
@@ -29,7 +34,9 @@ export const WorkspaceState = Schema.Struct({
   users: Schema.Array(UserRow),
   labels: Schema.Array(LabelRow),
 });
+
 export type WorkspaceState = typeof WorkspaceState.Type;
+
 export const initialWorkspace = (workspaceId: string): WorkspaceState => ({
   workspaceId,
   issueCount: 0,
@@ -40,6 +47,7 @@ export const initialWorkspace = (workspaceId: string): WorkspaceState => ({
   users: [],
   labels: [],
 });
+
 export const WorkspaceSummary = Schema.Struct({
   workspaceId: Identifier,
   issueCount: Sequence,
@@ -47,16 +55,20 @@ export const WorkspaceSummary = Schema.Struct({
   labelCount: Sequence,
   projectCount: Sequence,
 });
+
 export type WorkspaceSummary = typeof WorkspaceSummary.Type;
 
 const group = <A>(rows: ReadonlyArray<A>, key: (row: A) => string) => {
   const result = new Map<string, A[]>();
+
   for (const row of rows) {
     const id = key(row);
     const bucket = result.get(id);
+
     if (bucket) bucket.push(row);
     else result.set(id, [row]);
   }
+
   return result;
 };
 
@@ -80,7 +92,9 @@ export const indexWorkspace = (state: WorkspaceState) => ({
     (row) => row.assigneeId!,
   ),
 });
+
 export type WorkspaceIndex = ReturnType<typeof indexWorkspace>;
+
 export const boardCard = (index: WorkspaceIndex, issue: IssueRow): ProjectBoardCard => ({
   ...issue,
   labelIds: (index.membershipsByIssue.get(issue.issueId) ?? []).map((row) => row.labelId).sort(),
@@ -88,6 +102,7 @@ export const boardCard = (index: WorkspaceIndex, issue: IssueRow): ProjectBoardC
   assigneeName:
     issue.assigneeId === undefined ? null : (index.users.get(issue.assigneeId)?.name ?? null),
 });
+
 export const labelCount = (index: WorkspaceIndex, label: LabelRow): LabelCountRow => ({
   workspaceId: label.workspaceId,
   labelId: label.labelId,

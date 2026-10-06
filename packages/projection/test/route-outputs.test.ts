@@ -10,6 +10,7 @@ class Input extends Streamsy.json<Input>()("multi/Input", "multi/input/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class Board extends Streamsy.state<Board>()("multi/Board", "multi/board/:id", {
   params: { id: Schema.String },
   collections: {
@@ -20,6 +21,7 @@ class Board extends Streamsy.state<Board>()("multi/Board", "multi/board/:id", {
     },
   },
 }) {}
+
 for (const commit of [Commit.transaction, Commit.producer]) {
   test(`${commit.name}: one output routes ordered changes to two collections`, () =>
     Effect.runPromise(
@@ -30,6 +32,7 @@ for (const commit of [Commit.transaction, Commit.producer]) {
         yield* input.create(params);
         yield* board.create(params);
         yield* input.append(params, [2]);
+
         const declaration = Projection.emit({
           id: "multi",
           params: { id: Schema.String },
@@ -45,6 +48,7 @@ for (const commit of [Commit.transaction, Commit.producer]) {
             ],
           }),
         });
+
         expect("outputs" in declaration).toBe(false);
         expect("outputs" in declaration.at(params)).toBe(false);
         yield* Projection.run(declaration.at(params));
@@ -77,6 +81,7 @@ test("an invalid runtime collection fails without advancing the checkpoint", () 
       const input = yield* Input;
       yield* input.create(params);
       yield* input.append(params, [1]);
+
       const projection = Projection.emit({
         id: "invalid-collection",
         params: {},
@@ -86,6 +91,7 @@ test("an invalid runtime collection fails without advancing the checkpoint", () 
         // @ts-expect-error runtime callers can bypass the declared collection names
         emit: () => ({ board: [DurableState.remove("missing", "a")] }),
       }).at({});
+
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result).toMatchObject({
         _tag: "Failure",

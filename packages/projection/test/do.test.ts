@@ -10,6 +10,7 @@ const scratch = Effect.runSync(
 
 test("same-object Durable Object SQLite runs the transactional composition", async () => {
   const root = mkdtempSync(join(scratch, "projection-workerd-"));
+
   const built = await Bun.build({
     entrypoints: [join(import.meta.dir, "support/do-worker.ts")],
     outdir: join(root, "bundle"),
@@ -17,9 +18,12 @@ test("same-object Durable Object SQLite runs the transactional composition", asy
     format: "esm",
     external: ["cloudflare:workers"],
   });
+
   expect(built.success).toBe(true);
   const output = built.outputs[0];
+
   if (output === undefined) throw new Error("No workerd bundle");
+
   const miniflare = new Miniflare({
     rootPath: root,
     modulesRoot: join(root, "bundle"),
@@ -29,10 +33,12 @@ test("same-object Durable Object SQLite runs the transactional composition", asy
     durableObjects: { PROJECTION: { className: "ProjectionObject", useSQLite: true } },
     durableObjectsPersist: join(root, "state"),
   });
+
   try {
     const response = await miniflare.dispatchFetch("http://projection.test/proof");
     expect(response.status).toBe(200);
     const progress = Schema.Struct({ status: Schema.String, items: Schema.Finite });
+
     const result = Schema.decodeUnknownSync(
       Schema.Struct({
         first: progress,
@@ -47,6 +53,7 @@ test("same-object Durable Object SQLite runs the transactional composition", asy
         }),
       }),
     )(await response.json());
+
     expect(result.first.status).toBe("limit-reached");
     expect(result.first.items).toBe(1);
     expect(result.failed).toBe("Failure");

@@ -14,6 +14,7 @@ import { transact } from "./state.ts";
 
 export const workspaceSummary = Effect.gen(function* () {
   const params = yield* Serve.params(Board);
+
   return yield* Serve.value(
     WorkspaceSummary,
     Projection.read(tracker.at(params)).pipe(
@@ -38,17 +39,22 @@ export const outputRoutes = Layer.mergeAll(
 
 /** The route names a workspace that this server does not run. */
 class UnknownWorkspace extends Schema.TaggedError<UnknownWorkspace>()("UnknownWorkspace", {}) {}
+
 /** The command body does not decode. */
 class InvalidCommand extends Schema.TaggedError<InvalidCommand>()("InvalidCommand", {}) {}
 
 const json = HttpServerResponse.jsonUnsafe;
+
 const workspace = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const { workspaceId } = yield* HttpRouter.params;
+
     if (workspaceId === undefined || !workspaces.includes(workspaceId))
       return yield* new UnknownWorkspace();
+
     return workspaceId;
   });
+
 /** Answer 404 for an unknown workspace. Log any other failure and answer 500. */
 const api = <E, R>(
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E | UnknownWorkspace, R>,
@@ -69,10 +75,13 @@ const issueRow = (workspaceId: string, issueId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const issue = yield* storedIssue(sql, workspaceId, issueId);
+
     if (issue === undefined) return undefined;
+
     const labels = yield* sql<{
       readonly label_id: string;
     }>`SELECT label_id FROM issue_labels WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId} AND attached = 1`;
+
     return {
       issueId: issue.issueId,
       projectId: issue.projectId,
@@ -89,14 +98,17 @@ const commands = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const workspaceId = yield* workspace(workspaces);
     const request = yield* HttpServerRequest.HttpServerRequest;
+
     const command = yield* request.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(CommandRequest)),
       Effect.mapError(() => new InvalidCommand()),
     );
+
     const { event } = yield* transact(workspaceId, command);
     yield* Projection.run(issueRows.at({ workspaceId }));
     yield* Projection.run(tracker.at({ workspaceId }));
     const row = yield* issueRow(workspaceId, command.issueId);
+
     return json({ commandId: command.commandId, event, row });
   }).pipe(
     Effect.catchTags({
@@ -112,8 +124,10 @@ const drafts = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const workspaceId = yield* workspace(workspaces);
     const sql = yield* SqlClient.SqlClient;
+
     const rows =
       yield* sql`SELECT * FROM notification_drafts WHERE workspace_id = ${workspaceId} ORDER BY event_id`;
+
     return json({ workspaceId, rows });
   }).pipe(api);
 
@@ -121,6 +135,7 @@ const status = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const workspaceId = yield* workspace(workspaces);
     const { offsets } = yield* Projection.read(issueRows.at({ workspaceId }));
+
     return json({ workspaceId, offsets });
   }).pipe(api);
 

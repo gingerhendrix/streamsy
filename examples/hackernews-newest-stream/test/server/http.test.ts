@@ -11,10 +11,13 @@ import { ApiStatus } from "../../src/state-schema.ts";
 
 test("State is empty at boot and serves rows in the State wire shape", async () => {
   const h = await demoHarness();
+
   const web = HttpRouter.toWebHandler(stateRoute.pipe(HttpRouter.provideRequest(h.clientLayer)), {
     disableLogger: true,
   });
+
   const read = () => web.handler(new Request("http://host/state/newest?offset=-1"));
+
   try {
     const empty = await read();
     expect(empty.status).toBe(200);
@@ -36,6 +39,7 @@ test("State is empty at boot and serves rows in the State wire shape", async () 
 test("merged app serves status, poll, State and page routes", async () => {
   const h = await demoHarness();
   let polls = 0;
+
   const services = Layer.mergeAll(
     h.clientLayer,
     Layer.succeed(NewestStoriesPoller, {
@@ -50,10 +54,12 @@ test("merged app serves status, poll, State and page routes", async () => {
       }),
     }),
   );
+
   const web = HttpRouter.toWebHandler(
     app.pipe(HttpRouter.provideRequest(services), Layer.provide(BunHttpServer.layerHttpServices)),
     { disableLogger: true },
   );
+
   try {
     const status = await web.handler(new Request("http://host/api/status"));
     expect(Schema.decodeUnknownSync(ApiStatus)(await status.json())).toMatchObject({

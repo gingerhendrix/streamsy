@@ -55,24 +55,32 @@ export const decide = Effect.fn("Projection.decide")(function* <
     ItemOf<Inputs[K]>,
     Inputs[K]["stream"]["Identifier"]
   >;
+
   const attempt = Effect.gen(function* () {
     // Run with no limit, so the offsets are at the tail.
     yield* run(projection);
     const snapshot = yield* read(projection);
     const offset = snapshot.offsets[spec.input];
     const { value, items } = yield* spec.decide(snapshot);
+
     if (!isReadonlyArrayNonEmpty(items)) {
       const unchanged: Decided<B> = { value, offset, appended: false };
+
       return unchanged;
     }
+
     const { wire } = yield* address.stream;
+
     const appended = yield* Streams.append(address, items, { expectedOffset: offset }).pipe(
       Effect.provideService(StreamsWriter, wire),
       Effect.mapError((error) => (isOffsetMismatch(error) ? new LostRace(error) : error)),
     );
+
     const decided: Decided<B> = { value, offset: appended.offset, appended: true };
+
     return decided;
   });
+
   return yield* retryLostRace(attempt, spec.retry ?? defaultDecideRetry);
 });
 
@@ -105,6 +113,7 @@ const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
     }),
     Effect.retry(schedule),
   );
+
   return yield* Effect.fromResult(outcome);
 });
 

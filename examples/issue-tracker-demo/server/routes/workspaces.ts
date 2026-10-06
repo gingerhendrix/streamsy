@@ -7,6 +7,7 @@ import { apiErrors } from "./errors.ts";
 export const WorkspacesLive = HttpApiBuilder.group(IssueTrackerApi, "workspaces", (handlers) =>
   Effect.gen(function* () {
     const tracker = yield* IssueTracker;
+
     return handlers.handle("create", () =>
       Effect.map(tracker.create, (workspaceId) => ({ id: workspaceId })).pipe(apiErrors),
     );

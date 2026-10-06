@@ -17,10 +17,12 @@ export const CheckpointRecord = Schema.Struct({
     ),
   }),
 });
+
 export interface CheckpointRecord extends Schema.Schema.Type<typeof CheckpointRecord> {}
 
 /** Stored value. The version is the compare-and-set token exposed as a string. */
 const Envelope = Schema.Struct({ version: Counter, record: CheckpointRecord });
+
 const EnvelopeJson = Schema.fromJsonString(Envelope);
 
 export interface ProjectionKey {
@@ -29,6 +31,7 @@ export interface ProjectionKey {
   readonly generation: number;
   readonly params: Record<string, string>;
 }
+
 export const recordKey = (key: ProjectionKey): string =>
   encodeKey([
     "streamsy.projection.v1",
@@ -40,10 +43,12 @@ export const recordKey = (key: ProjectionKey): string =>
 
 /** Token "0" means no record is stored yet. */
 const ABSENT_TOKEN = "0";
+
 export interface Loaded {
   readonly record: Option.Option<CheckpointRecord>;
   readonly token: string;
 }
+
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /** Compare-and-set inside the owner transaction; returns the new token. */
@@ -55,6 +60,7 @@ export interface CheckpointStoreApi {
   /** Deletes the record. Absent keys are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
+
 const storageFailure =
   (phase: ProjectionFault["phase"], message: string) => (cause: StorageFault) =>
     new ProjectionFault({ phase, reason: "storage-failure", message, cause });
@@ -79,6 +85,7 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
       Effect.gen(function* () {
         const boundary = yield* CommitBoundary;
         const records = yield* OwnerRecords;
+
         const checkpoints = fromStore({
           read: (key) =>
             records
@@ -115,7 +122,9 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
               ),
             ),
         });
+
         attachOwner(checkpoints.load, ownerOf(boundary));
+
         return checkpoints;
       }),
     );
@@ -125,6 +134,7 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
     Effect.gen(function* () {
       const records = new Map<string, string>();
       const lock = yield* Semaphore.make(1);
+
       return fromStore({
         read: (key) => Effect.sync(() => Option.fromUndefinedOr(records.get(key))),
         write: (key, value) =>
@@ -152,13 +162,17 @@ export interface EncodedStore {
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
+
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   const load = Effect.fn("Projection.CheckpointStore.load")(function* (key: ProjectionKey) {
     const encoded = yield* store.read(recordKey(key));
+
     if (Option.isNone(encoded)) {
       const absent: Loaded = { record: Option.none(), token: ABSENT_TOKEN };
+
       return absent;
     }
+
     const envelope = yield* Schema.decodeEffect(EnvelopeJson)(encoded.value).pipe(
       Effect.mapError(
         () =>
@@ -169,12 +183,15 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
           }),
       ),
     );
+
     const loaded: Loaded = {
       record: Option.some(envelope.record),
       token: String(envelope.version),
     };
+
     return loaded;
   });
+
   const compareAndSet = Effect.fn("Projection.CheckpointStore.compareAndSet")(function* (
     key: ProjectionKey,
     ifToken: string,
@@ -183,6 +200,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
     return yield* store.withTransaction(
       Effect.gen(function* () {
         const current = yield* load(key);
+
         if (current.token !== ifToken)
           return yield* new ProjectionFault({
             phase: "checkpoint",
@@ -190,6 +208,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
             message: `Record for ${key.id} changed: expected token ${ifToken}, found ${current.token}`,
           });
         const version = Number(ifToken) + 1;
+
         const encoded = yield* Schema.encodeEffect(EnvelopeJson)({ version, record }).pipe(
           Effect.mapError(
             () =>
@@ -200,11 +219,14 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
               }),
           ),
         );
+
         yield* store.write(recordKey(key), encoded);
+
         return String(version);
       }),
     );
   });
+
   return {
     load,
     compareAndSet,
@@ -220,6 +242,7 @@ export interface Identity {
   readonly params: Record<string, string>;
   readonly inputs: InputMap;
 }
+
 const identityOf = (inputs: InputMap): Record<string, string> =>
   Object.fromEntries(
     Object.entries(inputs).map(([name, address]) => [
@@ -227,8 +250,10 @@ const identityOf = (inputs: InputMap): Record<string, string> =>
       encodeKey([address.id, address.contentType]),
     ]),
   );
+
 const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boolean => {
   const keys = Object.keys(a);
+
   return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]);
 };
 
@@ -239,20 +264,24 @@ export const restore = Effect.fn("Projection.restore")(function* <R>(
 ) {
   const loaded = yield* owner.load(projection);
   const identity = { inputs: identityOf(projection.inputs) };
+
   if (Option.isNone(loaded.record)) {
     const record: CheckpointRecord = {
       identity,
       inputs: Object.fromEntries(Object.keys(projection.inputs).map((name) => [name, ZERO_OFFSET])),
       adapters: {},
     };
+
     return { record, token: loaded.token, loaded };
   }
+
   if (!sameIdentity(loaded.record.value.identity.inputs, identity.inputs))
     return yield* new ProjectionFault({
       phase: "load",
       reason: "identity-mismatch",
       message: `Stored inputs differ from the declaration of ${projection.id}`,
     });
+
   for (const name of Object.keys(projection.inputs)) {
     if (loaded.record.value.inputs[name] === undefined)
       return yield* new ProjectionFault({
@@ -262,6 +291,7 @@ export const restore = Effect.fn("Projection.restore")(function* <R>(
         message: `Stored record of ${projection.id} has no offset for ${name}`,
       });
   }
+
   return { record: loaded.record.value, token: loaded.token, loaded };
 });
 
@@ -273,6 +303,7 @@ export const advance = (
   Object.fromEntries(
     Object.entries(inputs).map(([name, offset]) => [name, ranges[name]?.nextOffset ?? offset]),
   );
+
 /** Only the inputs that contributed items; the unit key and any pin come from these. */
 export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string, Range> =>
   Object.fromEntries(

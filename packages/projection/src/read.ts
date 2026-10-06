@@ -22,6 +22,7 @@ export interface RunOptions {
   /** Maximum checkpoint transactions per call; absent means run to completion. */
   readonly limit?: number;
 }
+
 export const validateOptions = (options: RunOptions) =>
   Effect.suspend(() =>
     options.limit === undefined || (Number.isSafeInteger(options.limit) && options.limit > 0)
@@ -46,6 +47,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
   from: string,
 ): Effect.fn.Return<Read<A>, ProjectionFault, R> {
   const { wire: reader } = yield* address.stream;
+
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
@@ -53,6 +55,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       input,
       message: `Required history of ${address.id} after ${from} is unavailable`,
     });
+
   const storageFailure = (cause: unknown) =>
     new ProjectionFault({
       phase: "read",
@@ -61,6 +64,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       message: `Cannot read ${address.id}`,
       cause,
     });
+
   if (Option.isNone(Schema.decodeOption(Offset)(from)))
     return yield* new ProjectionFault({
       phase: "load",
@@ -68,6 +72,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       input,
       message: `Stored offset for ${input} is not a valid offset`,
     });
+
   const result = yield* reader.read(address.id, { offset: from }).pipe(
     Effect.catchTags({
       InvalidReadRequest: (cause) =>
@@ -84,8 +89,10 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       TransportFault: storageFailure,
     }),
   );
+
   if (result.nextOffset < from || (result.messages.length === 0 && result.nextOffset !== from))
     return yield* historyUnavailable();
+
   if (result.nextOffset === from && (result.messages.length > 0 || !result.upToDate))
     return yield* new ProjectionFault({
       phase: "read",
@@ -94,6 +101,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       message: `Read of ${address.id} did not advance past ${from}`,
     });
   const items = yield* decodeMessages(input, address, result.messages);
+
   return {
     slice: {
       from,
@@ -134,6 +142,7 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
   range: PinnedRange,
 ): Effect.fn.Return<Read<A>, ProjectionFault, R> {
   const { wire: reader } = yield* address.stream;
+
   const unreproducible = (detail: string) =>
     new ProjectionFault({
       phase: "pin",
@@ -141,9 +150,11 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
       input,
       message: `Pinned range of ${address.id} after ${range.from} cannot be reproduced: ${detail}`,
     });
+
   let messages: Array<ReadMessage> = [];
   let cursor = range.from;
   let last: ReadResult | undefined;
+
   while (messages.length < range.count) {
     const page = yield* reader.read(address.id, { offset: cursor }).pipe(
       Effect.catchTags({
@@ -175,22 +186,28 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
           }),
       }),
     );
+
     if (page.messages.length === 0) return yield* unreproducible("the input ended early");
     messages.push(...page.messages);
     cursor = page.nextOffset;
     last = page;
+
     if (page.upToDate && messages.length < range.count)
       return yield* unreproducible("the input ended early");
   }
+
   if (last === undefined) return yield* unreproducible("the input ended early");
+
   if (messages.length === range.count) {
     if (cursor !== range.nextOffset)
       return yield* unreproducible(`the range ends at ${cursor}, not ${range.nextOffset}`);
   } else {
     messages = messages.slice(0, range.count);
+
     if (compare(cursor, range.nextOffset) < 0)
       return yield* unreproducible("the input is shorter than the pin");
   }
+
   return {
     slice: {
       from: range.from,
@@ -214,11 +231,13 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
 ): Effect.fn.Return<Pass<Inputs>, ProjectionFault, InputServices<Inputs>> {
   const slices: Record<string, Slice<unknown>> = {};
   let items = 0;
+
   for (const [name, address] of inputEntries(inputs)) {
     const read = yield* readSlice(name, address, offsets[name] ?? "");
     slices[name] = read.slice;
     items += read.slice.items.length;
   }
+
   // SAFETY: `slices` has exactly the keys of `inputs`, each read through that input's codec.
   return { slices: slices as Slices<Inputs>, items };
 });
@@ -228,9 +247,11 @@ export const items = <Inputs extends InputMap>(
   batch: Slices<Inputs>,
 ): ReadonlyArray<Entry<Inputs>> => {
   const out: Array<{ readonly input: string; readonly item: unknown; readonly index: number }> = [];
+
   for (const [input, slice] of Object.entries<Slice<unknown>>(batch)) {
     for (const item of slice.items) out.push({ input, item, index: out.length });
   }
+
   // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
   return out as ReadonlyArray<Entry<Inputs>>;
 };

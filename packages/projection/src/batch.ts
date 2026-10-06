@@ -2,6 +2,7 @@ import type { StreamAddress, Streamsy } from "@streamsy/core";
 
 /** Declaration order of the map is the read and item order of every pass. */
 export type InputMap = Record<string, Streamsy.Address<unknown, unknown>>;
+
 export type ItemOf<Address> = Address extends StreamAddress.StreamAddress<infer A> ? A : never;
 
 export interface Slice<A> {
@@ -12,6 +13,7 @@ export interface Slice<A> {
   readonly upToDate: boolean;
   readonly closed: boolean;
 }
+
 export type Slices<Inputs extends InputMap> = {
   readonly [K in keyof Inputs]: Slice<ItemOf<Inputs[K]>>;
 };

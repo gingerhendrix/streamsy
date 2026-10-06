@@ -30,17 +30,24 @@ const hosts: ReadonlyArray<
     ),
   ],
 ] as const;
+
 const input = FamilyFixture.json("named-input", { schema: Schema.Finite });
+
 const a = FamilyFixture.json("named-a", { schema: Schema.Finite });
+
 const b = FamilyFixture.json("named-b", { schema: Schema.Finite });
+
 const declarations = {
   a: a,
   b: b,
 };
+
 const seed = Streams.create(input).pipe(Effect.andThen(Streams.append(input, [1])));
 
 const numbers = FamilyFixture.json("numbers", { schema: Schema.Finite });
+
 const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
+
 const tracker = Projection.mapAccumBatch({
   commit: Commit.producer,
   id: "tracker",
@@ -56,6 +63,7 @@ const tracker = Projection.mapAccumBatch({
   mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
       const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+
       return [
         next,
         {
@@ -76,6 +84,7 @@ for (const [name, host] of hosts) {
         yield* seed;
         yield* Streams.create(b);
         let replay = false;
+
         const projection = Projection.emit({
           commit: Commit.producer,
           id: "changed-replay",
@@ -84,7 +93,9 @@ for (const [name, host] of hosts) {
           outputs: declarations,
           emit: () => Effect.succeed({ a: [1], b: replay ? [1] : [] }),
         }).at({});
+
         const writer = yield* StreamsWriter;
+
         const failed = yield* Projection.run(projection).pipe(
           FamilyFixture.provideWriter({
             ...writer,
@@ -103,6 +114,7 @@ for (const [name, host] of hosts) {
           }),
           Effect.result,
         );
+
         expect(failed._tag).toBe("Failure");
         const owner = yield* CheckpointStore;
         const before = yield* owner.load(projection);
@@ -110,6 +122,7 @@ for (const [name, host] of hosts) {
         replay = true;
         const result = yield* Projection.run(projection).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
+
         if (result._tag === "Failure")
           expect(result.failure).toMatchObject({
             phase: "process",
@@ -146,6 +159,7 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
+
         const projection = Projection.emit({
           commit: Commit.producer,
           id: "named",
@@ -154,6 +168,7 @@ for (const [name, host] of hosts) {
           outputs: declarations,
           emit: ({ item }) => Effect.succeed({ a: [item * 10], b: item % 2 === 0 ? [item] : [] }),
         }).at({});
+
         const saved: import("@streamsy/projection/checkpoint").CheckpointRecord[] = [];
         const owner = yield* CheckpointStore;
         yield* Projection.run(projection).pipe(
@@ -161,6 +176,7 @@ for (const [name, host] of hosts) {
             ...owner,
             compareAndSet: (key, token, record) => {
               saved.push(record);
+
               return owner.compareAndSet(key, token, record);
             },
           }),
@@ -181,6 +197,7 @@ for (const [name, host] of hosts) {
         expect(yield* readAll(b)).toEqual([2]);
         const ids: string[] = [];
         const writer = yield* StreamsWriter;
+
         const v2 = Projection.emit({
           commit: Commit.producer,
           id: "named",
@@ -190,11 +207,13 @@ for (const [name, host] of hosts) {
           outputs: declarations,
           emit: (entry) => Effect.succeed({ a: [entry.item * 100], b: [] }),
         }).at({});
+
         yield* Projection.run(v2).pipe(
           FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) => {
               ids.push(options.producer?.producerId ?? "");
+
               return writer.append(id, options);
             },
           }),
@@ -209,6 +228,7 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         yield* seed;
         const states: number[] = [];
+
         const projection = Projection.mapAccumBatch({
           commit: Commit.producer,
           id: "recover",
@@ -220,10 +240,13 @@ for (const [name, host] of hosts) {
             Effect.sync(() => {
               states.push(state);
               const next = state + batch.input.items.reduce((sum, n) => sum + n, 0);
+
               return [next, { a: [next], b: [next] }] as const;
             }),
         }).at({});
+
         const writer = yield* StreamsWriter;
+
         const failed = yield* Projection.run(projection).pipe(
           FamilyFixture.provideWriter({
             ...writer,
@@ -240,6 +263,7 @@ for (const [name, host] of hosts) {
           }),
           Effect.result,
         );
+
         expect(failed._tag).toBe("Failure");
         expect(yield* readAll(a)).toEqual([1]);
         expect(yield* readAll(b)).toEqual([]);
@@ -301,6 +325,7 @@ for (const [name, host] of hosts) {
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
+
         const projection = Projection.mapAccumBatch({
           commit: Commit.producer,
           id: "transactional-state",
@@ -311,7 +336,9 @@ for (const [name, host] of hosts) {
           mapAccumBatch: (state, batch) =>
             Effect.succeed([state + batch.input.items[0]!, {}] as const),
         }).at({});
+
         const store = yield* CheckpointStore;
+
         const failed = yield* Projection.run(projection).pipe(
           Effect.provideService(CheckpointStore, {
             ...store,
@@ -326,7 +353,9 @@ for (const [name, host] of hosts) {
           }),
           Effect.result,
         );
+
         expect(failed._tag).toBe("Failure");
+
         if (failed._tag === "Failure")
           expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
         expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
@@ -431,6 +460,7 @@ const checkTypes = () => {
     emit: () => Effect.succeed({ a: [], b: [], state: [] }),
   }).at({});
 };
+
 void checkTypes;
 
 test("named outputs reject an output that names one of their inputs", () => {

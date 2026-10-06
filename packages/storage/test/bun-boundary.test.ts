@@ -18,9 +18,11 @@ const scratch = Effect.runSync(
 
 const makeLayer = (filename: string, repairIntervalMs: number) => {
   const probe = makeBoundaryTestProbe();
+
   const client = Layer.effectContext(
     sharedSqlClientLayer(SqliteClient.make({ filename, create: true, busyTimeout: "50 millis" })),
   );
+
   return {
     layer: layerWithTestProbe({ repairIntervalMs }, probe).pipe(Layer.provideMerge(client)),
     probe,
@@ -104,6 +106,7 @@ test("full Bun Storage preserves boundary ownership and the bounded missed-wake 
 
 test("a second Bun process is observed only through bounded repair", async () => {
   const filename = `${scratch}/bun-storage-repair-${process.pid}-${crypto.randomUUID()}.sqlite`;
+
   const externalWrite = Effect.sync(() => {
     const child = Bun.spawnSync([
       process.execPath,
@@ -111,13 +114,17 @@ test("a second Bun process is observed only through bounded repair", async () =>
       "import { Database } from 'bun:sqlite'; const db=new Database(Bun.argv.at(-1),{readwrite:true}); db.run(\"INSERT INTO streamsy_streams VALUES ('external','text/plain',NULL,NULL,0,'0000000000000000_0000000000000000',NULL,0,NULL,NULL,NULL,NULL,0,NULL)\"); db.close(false);",
       filename,
     ]);
+
     if (!child.success) throw new Error(child.stderr.toString());
   });
+
   const { layer, probe } = makeLayer(filename, 100);
   const runtime = ManagedRuntime.make(layer);
+
   const result = await runtime.runPromise(
     runExternalRepair(externalWrite, probe).pipe(Effect.scoped),
   );
+
   await runtime.dispose();
   expect(result.parkedAfterCommit).toBe(true);
   expect(result.repaired).toBe(true);

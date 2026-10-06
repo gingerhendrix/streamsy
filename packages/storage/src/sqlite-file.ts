@@ -48,6 +48,7 @@ const openFault = (message: string) =>
 const decodeTableNames = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ name: Schema.String })),
 );
+
 const decodeVersions = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ version: Schema.NullOr(Schema.Finite) })),
 );
@@ -58,10 +59,12 @@ const readFormat = (reader: SqliteFileReader) => {
       ({ name }) => name,
     ),
   );
+
   const version = names.has(STORAGE_VERSION_TABLE)
     ? (decodeVersions(reader.all(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)).at(0)
         ?.version ?? 0)
     : 0;
+
   return { names, version };
 };
 
@@ -77,8 +80,11 @@ const preflight = (
       retry,
       (error) => error.retryable,
     );
+
     yield* inspectFormat(state.names);
+
     if (state.version > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(state.version);
+
     return undefined;
   });
 
@@ -94,15 +100,18 @@ export const prepare = (
 ): Effect.Effect<void, StorageFault, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const { filename } = options;
+
     if (filename === ":memory:") return;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const readonly = options.readonly === true;
+
     const mode: SqliteOpenMode = {
       readonly,
       readwrite: readonly ? false : (options.readwrite ?? true),
       create: readonly ? false : (options.create ?? true),
     };
+
     if (mode.readwrite && mode.create)
       yield* fs
         .makeDirectory(path.dirname(filename), { recursive: true })
@@ -111,6 +120,7 @@ export const prepare = (
             openFault(`Cannot create the folder for SQLite file ${filename}: ${error.message}`),
           ),
         );
+
     const exists = yield* fs
       .exists(filename)
       .pipe(
@@ -118,10 +128,14 @@ export const prepare = (
           openFault(`Cannot check SQLite file ${filename}: ${error.message}`),
         ),
       );
+
     if (exists) yield* preflight(filename, driver, retry);
+
     const retried = (step: Effect.Effect<void, StorageFault>) =>
       retryWithPolicy(step, retry, (error) => error.retryable);
+
     yield* retried(driver.run(filename, mode, []));
+
     if (!readonly && options.disableWAL !== true)
       yield* retried(
         driver.run(

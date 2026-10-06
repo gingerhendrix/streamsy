@@ -21,6 +21,7 @@ type OutboxUnavailableSchema = Schema.TaggedStruct<
   "OutboxUnavailable",
   { readonly operation: Schema.String; readonly detail: Schema.String }
 >;
+
 const OutboxUnavailableBase: Schema.Class<
   OutboxUnavailable,
   OutboxUnavailableSchema,
@@ -29,6 +30,7 @@ const OutboxUnavailableBase: Schema.Class<
   operation: Schema.String,
   detail: Schema.String,
 });
+
 export class OutboxUnavailable extends OutboxUnavailableBase {}
 
 /**
@@ -47,6 +49,7 @@ type ActionSinkDeliveryFailureSchema = Schema.TaggedStruct<
     readonly retryable: Schema.Boolean;
   }
 >;
+
 const ActionSinkDeliveryFailureBase: Schema.Class<
   ActionSinkDeliveryFailure,
   ActionSinkDeliveryFailureSchema,
@@ -57,6 +60,7 @@ const ActionSinkDeliveryFailureBase: Schema.Class<
   detail: Schema.String,
   retryable: Schema.Boolean,
 });
+
 export class ActionSinkDeliveryFailure extends ActionSinkDeliveryFailureBase {
   static retryable(
     handler: string,
@@ -76,4 +80,5 @@ export class ActionSinkDeliveryFailure extends ActionSinkDeliveryFailureBase {
 
 /** Why one outbox entry stopped being retried. */
 export const DEAD_LETTER_REASONS = ["attempts-exhausted", "permanent", "payload-poison"] as const;
+
 export type DeadLetterReason = (typeof DEAD_LETTER_REASONS)[number];

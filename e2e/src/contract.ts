@@ -2,9 +2,13 @@ import { Schema } from "effect";
 import type { LatencyMeasurement, ThroughputMeasurement } from "./measurement.ts";
 
 export const STACK_NAME = "streamsy-conf";
+
 export const COMPATIBILITY_DATE = "2026-07-30";
+
 export const COMPATIBILITY_FLAGS = ["nodejs_compat"] as const;
+
 export const CONFORMANCE_LONG_POLL_TIMEOUT_MS = 1_500;
+
 export const HOSTED_STATUS =
   "Deployed e2e run: the prebuilt conformance Worker on a throwaway workers.dev stage, the official suite, then destroy. Cloudflare metadata is not queried. The audit reads Alchemy local state for the stage.";
 
@@ -16,6 +20,7 @@ export const StackOutput = Schema.Struct({
   workerName: Schema.NonEmptyString,
   url: Schema.String,
 });
+
 export type StackOutput = typeof StackOutput.Type;
 
 export const isValidStage = (stage: string): boolean =>
@@ -25,12 +30,16 @@ export const stageName = (timestampSeconds: number, runId: string): string => {
   if (!Number.isSafeInteger(timestampSeconds) || timestampSeconds < 0) {
     throw new ContractError({ message: "Stage timestamp must be a nonnegative safe integer" });
   }
+
   if (!/^[0-9a-f]{6}$/.test(runId)) {
     throw new ContractError({ message: "Stage run id must be six lowercase hex characters" });
   }
+
   const stage = `c-${timestampSeconds.toString(36)}-${runId}`;
+
   if (!isValidStage(stage))
     throw new ContractError({ message: "Stage is longer than 16 characters" });
+
   return stage;
 };
 
@@ -45,9 +54,11 @@ export const decodeWorkerTarget = (value: unknown, expectedName: string): Target
   try {
     const decoded = Schema.decodeUnknownSync(StackOutput)(value);
     const url = new URL(decoded.url);
+
     if (decoded.workerName !== expectedName) {
       return { ok: false, reason: "Stack output worker name did not match the planned worker" };
     }
+
     if (
       url.protocol !== "https:" ||
       url.username !== "" ||
@@ -60,6 +71,7 @@ export const decodeWorkerTarget = (value: unknown, expectedName: string): Target
     ) {
       return { ok: false, reason: "Stack output URL was not a normalized workers.dev URL" };
     }
+
     return { ok: true, value: { workerName: decoded.workerName, url: `${url.origin}/` } };
   } catch {
     return { ok: false, reason: "Stack output was missing or malformed" };
@@ -67,6 +79,7 @@ export const decodeWorkerTarget = (value: unknown, expectedName: string): Target
 };
 
 export type StepStatus = "pending" | "success" | "failure" | "unavailable";
+
 export type StepResult<T> =
   | { readonly status: "pending" }
   | { readonly status: "success"; readonly value: T }
@@ -74,9 +87,12 @@ export type StepResult<T> =
   | { readonly status: "unavailable"; readonly reason: string };
 
 export const pending = <T>(): StepResult<T> => ({ status: "pending" });
+
 export const success = <T>(value: T): StepResult<T> => ({ status: "success", value });
+
 export const failure = <T>(reason: string, details?: T): StepResult<T> =>
   details === undefined ? { status: "failure", reason } : { status: "failure", reason, details };
+
 export const unavailable = <T>(reason: string): StepResult<T> => ({
   status: "unavailable",
   reason,

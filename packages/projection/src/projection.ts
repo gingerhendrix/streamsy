@@ -3,13 +3,21 @@ import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { Identity, ProjectionKey } from "./checkpoint-store.ts";
 import type { Unit } from "./unit.ts";
 import { items } from "./read.ts";
+
 export { fold } from "./fold.ts";
+
 export { process } from "./process.ts";
+
 export { emit } from "./emit.ts";
+
 export { mapAccum, mapAccumBatch } from "./map-accum.ts";
+
 export { pass, run } from "./run.ts";
+
 export { follow } from "./follow.ts";
+
 export { watch } from "./watch.ts";
+
 export { items };
 
 export const key = (projection: Identity): ProjectionKey => ({
@@ -28,5 +36,7 @@ export const each =
     Effect.forEach(items(batch), (entry) => handle(entry, unit), { discard: true });
 
 export { read } from "./snapshot.ts";
+
 export { decide } from "./decide.ts";
+
 export { forget } from "./forget.ts";

@@ -70,10 +70,12 @@ const define = <A>(definition: Definition<A>) =>
   Effect.gen(function* () {
     const value = yield* definition.config;
     const options = yield* StorageConfig;
+
     const storage = Option.match(options.longPollTimeoutMs, {
       onNone: () => ({}),
       onSome: (longPollTimeoutMs) => ({ longPollTimeoutMs }),
     });
+
     return Option.match(value, {
       onNone: (): Mounted | Unmounted => ({ name: definition.name, reason: definition.missing }),
       onSome: (present): Mounted | Unmounted => ({
@@ -120,6 +122,7 @@ const isMounted = (backend: Mounted | Unmounted): backend is Mounted => "layer" 
 export const select = (drivers: Drivers) =>
   Effect.gen(function* () {
     const backends = yield* Effect.all(definitions(drivers));
+
     return {
       mounted: backends.filter(isMounted),
       unmounted: backends.filter((backend): backend is Unmounted => !isMounted(backend)),

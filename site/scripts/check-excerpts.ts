@@ -22,7 +22,9 @@ export const pairs: ReadonlyArray<ExcerptPair> = [
 ];
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
 const DEFAULT_GRACE_MS = 500;
+
 const DEFAULT_REAP_TIMEOUT_MS = 2_000;
 
 export interface ProcessRunOptions {
@@ -43,6 +45,7 @@ const isNoSuchProcess = (error: Error): boolean => "code" in error && error.code
 
 const signalGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
   if (pid === undefined) return;
+
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -53,6 +56,7 @@ const signalGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
 const groupExists = (pid: number): boolean => {
   try {
     process.kill(-pid, 0);
+
     return true;
   } catch (error) {
     if (error instanceof Error && isNoSuchProcess(error)) return false;
@@ -62,15 +66,18 @@ const groupExists = (pid: number): boolean => {
 
 const waitForGroupGone = async (pid: number, timeoutMs: number): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
+
   while (groupExists(pid)) {
     if (Date.now() >= deadline) return false;
     await delay(10);
   }
+
   return true;
 };
 
 const combine = (primary: Error | undefined, cleanup: ReadonlyArray<Error>): never => {
   const errors = primary === undefined ? [...cleanup] : [primary, ...cleanup];
+
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, "Excerpt process failed and cleanup was incomplete", {
     cause: primary ?? errors[0],
@@ -112,6 +119,7 @@ const runOwnedProcess = async (
     hardKillTimer = setTimeout(
       () => {
         hardKillScheduled = true;
+
         try {
           signalGroup(child?.pid, "SIGKILL");
         } catch (error) {
@@ -120,24 +128,30 @@ const runOwnedProcess = async (
       },
       Math.max(0, deadlineAt - Date.now()),
     );
+
     const closed = new Promise<ChildExit>((resolve) => {
       let settled = false;
+
       const finish = (value: ChildExit): void => {
         if (settled) return;
         settled = true;
         resolve(value);
       };
+
       child?.once("error", (error) => finish({ code: null, signal: null, error }));
       child?.once("close", (code, signal) => finish({ code, signal }));
     });
+
     const beforeDeadline = await Promise.race([
       closed,
       delay(Math.max(0, timeoutMs - graceMs)).then(() => undefined),
     ]);
+
     if (beforeDeadline === undefined) {
       primaryError = new Error(`${label} exceeded ${timeoutMs} ms`);
       signalGroup(child.pid, "SIGTERM");
       exit = await Promise.race([closed, delay(graceMs).then(() => undefined)]);
+
       if (exit === undefined) {
         signalGroup(child.pid, "SIGKILL");
         exit = await Promise.race([closed, delay(reapTimeoutMs).then(() => undefined)]);
@@ -145,6 +159,7 @@ const runOwnedProcess = async (
     } else {
       exit = beforeDeadline;
     }
+
     if (exit === undefined) {
       cleanupErrors.push(new Error(`${label} child did not close after termination`));
     } else if (exit.error !== undefined) {
@@ -159,22 +174,26 @@ const runOwnedProcess = async (
   } finally {
     if (child?.pid !== undefined) {
       let gone = false;
+
       try {
         gone = await waitForGroupGone(child.pid, Math.max(0, deadlineAt - Date.now()));
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
       }
+
       if (!gone) {
         try {
           if (!hardKillScheduled) {
             hardKillScheduled = true;
             signalGroup(child.pid, "SIGKILL");
           }
+
           gone = await waitForGroupGone(child.pid, reapTimeoutMs);
         } catch (error) {
           cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
       }
+
       if (!gone) {
         try {
           signalGroup(child.pid, "SIGKILL");
@@ -183,14 +202,18 @@ const runOwnedProcess = async (
           cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
       }
+
       if (!gone) {
         cleanupErrors.push(
           new Error(`${label} process group remains; retained root: ${ownedRoot}`),
         );
       }
+
       if (hardKillError !== undefined) cleanupErrors.push(hardKillError);
+
       if (gone) {
         if (hardKillTimer !== undefined) clearTimeout(hardKillTimer);
+
         try {
           await rm(ownedRoot, { recursive: true, force: true });
         } catch (error) {
@@ -202,6 +225,7 @@ const runOwnedProcess = async (
       }
     } else {
       if (hardKillTimer !== undefined) clearTimeout(hardKillTimer);
+
       try {
         await rm(ownedRoot, { recursive: true, force: true });
       } catch (error) {
@@ -231,18 +255,25 @@ const isExactCitationParagraph = (node: Root["children"][number], source: string
   if (node.type !== "paragraph" || node.position?.start.column !== 1 || node.children.length !== 3)
     return false;
   const [prefix, link, suffix] = node.children;
+
   if (prefix?.type !== "text" || prefix.value !== "Compiled source: ") return false;
+
   if (suffix?.type !== "text" || suffix.value !== ".") return false;
+
   if (link?.type !== "link" || link.title !== null || link.children.length !== 1) return false;
   const visible = link.children[0];
+
   if (visible?.type !== "text" || visible.value !== source) return false;
   const destination = link.url;
+
   const repositorySourcePrefix = repositorySourcePrefixes.find((prefix) =>
     destination.startsWith(prefix),
   );
+
   if (repositorySourcePrefix === undefined) return false;
   const remainder = destination.slice(repositorySourcePrefix.length);
   const suffixPath = remainder.slice(source.length);
+
   return (
     remainder === source || (remainder.startsWith(source) && /^#L\d+(?:-L\d+)?$/.test(suffixPath))
   );
@@ -256,6 +287,7 @@ const hasRenderedCitation = (text: string, source: string, doc: string): boolean
           mdastExtensions: [mdxFromMarkdown()],
         })
       : fromMarkdown(text);
+
     return tree.children.some((node) => isExactCitationParagraph(node, source));
   } catch {
     return false;
@@ -265,6 +297,7 @@ const hasRenderedCitation = (text: string, source: string, doc: string): boolean
 export const assertExcerpt = (pair: ExcerptPair, text: string, code: string): void => {
   if (!hasRenderedCitation(text, pair.source, pair.doc))
     throw new Error(`Excerpt citation missing: ${pair.doc} must link ${pair.source}`);
+
   if (!text.includes(`\x60\x60\x60ts\n${code}\n\x60\x60\x60`)) {
     throw new Error(`Excerpt drift: ${pair.doc} must include ${pair.source} verbatim`);
   }
@@ -279,10 +312,12 @@ export const checkExcerpts = async (): Promise<void> => {
     const code = (await readFile(new URL(pair.source, root), "utf8")).trim();
     assertExcerpt(pair, text, code);
     console.log(`ok excerpt ${pair.doc} ← ${pair.source}`);
+
     if (!pair.execute) {
       console.log(`ok typechecked-only ${pair.source}`);
       continue;
     }
+
     await runExcerpt(pair.source, `Excerpt execution: ${pair.source}`);
     console.log(`ok executed ${pair.source} (15s bound)`);
   }

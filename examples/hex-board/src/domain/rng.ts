@@ -22,24 +22,29 @@ export function rollDice(rng: Rng, count: number): number[] {
 
 export function shuffle<T>(rng: Rng, items: readonly T[]): T[] {
   const out = items.slice();
+
   for (let i = out.length - 1; i > 0; i -= 1) {
     const j = rng.nextInt(i + 1);
     [out[i], out[j]] = [out[j]!, out[i]!];
   }
+
   return out;
 }
 
 export function createSeededRng(seed: number): Rng {
   let state = seed >>> 0;
+
   return {
     nextInt(bound: number): number {
       if (!Number.isInteger(bound) || bound <= 0) {
         throw new Error(`nextInt bound must be a positive integer, got ${bound}`);
       }
+
       state = (state + 0x6d2b79f5) >>> 0;
       let t = state;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+
       return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * bound);
     },
   };

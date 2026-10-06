@@ -5,12 +5,14 @@ import { Offset, StreamId, type StoredMessage, type StreamRecord } from "../../s
 import { ForkPlanBuilder } from "../../src/policy/fork-plan-builder.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import { computeExpiresAtMs } from "../../src/policy/expiry-policy.ts";
+
 const formatCounter = (n: number) =>
   Offset.make(`${String(n).padStart(16, "0")}_${"0".repeat(16)}`);
 
 const clock = { now: () => 1_000 };
 
 const enc = (value: string) => new TextEncoder().encode(value);
+
 const dec = (value: Uint8Array) => new TextDecoder().decode(value);
 
 function tailMessages(items: string[]): StoredMessage[] {
@@ -44,6 +46,7 @@ function newRecord(
     forkOffset: fork.forkOffset,
     expiresAtMs: computeExpiresAtMs(options, clock.now()),
   };
+
   if (fork.forkSubOffset !== undefined && fork.forkSubOffset > 0) {
     return {
       id: streamId,
@@ -52,6 +55,7 @@ function newRecord(
       currentOffset: fork.forkOffset,
     };
   }
+
   return {
     id: streamId,
     config: {
@@ -68,9 +72,11 @@ function newRecord(
 describe("ForkPlanBuilder", () => {
   it("builds a fork plan with inherited expiry, source liveness precondition, and initial messages", () => {
     const builder = new ForkPlanBuilder({ clock, newRecord });
+
     const decision = builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
       initialData: new TextEncoder().encode("child"),
     });
+
     if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
 
     expect(decision.plan.forkSource?.id).toBe(StreamId.make("source"));
@@ -97,6 +103,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 3 },
         tailMessages(["hello"]),
       );
+
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel"]);
       expect(decision.plan.record.lifecycle.forkSubOffset).toBe(3);
@@ -111,6 +118,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "application/json", forkOffset: ZERO_OFFSET, forkSubOffset: 2 },
         tailMessages(['{"a":1}', '{"b":2}', '{"c":3}']),
       );
+
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual([
         '{"a":1}',
@@ -131,6 +139,7 @@ describe("ForkPlanBuilder", () => {
         },
         tailMessages(["hello"]),
       );
+
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel", "XY"]);
     });
@@ -143,6 +152,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 0 },
         undefined,
       );
+
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages ?? []).toEqual([]);
       expect(decision.plan.record.lifecycle.forkSubOffset).toBeUndefined();
@@ -192,6 +202,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 5 },
         tailMessages(["hello"]),
       );
+
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hello"]);
     });

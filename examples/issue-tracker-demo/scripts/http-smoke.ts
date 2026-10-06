@@ -20,9 +20,11 @@ const apiErrors = { BadRequest, NotFound, Conflict, WipLimitReached };
 const expectApiError = <A, E, R>(effect: Effect.Effect<A, E, R>, tag: keyof typeof apiErrors) =>
   Effect.gen(function* () {
     const failure = yield* Effect.flip(effect);
+
     if (!Schema.is(apiErrors[tag])(failure)) {
       return yield* new SmokeFailure({ message: `expected ${tag}, got ${String(failure)}` });
     }
+
     return failure.error;
   });
 
@@ -46,17 +48,20 @@ const readStream = (streamUrl: string) =>
       "the stream route should serve the Durable State contract",
     );
     const head = response.headers["stream-next-offset"];
+
     if (head === undefined || head === "") {
       return yield* new SmokeFailure({
         message: "stream read should return a stream-next-offset header",
       });
     }
+
     const events = yield* decodeStateEvents(yield* response.json).pipe(
       Effect.fromResult,
       Effect.mapError(
         () => new SmokeFailure({ message: "stream read body should hold change events" }),
       ),
     );
+
     return { events: [...events], head };
   });
 
@@ -64,6 +69,7 @@ const findEvent = (events: StateEvent[], type: string, key: string, operation: s
   const match = events.find(
     (event) => event.type === type && event.key === key && event.headers.operation === operation,
   );
+
   return match === undefined
     ? Effect.fail(
         new SmokeFailure({
@@ -79,6 +85,7 @@ const smoke = Effect.gen(function* () {
   const cwd = path.resolve(import.meta.dir, "..");
   const tempDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "streamsy-issue-tracker-" });
   const databasePath = path.join(tempDirectory, "smoke.sqlite");
+
   const serverOptions = {
     cwd,
     entry: "server/index.ts",
@@ -97,10 +104,12 @@ const smoke = Effect.gen(function* () {
   // === 0. The seed: five issues, two of them in progress in one project ===
 
   const seed = yield* readStream(mainStreamUrl);
+
   const seededIssues = yield* Effect.forEach(
     seed.events.filter((event) => event.type === "issue"),
     (event) => Schema.decodeUnknownEffect(Issue)(event.value),
   );
+
   yield* check(seededIssues.length === 5, `main should seed 5 issues, got ${seededIssues.length}`);
   yield* check(
     seededIssues.filter(
@@ -116,6 +125,7 @@ const smoke = Effect.gen(function* () {
     params: main,
     payload: { name: "Smoke Project", description: "created by http-smoke" },
   });
+
   const projectId = projectResult.project.id;
   yield* check(projectResult.txid !== "", "create project should return a txid");
   yield* check(projectResult.awaitOffset !== "", "create project should return an awaitOffset");
@@ -128,6 +138,7 @@ const smoke = Effect.gen(function* () {
     }),
     "BadRequest",
   );
+
   yield* check(
     unknownProject === "Unknown projectId",
     `unknown projectId message: ${unknownProject}`,
@@ -138,6 +149,7 @@ const smoke = Effect.gen(function* () {
     params: main,
     payload: { projectId, title: "Smoke issue" },
   });
+
   const issueId = issueResult.issue.id;
   yield* check(issueResult.issue.status === "open", "new issue should default to open");
 
@@ -146,6 +158,7 @@ const smoke = Effect.gen(function* () {
     params: { ...main, id: issueId },
     payload: { status: "done" },
   });
+
   yield* check(updateResult.issue.status === "done", "issue update should set status to done");
 
   // 1e. Comment on the issue.
@@ -153,6 +166,7 @@ const smoke = Effect.gen(function* () {
     params: main,
     payload: { issueId, body: "looks good" },
   });
+
   const commentId = commentResult.comment.id;
 
   // 1f. Read the durable stream and verify every mutation produced a
@@ -169,6 +183,7 @@ const smoke = Effect.gen(function* () {
     (event) =>
       event.type === "issue" && event.key === issueId && event.headers.operation === "upsert",
   );
+
   yield* check(issueUpdate !== undefined, `expected the updated issue ${issueId} as an upsert`);
   const updatedIssue = yield* Schema.decodeUnknownEffect(Issue)(issueUpdate?.value);
   yield* check(updatedIssue.status === "done", "issue update event should carry status=done");
@@ -184,6 +199,7 @@ const smoke = Effect.gen(function* () {
   const createWorkspace = Effect.gen(function* () {
     const { id } = yield* api.workspaces.create();
     yield* check(/^[a-z0-9]{10}$/.test(id), `workspace id should be 10 base36 chars: ${id}`);
+
     return id;
   });
 
@@ -253,6 +269,7 @@ const smoke = Effect.gen(function* () {
   const badFieldResponse = yield* HttpClient.post(projectsUrl, {
     body: HttpBody.text(`{"name":42}`, "application/json"),
   });
+
   yield* check(
     badFieldResponse.status === 400,
     `a non-string name should 400, got ${badFieldResponse.status}`,
@@ -266,6 +283,7 @@ const smoke = Effect.gen(function* () {
   const badStatusResponse = yield* HttpClient.post(`${baseUrl}/api/w/main/issues`, {
     body: HttpBody.jsonUnsafe({ projectId, title: "bad status", status: "archived" }),
   });
+
   const badStatusStatus = badStatusResponse.status;
   yield* check(
     badStatusStatus === 400,
@@ -294,6 +312,7 @@ const smoke = Effect.gen(function* () {
 
   const before = yield* readStream(mainStreamUrl);
   const contentionCount = 10;
+
   const contentionResults = yield* Effect.all(
     Array.from({ length: contentionCount }, (_, index) =>
       api.issues.create({
@@ -303,6 +322,7 @@ const smoke = Effect.gen(function* () {
     ),
     { concurrency: "unbounded" },
   );
+
   const contentionIds = contentionResults.map((result) => result.issue.id);
   yield* check(
     new Set(contentionIds).size === contentionCount,
@@ -314,6 +334,7 @@ const smoke = Effect.gen(function* () {
     `stream should gain exactly ${contentionCount} events under contention ` +
       `(got ${after.events.length - before.events.length}) — no lost or duplicate appends`,
   );
+
   for (const contendedId of contentionIds) {
     yield* findEvent(after.events, "issue", contendedId, "upsert");
   }
@@ -322,20 +343,25 @@ const smoke = Effect.gen(function* () {
 
   const raceWorkspaceId = yield* createWorkspace;
   const race = { ws: raceWorkspaceId };
+
   const raceProject = yield* Schema.decodeUnknownEffect(Project)(
     (yield* readStream(`${baseUrl}/streams/workspace/${raceWorkspaceId}`)).events[0]?.value,
   );
+
   const raceIssue = (title: string, status: "open" | "in_progress") =>
     Effect.map(
       api.issues.create({ params: race, payload: { projectId: raceProject.id, title, status } }),
       (result) => result.issue.id,
     );
+
   yield* raceIssue("Busy 1", "in_progress");
   yield* raceIssue("Busy 2", "in_progress");
+
   const contenders = [
     yield* raceIssue("Contender A", "open"),
     yield* raceIssue("Contender B", "open"),
   ];
+
   const raced = yield* Effect.all(
     contenders.map((id) =>
       api.issues
@@ -344,6 +370,7 @@ const smoke = Effect.gen(function* () {
     ),
     { concurrency: "unbounded" },
   );
+
   const refused = raced.filter(Result.isFailure).map((result) => result.failure);
   yield* check(
     raced.filter(Result.isSuccess).length === 1 &&
@@ -355,10 +382,12 @@ const smoke = Effect.gen(function* () {
   // === 8. Raw stream writes cannot bypass domain validation ===
 
   const beforeDenied = yield* readStream(mainStreamUrl);
+
   for (const method of ["PUT", "POST", "DELETE"] as const) {
     const denied = yield* HttpClient.execute(HttpClientRequest.make(method)(mainStreamUrl));
     yield* check(denied.status === 405, `raw ${method} should 405, got ${denied.status}`);
   }
+
   const unknownStream = yield* HttpClient.get(`${baseUrl}/streams/private/unknown`);
   yield* check(unknownStream.status === 404, "undeclared stream should 404");
   yield* check(
@@ -371,13 +400,16 @@ const smoke = Effect.gen(function* () {
   const restartWorkspaceId = yield* createWorkspace;
   const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
   const beforeRestartIssue = yield* readStream(restartStreamUrl);
+
   const restartProject = yield* Schema.decodeUnknownEffect(Project)(
     beforeRestartIssue.events[0]?.value,
   );
+
   const restartIssue = yield* api.issues.create({
     params: { ws: restartWorkspaceId },
     payload: { projectId: restartProject.id, title: "Survives restart" },
   });
+
   const restartIssueId = restartIssue.issue.id;
 
   // A browser normally has a parked read when the server stops.
@@ -386,6 +418,7 @@ const smoke = Effect.gen(function* () {
   const parked = yield* Effect.forkScoped(
     HttpClient.get(`${restartStreamUrl}?offset=now&live=long-poll`),
   );
+
   yield* Effect.sleep("250 millis");
   yield* check(parked.pollUnsafe() === undefined, "shutdown probe should have a parked long poll");
   // The stop fails unless the server exits 0 with empty stderr.

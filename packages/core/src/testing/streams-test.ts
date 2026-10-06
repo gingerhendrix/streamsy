@@ -19,10 +19,12 @@ export const layerTest = (options: Memory.MemoryOptions & Protocol.ProtocolOptio
     Effect.gen(function* () {
       const storage = yield* Storage;
       const count = yield* Ref.make(0);
+
       const snapshots = yield* Effect.acquireRelease(
         Queue.unbounded<{ id: StreamId; value: ChangeSnapshot }>(),
         Queue.shutdown,
       );
+
       const observed = Storage.of({
         ...storage,
         changes: (id) =>
@@ -32,15 +34,18 @@ export const layerTest = (options: Memory.MemoryOptions & Protocol.ProtocolOptio
                 Ref.update(count, (n) => n + 1),
                 () => Ref.update(count, (n) => n - 1),
               );
+
               return storage
                 .changes(id)
                 .pipe(Stream.tap((value) => Queue.offer(snapshots, { id, value })));
             }),
           ),
       });
+
       const context = yield* Layer.build(
         Protocol.layer(options).pipe(Layer.provide(Layer.succeed(Storage, observed))),
       );
+
       return Context.add(
         context,
         StreamsTest,

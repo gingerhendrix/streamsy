@@ -25,6 +25,7 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
 ) {}
 
 export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>;
+
 /** One stamped event on a workspace stream. */
 export type WorkspaceEvent = StreamAddress.CollectionsChange<typeof Workspaces.collections>;
 

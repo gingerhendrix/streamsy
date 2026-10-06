@@ -61,6 +61,7 @@ describe("configMatches — forkedFrom / forkOffset", () => {
       forkedFrom: "parent",
       forkOffset: ZERO_OFFSET,
     });
+
     expect(
       configMatches(existing, {
         contentType: "application/json",
@@ -130,6 +131,7 @@ describe("configMatches — fork sub-offset", () => {
       forkOffset: ZERO_OFFSET,
       forkSubOffset: 2,
     });
+
     expect(
       configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET, forkSubOffset: 2 }),
     ).toBe(true);
@@ -141,6 +143,7 @@ describe("configMatches — fork sub-offset", () => {
       forkOffset: ZERO_OFFSET,
       forkSubOffset: 2,
     });
+
     expect(
       configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET, forkSubOffset: 3 }),
     ).toBe(false);
@@ -159,6 +162,7 @@ describe("configMatches — fork sub-offset", () => {
       forkOffset: ZERO_OFFSET,
       forkSubOffset: 2,
     });
+
     expect(configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET })).toBe(false);
   });
 });

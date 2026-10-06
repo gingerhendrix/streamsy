@@ -26,6 +26,7 @@ export interface Reader<E = StorageFault> {
     options: ReadNextOptions,
   ) => Effect.Effect<ReadNextResult, ReadNextError | E>;
 }
+
 export interface Writer<E = StorageFault> {
   readonly create: (
     id: StreamId,
@@ -42,9 +43,11 @@ export interface Writer<E = StorageFault> {
   ) => Effect.Effect<AppendResult, AppendError | E>;
   readonly remove: (id: StreamId) => Effect.Effect<void, RemoveError | E>;
 }
+
 export class StreamsReader extends Context.Service<StreamsReader, Reader<StreamsFault>>()(
   "@streamsy/core/StreamsReader",
 ) {}
+
 export class StreamsWriter extends Context.Service<StreamsWriter, Writer<StreamsFault>>()(
   "@streamsy/core/StreamsWriter",
 ) {}

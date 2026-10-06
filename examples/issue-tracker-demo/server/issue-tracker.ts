@@ -102,8 +102,10 @@ export class IssueTracker extends Context.Service<
 
 const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
   materialized.apply(event);
+
   return materialized;
 };
+
 const view = (state: MaterializedState): WorkspaceState => ({
   getProject: (projectId: string) => state.get<Project>("project", projectId),
   getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
@@ -123,6 +125,7 @@ export const IssueTrackerLive = Layer.effect(
     const stamp = Effect.fn("IssueTracker.stamp")(function* (prefix: string, txid?: string) {
       const now = DateTime.formatIso(yield* DateTime.now);
       const id = `${prefix}_${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+
       return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4) };
     }, Effect.orDie);
 
@@ -142,6 +145,7 @@ export const IssueTrackerLive = Layer.effect(
             () => new WorkspaceNotFound({ workspaceId }),
           ),
         );
+
       return { state: view(state), headOffset: offset };
     });
 
@@ -185,14 +189,17 @@ export const IssueTrackerLive = Layer.effect(
       yield* workspaces.create({ workspaceId });
       const starter = yield* stamp("proj");
       yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
+
       return workspaceId;
     }).pipe(Effect.withSpan("IssueTracker.create"));
 
     const seed = Effect.gen(function* () {
       yield* workspaces.create({ workspaceId: mainWorkspaceId });
       const { state, headOffset } = yield* materialize(mainWorkspaceId);
+
       if (state.hasProjects()) return;
       let head = headOffset;
+
       for (const change of mainWorkspaceSeed(yield* stamp("seed"))) {
         head = (yield* append(mainWorkspaceId, change, head)).offset;
       }

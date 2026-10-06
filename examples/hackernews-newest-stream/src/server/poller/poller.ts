@@ -29,6 +29,7 @@ export function makeNewestStoriesPoller(
 
     const patchCounters = (patch: Partial<PollCounters>) =>
       Ref.update(countersRef, (counters) => ({ ...counters, ...patch }));
+
     // Up to three retries after `OffsetMismatch`, so at most four appends per pass.
     const conflictRetries = Schedule.recurs(3).pipe(
       Schedule.tap(() =>
@@ -52,11 +53,13 @@ export function makeNewestStoriesPoller(
           0,
           config.limit,
         );
+
         // Fetch once; every retry reuses this result and reads the durable rows again.
         const fetched = {
           newestIds: new Set(newestIds),
           stories: yield* api.fetchStoriesById(newestIds),
         };
+
         // A retry runs, reads and decides again, so the diff uses the new rows.
         const { rows, changes, offset } = yield* reconcileNewest(fetched, conflictRetries);
         yield* patchCounters({
@@ -84,17 +87,22 @@ export function makeNewestStoriesPoller(
 
     const pollNow: Effect.Effect<void> = Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
+
       const claim = yield* Ref.modify(
         activeRef,
         (active): readonly [PollClaim, Option.Option<Deferred.Deferred<void>>] => {
           if (Option.isSome(active)) return [{ owner: false, gate: active.value }, active] as const;
+
           return [{ owner: true, gate }, Option.some(gate)] as const;
         },
       );
+
       if (!claim.owner) {
         yield* Deferred.await(claim.gate);
+
         return;
       }
+
       // Uninterruptible so stopping the loop waits for the in-flight pass,
       // matching the previous close() semantics.
       yield* runPoll().pipe(
@@ -109,12 +117,14 @@ export function makeNewestStoriesPoller(
 
     const stats = Effect.gen(function* () {
       const [counters, active] = yield* Effect.all([Ref.get(countersRef), Ref.get(activeRef)]);
+
       const result: PollStats = {
         polling: Option.isSome(active),
         newestLimit: config.limit,
         pollIntervalMs: config.intervalMs,
         ...counters,
       };
+
       return result;
     });
 
@@ -133,6 +143,7 @@ export const newestStoriesPollerLayer = (config: NewestStoriesPollerLayerConfig)
         Effect.repeat(Schedule.spaced(config.intervalMs)),
         Effect.forkScoped,
       );
+
       return poller;
     }),
   );

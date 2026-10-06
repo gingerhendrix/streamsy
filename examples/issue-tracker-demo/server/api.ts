@@ -15,6 +15,7 @@ const RequestErrorsLive = HttpApiMiddleware.layerSchemaErrorTransform(RequestErr
 
 function requestError({ kind, cause }: HttpApiError.HttpApiSchemaError): string {
   if (kind === "Params") return "Invalid workspace id";
+
   return `Invalid request ${kind.toLowerCase()}: ${cause.message}`;
 }
 

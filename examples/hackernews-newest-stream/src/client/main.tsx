@@ -10,9 +10,12 @@ import "./styles.css";
 function formatAge(unixSeconds: number): string {
   const diff = Date.now() - unixSeconds * 1000;
   const minutes = Math.max(0, Math.round(diff / 60000));
+
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
+
   if (hours < 24) return `${hours}h ago`;
+
   return `${Math.round(hours / 24)}d ago`;
 }
 
@@ -36,8 +39,10 @@ function App() {
       () => {
         if (cancelled) {
           created.close();
+
           return;
         }
+
         setDb(created);
       },
       (error) => {
@@ -73,23 +78,30 @@ function App() {
 
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
+
   const stories = useMemo(
     () =>
       (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || Number(b.id) - Number(a.id)),
     [storiesQuery.data],
   );
+
   const [status, setStatus] = useState<ApiStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+
     async function refresh() {
       const response = await fetch("/api/status");
+
       if (!response.ok) return;
       const next = Schema.decodeUnknownOption(ApiStatus)(await response.json());
+
       if (!cancelled && Option.isSome(next)) setStatus(next.value);
     }
+
     void refresh();
     const interval = setInterval(() => void refresh(), 5000);
+
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -174,5 +186,7 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
 }
 
 const root = document.getElementById("root");
+
 if (!root) throw new Error("Hacker News app root element is missing");
+
 createRoot(root).render(<App />);

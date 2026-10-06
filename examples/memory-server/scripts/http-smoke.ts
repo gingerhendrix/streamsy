@@ -59,12 +59,14 @@ const protocolChecks = Effect.fn("protocolChecks")(function* (streamUrl: string)
   const createResponse = yield* HttpClient.put(streamUrl, {
     headers: { "content-type": "application/json" },
   });
+
   yield* check(createResponse.status === 201, `create status ${createResponse.status}`);
   yield* requiredHeader(createResponse, "stream-next-offset");
 
   const appendResponse = yield* HttpClient.post(streamUrl, {
     body: HttpBody.jsonUnsafe({ type: "hello", n: 1 }),
   });
+
   yield* check(appendResponse.status === 204, `append status ${appendResponse.status}`);
   const firstOffset = yield* requiredHeader(appendResponse, "stream-next-offset");
 
@@ -80,6 +82,7 @@ const protocolChecks = Effect.fn("protocolChecks")(function* (streamUrl: string)
   const notModifiedResponse = yield* HttpClient.get(`${streamUrl}?offset=-1`, {
     headers: { "if-none-match": etag },
   });
+
   yield* check(
     notModifiedResponse.status === 304,
     `If-None-Match status ${notModifiedResponse.status}`,
@@ -88,10 +91,13 @@ const protocolChecks = Effect.fn("protocolChecks")(function* (streamUrl: string)
   const longPoll = yield* Effect.forkScoped(
     HttpClient.get(`${streamUrl}?offset=${firstOffset}&live=long-poll`),
   );
+
   yield* Effect.sleep("100 millis");
+
   const secondAppendResponse = yield* HttpClient.post(streamUrl, {
     body: HttpBody.jsonUnsafe({ type: "hello", n: 2 }),
   });
+
   yield* check(
     secondAppendResponse.status === 204,
     `second append status ${secondAppendResponse.status}`,
@@ -125,6 +131,7 @@ const protocolChecks = Effect.fn("protocolChecks")(function* (streamUrl: string)
     "SSE control should include the current next offset",
   );
   yield* check(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
+
   return secondOffset;
 });
 

@@ -11,27 +11,36 @@ class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
   params: {},
   schema: Schema.Finite,
 }) {}
+
 class Local extends Streamsy.json<Local>()("owner/Local", "owner/local/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class Foreign extends Streamsy.json<Foreign>()("owner/Foreign", "owner/foreign/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 const params = { id: "a" };
+
 const local = memoryHost();
+
 const sqlite = layerSqlite();
+
 const foreign = memoryHost();
+
 const host = Layer.merge(
   Protocol.bind(local, Streamsy.group(Input, Local)),
   Protocol.bind(foreign, Streamsy.group(Foreign)),
 ).pipe(Layer.provideMerge(local));
+
 const seed = Effect.gen(function* () {
   const input = yield* Input;
   yield* input.create({});
   yield* input.append({}, [1]);
 });
+
 // All tests exercise the public stream methods; no internal guard is supplied by the fixture.
 for (const sameOwner of [true, false]) {
   test(`declared outputs ${sameOwner ? "share their checkpoint owner" : "accept an existing foreign output"}`, async () => {
@@ -39,8 +48,10 @@ for (const sameOwner of [true, false]) {
       Effect.gen(function* () {
         yield* seed;
         const checkpoints = yield* CheckpointStore;
+
         if (!sameOwner) yield* (yield* Foreign).create(params);
         let processed = false;
+
         const projection = Projection.emit({
           commit: Commit.producer,
           id: `declared-${sameOwner}`,
@@ -53,9 +64,11 @@ for (const sameOwner of [true, false]) {
           emit: () =>
             Effect.sync(() => {
               processed = true;
+
               return { local: [2], foreign: [3] };
             }),
         }).at({});
+
         const result = yield* Projection.run(projection).pipe(Effect.result);
         expect(result._tag).toBe("Success");
         expect(processed).toBe(true);
@@ -94,6 +107,7 @@ for (const method of [
         yield* other.create(params);
         const ref = Foreign.at(params);
         const target = Foreign.at({ id: "b" });
+
         const writes = {
           append: other.append(params, [9]),
           create: other.create({ id: "b" }),
@@ -107,6 +121,7 @@ for (const method of [
           "wire.fork": other.wire.fork(target.id, ref.id),
           "wire.remove": other.wire.remove(ref.id),
         };
+
         const projection = Projection.process({
           commit: Commit.transaction,
           id: method,
@@ -118,8 +133,10 @@ for (const method of [
               yield* writes[method];
             }),
         }).at({});
+
         const result = yield* Projection.run(projection).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
+
         if (result._tag === "Failure")
           expect(result.failure).toMatchObject({
             _tag: "ProjectionFault",
@@ -144,6 +161,7 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
+
       const projection = Projection.emit({
         commit: Commit.producer,
         id: "foreign-pinned",
@@ -152,8 +170,10 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
         outputs: { output: Foreign.at(params) },
         emit: () => Effect.succeed({ output: [1] }),
       }).at({});
+
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+
       if (result._tag === "Failure") expect(result.failure.reason).toBe("invalid-output");
       expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
       expect((yield* (yield* Foreign).head(params).pipe(Effect.result))._tag).toBe("Failure");
@@ -167,6 +187,7 @@ test("producer settles a foreign append once after a failed checkpoint without T
       yield* seed;
       const foreignOutput = yield* Foreign;
       yield* foreignOutput.create(params);
+
       const projection = Projection.emit({
         commit: Commit.producer,
         id: "foreign-retry",
@@ -175,7 +196,9 @@ test("producer settles a foreign append once after a failed checkpoint without T
         outputs: { output: Foreign.at(params) },
         emit: () => Effect.succeed({ output: [9] }),
       }).at({});
+
       const store = yield* CheckpointStore;
+
       const failure = yield* Projection.run(projection).pipe(
         Effect.provideService(CheckpointStore, {
           ...store,
@@ -192,6 +215,7 @@ test("producer settles a foreign append once after a failed checkpoint without T
         }),
         Effect.result,
       );
+
       expect(failure._tag).toBe("Failure");
       yield* Projection.run(projection);
       expect(

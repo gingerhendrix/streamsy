@@ -14,6 +14,7 @@ export const clientRoute = Layer.unwrap(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.join(import.meta.dir, "../../dist");
+
     return (yield* fs.exists(path.join(root, "index.html")))
       ? HttpStaticServer.layer({ root, spa: true })
       : HttpRouter.add("GET", "/", HttpServerResponse.text(missingBuild));

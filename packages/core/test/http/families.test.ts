@@ -6,6 +6,7 @@ import { Http, Streamsy, MemoryStorage } from "../../src/index.ts";
 class Inputs extends Streamsy.bytes<Inputs>()("Inputs", "inputs/:id", {
   params: { id: Schema.String },
 }) {}
+
 class Outputs extends Streamsy.bytes<Outputs>()("Outputs", "outputs/:id", {
   params: { id: Schema.String },
 }) {}
@@ -18,6 +19,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
     }).pipe(HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Inputs, Outputs)))),
     { disableLogger: true },
   );
+
   const request = (path: string, method = "GET", body?: string) =>
     edge.handler(
       new Request(`http://host/streams/${path}`, {
@@ -28,8 +30,10 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
         headers: { "content-type": "application/octet-stream" },
       }),
     );
+
   try {
     expect((await request("private/secret")).status).toBe(404);
+
     for (const method of ["PUT", "POST", "DELETE"])
       expect((await request("outputs/a", method)).status).toBe(405);
     expect((await request("inputs/a", "PUT", "hello")).status).toBe(201);
@@ -37,6 +41,7 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
     expect(
       (await request("outputs/a", "OPTIONS")).headers.get("access-control-allow-methods"),
     ).toBe("GET, HEAD, OPTIONS");
+
     for (const source of ["/streams/private/secret", "/streams/outputs/a"]) {
       const fork = await edge.handler(
         new Request("http://host/streams/inputs/fork", {
@@ -44,9 +49,11 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
           headers: { "stream-forked-from": source },
         }),
       );
+
       expect(fork.status).toBe(404);
       expect(await fork.text()).toContain("Source stream not found");
     }
+
     const head = await request("inputs/a", "HEAD");
     expect(head.status).toBe(200);
     expect(head.headers.get("stream-next-offset")).not.toBeNull();
@@ -56,12 +63,14 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
   } finally {
     await edge.dispose();
   }
+
   const readOnly = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Outputs), { access: "read" }).pipe(
       HttpRouter.provideRequest(MemoryStorage.layer(Streamsy.group(Outputs))),
     ),
     { disableLogger: true },
   );
+
   try {
     expect(
       (await readOnly.handler(new Request("http://host/outputs/a", { method: "PUT" }))).status,
@@ -78,15 +87,18 @@ it("HTTP chooses stream ownership and access before entering the complete protoc
 
 it("append access allows POST but refuses creation and deletion", async () => {
   const streams = MemoryStorage.layer(Streamsy.group(Inputs));
+
   const seeded = Layer.effectDiscard(
     Effect.flatMap(Inputs, (inputs) => inputs.create({ id: "a" })),
   ).pipe(Layer.provideMerge(streams));
+
   const edge = HttpRouter.toWebHandler(
     Http.routes(Streamsy.group(Inputs), { access: "append" }).pipe(
       HttpRouter.provideRequest(seeded),
     ),
     { disableLogger: true },
   );
+
   try {
     for (const method of ["PUT", "DELETE"])
       expect((await edge.handler(new Request("http://host/inputs/a", { method }))).status).toBe(
@@ -120,6 +132,7 @@ it("a final catch-all cannot widen a declared read-only stream's HTTP access", a
     ),
     { disableLogger: true },
   );
+
   try {
     expect(
       (await edge.handler(new Request("http://host/outputs/private", { method: "PUT" }))).status,

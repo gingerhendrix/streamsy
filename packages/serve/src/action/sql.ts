@@ -15,8 +15,11 @@ const TABLE = "streamsy_effect_outbox";
 
 /** MySQL key columns. Their sum fits the 3072-byte InnoDB index limit at 4 bytes a character. */
 const MYSQL_SINK_LENGTH = 255;
+
 const MYSQL_PARTITION_LENGTH = 255;
+
 const MYSQL_KEY_LENGTH = 512;
+
 // NO PAD, so keys that differ only by trailing spaces stay distinct, as on SQLite and Postgres.
 const MYSQL_KEY_TYPE = "CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL";
 
@@ -93,6 +96,7 @@ interface OutboxRow {
 }
 
 const isOutboxUnavailable = Schema.is(OutboxUnavailable);
+
 const attempt = <A>(
   operation: string,
   effect: Effect.Effect<A, OutboxUnavailable | SqlError>,
@@ -135,6 +139,7 @@ const migrateMysql = (sql: SqlClient): Effect.Effect<void, OutboxUnavailable | S
         detail: "On MySQL, run migrateOutbox outside a transaction, at placement start",
       });
     yield* sql.unsafe<Record<string, never>>(CREATE_TABLE.mysql);
+
     for (const index of INDEXES) {
       if ((yield* mysqlIndexes(sql)).has(index.name)) continue;
       yield* sql
@@ -147,6 +152,7 @@ const migrateMysql = (sql: SqlClient): Effect.Effect<void, OutboxUnavailable | S
           ),
         );
     }
+
     return undefined;
   });
 
@@ -157,6 +163,7 @@ export function migrateOutbox(sql: SqlClient): Effect.Effect<void, OutboxUnavail
       (statement) => sql.unsafe<Record<string, never>>(statement),
       { discard: true },
     );
+
   return attempt(
     "migrateOutbox",
     sql.onDialectOrElse({
@@ -191,16 +198,19 @@ const mysqlKeyFault = (draft: OutboxDraft): OutboxUnavailable | undefined => {
     ["partition id", draft.partitionId, MYSQL_PARTITION_LENGTH],
     ["idempotency key", draft.idempotencyKey, MYSQL_KEY_LENGTH],
   ] as const;
+
   for (const [label, value, limit] of limits) {
     // MySQL VARCHAR counts code points, which is what the spread yields.
     // oxlint-disable-next-line typescript/no-misused-spread -- code points are the intended unit
     const length = [...value].length;
+
     if (length > limit)
       return new OutboxUnavailable({
         operation: "enqueue",
         detail: `The ${label} has ${length} characters; the MySQL outbox limit is ${limit}`,
       });
   }
+
   return undefined;
 };
 
@@ -216,10 +226,13 @@ export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
       orElse: () => migrateOutbox(sql),
     }),
   );
+
   const run = <A>(operation: string, statement: Effect.Effect<A, SqlError | OutboxUnavailable>) =>
     attempt(operation, Effect.andThen(ready, statement));
+
   const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>) =>
     run(operation, statement).pipe(Effect.asVoid);
+
   const rows = (operation: string, statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError>) =>
     run(operation, statement).pipe(Effect.map((found) => found.map(decodeRow)));
 
@@ -235,11 +248,14 @@ export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
       next_attempt_at_ms: draft.enqueuedAtMs,
       enqueued_at_ms: draft.enqueuedAtMs,
     });
+
     return sql.onDialectOrElse({
       // MySQL has no RETURNING. An ignored duplicate affects no rows.
       mysql: () => {
         const fault = mysqlKeyFault(draft);
+
         if (fault !== undefined) return Effect.fail(fault);
+
         return sql`INSERT IGNORE INTO streamsy_effect_outbox ${row}`.raw.pipe(
           Effect.map(
             (result) =>
@@ -263,7 +279,9 @@ export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
         "enqueue",
         Effect.gen(function* () {
           let enqueued = 0;
+
           for (const draft of drafts) if (yield* insert(draft)) enqueued += 1;
+
           return { enqueued, absorbed: drafts.length - enqueued };
         }),
       ),
@@ -334,8 +352,10 @@ function decodeState(value: string): OutboxEntryState {
 
 function decodeReason(value: string | null): DeadLetterReason | undefined {
   if (value === null) return undefined;
+
   if (value === "attempts-exhausted" || value === "permanent" || value === "payload-poison") {
     return value;
   }
+
   throw new TypeError(`unknown outbox dead-letter reason ${value}`);
 }

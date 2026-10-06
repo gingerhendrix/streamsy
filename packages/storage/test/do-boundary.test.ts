@@ -8,6 +8,7 @@ import { Miniflare } from "miniflare";
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
 const open: Array<{ readonly miniflare: Miniflare; readonly root: string }> = [];
 
 afterEach(async () => {
@@ -21,6 +22,7 @@ afterEach(async () => {
 test("full Storage boundary schedules pass on the official DO driver in real local workerd", async () => {
   const root = mkdtempSync(".streamsy-storage-workerd-");
   const bundle = join(root, "bundle");
+
   const built = await Bun.build({
     entrypoints: [join(import.meta.dir, "support/do-worker.ts")],
     outdir: bundle,
@@ -28,9 +30,12 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
     format: "esm",
     external: ["cloudflare:workers"],
   });
+
   expect(built.success).toBe(true);
   const output = built.outputs[0];
+
   if (output === undefined) throw new Error("DO Storage proof produced no bundle");
+
   const miniflare = new Miniflare({
     scriptPath: output.path,
     modules: true,
@@ -38,6 +43,7 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
     durableObjects: { STORAGE: { className: "StorageObject", useSQLite: true } },
     durableObjectsPersist: join(root, "state"),
   });
+
   open.push({ miniflare, root });
   await miniflare.ready;
   const response = await miniflare.dispatchFetch("http://storage.test/proof");

@@ -18,6 +18,7 @@ const cards = (state: WorkspaceState) =>
     projectName: state.projects.find((row) => row.projectId === issue.projectId)?.name ?? null,
     assigneeName: state.users.find((row) => row.userId === issue.assigneeId)?.name ?? null,
   }));
+
 const counts = (state: WorkspaceState) =>
   state.labels.map((label) => ({
     workspaceId: state.workspaceId,
@@ -30,18 +31,25 @@ const counts = (state: WorkspaceState) =>
         state.issues.some((issue) => issue.issueId === row.issueId),
     ).length,
   }));
+
 const at = "2026-09-23T10:00:00Z";
+
 const common = { workspaceId: "live", occurredAt: at };
+
 const user = { workspaceId: "live", userId: "ada", name: "Ada", updatedAt: at };
+
 const project = { workspaceId: "live", projectId: "p1", key: "p1", name: "Project", updatedAt: at };
+
 const label = { workspaceId: "live", labelId: "bug", name: "Bug", color: "#123456", updatedAt: at };
 
 test("indexed touched-key output matches full scans byte for byte across catalog and membership changes", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs("live");
+
         const phases = [
           Effect.gen(function* () {
             yield* (yield* Labels).append({ workspaceId: "live" }, [
@@ -159,19 +167,24 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             ]);
           }),
         ];
+
         const boardRef = Board.address({ workspaceId: "live" });
         const countsRef = LabelCounts.address({ workspaceId: "live" });
         const expectedBoard: Array<string | Uint8Array> = [];
         const expectedCounts: Array<string | Uint8Array> = [];
         let previous = initialWorkspace("live");
+
         for (const phase of phases) {
           yield* phase;
           yield* Projection.run(tracker.at({ workspaceId: "live" }));
+
           const next = yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
             Effect.map(({ state }) => state),
           );
+
           const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
           const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));
+
           for (const row of cards(next)) {
             if (JSON.stringify(row) !== JSON.stringify(oldCards.get(row.issueId)))
               expectedBoard.push(
@@ -183,6 +196,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 }),
               );
           }
+
           for (const row of counts(next)) {
             if (JSON.stringify(row) !== JSON.stringify(oldCounts.get(row.labelId)))
               expectedCounts.push(
@@ -194,6 +208,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 }),
               );
           }
+
           for (const row of previous.labels) {
             if (!next.labels.some((candidate) => candidate.labelId === row.labelId))
               expectedCounts.push(
@@ -204,6 +219,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 }),
               );
           }
+
           // Before the first issue, board is correctly absent; label counts already exist.
           if (expectedBoard.length > 0) {
             const actual = yield* Addresses.readOutput(Board, "live");
@@ -211,6 +227,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               expectedBoard,
             );
           }
+
           const actual = yield* Addresses.readOutput(LabelCounts, "live");
           expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
             expectedCounts,

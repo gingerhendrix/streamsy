@@ -24,16 +24,19 @@ const run = (
   current: Option.Option<number>,
 ) => {
   const actions: Array<string | number> = [];
+
   const alarm = Alarm.of({
     current: Effect.succeed(current),
     arm: (at) => Effect.sync(() => actions.push(at)),
     clear: Effect.sync(() => actions.push("clear")),
   });
+
   const layer = Layer.mergeAll(
     Layer.succeed(Storage, fakeStorage(next)),
     Layer.succeed(Alarm, alarm),
     TestClock.layer(),
   );
+
   return Effect.runPromise(reconcileAlarm().pipe(Effect.provide(layer))).then(() => actions);
 };
 

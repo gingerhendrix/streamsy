@@ -28,22 +28,27 @@ const makeServices = (
   let destroyed = false;
   let report: EvidenceReport | undefined;
   const calls: Array<string> = [];
+
   const operations: EvidenceOperationsService = {
     deploy: () => {
       calls.push("deploy");
+
       return Effect.succeed(target);
     },
     destroy: () => {
       calls.push("destroy");
       destroyed = true;
+
       return Effect.succeed({ code: 0 });
     },
     runOfficialSuite: () => {
       calls.push("conformance");
+
       return Effect.succeed({ passed: 332, skipped: 6, status: "local-only" });
     },
     captureMetadata: () => {
       calls.push("metadata");
+
       return Effect.succeed({
         reportedScriptSize: { status: "unavailable", provenance: "fake", reason: "not captured" },
         downloadedModuleBytes: {
@@ -61,10 +66,12 @@ const makeServices = (
     },
     auditExactWorker: () => {
       calls.push("audit");
+
       return Effect.succeed({ complete: true, workers: [] });
     },
     ...overrides,
   };
+
   const http = {
     request: (request: { readonly method: string }) => {
       if (request.method === "GET")
@@ -73,24 +80,32 @@ const makeServices = (
             ? { status: 404, body: "" }
             : { status: 400, body: "Stream path required: /{path}" },
         );
+
       if (request.method === "PUT") return Effect.succeed({ status: 201, body: "" });
+
       if (request.method === "HEAD") return Effect.succeed({ status: 200, body: "" });
+
       return Effect.succeed({ status: 204, body: "" });
     },
   };
+
   const persistence = {
     write: (value: EvidenceReport) => {
       report = value;
+
       if (reportFailure === "sync") throw new Error("sync write failed");
+
       return reportFailure
         ? Effect.fail(new ContractError({ message: "write failed" }))
         : Effect.succeed(undefined);
     },
   };
+
   const operationsLayer = Layer.succeed(EvidenceOperations, operations);
   const httpLayer = Layer.succeed(HttpOperation, http);
   const persistenceLayer = Layer.succeed(ReportPersistence, persistence);
   const layer = Layer.mergeAll(operationsLayer, httpLayer, persistenceLayer);
+
   return {
     layer,
     operationsLayer,
@@ -119,6 +134,7 @@ const runWithClock = (
     Effect.gen(function* () {
       const fiber = yield* program.pipe(Effect.forkChild);
       yield* TestClock.adjust(duration);
+
       return yield* Fiber.join(fiber);
     }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))),
   );
@@ -127,12 +143,15 @@ test("cleanup is pre-registered for partial deploy and reports the primary failu
   const services = makeServices({
     deploy: () => {
       services.calls.push("deploy");
+
       return Effect.fail(new ContractError({ message: "deploy failed" }));
     },
   });
+
   const exit = await Effect.runPromiseExit(
     runEvidence(identity).pipe(Effect.provide(services.layer)),
   );
+
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
   expect(services.report?.primaryFailure).toContain("deploy failed");
@@ -141,15 +160,18 @@ test("cleanup is pre-registered for partial deploy and reports the primary failu
 
 test("first destroy failure does not short-circuit destroy two or exact audit", async () => {
   let destroyCalls = 0;
+
   const services = makeServices({
     destroy: () => {
       destroyCalls += 1;
       services.calls.push("destroy");
+
       return destroyCalls === 1
         ? Effect.fail(new ContractError({ message: "first destroy" }))
         : Effect.succeed({ code: 0 });
     },
   });
+
   const exit = await runWithClock(runEvidence(identity), services.layer);
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual([
@@ -172,6 +194,7 @@ test("non-zero destroys and a surviving exact worker fail the owned workflow", a
   const nonzero = makeServices({
     destroy: () => Effect.succeed({ code: 1 }),
   });
+
   const nonzeroExit = await runWithClock(runEvidence(identity), nonzero.layer);
   expect(Exit.isFailure(nonzeroExit)).toBe(true);
   expect(nonzero.report?.destroyFirst).toEqual({
@@ -179,9 +202,11 @@ test("non-zero destroys and a surviving exact worker fail the owned workflow", a
     reason: "destroy #1 returned non-zero code 1",
     details: { code: 1 },
   });
+
   const surviving = makeServices({
     auditExactWorker: () => Effect.succeed({ complete: true, workers: [identity.workerName] }),
   });
+
   const survivingExit = await runWithClock(runEvidence(identity), surviving.layer);
   expect(Exit.isFailure(survivingExit)).toBe(true);
   expect(surviving.report?.audit.status).toBe("failure");
@@ -192,14 +217,17 @@ test("only the fixed affirmative conformance profile is successful", async () =>
     const services = makeServices({
       runOfficialSuite: () => Effect.succeed({ passed: 332, skipped: 6, status }),
     });
+
     const exit = await runWithClock(runEvidence(identity), services.layer);
     expect(Exit.isFailure(exit)).toBe(status !== "success");
     expect(services.report?.conformance.status).toBe(status === "success" ? "success" : "failure");
     expect(services.calls.slice(-3)).toEqual(["destroy", "destroy", "audit"]);
   }
+
   const zero = makeServices({
     runOfficialSuite: () => Effect.succeed({ passed: 0, skipped: 6, status: "success" }),
   });
+
   const zeroExit = await runWithClock(runEvidence(identity), zero.layer);
   expect(Exit.isFailure(zeroExit)).toBe(true);
   expect(zero.report?.conformance.status).toBe("failure");
@@ -209,9 +237,11 @@ test("conformance failure still runs both destroys and exact audit", async () =>
   const services = makeServices({
     runOfficialSuite: () => {
       services.calls.push("conformance");
+
       return Effect.fail(new ContractError({ message: "conformance failed" }));
     },
   });
+
   const exit = await runWithClock(runEvidence(identity), services.layer);
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual(["deploy", "conformance", "destroy", "destroy", "audit"]);
@@ -222,12 +252,15 @@ test("malformed output never creates an untrusted gone target", async () => {
   const services = makeServices({
     deploy: () => {
       services.calls.push("deploy");
+
       return Effect.succeed({ workerName: "other", url: "https://evil.test/" });
     },
   });
+
   const exit = await Effect.runPromiseExit(
     runEvidence(identity).pipe(Effect.provide(services.layer)),
   );
+
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
   expect(services.report?.gone.status).toBe("unavailable");
@@ -241,11 +274,14 @@ test("report persistence failure is surfaced after cleanup, beside any primary f
         : {},
       true,
     );
+
     const exit = await runWithClock(runEvidence(identity), services.layer);
     expect(Exit.isFailure(exit)).toBe(true);
     expect(services.report).toBeDefined();
     expect(services.calls.slice(-1)).toEqual(["audit"]);
+
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("report: ContractError");
+
     if (primary) expect(services.report?.primaryFailure).toContain("original deploy failure");
   }
 });
@@ -258,16 +294,19 @@ const interruptAt = async (
   Effect.runPromiseExit(
     Effect.gen(function* () {
       const fiber = yield* program.pipe(Effect.forkChild);
+
       const ticker = yield* Effect.forever(
         Effect.gen(function* () {
           yield* TestClock.adjust("2 seconds");
           yield* Effect.yieldNow;
         }),
       ).pipe(Effect.forkChild);
+
       yield* Deferred.await(started);
       const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
       yield* Fiber.join(interruption);
       yield* Fiber.interrupt(ticker);
+
       return yield* Fiber.join(fiber);
     }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))),
   );
@@ -278,21 +317,26 @@ const superviseInterruptedWorkflow = async (
 ) => {
   const started = Deferred.makeUnsafe<void>();
   let services: ReturnType<typeof makeServices>;
+
   const operationOverrides: MutableOperationOverrides = {
     deploy: () =>
       Effect.gen(function* () {
         services.calls.push("deploy");
         yield* Deferred.succeed(started, undefined);
+
         return yield* Effect.never;
       }),
   };
+
   if (secondary) {
     operationOverrides.destroy = () =>
       Effect.fail(new ContractError({ message: "destroy secondary" }));
     operationOverrides.auditExactWorker = () =>
       Effect.fail(new ContractError({ message: "audit secondary" }));
   }
+
   services = makeServices(operationOverrides, reportFailure);
+
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const child = yield* runEvidence(identity).pipe(Effect.forkChild);
@@ -301,18 +345,22 @@ const superviseInterruptedWorkflow = async (
       const childExit = yield* Fiber.await(child);
       let observed = false;
       let typedRecovered = false;
+
       const joinExit = yield* Effect.exit(
         Fiber.join(child).pipe(
           Effect.onInterrupt(() => Effect.sync(() => void (observed = true))),
           Effect.catch(() => {
             typedRecovered = true;
+
             return Effect.succeed(undefined);
           }),
         ),
       );
+
       return { childExit, joinExit, observed, typedRecovered };
     }).pipe(Effect.provide(services.layer)),
   );
+
   return { ...result, services };
 };
 
@@ -322,6 +370,7 @@ test("the actual workflow supervisor preserves interruption under clean cleanup"
   expect(Exit.isFailure(result.joinExit)).toBe(true);
   expect(result.observed).toBe(true);
   expect(result.typedRecovered).toBe(false);
+
   if (Exit.isFailure(result.childExit))
     expect(Cause.hasInterrupts(result.childExit.cause)).toBe(true);
   expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
@@ -334,11 +383,13 @@ test("the actual workflow supervisor preserves typed and synchronous report fail
     expect(Exit.isFailure(result.joinExit)).toBe(true);
     expect(result.observed).toBe(true);
     expect(result.typedRecovered).toBe(false);
+
     if (Exit.isFailure(result.joinExit)) {
       const message = Cause.pretty(result.joinExit.cause);
       expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
       expect(message).toContain("write");
     }
+
     expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
   }
 });
@@ -348,6 +399,7 @@ test("the actual workflow supervisor preserves all secondary failures under inte
   expect(Exit.isFailure(result.joinExit)).toBe(true);
   expect(result.observed).toBe(true);
   expect(result.typedRecovered).toBe(false);
+
   if (Exit.isFailure(result.joinExit)) {
     const message = Cause.pretty(result.joinExit.cause);
     expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
@@ -364,9 +416,11 @@ test("interrupted configured conformance and metadata steps report configured me
       throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
     },
   } as const;
+
   for (const step of ["conformance", "metadata"] as const) {
     const started = Deferred.makeUnsafe<void>();
     let services: ReturnType<typeof makeServices>;
+
     const overrides =
       step === "conformance"
         ? {
@@ -374,6 +428,7 @@ test("interrupted configured conformance and metadata steps report configured me
               Effect.gen(function* () {
                 services.calls.push("conformance");
                 yield* Deferred.succeed(started, undefined);
+
                 return yield* Effect.never;
               }),
           }
@@ -382,14 +437,17 @@ test("interrupted configured conformance and metadata steps report configured me
               Effect.gen(function* () {
                 services.calls.push("metadata");
                 yield* Deferred.succeed(started, undefined);
+
                 return yield* Effect.never;
               }),
           };
+
     services = makeServices(overrides);
     const exit = await interruptAt(runEvidence(identity, options), started, services.layer);
     expect(Exit.isFailure(exit)).toBe(true);
     const stepResult = services.report?.[step];
     expect(stepResult?.status).toBe("failure");
+
     if (stepResult?.status === "failure") expect(stepResult.reason).toContain("interrupted");
     expect(services.report?.measurement).toEqual({
       status: "unavailable",
@@ -401,12 +459,14 @@ test("interrupted configured conformance and metadata steps report configured me
 test("interrupted configured measurement is not reported as unavailable", async () => {
   const started = Deferred.makeUnsafe<void>();
   const services = makeServices();
+
   const options = {
     measurement: {
       latency: { baseUrl: target.url, paths: ["/streams/a"], concurrency: 1 },
       throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
     },
   } as const;
+
   const measurementHttp = Layer.succeed(HttpOperation, {
     request: (request: { readonly method: string }) =>
       request.method === "GET"
@@ -414,17 +474,21 @@ test("interrupted configured measurement is not reported as unavailable", async 
         : request.method === "PUT"
           ? Effect.gen(function* () {
               yield* Deferred.succeed(started, undefined);
+
               return yield* Effect.never;
             })
           : Effect.succeed({ status: 200, body: "" }),
   });
+
   const exit = await interruptAt(
     runEvidence(identity, options),
     started,
     Layer.mergeAll(services.operationsLayer, services.persistenceLayer, measurementHttp),
   );
+
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.report?.measurement.status).toBe("failure");
+
   if (services.report?.measurement.status === "failure")
     expect(services.report.measurement.reason).toContain("interrupted");
 });
@@ -436,6 +500,7 @@ test("configured but unreached measurement has an accurate reason", async () => 
       throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
     },
   } as const;
+
   for (const step of ["conformance", "metadata"] as const) {
     const services = makeServices(
       step === "conformance"
@@ -445,6 +510,7 @@ test("configured but unreached measurement has an accurate reason", async () => 
           }
         : { captureMetadata: () => Effect.fail(new ContractError({ message: "metadata failed" })) },
     );
+
     const exit = await runWithClock(runEvidence(identity, options), services.layer);
     expect(Exit.isFailure(exit)).toBe(true);
     expect(services.report?.measurement).toEqual({
@@ -461,6 +527,7 @@ test("synchronous cleanup throws do not skip later cleanup or reporting", async 
       throw new Error("sync destroy failure");
     },
   });
+
   const exit = await runWithClock(runEvidence(identity), services.layer);
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual([
@@ -482,8 +549,10 @@ test("fake measurement success and invalid body failures are part of the owned w
       throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
     },
   } as const;
+
   const successServices = makeServices();
   let measurementGetCalls = 0;
+
   const measurementHttp = Layer.succeed(HttpOperation, {
     request: (request: { readonly method: string }) =>
       Effect.sleep("1 millis").pipe(
@@ -499,17 +568,22 @@ test("fake measurement success and invalid body failures are part of the owned w
         ),
       ),
   });
+
   const successExit = await runWithClock(
     runEvidence(identity, options),
     Layer.mergeAll(successServices.layer, measurementHttp),
   );
+
   expect(Exit.isSuccess(successExit)).toBe(true);
   expect(successServices.report?.measurement.status).toBe("success");
+
   if (successServices.report?.measurement.status === "success") {
     expect(successServices.report.measurement.value.latency.firstPutBody).toBe("x");
     expect(successServices.report.measurement.value.latency.step0FirstPutBody).toBe("");
   }
+
   const failingServices = makeServices();
+
   const failingHttp = Layer.succeed(HttpOperation, {
     request: (request: { readonly method: string }) =>
       request.method === "HEAD"
@@ -518,10 +592,12 @@ test("fake measurement success and invalid body failures are part of the owned w
           ? Effect.succeed({ status: 400, body: "Stream path required: /{path}" })
           : Effect.succeed({ status: request.method === "PUT" ? 201 : 204, body: "" }),
   });
+
   const failingExit = await runWithClock(
     runEvidence(identity, options),
     Layer.mergeAll(failingServices.layer, failingHttp),
   );
+
   expect(Exit.isFailure(failingExit)).toBe(true);
   expect(failingServices.report?.measurement.status).toBe("failure");
   expect(failingServices.calls.slice(-3)).toEqual(["destroy", "destroy", "audit"]);
@@ -529,9 +605,11 @@ test("fake measurement success and invalid body failures are part of the owned w
 
 test("preflight failure performs no remote operation or cleanup", async () => {
   const services = makeServices();
+
   const exit = await Effect.runPromiseExit(
     runEvidence({ ...identity, stage: "not-a-stage" }).pipe(Effect.provide(services.layer)),
   );
+
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual([]);
   expect(services.report).toBeUndefined();

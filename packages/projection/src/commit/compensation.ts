@@ -38,6 +38,7 @@ export const withCompensation: {
         apply: (pending) =>
           Effect.suspend(() => {
             let completed = Option.none<Result>();
+
             const observed = setDetails(
               {
                 ...pending,
@@ -51,6 +52,7 @@ export const withCompensation: {
               },
               detailsOf(pending),
             );
+
             return self
               .apply(observed)
               .pipe(

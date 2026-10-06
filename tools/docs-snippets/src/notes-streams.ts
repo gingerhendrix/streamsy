@@ -11,12 +11,14 @@ export class Notes extends Streamsy.json<Notes>()("Notes/Notes", "notes", {
   params: {},
   schema: Note,
 }) {}
+
 export class Drafts extends Streamsy.json<Drafts>()("Notes/Drafts", "drafts/:draftId", {
   params: { draftId: Schema.String },
   schema: Note,
 }) {}
 
 const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
+
 const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
 
 export class Workspace extends Streamsy.state<Workspace>()(

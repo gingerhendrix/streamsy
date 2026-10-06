@@ -13,10 +13,12 @@ class facts extends Streamsy.json<facts>()("declaration.test/facts", "facts/:wor
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
 }) {}
+
 class config extends Streamsy.json<config>()("declaration.test/config", "config", {
   params: {},
   schema: Schema.String,
 }) {}
+
 class output extends Streamsy.json<output>()("declaration.test/output", "boards/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
@@ -31,6 +33,7 @@ test("a declaration binds declared inputs and keeps fixed addresses", () => {
     outputs: { output: output },
     emit: (entry) => Effect.succeed({ output: entry.input === "facts" ? [entry.item] : [] }),
   });
+
   const bound = board.at({ workspaceId: "ws-42" });
 
   expect(bound.commit).toBe(Commit.producer);
@@ -57,6 +60,7 @@ test("record keys and producer ids match the values before declarations", () => 
     inputs: { config },
     process: () => Effect.void,
   }).at({});
+
   const coded = Projection.process({
     commit: Commit.transaction,
     id: "hex-board",
@@ -64,6 +68,7 @@ test("record keys and producer ids match the values before declarations", () => 
     inputs: { config },
     process: () => Effect.void,
   }).at({ gameId: "game" });
+
   const versioned = Projection.process({
     commit: Commit.transaction,
     id: "issue-tracker",
@@ -95,7 +100,9 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
+
   const seen: Array<{ readonly id: number; readonly key: string }> = [];
+
   const declared = Projection.process({
     commit: Commit.atLeastOnce,
     id: "units",
@@ -103,13 +110,16 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
     inputs: { numbered },
     process: (_batch, unit) => Effect.sync(() => seen.push({ id: unit.params.id, key: unit.key })),
   });
+
   const bound = declared.at({ id: 7 });
   const host = FamilyFixture.withFamilies(memoryHost(), numbered);
+
   const run = Effect.gen(function* () {
     yield* Streams.create(bound.inputs.numbered);
     yield* Streams.append(bound.inputs.numbered, ["a"]);
     yield* Projection.run(bound);
   });
+
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The test is the entry point.
   await Effect.runPromise(run.pipe(Effect.provide(host)));
   expect(seen.map(({ id }) => id)).toEqual([7]);
@@ -122,6 +132,7 @@ test("number parameters encode to strings and parse back", () => {
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
+
   const declared = Projection.process({
     commit: Commit.transaction,
     id: "numbered",
@@ -129,6 +140,7 @@ test("number parameters encode to strings and parse back", () => {
     inputs: { numbered },
     process: () => Effect.void,
   });
+
   expect(declared.at({ id: 42 }).params).toEqual({ id: "42" });
   expect(Option.getOrThrow(declared.parse("numbered/42"))).toEqual({ id: 42 });
   expect(() => declared.at({ id: Number.NaN })).toThrow(
@@ -140,6 +152,7 @@ class stringId extends Streamsy.json<stringId>()("declaration.test/stringId", "s
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
+
 Projection.process({
   commit: Commit.transaction,
   id: "incompatible-codec",
@@ -153,6 +166,7 @@ class literalId extends Streamsy.json<literalId>()("declaration.test/literalId",
   params: { id: Schema.Literal("a") },
   schema: Schema.String,
 }) {}
+
 Projection.process({
   commit: Commit.transaction,
   id: "narrow-route-codec",
@@ -166,6 +180,7 @@ class wrong extends Streamsy.json<wrong>()("declaration.test/wrong", "wrong/:pro
   params: { projectId: Schema.String },
   schema: Schema.String,
 }) {}
+
 Projection.process({
   commit: Commit.transaction,
   id: "invalid",

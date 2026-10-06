@@ -12,25 +12,30 @@ export interface Entry {
   messages: StoredMessage[];
   producers: Map<ProducerId, ProducerState>;
 }
+
 export interface State {
   entries: Map<StreamId, Entry>;
   children: Map<StreamId, Set<StreamId>>;
   deadlines: Array<{ at: number; streamId: StreamId }>;
 }
+
 export const copyRecord = (record: StreamRecord): StreamRecord => ({
   id: record.id,
   currentOffset: record.currentOffset,
   config: { ...record.config },
   lifecycle: { ...record.lifecycle },
 });
+
 export const copyMessage = (message: StoredMessage): StoredMessage => ({
   offset: message.offset,
   timestamp: message.timestamp,
   data: new Uint8Array(message.data),
 });
+
 export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRecord {
   const config = { ...record.config, ...patch.config };
   const lifecycle = { ...record.lifecycle, ...patch.lifecycle };
+
   for (const key of patch.clear ?? []) {
     switch (key) {
       case "ttlSeconds":
@@ -47,6 +52,7 @@ export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRec
         break;
     }
   }
+
   return {
     id: record.id,
     currentOffset: patch.currentOffset ?? record.currentOffset,
@@ -54,6 +60,7 @@ export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRec
     lifecycle,
   };
 }
+
 export function indexDeadlines(state: State): void {
   state.deadlines = [...state.entries.values()]
     .flatMap(({ record }) =>

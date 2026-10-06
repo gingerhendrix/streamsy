@@ -36,6 +36,7 @@ export const makeShutdownSignal = Effect.gen(function* () {
   const count = yield* Ref.make(0);
   const enter = Ref.update(count, (n) => n + 1);
   const leave = Ref.update(count, (n) => n - 1);
+
   return ShutdownSignal.of({
     draining: Deferred.await(started),
     track: (effect) =>

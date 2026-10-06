@@ -24,6 +24,7 @@ const mount = (backend: Backends.Mounted) =>
   Effect.gen(function* () {
     const signal = yield* Http.ShutdownSignal;
     const storage = yield* Layer.build(backend.layer);
+
     const web = yield* Effect.acquireRelease(
       Effect.sync(() =>
         HttpRouter.toWebHandler(
@@ -36,7 +37,9 @@ const mount = (backend: Backends.Mounted) =>
       ),
       ({ dispose }) => Effect.promise(dispose),
     );
+
     const handler: WebHandler = (request) => web.handler(request);
+
     return [backend.name, handler] as const;
   });
 
@@ -52,9 +55,11 @@ const forward = (handler: WebHandler) =>
     // oxlint-disable-next-line effecttsgo/abort-controller-in-effect -- the signal must outlive the request scope; see above.
     const controller = new AbortController();
     const web = yield* HttpServerRequest.toWeb(request, { signal: controller.signal });
+
     const response = yield* Effect.promise(() => handler(web)).pipe(
       Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
     );
+
     return HttpServerResponse.fromWeb(response);
   }).pipe(
     Effect.orElseSucceed(() =>
@@ -74,6 +79,7 @@ export const routes = (options: Options) =>
     Effect.gen(function* () {
       const selection = yield* Backends.select(options.drivers);
       const handlers = new Map(yield* Effect.forEach(selection.mounted, mount));
+
       const health = HttpServerResponse.jsonUnsafe({
         runtime: options.runtime,
         backends: selection.mounted.map((backend) => backend.name),
@@ -81,14 +87,18 @@ export const routes = (options: Options) =>
           selection.unmounted.map((backend) => [backend.name, backend.reason]),
         ),
       });
+
       const dispatch = Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const handler = handlers.get(firstSegment(request.url));
+
         if (handler === undefined) {
           return HttpServerResponse.empty({ status: 404, headers: Http.securityHeaders });
         }
+
         return yield* forward(handler);
       });
+
       return Layer.mergeAll(
         Serve.route("/healthz", Effect.succeed(health)),
         HttpRouter.add("*", "/*", dispatch),

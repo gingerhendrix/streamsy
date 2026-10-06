@@ -8,20 +8,25 @@ class Notes extends Streamsy.json<Notes>()("Group/Notes", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
+
 class Counts extends Streamsy.bytes<Counts>()("Group/Counts", "counts/:user", {
   params: { user: Schema.String },
 }) {}
+
 class DuplicateName extends Streamsy.bytes<DuplicateName>()("Group/Notes", "other", {
   params: {},
 }) {}
+
 class DuplicateTemplate extends Streamsy.bytes<DuplicateTemplate>()(
   "Group/Duplicate",
   "notes/:user",
   { params: { user: Schema.String } },
 ) {}
+
 class Overlap extends Streamsy.bytes<Overlap>()("Group/Overlap", "notes/:id", {
   params: { id: Schema.String },
 }) {}
+
 const group = Streamsy.group(Notes, Counts);
 
 it("groups freeze their ordered declarations and reject duplicates and misplaced catch-alls", () => {

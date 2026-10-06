@@ -7,6 +7,7 @@ import { layerSqlite } from "./support/sqlite.ts";
 import * as Family from "./support/families.ts";
 
 const input = Family.json("prepare-input", { schema: Schema.Number });
+
 const host = Family.withFamilies(layerSqlite());
 
 test("prepare runs outside the transaction and passes its result into process", () =>
@@ -18,6 +19,7 @@ test("prepare runs outside the transaction and passes its result into process", 
       let inside = false;
       let preparedKey = "";
       let calls = 0;
+
       const projection = Projection.process({
         id: "prepared",
         params: {},
@@ -27,6 +29,7 @@ test("prepare runs outside the transaction and passes its result into process", 
           Effect.sync(() => {
             expect(inside).toBe(false);
             preparedKey = unit.key;
+
             return batch.input.items.reduce((sum, n) => sum + n, 0);
           }),
         process: (_batch, unit, prepared) =>
@@ -37,6 +40,7 @@ test("prepare runs outside the transaction and passes its result into process", 
             calls += 1;
           }),
       }).at({});
+
       yield* Projection.run(projection).pipe(
         Effect.provideService(Transaction, {
           ...transaction,
@@ -67,6 +71,7 @@ test("prepare requires the transaction capability, including through compensatio
     prepare: () => Effect.void,
     process: () => Effect.void,
   };
+
   expect(() => Projection.process({ ...definition, commit: Commit.atLeastOnce })).toThrow(
     "prepare requires Commit.transaction",
   );
@@ -90,6 +95,7 @@ test("a prepare failure preserves the handler error and never enters the transac
       const transaction = yield* Transaction;
       let entered = false;
       let processed = false;
+
       const projection = Projection.process({
         id: "prepare-failed",
         params: {},
@@ -101,16 +107,19 @@ test("a prepare failure preserves the handler error and never enters the transac
             processed = true;
           }),
       }).at({});
+
       const result = yield* Projection.run(projection).pipe(
         Effect.provideService(Transaction, {
           ...transaction,
           withTransaction: (body) => {
             entered = true;
+
             return transaction.withTransaction(body);
           },
         }),
         Effect.result,
       );
+
       expect(result).toMatchObject({ _tag: "Failure", failure: "prepare failed" });
       expect(entered).toBe(false);
       expect(processed).toBe(false);
@@ -128,6 +137,7 @@ for (const extended of [false, true]) {
         const keys: string[] = [];
         const batches: number[][] = [];
         let processed = 0;
+
         const declaration = Projection.process({
           id: "prepare-crash",
           params: {},
@@ -137,6 +147,7 @@ for (const extended of [false, true]) {
             Effect.sync(() => {
               keys.push(unit.key);
               batches.push([...batch.input.items]);
+
               return batch.input.items.length;
             }),
           process: (_batch, _unit, prepared) =>
@@ -144,7 +155,9 @@ for (const extended of [false, true]) {
               processed += prepared;
             }),
         });
+
         const crash = new Error("crash after prepare, before transaction");
+
         const exit = yield* Projection.run(declaration.at({})).pipe(
           Effect.provideService(Transaction, {
             ...transaction,
@@ -152,10 +165,13 @@ for (const extended of [false, true]) {
           }),
           Effect.exit,
         );
+
         expect(Exit.isFailure(exit)).toBe(true);
+
         if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(crash);
         expect(processed).toBe(0);
         expect((yield* store.load(declaration.at({}))).token).toBe("0");
+
         if (extended) yield* Streams.append(input, [2]);
         // Rebind after the simulated crash; only the host's stored checkpoint survives.
         yield* Projection.run(declaration.at({}));

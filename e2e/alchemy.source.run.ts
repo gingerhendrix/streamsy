@@ -11,6 +11,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
     const server = yield* sourceWorker(`${STACK_NAME}-${stage}`);
+
     return { url: server.url, workerName: server.workerName };
   }),
 );

@@ -75,6 +75,7 @@ const produce = Effect.gen(function* () {
   );
   yield* Projection.run(issueRows.at({ workspaceId: "acme" }));
   const sql = yield* SqlClient.SqlClient;
+
   for (const [table, expected] of [
     ["projects", 1],
     ["users", 2],
@@ -110,10 +111,12 @@ const app = Effect.gen(function* () {
     acme.rows.find((row) => row.issueId === "acme-1")?.labelIds.length === 0,
     "detached label remained on acme-1",
   );
+
   const changes = yield* getJson(
     `${baseUrl}/feed/workspaces/acme/issue-transitions?offset=-1`,
     Schema.Array(Schema.Unknown),
   );
+
   const drafts = yield* getJson(`${baseUrl}/api/workspaces/acme/drafts`, Rows);
   yield* check(changes.length === 4, `expected 4 accepted changes, got ${changes.length}`);
   yield* check(drafts.rows.length === 1, `expected one draft, got ${drafts.rows.length}`);

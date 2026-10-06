@@ -14,17 +14,22 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
     decide: () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
+
         const previous =
           command.type === "create"
             ? undefined
             : yield* storedIssue(sql, workspaceId, command.issueId);
+
         if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
+
         // Postgres and MySQL may return an aggregate as a `bigint` or a string.
         const [last] = yield* sql<{
           readonly sequence: number | bigint | string | null;
         }>`SELECT MAX(sequence) AS sequence FROM issues WHERE workspace_id = ${workspaceId}`;
+
         const sequence = (last?.sequence == null ? -1 : Number(last.sequence)) + 1;
         const occurredAt = new Date().toISOString();
+
         const common = {
           eventId: command.commandId,
           workspaceId,
@@ -32,6 +37,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
           sequence,
           occurredAt,
         };
+
         const event: IssueEvent =
           command.type === "create"
             ? {
@@ -49,6 +55,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
                   status: previous!.status,
                   assigneeId: command.assigneeId,
                 };
+
         return { value: event, items: [event] };
       }),
   }).pipe(Effect.map(({ value: event, offset }) => ({ event, offset })));
