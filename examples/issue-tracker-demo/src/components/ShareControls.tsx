@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { useState } from "react";
 import { createSharedWorkspace, gotoWorkspace, mainWorkspaceId } from "../utils/workspace.ts";
 
@@ -10,21 +11,23 @@ export function ShareControls({ workspaceId }: { workspaceId: string }) {
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const createWorkspace = async () => {
     setCreating(true);
 
     try {
       gotoWorkspace(await createSharedWorkspace());
     } catch (error) {
-      console.error("Unable to create shared workspace", error);
+      Effect.runSync(Effect.logError("Unable to create shared workspace", error));
       setCreating(false);
     }
   };
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const copyLink = async () => {
     await navigator.clipboard.writeText(window.location.href);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    Effect.runFork(Effect.sleep(1500).pipe(Effect.andThen(Effect.sync(() => setCopied(false)))));
   };
 
   const isShared = workspaceId !== mainWorkspaceId;

@@ -28,10 +28,11 @@ export function gotoWorkspace(workspaceId: string): void {
 }
 
 /** Create a fresh shared workspace on the server and return its id. */
-export async function createSharedWorkspace(): Promise<string> {
-  const response = await fetch("/api/workspaces", { method: "POST" });
+export function createSharedWorkspace(): Promise<string> {
+  // oxlint-disable-next-line effecttsgo/global-fetch -- This browser navigation boundary consumes a native Response before reloading the selected workspace.
+  return fetch("/api/workspaces", { method: "POST" }).then((response) => {
+    if (!response.ok) return response.text().then((text) => Promise.reject(new Error(text)));
 
-  if (!response.ok) throw new Error(await response.text());
-
-  return Schema.decodeUnknownSync(WorkspaceCreated)(await response.json()).id;
+    return response.json().then((body) => Schema.decodeUnknownSync(WorkspaceCreated)(body).id);
+  });
 }

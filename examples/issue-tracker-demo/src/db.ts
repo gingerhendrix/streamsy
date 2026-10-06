@@ -1,5 +1,6 @@
+import { DateTime } from "effect";
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
-import { Schema } from "effect";
+import { Exit, Schema } from "effect";
 import {
   Written,
   type CommentInput,
@@ -38,7 +39,9 @@ export type IssueDb = StreamDB<typeof issueTrackerState> & {
 };
 
 /** A write the server refused, with the `error` message from its body. */
-export class ApiError extends Error {}
+export class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
+  message: Schema.String,
+}) {}
 
 const ErrorBody = Schema.Struct({ error: Schema.String });
 
@@ -73,6 +76,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
         onMutate: ({ project }: CreateProjectAction) => {
           db.collections.projects.insert(project);
         },
+        // oxlint-disable-next-line effecttsgo/async-function -- TanStack DB awaits this mutation Promise and rolls back rejected writes.
         mutationFn: async ({ project, txid }: CreateProjectAction) => {
           const body: ProjectInput = {
             id: project.id,
@@ -89,6 +93,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
         onMutate: ({ issue }: CreateIssueAction) => {
           db.collections.issues.insert(issue);
         },
+        // oxlint-disable-next-line effecttsgo/async-function -- TanStack DB awaits this mutation Promise and rolls back rejected writes.
         mutationFn: async ({ issue, txid }: CreateIssueAction) => {
           const body: IssueInput = {
             id: issue.id,
@@ -107,12 +112,13 @@ export function createIssueDb(workspaceId: string): IssueDb {
         onMutate: ({ issue, patch, updatedBy }: UpdateIssueAction) => {
           db.collections.issues.update(issue.id, (draft) => {
             Object.assign(draft, patch);
-            draft.updatedAt = new Date().toISOString();
+            draft.updatedAt = DateTime.formatIso(DateTime.nowUnsafe());
 
             if (updatedBy === undefined) delete draft.updatedBy;
             else draft.updatedBy = updatedBy;
           });
         },
+        // oxlint-disable-next-line effecttsgo/async-function -- TanStack DB awaits this mutation Promise and rolls back rejected writes.
         mutationFn: async ({ issue, patch, updatedBy, txid }: UpdateIssueAction) => {
           // JSON leaves out an undefined `updatedBy`.
           const body: IssueInput = { ...patch, updatedBy, txid };
@@ -130,6 +136,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
         onMutate: ({ comment }: CreateCommentAction) => {
           db.collections.comments.insert(comment);
         },
+        // oxlint-disable-next-line effecttsgo/async-function -- TanStack DB awaits this mutation Promise and rolls back rejected writes.
         mutationFn: async ({ comment, txid }: CreateCommentAction) => {
           const body: CommentInput = {
             id: comment.id,
@@ -149,38 +156,37 @@ export function createIssueDb(workspaceId: string): IssueDb {
   return Object.assign(streamDb, { connection });
 }
 
-async function postJson(url: string, body: JsonValue, init: RequestInit = {}): Promise<Written> {
+function postJson(url: string, body: JsonValue, init: RequestInit = {}): Promise<Written> {
   const headers = new Headers(init.headers);
 
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
 
-  const response = await fetch(url, {
+  // oxlint-disable-next-line effecttsgo/global-fetch -- This browser transport preserves native RequestInit and Response semantics.
+  return fetch(url, {
     ...init,
     method: init.method ?? "POST",
     headers,
     body: JSON.stringify(body),
+  }).then((response) => {
+    if (!response.ok) return apiError(response).then((error) => Promise.reject(error));
+
+    return response.json().then(Schema.decodeUnknownSync(Written));
   });
-
-  if (!response.ok) throw await apiError(response);
-
-  return Schema.decodeUnknownSync(Written)(await response.json());
 }
 
 /** The `{ error }` body as an `ApiError`, or the status when the body is not one. */
-async function apiError(response: Response): Promise<ApiError> {
-  const text = await response.text();
+function apiError(response: Response): Promise<ApiError> {
+  return response.text().then((text) => {
+    const decoded = Schema.decodeExit(Schema.fromJsonString(ErrorBody))(text);
 
-  try {
-    return new ApiError(Schema.decodeUnknownSync(ErrorBody)(JSON.parse(text)).error);
-  } catch {
-    return new ApiError(`Request failed with status ${response.status}`);
-  }
+    return new ApiError({
+      message: Exit.isSuccess(decoded)
+        ? decoded.value.error
+        : `Request failed with status ${response.status}`,
+    });
+  });
 }
 
-export async function awaitOptimisticAction<T>(
-  action: OptimisticAction<T>,
-  variables: T,
-): Promise<void> {
-  const transaction = action(variables);
-  await transaction.isPersisted.promise;
+export function awaitOptimisticAction<T>(action: OptimisticAction<T>, variables: T): Promise<void> {
+  return action(variables).isPersisted.promise.then(() => {});
 }

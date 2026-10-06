@@ -1,3 +1,4 @@
+import { DateTime, Option } from "effect";
 import type { IssueStatus } from "../../shared/types.ts";
 
 export const STATUS_LABEL = {
@@ -7,8 +8,8 @@ export const STATUS_LABEL = {
 } satisfies Record<IssueStatus, string>;
 
 export function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diff = Date.now() - then;
+  const then = Option.getOrElse(Option.map(DateTime.make(iso), DateTime.toEpochMillis), () => NaN);
+  const diff = DateTime.toEpochMillis(DateTime.nowUnsafe()) - then;
 
   if (Number.isNaN(diff)) return "";
   const seconds = Math.round(diff / 1000);

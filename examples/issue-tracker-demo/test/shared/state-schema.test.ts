@@ -11,7 +11,7 @@ const project = {
 
 const upsert = issueTrackerState.projects.upsert({
   value: project,
-  headers: { timestamp: project.createdAt, txid: crypto.randomUUID() },
+  headers: { timestamp: project.createdAt, txid: "00000000-0000-4000-8000-000000000001" },
 });
 
 const isStateEvent = (value: JsonValue | undefined) => Result.isSuccess(decodeStateEvents([value]));

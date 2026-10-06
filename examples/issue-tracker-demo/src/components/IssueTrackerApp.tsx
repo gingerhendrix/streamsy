@@ -1,3 +1,5 @@
+import { browserCrypto } from "../utils/crypto.ts";
+import { DateTime, Effect } from "effect";
 import { useState } from "react";
 import { anonymousAuthor } from "../../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
@@ -19,7 +21,8 @@ import { Notices } from "./Notices.tsx";
 import { ProjectsPanel } from "./ProjectsPanel.tsx";
 import { Topbar } from "./Topbar.tsx";
 
-const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+const newId = (prefix: string) =>
+  `${prefix}_${Effect.runSync(browserCrypto.randomUUIDv4).slice(0, 8)}`;
 
 export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId: string }) {
   // Holds an explicit user selection only; while empty, rendering falls back to
@@ -45,6 +48,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
    * Run one optimistic action. If the server refuses it, TanStack DB rolls the
    * local change back, and the page says why.
    */
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const run = async <T,>(action: OptimisticAction<T>, variables: T) => {
     try {
       await awaitOptimisticAction(action, variables);
@@ -57,22 +61,24 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
     }
   };
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const createProject = async (projectName: string, description: string) => {
     const project: Project = {
       id: newId("proj"),
       name: projectName,
       description,
-      createdAt: new Date().toISOString(),
+      createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
     };
 
-    const txid = crypto.randomUUID();
+    const txid = Effect.runSync(browserCrypto.randomUUIDv4);
 
     if (await run(db.actions.createProject, { project, txid })) setSelectedProjectId(project.id);
   };
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const createIssue = async (title: string) => {
     if (!selectedProject) return;
-    const now = new Date().toISOString();
+    const now = DateTime.formatIso(DateTime.nowUnsafe());
 
     const unnamed: Issue = {
       id: newId("issue"),
@@ -84,22 +90,31 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
     };
 
     const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
-    await run(db.actions.createIssue, { issue, txid: crypto.randomUUID() });
+    await run(db.actions.createIssue, { issue, txid: Effect.runSync(browserCrypto.randomUUIDv4) });
   };
 
   const updateIssue = (issue: Issue, patch: { title?: string; status?: IssueStatus }) =>
-    run(db.actions.updateIssue, { issue, patch, updatedBy: writer, txid: crypto.randomUUID() });
+    run(db.actions.updateIssue, {
+      issue,
+      patch,
+      updatedBy: writer,
+      txid: Effect.runSync(browserCrypto.randomUUIDv4),
+    });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const createComment = async (issue: Issue, body: string) => {
     const comment: Comment = {
       id: newId("comment"),
       issueId: issue.id,
       author: writer ?? anonymousAuthor,
       body,
-      createdAt: new Date().toISOString(),
+      createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
     };
 
-    await run(db.actions.createComment, { comment, txid: crypto.randomUUID() });
+    await run(db.actions.createComment, {
+      comment,
+      txid: Effect.runSync(browserCrypto.randomUUIDv4),
+    });
   };
 
   return (
