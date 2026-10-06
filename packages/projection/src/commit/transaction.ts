@@ -88,8 +88,12 @@ export const transaction = withPrepare(
             }
 
             yield* settle(pending, result);
+
+            return yield* Effect.void;
           }),
         );
+
+        return yield* Effect.void;
       }),
   }),
 );

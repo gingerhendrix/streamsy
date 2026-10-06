@@ -2,7 +2,7 @@ import { Effect, Option, Schema } from "effect";
 import { type ProjectionKey } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
 
-export type StateSchema<A, I = unknown> = Schema.Codec<A, I, never, never>;
+export type StateSchema<A, I = unknown> = Schema.Codec<A, I>;
 
 /** A value, or a function of the decoded params the projection was bound with. */
 export type Initial<A, P = Record<string, string>> = A | ((params: P) => A);

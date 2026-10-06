@@ -21,6 +21,7 @@ export const offsetsOf = <Inputs extends InputMap>(record: {
   readonly inputs: Record<string, string>;
 }): Offsets<Inputs> =>
   // SAFETY: a restored or advanced record has one offset for every declared input.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Restoration supplies one offset per declared input; TS cannot infer the mapped keys from a string record.
   record.inputs as Offsets<Inputs>;
 
 export type StateValue<S> = [S] extends [never] ? undefined : S;
@@ -51,6 +52,7 @@ export const read = Effect.fn("Projection.read")(function* <
       : yield* decodeState(projection, declared.schema, encoded);
 
   // SAFETY: the state is undefined exactly when the declaration has no state.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The declaration supplies S exactly when state exists; TS cannot reduce StateValue for a generic S.
   const state = (
     declared === undefined ? undefined : Option.getOrElse(stored, declared.initial)
   ) as StateValue<S>;

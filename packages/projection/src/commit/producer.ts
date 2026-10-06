@@ -199,6 +199,8 @@ export const producer = pin(
           token,
           withState({ ...request.next, ...record }, result),
         );
+
+        return yield* Effect.void;
       }),
   }),
 );

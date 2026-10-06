@@ -22,6 +22,8 @@ export const forget = <R>(
           message: "This Commit does not support forgetting",
         });
       yield* projection.commit.remove(projection);
+
+      return yield* Effect.void;
     }),
     true,
   );
