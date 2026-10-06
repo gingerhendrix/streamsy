@@ -7,7 +7,6 @@ import {
   readdirSync,
   rmSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -247,7 +246,7 @@ const build = async (): Promise<void> => {
       sourceSha,
       sourceDirty: sourceStatus.trim().length > 0,
       sourceStatus: sourceStatus.trim().length > 0 ? "dirty" : "clean",
-      workerSha256: createHash("sha256").update(Buffer.from(publishedBytes)).digest("hex"),
+      workerSha256: new Bun.CryptoHasher("sha256").update(publishedBytes).digest("hex"),
       buildTimestamp: new Date().toISOString(),
       bunVersion: Bun.version,
       gzipToolVersion: gzipVersion,

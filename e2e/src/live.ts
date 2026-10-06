@@ -7,8 +7,8 @@
  * CLI with the local `.alchemy/` state store. The official suite runs
  * `packages/conformance-tests` `test:deployed` against the Worker URL.
  */
-import { createHash, randomBytes } from "node:crypto";
-import { Clock, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Clock, Crypto, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Hex } from "effect/encoding";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   ContractError,
@@ -246,6 +246,7 @@ export const liveIdentity = (paths: LivePaths) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const crypto = yield* Crypto.Crypto;
 
     const artifact = yield* fs
       .readFile(paths.workerArtifact)
@@ -262,7 +263,16 @@ export const liveIdentity = (paths: LivePaths) =>
         Effect.mapError(contractError("git rev-parse")),
       );
 
-    const runId = randomBytes(3).toString("hex");
+    const runId = Hex.encode(
+      yield* crypto.randomBytes(3).pipe(Effect.mapError(contractError("run id"))),
+    );
+
+    const artifactSha256 = Hex.encode(
+      yield* crypto
+        .digest("SHA-256", artifact)
+        .pipe(Effect.mapError(contractError("artifact hash"))),
+    );
+
     const now = yield* Clock.currentTimeMillis;
 
     const stage = yield* Effect.try({
@@ -276,6 +286,6 @@ export const liveIdentity = (paths: LivePaths) =>
       workerName: expectedWorkerName(stage),
       cwd: path.resolve(paths.root),
       sourceSha,
-      artifactSha256: createHash("sha256").update(artifact).digest("hex"),
+      artifactSha256,
     } satisfies RunIdentity;
   });

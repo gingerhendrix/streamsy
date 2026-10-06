@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { assertExcerpt, runExcerpt } from "../../scripts/check-excerpts.ts";
 
 const exists = async (path: string): Promise<boolean> => {
@@ -20,7 +19,7 @@ const waitForFile = async (path: string, timeoutMs = 1_000): Promise<void> => {
 
   while (!(await exists(path))) {
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path}`);
-    await delay(10);
+    await Bun.sleep(10);
   }
 };
 
@@ -243,7 +242,7 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
     await waitForFile(readyFile);
     const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
     const beforeDeadline = Math.max(0, timeoutMs - (Date.now() - startedAt) - 30);
-    await delay(beforeDeadline);
+    await Bun.sleep(beforeDeadline);
     expect(isAlive(pid)).toBe(true);
     expect((await rejection(execution)).message).toContain("exceeded 300 ms");
     expect(Date.now() - startedAt).toBeLessThan(timeoutMs + 700);

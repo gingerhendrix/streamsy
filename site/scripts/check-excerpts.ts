@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- A plain Node-typed script outside Effect. Without Bun types, this is its only sleep that adds no new-promise or global-timers finding.
 import { setTimeout as delay } from "node:timers/promises";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { mdxFromMarkdown } from "mdast-util-mdx";

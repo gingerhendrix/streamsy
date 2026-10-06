@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, relative } from "node:path";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- A plain Node-typed script outside Effect. Without Bun types, this is its only sleep that adds no new-promise or global-timers finding.
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { movedPages } from "../src/lib/moved-pages.ts";
