@@ -56,7 +56,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
     const logs = await new Response(server.stdout).text();
     expect(logs).toContain("projection startup failed");
     expect(logs).toContain("issue-rows");
-    expect(logs).toContain("issue-tracker");
+    expect(logs).toContain("bugsy");
     server = undefined;
   } finally {
     if (server !== undefined) await stopServer(server);

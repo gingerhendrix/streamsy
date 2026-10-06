@@ -108,6 +108,10 @@ const view = (state: MaterializedState): WorkspaceState => ({
   getProject: (projectId: string) => state.get<Project>("project", projectId),
   getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
   hasProjects: () => state.getType("project").size > 0,
+  countInProgress: (projectId: string) =>
+    [...state.getType("issue").keys()]
+      .map((issueId) => state.get<Issue>("issue", issueId))
+      .filter((issue) => issue?.projectId === projectId && issue.status === "in_progress").length,
 });
 
 export const IssueTrackerLive = Layer.effect(

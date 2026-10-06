@@ -4,15 +4,15 @@ import { Config, Effect, Option, type Redacted, Schema } from "effect";
 export const ServerConfig = Config.all({
   port: Config.Port("PORT").pipe(Config.withDefault(1340)),
   /** SQLite file for streams, checkpoints and application tables. */
-  databasePath: Config.String("ISSUE_TRACKER_DB").pipe(
-    Config.withDefault(`/tmp/streamsy-issue-tracker-${process.pid}.sqlite`),
+  databasePath: Config.String("BUGSY_DB").pipe(
+    Config.withDefault(`/tmp/streamsy-bugsy-${process.pid}.sqlite`),
   ),
   /** Postgres database for streams, checkpoints and application tables, in place of SQLite. */
   pgUrl: Config.Redacted("STREAMSY_PG_URL").pipe(Config.option),
   /** MySQL database for streams, checkpoints and application tables, in place of SQLite. */
   mysqlUrl: Config.Redacted("STREAMSY_MYSQL_URL").pipe(Config.option),
   /** Fixed list of workspaces that the server creates and runs at startup. */
-  workspaces: Config.String("ISSUE_TRACKER_WORKSPACES").pipe(
+  workspaces: Config.String("BUGSY_WORKSPACES").pipe(
     Config.withDefault("acme,live"),
     Config.map((list) => list.split(",").filter(Boolean)),
   ),
@@ -32,7 +32,7 @@ export type StorageChoice =
 
 /**
  * `STREAMSY_PG_URL` picks Postgres, `STREAMSY_MYSQL_URL` picks MySQL, and
- * neither picks SQLite at `ISSUE_TRACKER_DB`. Both is an error.
+ * neither picks SQLite at `BUGSY_DB`. Both is an error.
  */
 export const storageChoice = (config: Config.Success<typeof ServerConfig>) =>
   Option.match(config.pgUrl, {

@@ -108,6 +108,42 @@ select {
   letter-spacing: 0.1em;
 }
 
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.name-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.name-field input {
+  width: 140px;
+  padding: 5px 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.offline-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--status-progress);
+  background: var(--status-progress-bg);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
 .share-controls {
   display: flex;
   align-items: center;
@@ -387,6 +423,38 @@ button.subtle:hover {
   border-bottom: 1px solid var(--border);
 }
 
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+button.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+button.filter-chip:hover {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
+}
+button.filter-chip.selected {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.filter-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 .issue-list {
   display: flex;
   flex-direction: column;
@@ -404,6 +472,13 @@ button.subtle:hover {
   border-bottom: 0;
 }
 
+/* A local change that the server has not confirmed yet. */
+.issue-row.pending,
+.comment.pending {
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
 .issue-main {
   min-width: 0;
 }
@@ -412,6 +487,27 @@ button.subtle:hover {
   font-size: 14px;
   font-weight: 500;
   color: var(--text);
+}
+button.issue-title-button {
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  cursor: text;
+}
+button.issue-title-button:hover {
+  background: none;
+  text-decoration: underline dotted var(--text-faint);
+  text-underline-offset: 3px;
+}
+.issue-title-input {
+  padding: 2px 6px;
+  font-size: 14px;
+  font-weight: 500;
 }
 .issue-meta {
   display: flex;
@@ -531,6 +627,39 @@ button.subtle:hover {
   border-color: var(--border-strong);
 }
 
+/* ---------- Notices ---------- */
+
+.notices {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+}
+.notice {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--status-progress);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(28, 25, 23, 0.08);
+}
+.notice-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--status-progress);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 /* ---------- Empty / loading states ---------- */
 
 .empty-state {
@@ -571,7 +700,8 @@ button.subtle:hover {
   .topbar {
     padding: 0 16px;
   }
-  .brand-app {
+  .brand-app,
+  .name-field span {
     display: none;
   }
   .issue-row {

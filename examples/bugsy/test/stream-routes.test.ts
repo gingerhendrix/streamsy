@@ -12,11 +12,8 @@ test("tracker streams expose declared streams with host access rules", async () 
   );
   try {
     expect(
-      (
-        await web.handler(
-          new Request("http://host/streams/issue-tracker/live/issue-events?offset=-1"),
-        )
-      ).status,
+      (await web.handler(new Request("http://host/streams/bugsy/live/issue-events?offset=-1")))
+        .status,
     ).toBe(200);
     for (const method of ["GET", "PUT", "POST", "DELETE"]) {
       expect(
@@ -35,11 +32,8 @@ test("tracker streams expose declared streams with host access rules", async () 
     ]) {
       for (const method of ["PUT", "POST", "DELETE"]) {
         expect(
-          (
-            await web.handler(
-              new Request(`http://host/streams/issue-tracker/live/${name}`, { method }),
-            )
-          ).status,
+          (await web.handler(new Request(`http://host/streams/bugsy/live/${name}`, { method })))
+            .status,
         ).toBe(405);
       }
     }

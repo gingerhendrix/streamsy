@@ -4,16 +4,16 @@ import { Identifier, IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 
 const params = { workspaceId: Identifier } as const;
 export class Events extends Streamsy.json<Events>()(
-  "IssueTracker/Events",
-  "issue-tracker/:workspaceId/issue-events",
+  "Bugsy/Events",
+  "bugsy/:workspaceId/issue-events",
   {
     params,
     schema: IssueEvent,
   },
 ) {}
 export class LabelEvents extends Streamsy.json<LabelEvents>()(
-  "IssueTracker/LabelEvents",
-  "issue-tracker/:workspaceId/issue-label-events",
+  "Bugsy/LabelEvents",
+  "bugsy/:workspaceId/issue-label-events",
   {
     params,
     schema: IssueLabelEvent,
@@ -21,29 +21,21 @@ export class LabelEvents extends Streamsy.json<LabelEvents>()(
 ) {}
 
 export class Projects extends Streamsy.state<Projects>()(
-  "IssueTracker/Projects",
-  "issue-tracker/:workspaceId/projects",
+  "Bugsy/Projects",
+  "bugsy/:workspaceId/projects",
   {
     params,
     collections: { project: { schema: ProjectRow, key: "projectId" } },
   },
 ) {}
-export class Users extends Streamsy.state<Users>()(
-  "IssueTracker/Users",
-  "issue-tracker/:workspaceId/users",
-  {
-    params,
-    collections: { user: { schema: UserRow, key: "userId" } },
-  },
-) {}
-export class Labels extends Streamsy.state<Labels>()(
-  "IssueTracker/Labels",
-  "issue-tracker/:workspaceId/labels",
-  {
-    params,
-    collections: { label: { schema: LabelRow, key: "labelId" } },
-  },
-) {}
+export class Users extends Streamsy.state<Users>()("Bugsy/Users", "bugsy/:workspaceId/users", {
+  params,
+  collections: { user: { schema: UserRow, key: "userId" } },
+}) {}
+export class Labels extends Streamsy.state<Labels>()("Bugsy/Labels", "bugsy/:workspaceId/labels", {
+  params,
+  collections: { label: { schema: LabelRow, key: "labelId" } },
+}) {}
 export const routes = {
   events: Events,
   labelEvents: LabelEvents,

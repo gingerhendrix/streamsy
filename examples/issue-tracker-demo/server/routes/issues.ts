@@ -3,7 +3,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { IssueTrackerApi } from "../../shared/api.ts";
 import { IssueTracker } from "../issue-tracker.ts";
 import { createIssue, updateIssue } from "../state.ts";
-import { apiErrors } from "./errors.ts";
+import { issueApiErrors } from "./errors.ts";
 
 export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handlers) =>
   Effect.gen(function* () {
@@ -15,7 +15,7 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, createIssue(payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, apiErrors),
+        }, issueApiErrors),
       )
       .handle(
         "update",
@@ -23,7 +23,7 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, updateIssue(params.id, payload, stamp));
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
-        }, apiErrors),
+        }, issueApiErrors),
       );
   }),
 );

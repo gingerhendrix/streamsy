@@ -10,7 +10,7 @@ class Usage extends Schema.TaggedError<Usage>()("Usage", { message: Schema.Strin
 const program = Effect.gen(function* () {
   const workspaceId = yield* Effect.fromNullishOr(Bun.argv[2]).pipe(
     Effect.mapError(
-      () => new Usage({ message: "usage: ISSUE_TRACKER_DB=<path> run-once.ts <workspaceId>" }),
+      () => new Usage({ message: "usage: BUGSY_DB=<path> run-once.ts <workspaceId>" }),
     ),
   );
   yield* Effect.log(yield* Projection.run(issueRows.at({ workspaceId })));
@@ -18,9 +18,7 @@ const program = Effect.gen(function* () {
 });
 
 const host = Layer.unwrap(
-  Effect.map(Config.String("ISSUE_TRACKER_DB"), (filename) =>
-    applicationLayer(sqliteStorage(filename)),
-  ),
+  Effect.map(Config.String("BUGSY_DB"), (filename) => applicationLayer(sqliteStorage(filename))),
 );
 
 // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.

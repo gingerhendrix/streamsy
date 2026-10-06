@@ -1,6 +1,12 @@
 import { DurableState } from "@streamsy/core";
 import { Effect, Schema } from "effect";
-import type { Comment, Issue, Project } from "../shared/state-schema.ts";
+import {
+  anonymousAuthor,
+  wipLimit,
+  type Comment,
+  type Issue,
+  type Project,
+} from "../shared/state-schema.ts";
 import type { WorkspaceChange } from "./streams.ts";
 
 /** Read-only view over one workspace's materialized state. */
@@ -8,6 +14,8 @@ export interface WorkspaceState {
   getProject(projectId: string): Project | undefined;
   getIssue(issueId: string): Issue | undefined;
   hasProjects(): boolean;
+  /** How many issues of the project are `in_progress` at this head. */
+  countInProgress(projectId: string): number;
 }
 
 /**
@@ -35,6 +43,12 @@ export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()("IssueNot
   issueId: Schema.String,
 }) {}
 
+/** The project already has `limit` issues in progress. */
+export class TooManyInProgress extends Schema.TaggedError<TooManyInProgress>()(
+  "TooManyInProgress",
+  { projectId: Schema.String, limit: Schema.Number },
+) {}
+
 const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });
 
 export const projectUpsert = (project: Project, stamp: Stamp): WorkspaceChange =>
@@ -59,22 +73,41 @@ export const createProject =
 
 export const createIssue =
   (input: Partial<Issue>, stamp: Stamp) =>
-  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference> => {
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference | TooManyInProgress> => {
     const issue = newIssue(input, stamp);
     if (!state.getProject(issue.projectId)) {
       return Effect.fail(new UnknownReference({ field: "projectId", id: issue.projectId }));
+    }
+    if (startsWork(state, undefined, issue)) {
+      return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
     }
     return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
   };
 
 export const updateIssue =
   (issueId: string, input: Partial<Issue>, stamp: Stamp) =>
-  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound> => {
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound | TooManyInProgress> => {
     const previous = state.getIssue(issueId);
     if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
     const issue = nextIssue(previous, input, stamp);
+    if (startsWork(state, previous, issue)) {
+      return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
+    }
     return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
   };
+
+/**
+ * The work-in-progress rule. It depends on every issue of the project, so it
+ * holds only because each attempt sees the state at the head it appends to.
+ * An issue that stays in progress does not count twice.
+ */
+function startsWork(state: WorkspaceState, previous: Issue | undefined, issue: Issue): boolean {
+  return (
+    issue.status === "in_progress" &&
+    previous?.status !== "in_progress" &&
+    state.countInProgress(issue.projectId) >= wipLimit
+  );
+}
 
 export const createComment =
   (input: Partial<Comment>, stamp: Stamp) =>
@@ -86,33 +119,40 @@ export const createComment =
     return Effect.succeed({ change: commentUpsert(comment, stamp), value: comment });
   };
 
+// The server owns time: every time field comes from the stamp, never from
+// the request.
+
 export function newProject(input: Partial<Project>, stamp: Stamp): Project {
   return {
     id: input.id ?? stamp.id,
     name: (input.name ?? "Untitled project").trim(),
     description: (input.description ?? "").trim(),
-    createdAt: input.createdAt ?? stamp.now,
+    createdAt: stamp.now,
   };
 }
 
 export function newIssue(input: Partial<Issue>, stamp: Stamp): Issue {
-  const createdAt = input.createdAt ?? stamp.now;
   return {
     id: input.id ?? stamp.id,
     projectId: input.projectId ?? "",
     title: (input.title ?? "Untitled issue").trim(),
     status: input.status ?? "open",
-    createdAt,
-    updatedAt: input.updatedAt ?? createdAt,
+    createdAt: stamp.now,
+    updatedAt: stamp.now,
+    ...writer(input.updatedBy),
   };
 }
 
+/** The issue after a patch. `updatedBy` names this writer, or nobody. */
 export function nextIssue(previous: Issue, input: Partial<Issue>, stamp: Stamp): Issue {
   return {
-    ...previous,
+    id: previous.id,
+    projectId: previous.projectId,
     title: input.title === undefined ? previous.title : input.title.trim(),
     status: input.status ?? previous.status,
-    updatedAt: input.updatedAt ?? stamp.now,
+    createdAt: previous.createdAt,
+    updatedAt: stamp.now,
+    ...writer(input.updatedBy),
   };
 }
 
@@ -120,10 +160,16 @@ export function newComment(input: Partial<Comment>, stamp: Stamp): Comment {
   return {
     id: input.id ?? stamp.id,
     issueId: input.issueId ?? "",
-    author: (input.author ?? "you").trim() || "you",
+    author: input.author?.trim() || anonymousAuthor,
     body: (input.body ?? "").trim(),
-    createdAt: input.createdAt ?? stamp.now,
+    createdAt: stamp.now,
   };
+}
+
+/** A blank display name is no name. */
+function writer(name: string | undefined): Pick<Issue, "updatedBy"> {
+  const trimmed = name?.trim();
+  return trimmed ? { updatedBy: trimmed } : {};
 }
 
 /** The first project of a new shared workspace. */
@@ -136,7 +182,11 @@ export function starterProject(stamp: Stamp): Project {
   };
 }
 
-/** The known demo workspace's first changes. */
+/**
+ * The known demo workspace's first changes. "Streamsy Demo" starts with two
+ * issues in progress, one below the limit, so two tabs can race for the last
+ * place.
+ */
 export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
   const createdAt = stamp.now;
   const projects: Project[] = [
@@ -167,6 +217,22 @@ export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
       projectId: "proj_streamsy",
       title: "Use StreamDB collections for optimistic local writes",
       status: "in_progress",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: "issue_filters",
+      projectId: "proj_streamsy",
+      title: "Filter issues by status with live queries",
+      status: "in_progress",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: "issue_names",
+      projectId: "proj_streamsy",
+      title: "Show who made each change",
+      status: "open",
       createdAt,
       updatedAt: createdAt,
     },

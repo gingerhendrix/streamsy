@@ -1,11 +1,11 @@
 ---
-title: Issue tracker projection
+title: Bugsy
 description: Send issue commands to a server that keeps SQL tables, board rows, label counts and a change feed up to date.
 ---
 
-This demo is the server side of an issue tracker. You send it commands: create an issue, change its status, assign it. The server stores each command as a fact in a stream. Two projections then keep the rest up to date: SQL tables for the API, and output streams with board cards, label counts and a feed of accepted changes. A client can follow those streams over HTTP. The demo has no browser, so this page has no screenshot.
+Bugsy is the server side of an issue tracker. You send it commands: create an issue, change its status, assign it. The server stores each command as a fact in a stream. Two projections then keep the rest up to date: SQL tables for the API, and output streams with board cards, label counts and a feed of accepted changes. A client can follow those streams over HTTP. The demo has no browser, so this page has no screenshot.
 
-The full source is in [`examples/issue-tracker`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker).
+The full source is in [`examples/bugsy`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy).
 
 ## Run it
 
@@ -14,14 +14,14 @@ From the repository root:
 ```bash
 bun install --frozen-lockfile
 bun run build
-bun run --cwd examples/issue-tracker start
+bun run --cwd examples/bugsy start
 ```
 
-Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`. Set `ISSUE_TRACKER_DB` to use a different file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker) lists the other settings and the smoke scripts.
+Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`. Set `BUGSY_DB` to use a different file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy) lists the other settings and the smoke scripts.
 
 ## Architecture
 
-![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Triggers run both projections after each command and when an input changes. Serve routes publish the results read-only.](/docs/demos/issue-tracker-projection-architecture.svg)
+![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Triggers run both projections after each command and when an input changes. Serve routes publish the results read-only.](/docs/demos/bugsy-architecture.svg)
 
 Each number in the diagram is also a section number below.
 
@@ -43,8 +43,8 @@ Each workspace has five input streams. Two are JSON streams of facts: issue even
 ```ts title="server/streams.ts"
 const params = { workspaceId: Identifier } as const;
 export class Events extends Streamsy.json<Events>()(
-  "IssueTracker/Events",
-  "issue-tracker/:workspaceId/issue-events",
+  "Bugsy/Events",
+  "bugsy/:workspaceId/issue-events",
   {
     params,
     schema: IssueEvent,
@@ -52,8 +52,8 @@ export class Events extends Streamsy.json<Events>()(
 ) {}
 // ...
 export class Projects extends Streamsy.state<Projects>()(
-  "IssueTracker/Projects",
-  "issue-tracker/:workspaceId/projects",
+  "Bugsy/Projects",
+  "bugsy/:workspaceId/projects",
   {
     params,
     collections: { project: { schema: ProjectRow, key: "projectId" } },
@@ -157,7 +157,7 @@ See [Commits](/docs/projections/define#commits) and [Commit with your own tables
 ```ts title="server/outputs.ts"
 export const tracker = Projection.mapAccumBatch({
   commit: Commit.producer,
-  id: "issue-tracker",
+  id: "bugsy",
   params: { workspaceId: Identifier },
   inputs: routes,
   outputs: {

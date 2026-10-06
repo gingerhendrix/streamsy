@@ -16,7 +16,7 @@ export const demoExamples = new Map<string, string>([
   ["hackernews-newest-stream", "examples/hackernews-newest-stream"],
   ["hex-board", "examples/hex-board"],
   ["issue-tracker", "examples/issue-tracker-demo"],
-  ["issue-tracker-projection", "examples/issue-tracker"],
+  ["bugsy", "examples/bugsy"],
   ["memory-server", "examples/memory-server"],
   ["fold-agent", "examples/fold-agent"],
 ]);

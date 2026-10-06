@@ -12,19 +12,26 @@ export const TxId = Schema.String.check(Schema.isUUID());
 
 /**
  * Mutation bodies carry a partial entity: absent fields take a server default,
- * present fields must already match the wire schema.
+ * present fields must already match the wire schema. The server stamps the
+ * time fields, so a body cannot set them.
  */
-const input = <Fields extends Schema.Struct.Fields>(entity: Schema.Struct<Fields>) =>
+const input = <
+  Fields extends Schema.Struct.Fields,
+  const Stamped extends ReadonlyArray<keyof Fields>,
+>(
+  entity: Schema.Struct<Fields>,
+  stamped: Stamped,
+) =>
   entity.mapFields((fields) => ({
-    ...Struct.map(fields, Schema.optionalKey),
+    ...Struct.map(Struct.omit(fields, stamped), Schema.optionalKey),
     txid: Schema.optionalKey(TxId),
   }));
 
-export const ProjectInput = input(Project);
+export const ProjectInput = input(Project, ["createdAt"]);
 export type ProjectInput = typeof ProjectInput.Type;
-export const IssueInput = input(Issue);
+export const IssueInput = input(Issue, ["createdAt", "updatedAt"]);
 export type IssueInput = typeof IssueInput.Type;
-export const CommentInput = input(Comment);
+export const CommentInput = input(Comment, ["createdAt"]);
 export type CommentInput = typeof CommentInput.Type;
 
 /** Every accepted write returns the stream offset and txid to wait for. */
@@ -53,6 +60,16 @@ export class Conflict extends Schema.TaggedError<Conflict>()(
   "Conflict",
   { error: Schema.String },
   { httpApiStatus: 409 },
+) {}
+
+/**
+ * A business rule refused the write. Unlike `Conflict`, a retry gives the same
+ * answer until the workspace changes.
+ */
+export class WipLimitReached extends Schema.TaggedError<WipLimitReached>()(
+  "WipLimitReached",
+  { error: Schema.String },
+  { httpApiStatus: 422 },
 ) {}
 
 export class InternalServerError extends Schema.TaggedError<InternalServerError>()(

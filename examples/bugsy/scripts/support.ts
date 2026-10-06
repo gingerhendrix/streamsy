@@ -41,7 +41,7 @@ export const startServer = (database: string, port?: number) =>
     return yield* spawnServer({
       cwd: path.resolve(import.meta.dir, ".."),
       entry: "server/index.ts",
-      env: { ISSUE_TRACKER_DB: database, ISSUE_TRACKER_WORKSPACES: "acme,live" },
+      env: { BUGSY_DB: database, BUGSY_WORKSPACES: "acme,live" },
       port,
       isReady: (status) => status === 200,
     });

@@ -134,5 +134,5 @@ export const app = (workspaces: ReadonlyArray<string>) =>
     HttpRouter.add("POST", "/api/workspaces/:workspaceId/commands", commands(workspaces)),
     Serve.route("/api/workspaces/:workspaceId/status", status(workspaces)),
     Serve.route("/api/workspaces/:workspaceId/drafts", drafts(workspaces)),
-    HttpRouter.add("GET", "/", json({ service: "issue-tracker", workspaces })),
+    HttpRouter.add("GET", "/", json({ service: "bugsy", workspaces })),
   );

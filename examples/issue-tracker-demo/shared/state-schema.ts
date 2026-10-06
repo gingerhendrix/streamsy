@@ -23,6 +23,12 @@ export const issueStatuses = ["open", "in_progress", "done"] as const;
 export const IssueStatus = Schema.Literals(issueStatuses);
 export type IssueStatus = typeof IssueStatus.Type;
 
+/** A project holds at most this many issues `in_progress` at once. */
+export const wipLimit = 3;
+
+/** The author name when the writer gives none. */
+export const anonymousAuthor = "anonymous";
+
 export const Issue = Schema.Struct({
   id: Schema.String,
   projectId: Schema.String,
@@ -30,6 +36,8 @@ export const Issue = Schema.Struct({
   status: IssueStatus,
   createdAt: Schema.String,
   updatedAt: Schema.String,
+  /** The display name of the last writer, when the writer gave one. */
+  updatedBy: Schema.optionalKey(Schema.String),
 });
 export type Issue = typeof Issue.Type;
 

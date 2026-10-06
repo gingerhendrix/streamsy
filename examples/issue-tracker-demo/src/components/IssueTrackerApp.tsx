@@ -1,91 +1,104 @@
-import { useMemo, useState } from "react";
-import { useLiveQuery } from "@tanstack/react-db";
+import { useState } from "react";
+import { anonymousAuthor } from "../../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
-import { awaitOptimisticAction, type IssueDb } from "../db.ts";
-import { Topbar } from "./Topbar.tsx";
-import { ProjectsPanel } from "./ProjectsPanel.tsx";
+import { awaitOptimisticAction, type IssueDb, type OptimisticAction } from "../db.ts";
+import {
+  useCommentsByIssue,
+  useIssueCountByProject,
+  useProjects,
+  useStatusCounts,
+  useVisibleIssues,
+  type StatusFilter,
+} from "../queries.ts";
+import { useDisplayName } from "../utils/display-name.ts";
+import { useNotices } from "../utils/notices.ts";
+import { ConnectionBadge } from "./ConnectionBadge.tsx";
 import { IssuesPanel } from "./IssuesPanel.tsx";
+import { NameField } from "./NameField.tsx";
+import { Notices } from "./Notices.tsx";
+import { ProjectsPanel } from "./ProjectsPanel.tsx";
+import { Topbar } from "./Topbar.tsx";
+
+const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
 
 export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId: string }) {
   // Holds an explicit user selection only; while empty, rendering falls back to
   // the first project below — no effect needed to "initialize" the selection.
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [name, setName] = useDisplayName();
+  const { notices, notify } = useNotices();
+  const writer = name.trim() || undefined;
 
-  const projectsQuery = useLiveQuery((q) => q.from({ projects: db.collections.projects }));
-  const issuesQuery = useLiveQuery((q) => q.from({ issues: db.collections.issues }));
-  const commentsQuery = useLiveQuery((q) => q.from({ comments: db.collections.comments }));
-
-  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
-  const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
-  const comments = useMemo(() => commentsQuery.data ?? [], [commentsQuery.data]);
-
+  const projects = useProjects(db);
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0];
-  const visibleIssues = useMemo(
-    () =>
-      issues
-        .filter((issue) => issue.projectId === selectedProject?.id)
-        .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    [issues, selectedProject?.id],
-  );
-  const issueCountByProject = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const issue of issues) counts.set(issue.projectId, (counts.get(issue.projectId) ?? 0) + 1);
-    return counts;
-  }, [issues]);
-  const commentsByIssue = useMemo(() => {
-    const grouped = new Map<string, Comment[]>();
-    for (const comment of comments) {
-      const list = grouped.get(comment.issueId) ?? [];
-      list.push(comment);
-      grouped.set(comment.issueId, list);
+  const projectId = selectedProject?.id ?? "";
+  const issueCountByProject = useIssueCountByProject(db);
+  const visibleIssues = useVisibleIssues(db, projectId, filter);
+  const statusCounts = useStatusCounts(db, projectId);
+  const commentsByIssue = useCommentsByIssue(db);
+
+  /**
+   * Run one optimistic action. If the server refuses it, TanStack DB rolls the
+   * local change back, and the page says why.
+   */
+  const run = async <T,>(action: OptimisticAction<T>, variables: T) => {
+    try {
+      await awaitOptimisticAction(action, variables);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+      return false;
     }
-    for (const list of grouped.values())
-      list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    return grouped;
-  }, [comments]);
-
-  const createProject = async (project: Project) => {
-    await awaitOptimisticAction(db.actions.createProject, {
-      project,
-      txid: crypto.randomUUID(),
-    });
-    setSelectedProjectId(project.id);
   };
 
-  const createIssue = async (issue: Issue) => {
-    await awaitOptimisticAction(db.actions.createIssue, {
-      issue,
-      txid: crypto.randomUUID(),
-    });
+  const createProject = async (projectName: string, description: string) => {
+    const project: Project = {
+      id: newId("proj"),
+      name: projectName,
+      description,
+      createdAt: new Date().toISOString(),
+    };
+    const txid = crypto.randomUUID();
+    if (await run(db.actions.createProject, { project, txid })) setSelectedProjectId(project.id);
   };
 
-  const updateIssueStatus = async (issue: Issue, status: IssueStatus) => {
-    await awaitOptimisticAction(db.actions.updateIssueStatus, {
-      issue,
-      status,
-      updatedAt: new Date().toISOString(),
-      txid: crypto.randomUUID(),
-    });
+  const createIssue = async (title: string) => {
+    if (!selectedProject) return;
+    const now = new Date().toISOString();
+    const unnamed: Issue = {
+      id: newId("issue"),
+      projectId: selectedProject.id,
+      title,
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
+    await run(db.actions.createIssue, { issue, txid: crypto.randomUUID() });
   };
+
+  const updateIssue = (issue: Issue, patch: { title?: string; status?: IssueStatus }) =>
+    run(db.actions.updateIssue, { issue, patch, updatedBy: writer, txid: crypto.randomUUID() });
 
   const createComment = async (issue: Issue, body: string) => {
     const comment: Comment = {
-      id: `comment_${crypto.randomUUID().slice(0, 8)}`,
+      id: newId("comment"),
       issueId: issue.id,
-      author: "you",
+      author: writer ?? anonymousAuthor,
       body,
       createdAt: new Date().toISOString(),
     };
-    await awaitOptimisticAction(db.actions.createComment, {
-      comment,
-      txid: crypto.randomUUID(),
-    });
+    await run(db.actions.createComment, { comment, txid: crypto.randomUUID() });
   };
 
   return (
     <main className="shell">
-      <Topbar workspaceId={workspaceId} />
+      <Topbar workspaceId={workspaceId}>
+        <ConnectionBadge connection={db.connection} />
+        <NameField name={name} onName={setName} />
+      </Topbar>
 
       <section className="layout">
         <ProjectsPanel
@@ -100,11 +113,17 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
           selectedProject={selectedProject}
           visibleIssues={visibleIssues}
           commentsByIssue={commentsByIssue}
+          filter={filter}
+          statusCounts={statusCounts}
+          onFilter={setFilter}
           onCreateIssue={createIssue}
-          onStatus={updateIssueStatus}
+          onStatus={(issue, status) => void updateIssue(issue, { status })}
+          onRename={(issue, title) => void updateIssue(issue, { title })}
           onComment={createComment}
         />
       </section>
+
+      <Notices notices={notices} />
     </main>
   );
 }

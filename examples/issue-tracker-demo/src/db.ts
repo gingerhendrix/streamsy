@@ -1,17 +1,24 @@
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
 import { Schema } from "effect";
-import { Written } from "../shared/api-schema.ts";
+import {
+  Written,
+  type CommentInput,
+  type IssueInput,
+  type ProjectInput,
+} from "../shared/api-schema.ts";
 import { issueTrackerState, type JsonValue } from "../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../shared/types.ts";
+import { trackConnection, type Connection } from "./connection.ts";
 
 export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
 
 export type CreateProjectAction = { project: Project; txid: string };
 export type CreateIssueAction = { issue: Issue; txid: string };
-export type UpdateIssueStatusAction = {
+/** A patch of the fields a user can edit, with the writer's display name. */
+export type UpdateIssueAction = {
   issue: Issue;
-  status: IssueStatus;
-  updatedAt: string;
+  patch: { title?: string; status?: IssueStatus };
+  updatedBy: string | undefined;
   txid: string;
 };
 export type CreateCommentAction = { comment: Comment; txid: string };
@@ -20,10 +27,17 @@ export type IssueDb = StreamDB<typeof issueTrackerState> & {
   actions: {
     createProject: OptimisticAction<CreateProjectAction>;
     createIssue: OptimisticAction<CreateIssueAction>;
-    updateIssueStatus: OptimisticAction<UpdateIssueStatusAction>;
+    updateIssue: OptimisticAction<UpdateIssueAction>;
     createComment: OptimisticAction<CreateCommentAction>;
   };
+  /** Whether the stream reader reaches the server. */
+  connection: Connection;
 };
+
+/** A write the server refused, with the `error` message from its body. */
+export class ApiError extends Error {}
+
+const ErrorBody = Schema.Struct({ error: Schema.String });
 
 function streamUrl(workspaceId: string): string {
   return new URL(
@@ -36,12 +50,18 @@ function apiUrl(workspaceId: string, path: string): string {
   return `/api/w/${encodeURIComponent(workspaceId)}${path}`;
 }
 
+// The optimistic rows carry local times so they can sort at once. The bodies
+// leave the times out: the server stamps them, and the stream row replaces the
+// local one when the txid arrives.
+
 export function createIssueDb(workspaceId: string): IssueDb {
-  return createStreamDB({
+  const connection = trackConnection();
+  const streamDb = createStreamDB({
     streamOptions: {
       url: streamUrl(workspaceId),
       contentType: "application/json",
       warnOnHttp: false,
+      fetch: connection.fetch,
     },
     state: issueTrackerState,
     actions: ({ db }) => ({
@@ -50,10 +70,13 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.projects.insert(project);
         },
         mutationFn: async ({ project, txid }: CreateProjectAction) => {
-          const result = await postJson(apiUrl(workspaceId, "/projects"), {
-            ...project,
+          const body: ProjectInput = {
+            id: project.id,
+            name: project.name,
+            description: project.description,
             txid,
-          });
+          };
+          const result = await postJson(apiUrl(workspaceId, "/projects"), body);
           await db.utils.awaitTxId(result.txid);
         },
       },
@@ -62,24 +85,33 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.issues.insert(issue);
         },
         mutationFn: async ({ issue, txid }: CreateIssueAction) => {
-          const result = await postJson(apiUrl(workspaceId, "/issues"), {
-            ...issue,
+          const body: IssueInput = {
+            id: issue.id,
+            projectId: issue.projectId,
+            title: issue.title,
+            status: issue.status,
+            updatedBy: issue.updatedBy,
             txid,
-          });
+          };
+          const result = await postJson(apiUrl(workspaceId, "/issues"), body);
           await db.utils.awaitTxId(result.txid);
         },
       },
-      updateIssueStatus: {
-        onMutate: ({ issue, status, updatedAt }: UpdateIssueStatusAction) => {
+      updateIssue: {
+        onMutate: ({ issue, patch, updatedBy }: UpdateIssueAction) => {
           db.collections.issues.update(issue.id, (draft) => {
-            draft.status = status;
-            draft.updatedAt = updatedAt;
+            Object.assign(draft, patch);
+            draft.updatedAt = new Date().toISOString();
+            if (updatedBy === undefined) delete draft.updatedBy;
+            else draft.updatedBy = updatedBy;
           });
         },
-        mutationFn: async ({ issue, status, updatedAt, txid }: UpdateIssueStatusAction) => {
+        mutationFn: async ({ issue, patch, updatedBy, txid }: UpdateIssueAction) => {
+          // JSON leaves out an undefined `updatedBy`.
+          const body: IssueInput = { ...patch, updatedBy, txid };
           const result = await postJson(
             apiUrl(workspaceId, `/issues/${encodeURIComponent(issue.id)}`),
-            { status, updatedAt, txid },
+            body,
             { method: "PATCH" },
           );
           await db.utils.awaitTxId(result.txid);
@@ -90,15 +122,20 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.comments.insert(comment);
         },
         mutationFn: async ({ comment, txid }: CreateCommentAction) => {
-          const result = await postJson(apiUrl(workspaceId, "/comments"), {
-            ...comment,
+          const body: CommentInput = {
+            id: comment.id,
+            issueId: comment.issueId,
+            author: comment.author,
+            body: comment.body,
             txid,
-          });
+          };
+          const result = await postJson(apiUrl(workspaceId, "/comments"), body);
           await db.utils.awaitTxId(result.txid);
         },
       },
     }),
   });
+  return Object.assign(streamDb, { connection });
 }
 
 async function postJson(url: string, body: JsonValue, init: RequestInit = {}): Promise<Written> {
@@ -110,8 +147,18 @@ async function postJson(url: string, body: JsonValue, init: RequestInit = {}): P
     headers,
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await apiError(response);
   return Schema.decodeUnknownSync(Written)(await response.json());
+}
+
+/** The `{ error }` body as an `ApiError`, or the status when the body is not one. */
+async function apiError(response: Response): Promise<ApiError> {
+  const text = await response.text();
+  try {
+    return new ApiError(Schema.decodeUnknownSync(ErrorBody)(JSON.parse(text)).error);
+  } catch {
+    return new ApiError(`Request failed with status ${response.status}`);
+  }
 }
 
 export async function awaitOptimisticAction<T>(

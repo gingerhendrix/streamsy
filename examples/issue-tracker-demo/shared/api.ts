@@ -17,6 +17,7 @@ import {
   NotFound,
   ProjectInput,
   ProjectWritten,
+  WipLimitReached,
   WorkspaceCreated,
   WorkspaceId,
 } from "./api-schema.ts";
@@ -29,6 +30,8 @@ export class RequestErrors extends HttpApiMiddleware.Service<RequestErrors>()(
 
 const inWorkspace = { ws: WorkspaceId };
 const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
+/** An issue write can also break the work-in-progress rule. */
+const issueErrors = [...writeErrors, WipLimitReached];
 
 export class WorkspacesApi extends HttpApiGroup.make("workspaces").add(
   HttpApiEndpoint.post("create", "/workspaces", {
@@ -51,13 +54,13 @@ export class IssuesApi extends HttpApiGroup.make("issues").add(
     params: inWorkspace,
     payload: IssueInput,
     success: IssueWritten.pipe(HttpApiSchema.status(201)),
-    error: writeErrors,
+    error: issueErrors,
   }),
   HttpApiEndpoint.patch("update", "/w/:ws/issues/:id", {
     params: { ...inWorkspace, id: Schema.String },
     payload: IssueInput,
     success: IssueWritten,
-    error: writeErrors,
+    error: issueErrors,
   }),
 ) {}
 

@@ -1,10 +1,10 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Console, Effect, Fiber, FileSystem, Layer, Path, Schema } from "effect";
+import { Console, Effect, Fiber, FileSystem, Layer, Path, Result, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { IssueTrackerApi } from "../shared/api.ts";
-import { BadRequest, Conflict, NotFound } from "../shared/api-schema.ts";
+import { BadRequest, Conflict, NotFound, WipLimitReached } from "../shared/api-schema.ts";
 import { decodeStateEvents, Issue, Project, type StateEvent } from "../shared/state-schema.ts";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
@@ -14,7 +14,7 @@ class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
 const check = (condition: boolean, message: string) =>
   condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));
 
-const apiErrors = { BadRequest, NotFound, Conflict };
+const apiErrors = { BadRequest, NotFound, Conflict, WipLimitReached };
 
 /** Run a call that must fail with the API error `tag`; return its `error` message. */
 const expectApiError = <A, E, R>(effect: Effect.Effect<A, E, R>, tag: keyof typeof apiErrors) =>
@@ -93,6 +93,21 @@ const smoke = Effect.gen(function* () {
   const api = yield* HttpApiClient.make(IssueTrackerApi, { baseUrl });
 
   const main = { ws: "main" };
+
+  // === 0. The seed: five issues, two of them in progress in one project ===
+
+  const seed = yield* readStream(mainStreamUrl);
+  const seededIssues = yield* Effect.forEach(
+    seed.events.filter((event) => event.type === "issue"),
+    (event) => Schema.decodeUnknownEffect(Issue)(event.value),
+  );
+  yield* check(seededIssues.length === 5, `main should seed 5 issues, got ${seededIssues.length}`);
+  yield* check(
+    seededIssues.filter(
+      (issue) => issue.projectId === "proj_streamsy" && issue.status === "in_progress",
+    ).length === 2,
+    "main should seed 2 issues in progress in Streamsy Demo",
+  );
 
   // === 1. CRUD flow on the known workspace (/api/w/main) ===
 
@@ -303,7 +318,41 @@ const smoke = Effect.gen(function* () {
     yield* findEvent(after.events, "issue", contendedId, "upsert");
   }
 
-  // === 7. Raw stream writes cannot bypass domain validation ===
+  // === 7. Two writers race for the last in-progress place ===
+
+  const raceWorkspaceId = yield* createWorkspace;
+  const race = { ws: raceWorkspaceId };
+  const raceProject = yield* Schema.decodeUnknownEffect(Project)(
+    (yield* readStream(`${baseUrl}/streams/workspace/${raceWorkspaceId}`)).events[0]?.value,
+  );
+  const raceIssue = (title: string, status: "open" | "in_progress") =>
+    Effect.map(
+      api.issues.create({ params: race, payload: { projectId: raceProject.id, title, status } }),
+      (result) => result.issue.id,
+    );
+  yield* raceIssue("Busy 1", "in_progress");
+  yield* raceIssue("Busy 2", "in_progress");
+  const contenders = [
+    yield* raceIssue("Contender A", "open"),
+    yield* raceIssue("Contender B", "open"),
+  ];
+  const raced = yield* Effect.all(
+    contenders.map((id) =>
+      api.issues
+        .update({ params: { ...race, id }, payload: { status: "in_progress" } })
+        .pipe(Effect.result),
+    ),
+    { concurrency: "unbounded" },
+  );
+  const refused = raced.filter(Result.isFailure).map((result) => result.failure);
+  yield* check(
+    raced.filter(Result.isSuccess).length === 1 &&
+      refused.length === 1 &&
+      Schema.is(WipLimitReached)(refused[0]),
+    `the race should give one success and one WipLimitReached, got ${refused.map(String).join(", ")}`,
+  );
+
+  // === 8. Raw stream writes cannot bypass domain validation ===
 
   const beforeDenied = yield* readStream(mainStreamUrl);
   for (const method of ["PUT", "POST", "DELETE"] as const) {
@@ -317,7 +366,7 @@ const smoke = Effect.gen(function* () {
     "denied writes leave the stream unchanged",
   );
 
-  // === 8. SQLite restart preserves a workspace and its issue ===
+  // === 9. SQLite restart preserves a workspace and its issue ===
 
   const restartWorkspaceId = yield* createWorkspace;
   const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
