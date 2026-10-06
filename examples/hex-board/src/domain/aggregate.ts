@@ -315,7 +315,7 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
         };
       }
 
-      beginTurn(state, event.turnOrder[0]!);
+      beginTurn(state, event.turnOrder[0]);
       break;
     }
 
@@ -375,8 +375,8 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
         );
       }
 
-      const from = state.territories[event.from]!;
-      const to = state.territories[event.to]!;
+      const from = state.territories[event.from];
+      const to = state.territories[event.to];
       from.armies -= event.attackerLosses;
       to.armies -= event.defenderLosses;
       state.attacks[event.attackId] = {
@@ -407,8 +407,8 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
     }
 
     case "TerritoryOccupied": {
-      const from = state.territories[event.from]!;
-      const to = state.territories[event.to]!;
+      const from = state.territories[event.from];
+      const to = state.territories[event.to];
       from.armies -= event.armies;
       to.ownerId = event.playerId;
       to.armies = event.armies;
@@ -459,7 +459,7 @@ export function foldAggregate(events: readonly GameEvent[]): AggregateState {
   const state = initialState();
 
   for (let index = 0; index < events.length; index += 1) {
-    const event = events[index]!;
+    const event = events[index];
     applyEvent(state, event);
     state.eventCount = index + 1;
     const record = state.commandIndex[event.commandId];
@@ -489,7 +489,7 @@ export function nextTurn(state: AggregateState, finishingPlayerId: string): Next
   const order = activePlayers(state);
   const fromIndex = order.indexOf(finishingPlayerId);
   const nextIndex = (fromIndex + 1) % order.length;
-  const nextPlayerId = order[nextIndex]!;
+  const nextPlayerId = order[nextIndex];
   const wrapped = nextIndex <= fromIndex;
 
   return { nextPlayerId, round: wrapped ? state.round + 1 : state.round };
@@ -511,7 +511,7 @@ export function friendlyReachable(state: AggregateState, playerId: string, from:
   const reachable: string[] = [];
 
   for (let head = 0; head < queue.length; head += 1) {
-    for (const next of state.index.territoryById.get(queue[head]!)?.adjacentTerritoryIds ?? []) {
+    for (const next of state.index.territoryById.get(queue[head])?.adjacentTerritoryIds ?? []) {
       if (seen.has(next) || state.territories[next]?.ownerId !== playerId) continue;
       seen.add(next);
       queue.push(next);

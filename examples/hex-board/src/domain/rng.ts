@@ -25,7 +25,7 @@ export function shuffle<T>(rng: Rng, items: readonly T[]): T[] {
 
   for (let i = out.length - 1; i > 0; i -= 1) {
     const j = rng.nextInt(i + 1);
-    [out[i], out[j]] = [out[j]!, out[i]!];
+    [out[i], out[j]] = [out[j], out[i]];
   }
 
   return out;

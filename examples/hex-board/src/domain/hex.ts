@@ -39,8 +39,8 @@ export function parseHexId(id: string): Axial {
     throw new Error(`Malformed hex id: ${id}`);
   }
 
-  const q = Number.parseInt(parts[1]!, 10);
-  const r = Number.parseInt(parts[2]!, 10);
+  const q = Number.parseInt(parts[1], 10);
+  const r = Number.parseInt(parts[2], 10);
 
   if (!Number.isInteger(q) || !Number.isInteger(r)) {
     throw new Error(`Malformed hex id: ${id}`);

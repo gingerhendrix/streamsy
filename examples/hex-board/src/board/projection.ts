@@ -399,7 +399,7 @@ function applyEvent(
         }
 
         refreshDerivedTotals(state);
-        const first = event.turnOrder[0]!;
+        const first = event.turnOrder[0];
         beginTurn(state, first, turnIdOf(event.round, first));
         break;
       }
@@ -739,7 +739,7 @@ export function projectEvents(
     let state = initialProjection();
 
     for (let index = 0; index < events.length; index += 1) {
-      state = yield* projectEvent(state, events[index]!, String(index), index);
+      state = yield* projectEvent(state, events[index], String(index), index);
     }
 
     return state;
