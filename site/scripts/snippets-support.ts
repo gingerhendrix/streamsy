@@ -179,7 +179,7 @@ export const program = Projection.run(orderTotalsProjection, { limit: 10 });
       renames: { 1: "app.ts" },
       preludes: {
         3: `import { Context, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", { params: { seat: Schema.String }, schema: Schema.String }) {}
@@ -192,13 +192,13 @@ import { Streamsy } from "@streamsy/core";
 class Events extends Streamsy.json<Events>()("Game/ApiEvents", "events/:seat", { params: { seat: Schema.String }, schema: Schema.String }) {}
 `,
         5: `import { Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { App } from "./app.ts";
 `,
       },
       modules: {
         "zz-provided.ts": `import { Layer, Schema } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { App, game } from "./app.ts";
 const served = HttpRouter.serve(App);
@@ -207,7 +207,7 @@ class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", { pa
 // The served app requires the Events stream service.
 export const requiresEvents: Events extends Needs ? true : false = true;
 export const provided = served.pipe(Layer.provide(MemoryStorage.layer(game)));
-type Left = Exclude<Layer.Services<typeof provided>, import("effect/unstable/http").HttpServer.HttpServer>;
+type Left = Exclude<Layer.Services<typeof provided>, import("effect/http").HttpServer.HttpServer>;
 export const nothingElse: [Left] extends [never] ? true : false = true;
 `,
       },

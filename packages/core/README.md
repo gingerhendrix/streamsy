@@ -3,7 +3,7 @@
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
 protocol. Typed stream declarations, stream services, an in-process memory Layer, an
 HTTP app, and a client for remote hosts. Version 0.4.0 requires
-`effect@4.0.0-rc.115`.
+`effect@4.0.1`.
 
 ```sh
 bun add @streamsy/core effect

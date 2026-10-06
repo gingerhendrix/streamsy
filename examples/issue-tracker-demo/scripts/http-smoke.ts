@@ -1,8 +1,8 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
 import { Console, Effect, Fiber, FileSystem, Layer, Path, Schema } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
+import { HttpApiClient } from "effect/http-api";
 import { IssueTrackerApi } from "../shared/api.ts";
 import { BadRequest, Conflict, NotFound } from "../shared/api-schema.ts";
 import { decodeStateEvents, Issue, Project, type StateEvent } from "../shared/state-schema.ts";

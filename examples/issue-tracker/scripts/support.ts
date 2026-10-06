@@ -1,6 +1,6 @@
 import { spawnServer } from "@streamsy/test-support/server";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
 import { ServerConfig, storageChoice } from "../server/config.ts";
 

@@ -15,8 +15,8 @@ import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { Config, Context, Effect, Layer, Option, Random, Redacted, type Scope } from "effect";
-import type { Reactivity } from "effect/unstable/reactivity";
-import { SqlClient, type SqlError } from "effect/unstable/sql";
+import type { Reactivity } from "effect/reactivity";
+import { SqlClient, type SqlError } from "effect/sql";
 import type { IssueEvent, IssueLabelEvent, IssueStatus } from "../domain/issue.ts";
 import {
   applicationLayer,

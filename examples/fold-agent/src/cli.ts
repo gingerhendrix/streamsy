@@ -13,7 +13,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { resumeSession, SessionId, startSession, type FoldSession } from "@humanlayer/fold-core";
 import { Console, Effect, Option } from "effect";
-import { Argument, CliError, Command } from "effect/unstable/cli";
+import { Argument, CliError, Command } from "effect/cli";
 import packageJson from "../package.json" with { type: "json" };
 import { configuredModel, exampleAgent } from "./agent.ts";
 import { formatEntry } from "./render.ts";

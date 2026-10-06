@@ -45,10 +45,10 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { Reactivity } from "effect/unstable/reactivity";
-import { SqlClient, type SqlError } from "effect/unstable/sql";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { Reactivity } from "effect/reactivity";
+import { SqlClient, type SqlError } from "effect/sql";
 
 /** The backends of the plan, in table order. */
 const BACKENDS = ["memory", "sqlite", "pg", "mysql"] as const;

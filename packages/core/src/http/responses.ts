@@ -1,4 +1,4 @@
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 /**
  * Response factory for the HTTP layer.
  *

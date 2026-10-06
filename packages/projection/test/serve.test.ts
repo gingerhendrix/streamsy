@@ -5,7 +5,7 @@ import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- These integration tests own the managed runtime and Web handler boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Streams } from "@streamsy/core/protocol";
 import { Projection } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";

@@ -12,17 +12,17 @@
     "test:unit": "bun test test"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.0-rc.115",
-    "@effect/platform-deno": "4.0.0-rc.115",
-    "@effect/platform-node": "4.0.0-rc.115",
-    "@effect/sql-mysql2": "4.0.0-rc.115",
-    "@effect/sql-pg": "4.0.0-rc.115",
-    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-    "@effect/sql-sqlite-node": "4.0.0-rc.115",
+    "@effect/platform-bun": "4.0.1",
+    "@effect/platform-deno": "4.0.1",
+    "@effect/platform-node": "4.0.1",
+    "@effect/sql-mysql2": "4.0.1",
+    "@effect/sql-pg": "4.0.1",
+    "@effect/sql-sqlite-bun": "4.0.1",
+    "@effect/sql-sqlite-node": "4.0.1",
     "@streamsy/core": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.1"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

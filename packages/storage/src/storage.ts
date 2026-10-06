@@ -22,9 +22,9 @@ import {
   type RecordPatch,
 } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import * as SqlClient from "effect/sql/SqlClient";
+import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import {
   BoundaryRuntimeService,
   boundaryLayer,

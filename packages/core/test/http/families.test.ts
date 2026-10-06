@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { Http, Streamsy, MemoryStorage } from "../../src/index.ts";
 
 class Inputs extends Streamsy.bytes<Inputs>()("Inputs", "inputs/:id", {

@@ -4,7 +4,7 @@ import { Streamsy, MemoryStorage } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 

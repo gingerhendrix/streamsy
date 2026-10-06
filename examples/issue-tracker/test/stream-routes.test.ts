@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { app } from "../server/app.ts";
 import { applicationLayer, sqliteStorage } from "../server/host.ts";
 import { Layer } from "effect";

@@ -1,7 +1,7 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { Context, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
 class stream extends Streamsy.json<stream>()("serve/serve.type-test/stream", "events/:seat", {

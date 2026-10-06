@@ -2,7 +2,7 @@
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
 Node, Deno and Cloudflare host glue and durable action delivery. Requires Effect
-`4.0.0-rc.115`.
+`4.0.1`.
 
 ```ts
 import { Layer, Schema } from "effect";

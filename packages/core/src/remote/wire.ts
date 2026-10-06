@@ -7,7 +7,7 @@
  * a field the direct Layer returns, the decoder reports what the wire has.
  */
 import { Effect, Schema, Stream } from "effect";
-import type { HttpClientResponse } from "effect/unstable/http";
+import type { HttpClientResponse } from "effect/http";
 import { TransportFault } from "../fault.ts";
 import type { ReadMessage } from "../protocol/results.ts";
 

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { Array, Context, Effect, Layer, Option, Result } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Storage, StreamId } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { SqlStorage } from "@streamsy/storage";

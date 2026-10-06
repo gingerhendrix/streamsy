@@ -19,7 +19,7 @@ import {
   HttpBody,
   HttpClient,
   type HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,
@@ -38,7 +38,10 @@ const requiredHeader = (response: HttpClientResponse.HttpClientResponse, name: s
 const readSseUntilControl = (response: HttpClientResponse.HttpClientResponse) =>
   response.stream.pipe(
     Stream.decodeText,
-    Stream.scan("", (output, chunk) => output + chunk),
+    Stream.scan(
+      () => "",
+      (output, chunk) => output + chunk,
+    ),
     Stream.takeUntil(
       (output) => output.includes("event: data") && output.includes("event: control"),
     ),

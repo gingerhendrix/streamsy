@@ -1,5 +1,5 @@
 import { Array, Effect } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";

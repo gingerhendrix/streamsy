@@ -1,5 +1,5 @@
 import { Cause, Duration, Effect, Exit, Layer, Runtime } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { ShutdownSignal, layerShutdownSignal } from "@streamsy/core/http";
 
 type DefaultServeRequires<R> =

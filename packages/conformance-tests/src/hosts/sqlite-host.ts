@@ -8,7 +8,7 @@ import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { SqlStorage } from "@streamsy/storage";
 import { Config, Effect, Layer, Option } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 
 export const HostConfig = Config.all({
   // Zero asks the runtime for a free port, which `Config.Port` does not accept.

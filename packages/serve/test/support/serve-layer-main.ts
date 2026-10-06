@@ -4,7 +4,7 @@
  * `Serve.teardown`. The listener and `runMain` come from `./runtime.ts`.
  */
 import { Config, Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { ShutdownSignal } from "@streamsy/core/http";
 import { MemoryStorage } from "@streamsy/core";
 import { routes } from "@streamsy/core/protocol";

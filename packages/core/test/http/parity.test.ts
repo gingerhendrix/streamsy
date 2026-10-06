@@ -7,7 +7,7 @@ import { MemoryStorage } from "../../src/index.ts";
 import { StreamsReader } from "../../src/protocol/index.ts";
 import fixtures from "../../src/http/fixtures/wire.json";
 import * as Http from "../../src/http/index.ts";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 
 interface WireFixture {
   readonly label: string;

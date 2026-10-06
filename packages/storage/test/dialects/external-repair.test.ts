@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { Context, Effect, Layer } from "effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { makeBoundaryTestProbe } from "../../src/boundary.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import { runExternalRepair } from "../support/storage-boundary-scenarios.ts";

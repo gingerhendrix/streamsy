@@ -14,8 +14,8 @@ import {
   HttpServerRequest,
   HttpServerResponse,
   HttpServerRespondable,
-} from "effect/unstable/http";
-import type { HttpServerError } from "effect/unstable/http/HttpServerError";
+} from "effect/http";
+import type { HttpServerError } from "effect/http/HttpServerError";
 import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http";
 import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
 import { resolvePlacement } from "./cloudflare/router.ts";

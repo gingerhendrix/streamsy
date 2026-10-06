@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the Web request boundary. */
 import { expect, test } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerRespondable, Etag } from "effect/unstable/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerRespondable, Etag } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { BunServices, BunHttpPlatform } from "@effect/platform-bun";
 import { Streamsy, MemoryStorage, Http } from "@streamsy/core";
 import { Serve } from "../src/index.ts";

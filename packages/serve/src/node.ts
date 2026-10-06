@@ -1,6 +1,6 @@
 import { createServer, type ServerOptions } from "node:http";
 import { Effect, Layer, type Duration } from "effect";
-import { HttpServer, HttpServerResponse } from "effect/unstable/http";
+import { HttpServer, HttpServerResponse } from "effect/http";
 import { NodeHttpServer } from "@effect/platform-node";
 
 export const DEFAULT_PORT = 3000;

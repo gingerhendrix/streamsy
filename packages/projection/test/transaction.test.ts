@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";

@@ -11,11 +11,11 @@
     "destroy": "node node_modules/alchemy/bin/cli.js destroy"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.115",
-    "@effect/platform-node": "4.0.0-rc.115",
+    "@effect/platform-bun": "4.0.1",
+    "@effect/platform-node": "4.0.1",
     "@types/bun": "1.4.0",
-    "alchemy": "2.0.0-beta.79",
-    "effect": "4.0.0-rc.115",
+    "alchemy": "2.0.0-beta.80",
+    "effect": "4.0.1",
     "typescript": "^7.0.2"
   }
 }

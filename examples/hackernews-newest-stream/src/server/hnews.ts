@@ -1,5 +1,5 @@
 import { Array, Effect, Layer, Option, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { HackerNewsItem, HackerNewsStory, newestStorySort } from "../state-schema.ts";
 import { DemoConfig } from "./config.ts";
 import { HackerNewsApi, pollFailure } from "./poller/contract.ts";

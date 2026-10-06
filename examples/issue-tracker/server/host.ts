@@ -3,8 +3,8 @@ import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@s
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer, type Scope } from "effect";
-import type { Reactivity } from "effect/unstable/reactivity";
-import { SqlClient } from "effect/unstable/sql";
+import type { Reactivity } from "effect/reactivity";
+import { SqlClient } from "effect/sql";
 import { tracker, outputStreams } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";

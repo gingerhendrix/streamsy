@@ -1,6 +1,6 @@
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { streamPath } from "./config.ts";
 import { NewestStoriesPoller } from "./poller/contract.ts";
 import { clientRoute } from "./static.ts";

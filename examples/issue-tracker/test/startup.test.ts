@@ -67,7 +67,7 @@ test("a workspace fault at startup leaves HTTP and other workspaces available", 
 test("the host runtime provides application storage services and no Storage", async () => {
   const { Storage } = await import("@streamsy/core");
   const { CheckpointStore, Transaction } = await import("@streamsy/projection");
-  const { SqlClient } = await import("effect/unstable/sql");
+  const { SqlClient } = await import("effect/sql");
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {

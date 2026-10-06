@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "bun:test";
 import { Effect, Exit, Layer } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { spawnServer, UncleanStop } from "../server.ts";
 
 const services = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);

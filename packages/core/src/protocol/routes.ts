@@ -1,4 +1,4 @@
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { app } from "../http/program.ts";
 import type { RoutesOptions } from "../http/routes.ts";
 

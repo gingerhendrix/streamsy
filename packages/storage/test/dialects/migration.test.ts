@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { Context, Effect, Layer, Option, type Scope } from "effect";
 import { Offset, Storage, StreamId } from "@streamsy/core";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { migrate } from "../../src/migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "../../src/schema.ts";
 import { storageLayer } from "../../src/storage.ts";

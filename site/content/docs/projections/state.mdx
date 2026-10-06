@@ -54,7 +54,7 @@ Each unit decodes and saves the whole value. Use state for small values, for exa
 Keep large row sets in application tables, with `Commit.transaction` on a SQL host:
 
 ```ts
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 
 const orderRows = Projection.fold({
   id: "order-rows",

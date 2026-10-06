@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { CommitBoundary } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
 import { ProjectionFault } from "./fault.ts";

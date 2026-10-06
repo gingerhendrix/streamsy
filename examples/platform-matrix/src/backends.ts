@@ -10,8 +10,8 @@ import { PgClient } from "@effect/sql-pg";
 import { MemoryStorage, type StorageFault, Streamsy } from "@streamsy/core";
 import { SqlStorage } from "@streamsy/storage";
 import { Config, Effect, Layer, Option, type Scope } from "effect";
-import type { Reactivity } from "effect/unstable/reactivity";
-import type { SqlClient, SqlError } from "effect/unstable/sql";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient, SqlError } from "effect/sql";
 
 export const streams = Streamsy.group(Streamsy.Wildcard);
 

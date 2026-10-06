@@ -6,7 +6,7 @@ import {
   type FoldModel,
 } from "@humanlayer/fold-core";
 import { Effect, Ref, Stream } from "effect";
-import { LanguageModel, type Response } from "effect/unstable/ai";
+import { LanguageModel, type Response } from "effect/ai";
 
 export type ScriptedTurn = { readonly parts: ReadonlyArray<Response.StreamPartEncoded> };
 

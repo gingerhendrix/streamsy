@@ -2,7 +2,7 @@
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect, Layer } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { MemoryStorage } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";

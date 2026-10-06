@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Http } from "@streamsy/core";
 import { ConfigProvider, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import * as App from "../src/app.ts";
 
 const edges: Array<{ readonly dispose: () => Promise<void> }> = [];

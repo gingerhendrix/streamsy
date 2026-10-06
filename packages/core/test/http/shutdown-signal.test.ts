@@ -1,7 +1,7 @@
 // oxlint-disable effecttsgo/async-function -- Web boundary tests use requests and response body promises.
 import { expect, it } from "bun:test";
 import { Effect, Fiber, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { MemoryStorage } from "../../src/index.ts";
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 import {

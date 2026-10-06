@@ -1,7 +1,7 @@
 import type { Effect, Layer } from "effect";
 import type { Transaction, CheckpointStore } from "@streamsy/projection";
-import type { HttpRouter } from "effect/unstable/http";
-import type { SqlClient } from "effect/unstable/sql";
+import type { HttpRouter } from "effect/http";
+import type { SqlClient } from "effect/sql";
 import type { app, outputRoutes } from "../server/app.ts";
 import type { tracker, Board, LabelCounts, Transitions } from "../server/outputs.ts";
 import type { issueRows } from "../server/projection.ts";

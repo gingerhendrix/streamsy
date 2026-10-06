@@ -2,7 +2,7 @@ import { BunRuntime } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { Effect, Layer } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { DemoConfig } from "./config.ts";
 import { hackerNewsApiLayer } from "./hnews.ts";
 import { app } from "./http.ts";

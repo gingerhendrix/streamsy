@@ -41,7 +41,7 @@ the example to one stream and one write per entry.
 `memoryLayer()` and `sqliteLayer(filename)` give the same `Sessions` service
 on the memory host and on Bun SQLite. The CLI reads its settings with Effect
 `Config` and provides the store Layer for each command. The commands are
-defined with `effect/unstable/cli` and run by `BunRuntime.runMain`, so Ctrl-C
+defined with `effect/cli` and run by `BunRuntime.runMain`, so Ctrl-C
 interrupts the command and closes the store.
 
 ## Verify
@@ -62,6 +62,7 @@ Full-history recovery is O(log). Snapshots, retention, and recovery of an
 in-flight provider request are not provided. Non-recomputable payloads need
 the persisted tuple contract described under
 [Producer restarts](../../packages/core/README.md#producer-restarts). Effect is
-pinned to `4.0.0-rc.115` through the workspace override;
-`@humanlayer/fold-core` declares older peers, and the tests cover that
+pinned to `4.0.1` through the workspace override.
+`@humanlayer/fold-core` 0.1.32 declares an exact `effect` `4.0.0` peer. The
+override gives it the workspace's single `4.0.1` copy, and the tests cover that
 combination.

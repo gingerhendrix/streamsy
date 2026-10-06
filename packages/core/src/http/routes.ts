@@ -1,5 +1,5 @@
 import { Effect, type Layer } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { checkStreams, type Any, type Identifiers } from "../toolkit/streamsy.ts";
 import type * as Group from "../toolkit/streamsy.ts";

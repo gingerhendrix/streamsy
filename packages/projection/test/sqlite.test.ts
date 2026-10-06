@@ -16,7 +16,7 @@ import {
   Option,
   Schema,
 } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Streams } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";

@@ -9,7 +9,7 @@ import {
   Ids,
   layerLiveIdFactory,
   LogEntry as LogEntrySchema,
-  makeStoredLogEntry,
+  storedLogEntry,
   type EventLogService,
   type LogEntryInput,
   type SessionId,
@@ -103,7 +103,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           if (fenced) return yield* unavailable("This writer is fenced; resume from the log");
           if (nextEntrySeq === 0 ? !isSessionStart(input) : isSessionStart(input))
             return yield* corrupt("Fold log requires exactly one initial session_started");
-          const entry = yield* makeStoredLogEntry(input, nextEntrySeq, ids);
+          const entry = yield* storedLogEntry(input, nextEntrySeq, yield* ids.makeEventId);
           // Preserve Fold v1 optional-field omission; toCodecJson would encode undefined as null.
           const bytes = yield* Schema.encodeEffect(Schema.fromJsonString(LogEntrySchema))(entry);
           const json = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(bytes);

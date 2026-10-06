@@ -11,10 +11,10 @@ import {
   Stream,
 } from "effect";
 import * as Scheduler from "effect/Scheduler";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
-import { isSqlError } from "effect/unstable/sql/SqlError";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
+import { isSqlError } from "effect/sql/SqlError";
 import type { CommitBoundaryApi } from "@streamsy/core";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 

@@ -19,7 +19,7 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { createHnDb, type HnDb } from "../src/client/db.ts";
 import { ApiStatusSmokeView } from "../src/state-schema.ts";
 import { storiesAddress } from "../src/server/stories.ts";

@@ -13,6 +13,7 @@ import {
   type FoldModel,
 } from "@humanlayer/fold-core";
 import { Config, Effect, Option, Schema } from "effect";
+import { FetchHttpClient, type HttpClient } from "effect/http";
 import { scriptedModel, textTurn, toolCallTurn } from "./scripted-model.ts";
 
 export const SYSTEM_PROMPT = [
@@ -105,6 +106,12 @@ const scriptedFromJson = (fixture: string) =>
     Effect.map(({ model }) => model),
   );
 
+/** Fold's built-in providers need an HttpClient. The example reaches them over fetch. */
+const overFetch = (model: FoldModel<HttpClient.HttpClient>): FoldModel => ({
+  ...model,
+  make: model.make.pipe(Effect.provide(FetchHttpClient.layer)),
+});
+
 /**
  * Pick a model from config. A scripted fixture wins, then OpenAI, then
  * Anthropic. Tests that do not run the CLI supply a scripted model instead.
@@ -116,14 +123,18 @@ export const configuredModel: Effect.Effect<
   const settings = yield* ModelSettings;
   if (Option.isSome(settings.script)) return yield* scriptedFromJson(settings.script.value);
   if (Option.isSome(settings.openaiKey))
-    return openaiModel({
-      apiKey: settings.openaiKey.value,
-      model: Option.getOrElse(settings.model, () => "gpt-5.6"),
-    });
+    return overFetch(
+      openaiModel({
+        apiKey: settings.openaiKey.value,
+        model: Option.getOrElse(settings.model, () => "gpt-5.6"),
+      }),
+    );
   if (Option.isSome(settings.anthropicKey))
-    return anthropicModel({
-      apiKey: settings.anthropicKey.value,
-      ...Option.match(settings.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
-    });
+    return overFetch(
+      anthropicModel({
+        apiKey: settings.anthropicKey.value,
+        ...Option.match(settings.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
+      }),
+    );
   return yield* missingCredentials();
 });

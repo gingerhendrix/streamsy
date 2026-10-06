@@ -149,8 +149,8 @@ Protect the protocol routes too, if they expose private data.
 
 ```ts
 import { Effect, Schema } from "effect";
-import { HttpServerRespondable } from "effect/unstable/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpServerRespondable } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
 const Api = HttpApi.make("Game").add(
   HttpApiGroup.make("feeds").add(

@@ -2,7 +2,7 @@ import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer } from "effect";
 import { StorageFault, MemoryStorage } from "@streamsy/core";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
 import { Option } from "effect";
 import { objectHandlers } from "../src/alchemy.ts";

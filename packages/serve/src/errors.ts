@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import { Http } from "@streamsy/core";
 import type { PublicError } from "./contract.ts";
 

@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Streamsy } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
 
