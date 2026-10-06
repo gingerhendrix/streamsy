@@ -10,8 +10,11 @@ import { defineView, from, parameter, source, view } from "@streamsy/views";
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion -- Malformed plan fixtures intentionally cross the static contract to prove runtime rejection. */
 
 const Row = Schema.Struct({ id: Schema.String, projectId: Schema.String, score: Schema.Finite });
+
 type Row = typeof Row.Type;
+
 const x = selectors<Row>();
+
 const rows = source("example.rows", {
   schema: Row,
   schemaRef: { name: "example.Row", version: 1 },
@@ -19,6 +22,7 @@ const rows = source("example.rows", {
   key: "id",
   mode: "facts",
 });
+
 const unusedReducer: ReducerDeclaration<typeof Row, typeof Row> = {
   kind: "reducer",
   ref: { name: "example.reducer", version: 1 },
@@ -39,6 +43,7 @@ describe("relation compilation", () => {
         .select({ id: x.row.id, projectId: x.row.projectId, score: x.row.score })
         .top({ by: [x.row.score.desc(), x.row.id.asc()], limit: 10 }),
     );
+
     expect(declaration.plan.nodes.map((node) => node.kind)).toEqual([
       "source",
       "filter",
@@ -69,6 +74,7 @@ describe("relation compilation", () => {
 
   it("encodes frozen fact and state source modes as distinct plan identities", () => {
     const facts = rows;
+
     const state = source("example.state-rows", {
       schema: Row,
       schemaRef: { name: "example.Row", version: 1 },
@@ -76,16 +82,19 @@ describe("relation compilation", () => {
       key: "id",
       mode: "state",
     });
+
     const factPlan = view(
       "example.source-mode",
       { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
       from(facts),
     ).plan;
+
     const statePlan = view(
       "example.source-mode",
       { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
       from(state),
     ).plan;
+
     expect(factPlan.version).toBe(3);
     expect(factPlan.nodes[0]).toMatchObject({ mode: "facts", key: x.row.id });
     expect(statePlan.nodes[0]).toMatchObject({ mode: "state", key: x.row.id });
@@ -99,6 +108,7 @@ describe("relation compilation", () => {
   it("records parameter metadata and enforced top bounds", () => {
     const projectId = parameter("projectId", Schema.String);
     const limit = parameter("limit", Schema.Int, { maximum: 50 });
+
     const declaration = defineView({
       name: "example.by-project",
       params: { projectId, limit },
@@ -110,11 +120,13 @@ describe("relation compilation", () => {
           .where(x.row.projectId.eq(params.projectId))
           .top({ by: [x.row.score.desc(), x.row.id.asc()], limit: params.limit }),
     });
+
     expect(declaration.plan.parameters).toEqual({
       projectId: { schema: { name: "projectId", version: 1 } },
       limit: { schema: { name: "limit", version: 1 }, maximum: 50 },
     });
     expect(declaration.plan.nodes.at(-1)).toMatchObject({ kind: "top-n", maximum: 50 });
+
     return expect(Effect.runPromise(checkPlan(declaration))).resolves.toMatchObject({
       hash: expect.stringMatching(/^[0-9a-f]{8}$/),
     });
@@ -123,6 +135,7 @@ describe("relation compilation", () => {
 
 describe("checking and canonical identity", () => {
   const schema = { name: "example.Row", version: 1 } as const;
+
   const raw = (overrides: Partial<RelationPlan> = {}): RelationPlan => ({
     version: 3,
     name: "bad",
@@ -164,6 +177,7 @@ describe("checking and canonical identity", () => {
       "unbounded-top",
       "unstable-top-order",
     ]);
+
     return expect(Effect.runPromise(checkPlan(raw()))).rejects.toMatchObject({
       _tag: "PlanCheckFailed",
       issues,
@@ -172,12 +186,14 @@ describe("checking and canonical identity", () => {
 
   it("sorts object keys, preserves array order and rejects non-JSON values", () => {
     const first = raw({ name: "canonical", output: "source", nodes: [raw().nodes[0]!] });
+
     const reordered = {
       output: first.output,
       nodes: first.nodes,
       name: first.name,
       version: 3,
     } as RelationPlan;
+
     expect(encodePlan(first)).toBe(encodePlan(reordered));
     expect(planHash(first)).toBe(planHash(reordered));
     expect(planHash(first)).toMatch(/^[0-9a-f]{8}$/);
@@ -186,9 +202,11 @@ describe("checking and canonical identity", () => {
     expect(() => encodePlan({ ...first, value: 1n } as RelationPlan)).toThrow("non-JSON");
     expect(() => encodePlan({ ...first, value: () => 1 } as RelationPlan)).toThrow("non-JSON");
     expect(() => encodePlan({ ...first, value: Symbol("x") } as RelationPlan)).toThrow("non-JSON");
+
     class NonPlainValue {
       readonly marker = "non-plain";
     }
+
     expect(() => encodePlan({ ...first, value: new NonPlainValue() } as RelationPlan)).toThrow(
       "non-plain",
     );

@@ -15,11 +15,13 @@ import type { StateRow } from "../../src/engine/state.ts";
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- Generated fixtures are constructed from the closed issue helper below; assertions recover its known string id and adapt JSON-only results to the canonical test encoder. */
 
 const schema = { name: "issue.Row", version: 1 } as const;
+
 const ref = (scope: "row" | "left" | "right", ...path: string[]): Expression => ({
   kind: "reference",
   scope,
   path,
 });
+
 const source = (id: string): RelationNode => ({
   kind: "source",
   id,
@@ -29,6 +31,7 @@ const source = (id: string): RelationNode => ({
   key: ref("row", "id"),
   mode: "state",
 });
+
 const makePlan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
   version: 3,
   name,
@@ -120,6 +123,7 @@ const topPlan = makePlan(
 );
 
 const plans = [leftJoinPlan, aggregatePlan, topPlan] as const;
+
 const projectRows: readonly StateRow[] = [
   { key: "p1", row: { id: "p1", workspaceId: "w", projectId: "w", name: "One" } },
   { key: "p2", row: { id: "p2", workspaceId: "w", projectId: "w", name: "Two" } },
@@ -136,9 +140,11 @@ describe("deterministic generated issue-tracker conformance", () => {
       issue("i2", "p1", "open", 3, 2),
       issue("i3", "p1", "closed", 2, 3),
     ];
+
     for (const plan of plans) {
       const preload =
         plan === leftJoinPlan ? [{ sourceId: "projects", changes: enters(projectRows) }] : [];
+
       const one = maintainGraph({
         plan,
         inputs: [
@@ -149,8 +155,11 @@ describe("deterministic generated issue-tracker conformance", () => {
           },
         ],
       });
+
       let split: MaintainGraphResult | undefined;
+
       if (preload.length > 0) split = maintainGraph({ plan, inputs: preload });
+
       for (const row of rows)
         split = maintainGraph({
           plan,
@@ -176,15 +185,19 @@ function runSeed(seed: number): void {
       inputs: [{ sourceId: "projects", changes: enters(projectRows) }],
     }),
   );
+
   for (let event = 0; event < 100; event++) {
     const id = `i${integer(random, 0, 11)}`;
     const before = issues.get(id);
     let after: JsonObject | undefined;
+
     if (before === undefined) after = randomIssue(random, id, event);
     else if (random() < 0.12) after = undefined;
     else after = mutateIssue(random, before, event);
+
     if (after === undefined) issues.delete(id);
     else issues.set(id, after);
+
     const delta: Change<JsonObject> =
       before === undefined
         ? { kind: "enter", key: id, after: after! }
@@ -198,7 +211,9 @@ function runSeed(seed: number): void {
         state: states.get(plan.name)?.state,
         inputs: [{ sourceId: "issues", changes: [delta] }],
       });
+
       states.set(plan.name, result);
+
       const expected = fullRecompute({
         plan,
         sources: {
@@ -206,9 +221,11 @@ function runSeed(seed: number): void {
           projects: projectRows,
         },
       });
+
       expect(normalize(result), `seed ${seed}, event ${event}, plan ${plan.name}`).toBe(
         canonicalJson(expected as never),
       );
+
       if (event % 25 === 24)
         expect(
           normalize(rebuild(plan, [...issues.values()])),
@@ -251,11 +268,16 @@ function randomIssue(random: () => number, id: string, event: number): JsonObjec
 
 function mutateIssue(random: () => number, before: JsonObject, event: number): JsonObject {
   const choice = integer(random, 0, 4);
+
   if (choice === 0) return { ...before, projectId: before.projectId === "p1" ? "p2" : "p1" };
+
   if (choice === 1)
     return { ...before, status: ["open", "closed", "blocked", "deleted"][integer(random, 0, 3)]! };
+
   if (choice === 2) return { ...before, score: integer(random, 0, 4) };
+
   if (choice === 3) return { ...before, title: `Title ${event}` };
+
   return { ...before, updatedAt: event % 7 };
 }
 
@@ -271,10 +293,12 @@ function issue(
 
 function generator(seed: number): () => number {
   let value = seed >>> 0;
+
   return () => {
     value ^= value << 13;
     value ^= value >>> 17;
     value ^= value << 5;
+
     return (value >>> 0) / 0x1_0000_0000;
   };
 }

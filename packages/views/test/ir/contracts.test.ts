@@ -11,6 +11,7 @@ const expressionKind = (expression: Expression): Expression["kind"] => {
       return expression.kind;
     default: {
       const unreachable: never = expression;
+
       return unreachable;
     }
   }
@@ -30,6 +31,7 @@ const nodeKind = (node: RelationNode): RelationNode["kind"] => {
       return node.kind;
     default: {
       const unreachable: never = node;
+
       return unreachable;
     }
   }
@@ -42,6 +44,7 @@ describe("views IR contracts", () => {
       key: ["issue-1", 2, true],
       after: { value: 1 },
     };
+
     expect(change.key).toEqual(["issue-1", 2, true]);
     expect(
       expressionKind({
@@ -64,6 +67,7 @@ describe("views IR contracts", () => {
   it("round-trips a representative full plan through JSON", () => {
     const ref = { kind: "reference", scope: "row", path: ["id"] } as const;
     const schema = { name: "example.Row", version: 1 } as const;
+
     const plan: RelationPlan = {
       version: 3,
       name: "example.view",
@@ -97,6 +101,7 @@ describe("views IR contracts", () => {
       ],
       output: "example.view/top/1",
     };
+
     expect(JSON.parse(JSON.stringify(plan))).toEqual(plan);
   });
 });

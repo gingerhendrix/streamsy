@@ -10,9 +10,12 @@ export function projectChange(
 ): readonly Change<JsonObject>[] {
   const before =
     change.kind === "enter" ? undefined : project(node, change.before, parameters, decode);
+
   const after =
     change.kind === "exit" ? undefined : project(node, change.after, parameters, decode);
+
   const result = transition(change.key, before, after);
+
   return result === undefined ? [] : [result];
 }
 
@@ -23,7 +26,9 @@ function project(
   decode: (row: JsonObject) => JsonObject,
 ): JsonObject {
   const output: Record<string, JsonValue> = {};
+
   for (const [name, expression] of Object.entries(node.fields))
     output[name] = evaluate(expression, { row, parameter: parameters });
+
   return decode(output);
 }

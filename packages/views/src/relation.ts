@@ -24,6 +24,7 @@ import {
 } from "./expression.ts";
 
 type SchemaType<S extends Schema.Top> = S["Type"];
+
 type Selected<Fields extends Readonly<Record<string, Expression>>> = {
   readonly [K in keyof Fields]: ExpressionValue<Fields[K]>;
 };
@@ -76,11 +77,14 @@ export const source = <S extends Schema.Top, const Spec extends SourceSpec<S>>(
   });
 
 export type EvolveBranch = Readonly<Record<string, Expression>>;
+
 export type EvolveBranchBuilder<Event, State> = (x: {
   readonly event: Reference<Event>;
   readonly state: Reference<State>;
 }) => EvolveBranch;
+
 type Tagged<Input, D extends string> = Extract<Input, Record<D, string>>;
+
 type TagsOf<Input, D extends string> = Tagged<Input, D>[D] & string;
 
 export interface ReducerSpec<State extends Schema.Top, Input extends Schema.Top, D extends string> {
@@ -114,6 +118,7 @@ export const reducer = <State extends Schema.Top, Input extends Schema.Top, D ex
   spec: ReducerSpec<State, Input, D>,
 ): ReducerDeclaration<State, Input> => {
   const evolve: Record<string, EvolveBranch> = {};
+
   for (const [tag, build] of Object.entries(spec.evolve)) {
     const x = selectors<unknown, unknown, unknown>();
     // SAFETY: Object.entries erases the mapped tag, but every value is a builder and builders only emit references.
@@ -121,6 +126,7 @@ export const reducer = <State extends Schema.Top, Input extends Schema.Top, D ex
     const branch = build as EvolveBranchBuilder<unknown, unknown>;
     evolve[tag] = deepFreeze(branch({ event: x.event, state: x.state }));
   }
+
   return deepFreeze({
     kind: "reducer",
     ref,
@@ -137,22 +143,26 @@ interface SourceRelation<Row> {
   readonly source: SourceDeclaration;
   readonly _row?: Row;
 }
+
 interface FilterRelation<Row> {
   readonly kind: "filter";
   readonly input: RelationExpression<Row>;
   readonly predicate: Expression;
 }
+
 interface ProjectRelation<Row> {
   readonly kind: "project";
   readonly input: RelationExpression;
   readonly fields: Readonly<Record<string, Expression>>;
   readonly _row?: Row;
 }
+
 interface KeyRelation<Row> {
   readonly kind: "key";
   readonly input: RelationExpression<Row>;
   readonly key: Expression;
 }
+
 interface JoinRelation<Row> {
   readonly kind: "inner-join" | "left-join";
   readonly left: RelationExpression;
@@ -161,6 +171,7 @@ interface JoinRelation<Row> {
   readonly rightAlias: string;
   readonly _row?: Row;
 }
+
 interface AggregateRelation<Row> {
   readonly kind: "grouped-aggregate";
   readonly input: RelationExpression;
@@ -168,6 +179,7 @@ interface AggregateRelation<Row> {
   readonly aggregates: Readonly<Record<string, AggregateExpression>>;
   readonly _row?: Row;
 }
+
 interface TopRelation<Row> {
   readonly kind: "top-n";
   readonly input: RelationExpression<Row>;
@@ -175,6 +187,7 @@ interface TopRelation<Row> {
   readonly limit: Expression;
   readonly partitionBy?: readonly Expression[];
 }
+
 interface ReduceByKeyRelation<Row> {
   readonly kind: "reduce-by-key";
   readonly input: SourceRelation<unknown>;
@@ -293,6 +306,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
     top: (spec) => {
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- TopSpec is a parsed discriminated union of a numeric literal and TypedExpression.
       const limit = typeof spec.limit === "number" ? literal(spec.limit) : spec.limit;
+
       const top: TopRelation<Row> =
         spec.partitionBy === undefined
           ? { kind: "top-n", input: expression, orderBy: spec.by, limit }
@@ -303,6 +317,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
               limit,
               partitionBy: spec.partitionBy,
             };
+
       return builder(deepFreeze(top));
     },
     reduceByKey: <State extends Schema.Top>(spec: {
@@ -312,6 +327,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
       if (expression.kind !== "source-relation" || expression.source.mode !== "facts") {
         throw new TypeError("reduceByKey is only available directly on a fact source");
       }
+
       return builder<State["Type"]>(
         deepFreeze({
           kind: "reduce-by-key",
@@ -322,6 +338,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
       );
     },
   };
+
   return Object.freeze(result);
 };
 
@@ -413,6 +430,7 @@ export const parameter = <S extends Schema.Top>(
     schema,
     schemaRef: options.schemaRef ?? { name, version: 1 },
   } as const;
+
   return options.maximum === undefined
     ? deepFreeze(declaration)
     : deepFreeze({ ...declaration, maximum: options.maximum });
@@ -435,10 +453,12 @@ export const defineView = <
   readonly query: (params: ParameterValues<P>) => RelationBuilder<SchemaType<S>>;
 }): ViewDeclaration<S, Key> => {
   const values: Record<string, TypedExpression<unknown>> = {};
+
   for (const name of Object.keys(spec.params)) values[name] = parameterReference(name);
   // SAFETY: values is built from exactly the keys of P, and each reference carries that parameter's decoded type only at compile time.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-known-value-widening
   const expression = spec.query(values as ParameterValues<P>).expression;
+
   return makeView(spec.name, spec, expression, spec.params);
 };
 
@@ -457,6 +477,7 @@ function makeView<S extends Schema.Top, Key extends DeclaredKey>(
   const lowered = keyExpression(spec.key);
   const expression = keyOutput(query, lowered);
   const plan = compilePlan(name, expression, spec.schemaRef, parameters);
+
   return deepFreeze({
     kind: "view",
     name,
@@ -481,9 +502,11 @@ function keyOutput<Row>(
   key: Expression,
 ): RelationExpression<Row> {
   if (expression.kind === "key" || expression.kind === "reduce-by-key") return expression;
+
   if (expression.kind === "top-n") {
     return deepFreeze({ ...expression, input: keyOutput(expression.input, key) });
   }
+
   return deepFreeze({ kind: "key", input: expression, key });
 }
 
@@ -497,13 +520,16 @@ export function compilePlan(
   const seen = new Set<string>();
   let index = 0;
   const fallbackSchema = outputSchema ?? inferSchema(expression);
+
   const add = (node: RelationNode): string => {
     if (!seen.has(node.id)) {
       nodes.push(node);
       seen.add(node.id);
     }
+
     return node.id;
   };
+
   const walk = (relation: RelationExpression): string => {
     if (relation.kind === "source-relation") {
       return add({
@@ -516,8 +542,10 @@ export function compilePlan(
         mode: relation.source.mode,
       });
     }
+
     if (relation.kind === "reduce-by-key") {
       const input = walk(relation.input);
+
       return add({
         kind: "reduce-by-key",
         id: name,
@@ -527,11 +555,13 @@ export function compilePlan(
         reducer: relation.reducer.ref,
       });
     }
+
     if (relation.kind === "inner-join" || relation.kind === "left-join") {
       const left = walk(relation.left);
       const right = walk(relation.right);
       const current = index++;
       const id = `${name}/${relation.kind}/${current}`;
+
       return add({
         kind: relation.kind,
         id,
@@ -542,10 +572,12 @@ export function compilePlan(
         rightAlias: relation.rightAlias,
       });
     }
+
     if (!("input" in relation)) throw new TypeError("unsupported relation expression");
     const input = walk(relation.input);
     const current = index++;
     const id = `${name}/${relation.kind === "top-n" ? "top" : relation.kind}/${current}`;
+
     switch (relation.kind) {
       case "filter":
         return add({
@@ -570,6 +602,7 @@ export function compilePlan(
         });
       case "top-n": {
         const maximum = maximumFor(relation.limit, parameters);
+
         const top = {
           kind: "top-n",
           id,
@@ -579,27 +612,33 @@ export function compilePlan(
           limit: relation.limit,
           maximum,
         } as const;
+
         return add(
           relation.partitionBy === undefined ? top : { ...top, partitionBy: relation.partitionBy },
         );
       }
     }
+
     return unreachable(relation);
   };
+
   const output = walk(expression);
   const parameterDescriptors: Record<string, ParameterDescriptor> = {};
+
   for (const [key, value] of Object.entries(parameters)) {
     parameterDescriptors[key] =
       value.maximum === undefined
         ? { schema: value.schemaRef }
         : { schema: value.schemaRef, maximum: value.maximum };
   }
+
   const plan = {
     version: 3,
     name,
     nodes,
     output,
   } as const;
+
   return Object.keys(parameterDescriptors).length === 0
     ? deepFreeze(plan)
     : deepFreeze({ ...plan, parameters: parameterDescriptors });
@@ -611,18 +650,24 @@ function maximumFor(
 ): number {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- LiteralExpression.value is parsed JsonValue; a numeric literal supplies its own bound.
   if (limit.kind === "literal" && typeof limit.value === "number") return limit.value;
+
   if (limit.kind === "reference" && limit.scope === "parameter" && limit.path.length === 1) {
     return parameters[limit.path[0] ?? ""]?.maximum ?? 0;
   }
+
   return 0;
 }
 
 function inferSchema(expression: RelationExpression): DescriptorRef {
   if (expression.kind === "source-relation") return expression.source.schemaRef;
+
   if (expression.kind === "reduce-by-key") return expression.reducer.stateRef;
+
   if (expression.kind === "inner-join" || expression.kind === "left-join")
     return inferSchema(expression.left);
+
   if (!("input" in expression)) throw new TypeError("unsupported relation expression");
+
   return inferSchema(expression.input);
 }
 
@@ -630,13 +675,16 @@ export interface Scope {
   readonly kind: "scope";
   readonly value: string;
 }
+
 export const scope = (value: string): Scope => Object.freeze({ kind: "scope", value });
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- This is the freezing boundary for inert declaration values; schema classes are already frozen externally and are intentionally not traversed. */
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.freeze(value);
+
   for (const child of Object.values(value)) deepFreeze(child);
+
   return value;
 }
 /* oxlint-enable anti-slop/no-runtime-typeof */
@@ -660,6 +708,7 @@ export {
   parameterReference,
   selectors,
 } from "./expression.ts";
+
 export type {
   AggregateValue,
   BooleanExpression,
@@ -671,6 +720,7 @@ export type {
   TypedAggregateExpression,
   TypedExpression,
 } from "./expression.ts";
+
 export {
   checkPlan,
   collectPlanIssues,
@@ -678,9 +728,11 @@ export {
   PlanIssue,
   PlanIssueCode,
 } from "./check.ts";
+
 export type {
   CheckedPlan,
   PlanIssue as PlanIssueType,
   PlanIssueCode as PlanIssueCodeType,
 } from "./check.ts";
+
 export { encodePlan, planHash } from "./plan.ts";

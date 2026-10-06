@@ -9,14 +9,18 @@ export function encodeRowKey(key: RowKey): string {
 
 function encodePart(part: RowKeyPart): string {
   if (typeof part === "string") return `s${part.length}:${part}`;
+
   if (typeof part === "boolean") return part ? "b1:" : "b0:";
+
   if (!Number.isFinite(part)) throw new TypeError("row keys require finite numbers");
   const value = Object.is(part, -0) ? "0" : String(part);
+
   return `n${value.length}:${value}`;
 }
 
 export function asRowKey(value: JsonValue): RowKey {
   if (isPart(value)) return value;
+
   if (Array.isArray(value) && value.every(isPart)) return value;
   throw new TypeError("expression did not produce a scalar or composite row key");
 }
@@ -32,7 +36,9 @@ function isPart(value: JsonValue): value is RowKeyPart {
 /** Canonical JSON identity used for expression values, partitions, and rows. */
 export function canonicalJson(value: JsonValue): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
+
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+
   return `{${Object.entries(value)
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)

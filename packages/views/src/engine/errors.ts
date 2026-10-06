@@ -48,5 +48,6 @@ export class OperatorFault extends TypeError {
 
 function bounded(value: RowKey): string {
   const text = JSON.stringify(value);
+
   return text.length <= 120 ? text : `${text.slice(0, 117)}...`;
 }

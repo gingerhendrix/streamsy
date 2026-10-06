@@ -80,6 +80,7 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
   const prior = input.state ?? emptyOperatorState(input.plan.name);
   const parameters = input.parameters ?? {};
   let runtime: Runtime;
+
   try {
     validateSnapshot(input.plan, prior);
     runtime = restore(input.plan, prior);
@@ -94,8 +95,10 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
       cause,
     );
   }
+
   const consumers = consumersOf(input.plan);
   const emitted: Change<JsonObject>[] = [];
+
   const counts = {
     changes: 0,
     indexLookups: 0,
@@ -109,18 +112,24 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
         node.kind === "source" &&
         (node.sourceId === sourceInput.sourceId || node.id === sourceInput.sourceId),
     );
+
     if (source === undefined)
       throw fault(input.plan, undefined, "plan", `unknown source ${sourceInput.sourceId}`);
+
     for (const sourceChange of sourceInput.changes) {
       validateSourceKey(input.plan, source, sourceChange, parameters);
       applyRelationChange(input.plan, source, runtime, sourceChange);
+
       const queue: { relationId: string; change: Change<JsonObject> }[] = [
         { relationId: source.id, change: sourceChange },
       ];
+
       while (queue.length > 0) {
         const item = queue.shift()!;
+
         for (const node of consumers.get(item.relationId) ?? []) {
           let changes: readonly Change<JsonObject>[];
+
           try {
             const result = processNode(
               input,
@@ -130,6 +139,7 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
               item.change,
               parameters,
             );
+
             changes = result.changes;
             counts.indexLookups += result.indexLookups;
             counts.candidateComparisons += result.candidateComparisons;
@@ -145,9 +155,13 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
               cause,
             );
           }
+
           counts.changes += changes.length;
+
           if (node.id === input.plan.output) emitted.push(...changes);
+
           if (node.kind === "top-n") continue;
+
           for (const change of changes) {
             applyRelationChange(input.plan, node, runtime, change);
             queue.push({ relationId: node.id, change });
@@ -159,12 +173,15 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
 
   const state = snapshot(input.plan, prior.revision + 1, runtime);
   const output = input.plan.nodes.find((node) => node.id === input.plan.output);
+
   if (output === undefined) throw fault(input.plan, undefined, "plan", "output node is absent");
   const rows = outputRows(output, runtime, parameters);
+
   const ordered =
     output.kind === "top-n"
       ? orderedTop(output, runtime.tops.get(output.id) ?? [], parameters)
       : [];
+
   return {
     state,
     patch: mutationPatch(prior, state),
@@ -187,8 +204,10 @@ function validateSourceKey(
       : change.kind === "exit"
         ? [change.before]
         : [change.before, change.after];
+
   for (const row of rows) {
     const key = asRowKey(evaluate(source.key, { row, parameter: parameters }));
+
     if (encodeRowKey(key) !== encodeRowKey(change.key))
       throw fault(
         plan,
@@ -215,6 +234,7 @@ function processNode(
 } {
   const decode = (row: JsonObject): JsonObject =>
     input.decodeRow?.(node.schema, row, node.id) ?? row;
+
   switch (node.kind) {
     case "filter":
       return metrics(filterChange(node, change, parameters));
@@ -234,8 +254,10 @@ function processNode(
         },
         parameters,
       );
+
       return { ...metrics(result.changes), indexLookups: result.operations };
     }
+
     case "grouped-aggregate": {
       const result = aggregateChange(
         node,
@@ -243,14 +265,19 @@ function processNode(
         change,
         parameters,
       );
+
       runtime.aggregates.set(node.id, result.groups);
+
       return { ...metrics(result.changes), aggregateContributions: result.operations };
     }
+
     case "top-n": {
       const result = topChange(node, runtime.tops.get(node.id) ?? [], change, parameters);
       runtime.tops.set(node.id, result.partitions);
+
       return { ...metrics(result.changes), candidateComparisons: result.operations };
     }
+
     case "source":
       throw new TypeError("source nodes cannot consume graph changes");
     case "reduce-by-key":
@@ -269,16 +296,21 @@ function keyChange(
 ): readonly Change<JsonObject>[] {
   if (change.kind === "enter") {
     const key = asRowKey(evaluate(expression, { row: change.after, parameter: parameters }));
+
     return [{ kind: "enter", key, after: change.after }];
   }
+
   const beforeKey = asRowKey(evaluate(expression, { row: change.before, parameter: parameters }));
+
   if (change.kind === "exit") return [{ kind: "exit", key: beforeKey, before: change.before }];
   const afterKey = asRowKey(evaluate(expression, { row: change.after, parameter: parameters }));
+
   if (encodeRowKey(beforeKey) !== encodeRowKey(afterKey))
     return [
       { kind: "exit", key: beforeKey, before: change.before },
       { kind: "enter", key: afterKey, after: change.after },
     ];
+
   return sameRow(change.before, change.after)
     ? []
     : [{ kind: "update", key: afterKey, before: change.before, after: change.after }];
@@ -293,6 +325,7 @@ function applyRelationChange(
   const relation = runtime.relations.get(node.id) ?? new Map<string, KeyedRow>();
   const encoded = encodeRowKey(change.key);
   const existing = relation.get(encoded);
+
   if (change.kind === "enter") {
     if (existing !== undefined)
       throw fault(plan, node, "restore", "enter duplicates an existing key", change.key);
@@ -306,9 +339,11 @@ function applyRelationChange(
         "change before-row does not match current relation",
         change.key,
       );
+
     if (change.kind === "exit") relation.delete(encoded);
     else relation.set(encoded, { key: change.key, row: change.after });
   }
+
   runtime.relations.set(node.id, relation);
   updateArrangements(runtime, node.id, change);
 }
@@ -320,12 +355,15 @@ function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
       new Map(relation.rows.map((entry) => [encodeRowKey(entry.key), entry])),
     ]),
   );
+
   const requirements = planRequirements(plan).flatMap((item) => item.arrangements);
   const saved = new Map(state.arrangements.map((arrangement) => [arrangement.id, arrangement]));
   const arrangements = new Map<string, MutableArrangement>();
+
   for (const requirement of uniqueArrangements(requirements)) {
     const prior = saved.get(requirement.id);
     const mutable: MutableArrangement = { requirement, buckets: new Map() };
+
     if (prior !== undefined) {
       for (const entry of prior.entries)
         mutable.buckets.set(canonicalJson(entry.value), {
@@ -336,8 +374,10 @@ function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
       for (const entry of relations.get(requirement.relationId)?.values() ?? [])
         arrangementAdd(mutable, entry.key, entry.row);
     }
+
     arrangements.set(requirement.id, mutable);
   }
+
   for (const node of plan.nodes) {
     if (node.kind !== "grouped-aggregate" || relations.has(node.id)) continue;
     const groups = state.aggregates.find((aggregate) => aggregate.nodeId === node.id)?.groups ?? [];
@@ -346,6 +386,7 @@ function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
       new Map(aggregateRows(node, groups).map((entry) => [encodeRowKey(entry.key), entry])),
     );
   }
+
   return {
     relations,
     arrangements,
@@ -361,7 +402,9 @@ function updateArrangements(
 ): void {
   for (const arrangement of runtime.arrangements.values()) {
     if (arrangement.requirement.relationId !== relationId) continue;
+
     if (change.kind !== "enter") arrangementRemove(arrangement, change.key, change.before);
+
     if (change.kind !== "exit") arrangementAdd(arrangement, change.key, change.after);
   }
 }
@@ -372,6 +415,7 @@ function arrangementAdd(arrangement: MutableArrangement, key: RowKey, row: JsonO
     left: row,
     right: row,
   });
+
   if (isMissing(value)) return;
   const encoded = canonicalJson(value);
   const bucket = arrangement.buckets.get(encoded) ?? { value, rows: new Map() };
@@ -385,11 +429,14 @@ function arrangementRemove(arrangement: MutableArrangement, key: RowKey, row: Js
     left: row,
     right: row,
   });
+
   if (isMissing(value)) return;
   const encoded = canonicalJson(value);
   const bucket = arrangement.buckets.get(encoded);
+
   if (bucket === undefined || !bucket.rows.delete(encodeRowKey(key)))
     throw new TypeError("arrangement retraction references an absent entry");
+
   if (bucket.rows.size === 0) arrangement.buckets.delete(encoded);
 }
 
@@ -400,14 +447,17 @@ function lookup(
   value: JsonValue,
 ): readonly KeyedRow[] {
   const signature = canonicalJson(expression as never);
+
   const arrangement = [...runtime.arrangements.values()].find(
     (candidate) =>
       candidate.requirement.relationId === relationId &&
       canonicalJson(candidate.requirement.keyExpression as never) === signature,
   );
+
   if (arrangement === undefined) throw new TypeError(`missing arrangement for ${relationId}`);
   const keys = arrangement.buckets.get(canonicalJson(value))?.rows.values() ?? [];
   const relation = runtime.relations.get(relationId);
+
   return [...keys]
     .map((key) => relation?.get(encodeRowKey(key)))
     .filter((row): row is KeyedRow => row !== undefined);
@@ -419,6 +469,7 @@ function snapshot(plan: RelationPlan, revision: number, runtime: Runtime): Opera
       .filter((node) => node.kind === "top-n" || node.kind === "grouped-aggregate")
       .map((node) => node.id),
   );
+
   return {
     version: 1,
     planName: plan.name,
@@ -470,11 +521,13 @@ function outputRows(
       encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)),
     );
   const ordered = orderedTop(node, runtime.tops.get(node.id) ?? [], parameters);
+
   const candidates = new Map(
     (runtime.tops.get(node.id) ?? []).flatMap((partition) =>
       partition.candidates.map((candidate) => [encodeRowKey(candidate.key), candidate] as const),
     ),
   );
+
   return ordered
     .flatMap((partition) =>
       partition.keys.map((key) => ({ key, row: candidates.get(encodeRowKey(key))!.row })),
@@ -484,18 +537,23 @@ function outputRows(
 
 function consumersOf(plan: RelationPlan): Map<string, RelationNode[]> {
   const consumers = new Map<string, RelationNode[]>();
+
   const add = (input: string, node: RelationNode): void => {
     const values = consumers.get(input) ?? [];
     values.push(node);
     consumers.set(input, values);
   };
+
   for (const node of plan.nodes) {
     if (node.kind === "source") continue;
+
     if (node.kind === "inner-join" || node.kind === "left-join") {
       add(node.left, node);
+
       if (node.right !== node.left) add(node.right, node);
     } else add(node.input, node);
   }
+
   return consumers;
 }
 
@@ -514,12 +572,14 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
       "operator-state snapshot is incompatible with the plan",
     );
   const ids = new Set(plan.nodes.map((node) => node.id));
+
   const relationRows = new Map(
     state.relations.map((relation) => [
       relation.relationId,
       new Set(relation.rows.map((entry) => encodeRowKey(entry.key))),
     ]),
   );
+
   for (const relation of state.relations)
     if (!ids.has(relation.relationId))
       throw fault(
@@ -528,9 +588,11 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
         "restore",
         `state references unknown node ${relation.relationId}`,
       );
+
   for (const aggregate of state.aggregates) {
     if (!ids.has(aggregate.nodeId))
       throw fault(plan, undefined, "restore", `state references unknown node ${aggregate.nodeId}`);
+
     if (
       aggregate.groups.some(
         (group) =>
@@ -540,14 +602,17 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
     )
       throw fault(plan, undefined, "restore", `aggregate ${aggregate.nodeId} has corrupt counts`);
   }
+
   for (const top of state.tops)
     if (!ids.has(top.nodeId))
       throw fault(plan, undefined, "restore", `state references unknown node ${top.nodeId}`);
+
   const arrangementIds = new Set(
     planRequirements(plan)
       .flatMap((requirement) => requirement.arrangements)
       .map((arrangement) => arrangement.id),
   );
+
   for (const arrangement of state.arrangements) {
     if (!arrangementIds.has(arrangement.id))
       throw fault(
@@ -557,6 +622,7 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
         `state references unknown arrangement ${arrangement.id}`,
       );
     const rowKeys = relationRows.get(arrangement.relationId);
+
     if (
       arrangement.entries.length > 0 &&
       (rowKeys === undefined ||
@@ -583,12 +649,15 @@ function mutationPatch(
   const newIndexes = indexRecords(after);
   const operatorValues: OperatorValueMutation[] = [];
   const operatorIndexes: OperatorIndexMutation[] = [];
+
   for (const [identity, old] of oldValues)
     if (!newValues.has(identity))
       operatorValues.push({ id: old.id, operation: "delete", key: old.key });
+
   for (const [identity, next] of newValues)
     if (canonicalJson(oldValues.get(identity)?.value ?? null) !== canonicalJson(next.value))
       operatorValues.push({ id: next.id, operation: "put", key: next.key, value: next.value });
+
   for (const [identity, old] of oldIndexes)
     if (!newIndexes.has(identity))
       operatorIndexes.push({
@@ -599,11 +668,14 @@ function mutationPatch(
         sortKey: old.sortKey,
         rowKey: old.rowKey,
       });
+
   for (const [identity, next] of newIndexes) {
     const old = oldIndexes.get(identity);
+
     if (old === undefined || canonicalJson(old.value ?? null) !== canonicalJson(next.value ?? null))
       operatorIndexes.push({ ...next, operation: "put" });
   }
+
   return {
     version: 1,
     planName: after.planName,
@@ -616,6 +688,7 @@ function mutationPatch(
 
 function valueRecords(state: OperatorStateSnapshot) {
   const records = new Map<string, { id: string; key: RowKey; value: JsonValue }>();
+
   for (const aggregate of state.aggregates)
     for (const group of aggregate.groups)
       records.set(`${aggregate.nodeId}|${encodeRowKey(group.key)}`, {
@@ -623,12 +696,15 @@ function valueRecords(state: OperatorStateSnapshot) {
         key: group.key,
         value: group as never,
       });
+
   return records;
 }
 
 function indexRecords(state: OperatorStateSnapshot) {
   type Put = Extract<OperatorIndexMutation, { operation: "put" }>;
+
   const records = new Map<string, Omit<Put, "operation">>();
+
   for (const arrangement of state.arrangements)
     for (const entry of arrangement.entries)
       for (const rowKey of entry.rowKeys) {
@@ -636,10 +712,12 @@ function indexRecords(state: OperatorStateSnapshot) {
         const value = { id: arrangement.id, indexName: "exact", indexKey, sortKey: rowKey, rowKey };
         records.set(`${arrangement.id}|${encodeRowKey(indexKey)}|${encodeRowKey(rowKey)}`, value);
       }
+
   for (const top of state.tops)
     for (const partition of top.partitions)
       for (const candidate of partition.candidates) {
         const sortKey = asRowKey(candidate.sortValues);
+
         const value = {
           id: top.nodeId,
           indexName: "candidates",
@@ -648,11 +726,13 @@ function indexRecords(state: OperatorStateSnapshot) {
           rowKey: candidate.key,
           value: candidate.row as JsonValue,
         };
+
         records.set(
           `${top.nodeId}|${encodeRowKey(partition.key)}|${encodeRowKey(sortKey)}|${encodeRowKey(candidate.key)}`,
           value,
         );
       }
+
   return records;
 }
 
@@ -705,19 +785,29 @@ function fault(
  * subpaths of their own.
  */
 export { coalesceChanges } from "./change.ts";
+
 export { OperatorFault } from "./errors.ts";
+
 export type { OperatorPhase } from "./errors.ts";
+
 export { evaluate, evaluateOptional } from "./expression.ts";
+
 export { asRowKey, canonicalJson, encodeRowKey } from "./key.ts";
+
 export { fullRecompute, normalizeResult } from "./reference.ts";
+
 export type { FullRecomputeInput, FullRecomputeResult } from "./reference.ts";
+
 export { planRequirements } from "./requirements.ts";
+
 export type {
   AccumulatorRequirement,
   ArrangementRequirement,
   OperatorRequirements,
 } from "./requirements.ts";
+
 export { emptyOperatorState } from "./state.ts";
+
 export type {
   AggregateGroupState,
   AggregateState,

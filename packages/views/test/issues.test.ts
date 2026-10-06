@@ -6,7 +6,9 @@ import { collectPlanIssues, PlanIssue } from "../src/check.ts";
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions -- Malformed fixtures intentionally cross the static plan contract to exercise every checker issue code. */
 
 const schema = { name: "Row", version: 1 } as const;
+
 const reference = { kind: "reference", scope: "row", path: ["id"] } as const;
+
 const source = (id = "source", sourceId = id): RelationNode => ({
   kind: "source",
   id,
@@ -16,6 +18,7 @@ const source = (id = "source", sourceId = id): RelationNode => ({
   key: reference,
   mode: "facts",
 });
+
 const plan = (
   nodes: readonly RelationNode[],
   output = nodes.at(-1)?.id ?? "missing",
@@ -25,6 +28,7 @@ const plan = (
   nodes,
   output,
 });
+
 const codes = (value: RelationPlan): readonly string[] =>
   collectPlanIssues(value).map((issue) => issue.code);
 
@@ -81,6 +85,7 @@ describe("plan issue collection", () => {
         ]),
       ),
     ).toContain("non-boolean-predicate");
+
     const badJoin: RelationNode = {
       kind: "inner-join",
       id: "join",
@@ -90,6 +95,7 @@ describe("plan issue collection", () => {
       rightAlias: "",
       on: { kind: "literal", value: 1 },
     };
+
     const joinCodes = codes(plan([source("left"), source("right"), badJoin]));
     expect(joinCodes).toContain("join-alias-conflict");
     expect(joinCodes).toContain("join-condition-not-boolean");
@@ -120,6 +126,7 @@ describe("plan issue collection", () => {
       limit: { kind: "reference", scope: "parameter", path: ["limit"] },
       maximum: 0,
     };
+
     const topCodes = codes(plan([source(), top]));
     expect(topCodes).toContain("undeclared-parameter");
     expect(topCodes).toContain("unbounded-top");
@@ -129,15 +136,19 @@ describe("plan issue collection", () => {
     ).toContain("invalid-top-limit");
     const unsupported = Object.defineProperty(plan([source()]), "version", { value: 1 });
     expect(codes(unsupported)).toContain("unsupported-plan-version");
+
     class NonPlainValue {
       readonly marker = "non-plain";
     }
+
     const nonJson = Object.defineProperty(plan([source()]), "runtime", {
       value: new NonPlainValue(),
       enumerable: true,
     });
+
     const issues = collectPlanIssues(nonJson);
     expect(issues.map((issue) => issue.code)).toContain("non-json-plan-value");
+
     for (const issue of issues) expect(Schema.decodeSync(PlanIssue)(issue)).toEqual(issue);
   });
 });

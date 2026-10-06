@@ -37,15 +37,19 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
   const local = new Map(plan.nodes.map((node) => [node.id, requirementsFor(node)]));
   const downstream = new Map<string, Set<string>>([[plan.output, new Set(["*"])]]);
   const resolved = new Map<string, OperatorRequirements>();
+
   const add = (relationId: string, values: readonly string[]): void => {
     const demand = downstream.get(relationId) ?? new Set<string>();
+
     for (const value of values) demand.add(value);
     downstream.set(relationId, demand);
   };
+
   for (const node of plan.nodes.toReversed()) {
     const requirement = local.get(node.id)!;
     const output = downstream.get(node.id) ?? new Set<string>();
     const inputFields: Record<string, readonly string[]> = {};
+
     if (node.kind === "source") {
       inputFields[node.sourceId] = union(requirement.inputFields[node.sourceId] ?? [], output);
     } else if (node.kind === "project") {
@@ -53,14 +57,17 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
         ? Object.values(node.fields)
         : [...output].flatMap((path) => {
             const expression = node.fields[path.split(".")[0] ?? path];
+
             return expression === undefined ? [] : [expression];
           });
+
       const values = fields(selected, "row");
       inputFields[node.input] = values;
       add(node.input, values);
     } else if (node.kind === "inner-join" || node.kind === "left-join") {
       const left = new Set(requirement.inputFields[node.left] ?? []);
       const right = new Set(requirement.inputFields[node.right] ?? []);
+
       if (output.has("*")) {
         left.add("*");
         right.add("*");
@@ -72,6 +79,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
           else left.add(path);
         }
       }
+
       const leftValues = [...left].sort();
       const rightValues = [...right].sort();
       inputFields[node.left] = leftValues;
@@ -87,8 +95,10 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
       inputFields[node.input] = values;
       add(node.input, values);
     }
+
     resolved.set(node.id, { ...requirement, inputFields });
   }
+
   return plan.nodes.map((node) => resolved.get(node.id)!);
 }
 
@@ -129,6 +139,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       );
       break;
     }
+
     case "grouped-aggregate":
       inputFields[node.input] = fields(
         [
@@ -155,6 +166,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       intrinsicState = "accumulators";
       break;
   }
+
   return {
     nodeId: node.id,
     inputFields,
@@ -172,6 +184,7 @@ function arrangement(
   retainedFields: readonly string[],
 ): ArrangementRequirement {
   const signature = canonicalJson(expression as never);
+
   return {
     id: `arrangement:${relationId}:${signature}`,
     relationId,
@@ -194,12 +207,15 @@ function aggregateRequirements(node: GroupedAggregateNode): readonly Accumulator
 function joinEquality(on: Expression): { readonly left: Expression; readonly right: Expression } {
   if (on.kind !== "binary" || on.operator !== "equal")
     throw new TypeError("A2 joins require one equality expression");
+
   return { left: on.left, right: on.right };
 }
 
 function fields(expressions: readonly Expression[], scope: ReferenceScope): readonly string[] {
   const paths = new Set<string>();
+
   for (const expression of expressions) collect(expression, scope, paths);
+
   return [...paths].sort();
 }
 
@@ -207,13 +223,17 @@ function collect(expression: Expression, scope: ReferenceScope, paths: Set<strin
   if (expression.kind === "reference") {
     if (expression.scope === scope && expression.path.length > 0)
       paths.add(expression.path.join("."));
+
     return;
   }
+
   if (expression.kind === "unary") collect(expression.operand, scope, paths);
+
   if (expression.kind === "binary") {
     collect(expression.left, scope, paths);
     collect(expression.right, scope, paths);
   }
+
   if (expression.kind === "variadic")
     for (const operand of expression.operands) collect(operand, scope, paths);
 }

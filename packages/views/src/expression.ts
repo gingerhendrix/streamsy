@@ -10,14 +10,18 @@ import type {
 } from "./ir/contracts.ts";
 
 declare const ExpressionType: unique symbol;
+
 declare const AggregateType: unique symbol;
 
 type Present<T> = Exclude<T, undefined>;
+
 type LiteralOperand<T> =
   Present<T> extends JsonValue
     ? Present<T> | TypedExpression<Present<T>>
     : TypedExpression<Present<T>>;
+
 type Ordered = number | string;
+
 type ObjectFields<T> = T extends object
   ? { readonly [K in keyof T & string]-?: TypedExpression<T[K]> }
   : unknown;
@@ -79,12 +83,15 @@ export type TypedExpression<T> = Expression &
 export type ExpressionValue<E> = E extends { readonly [ExpressionType]?: infer Value }
   ? Value
   : never;
+
 export type TypedAggregateExpression<T> = AggregateExpression & { readonly [AggregateType]?: T };
+
 export type AggregateValue<E> = E extends { readonly [AggregateType]?: infer Value }
   ? Value
   : never;
 
 export type Reference<T> = TypedExpression<T>;
+
 export type BooleanExpression = TypedExpression<boolean>;
 
 const unary = <T>(operator: UnaryOperator, operand: Expression): TypedExpression<T> =>
@@ -104,6 +111,7 @@ const variadic = <T>(
 
 const operand = <T>(value: LiteralOperand<T>): Expression => {
   if (isExpression(value)) return value;
+
   return literal(value);
 };
 
@@ -132,12 +140,16 @@ const operations = new Set([
 function decorate<T>(node: Expression): TypedExpression<T> {
   if (!isDecoratableExpression<T>(node))
     throw new TypeError("expression nodes must be frozen before decoration");
+
   return new Proxy(node, {
     get(target, property) {
       if (typeof property !== "string" || property in target)
         return Reflect.get(target, property) as unknown;
+
       if (property === "value") return unary<Present<T>>("value", target);
+
       if (!operations.has(property)) return nestedReference<T>(target, property);
+
       switch (property) {
         case "eq":
           return (right: LiteralOperand<T>) => binary<boolean>("equal", target, operand(right));
@@ -190,6 +202,7 @@ function isDecoratableExpression<T>(node: Expression): node is TypedExpression<T
 function nestedReference<T>(target: Expression, property: string): TypedExpression<T> {
   if (target.kind !== "reference")
     throw new TypeError(`cannot select ${property} from ${target.kind}`);
+
   return reference<T>(target.scope, [...target.path, property]);
 }
 
@@ -254,6 +267,7 @@ export const joinSelectors = <Left, Right>(): {
   readonly right: Reference<Right>;
 } => {
   const roots = selectors<Left, Left, Left, never, Right>();
+
   return Object.freeze({ left: roots.left, right: roots.right });
 };
 
@@ -280,6 +294,7 @@ export type KeyFieldsOf<Row> = (keyof Row & string) | readonly (keyof Row & stri
  */
 export const keyExpression = (declared: DeclaredKey): Expression => {
   const fields = [declared].flat();
+
   return Array.isArray(declared)
     ? variadic<readonly RowKeyValue[]>(
         "key",

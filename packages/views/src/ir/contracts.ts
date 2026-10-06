@@ -1,10 +1,14 @@
 /** JSON-only contracts shared by declaration compilers and view engines. */
 export type JsonScalar = null | boolean | number | string;
+
 export type JsonValue = JsonScalar | JsonObject | JsonArray;
+
 export type JsonObject = { readonly [name: string]: JsonValue };
+
 export type JsonArray = readonly JsonValue[];
 
 export type RowKeyPart = boolean | number | string;
+
 export type RowKey = RowKeyPart | readonly RowKeyPart[];
 
 export function isJsonObject(value: JsonValue): value is JsonObject {
@@ -44,6 +48,7 @@ export interface ReferenceExpression {
 }
 
 export type UnaryOperator = "is-present" | "value" | "not";
+
 export interface UnaryExpression {
   readonly kind: "unary";
   readonly operator: UnaryOperator;
@@ -59,6 +64,7 @@ export type BinaryOperator =
   | "less-than-or-equal"
   | "add"
   | "or-else";
+
 export interface BinaryExpression {
   readonly kind: "binary";
   readonly operator: BinaryOperator;
@@ -67,6 +73,7 @@ export interface BinaryExpression {
 }
 
 export type VariadicOperator = "and" | "or" | "in" | "key";
+
 export interface VariadicExpression {
   readonly kind: "variadic";
   readonly operator: VariadicOperator;
@@ -81,6 +88,7 @@ export type Expression =
   | VariadicExpression;
 
 export type AggregateFunction = "count" | "count-where" | "sum" | "max";
+
 export interface AggregateExpression {
   readonly kind: "aggregate";
   readonly function: AggregateFunction;

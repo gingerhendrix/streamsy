@@ -12,12 +12,15 @@ import { planRequirements } from "../../src/engine/requirements.ts";
 import type { OperatorStateSnapshot } from "../../src/engine/state.ts";
 
 const schema = { name: "test.Row", version: 1 } as const;
+
 const ref = (scope: "row" | "left" | "right" | "parameter", ...path: string[]): Expression => ({
   kind: "reference",
   scope,
   path,
 });
+
 const literal = (value: string | number | boolean): Expression => ({ kind: "literal", value });
+
 const source = (id: string): RelationNode => ({
   kind: "source",
   id,
@@ -27,6 +30,7 @@ const source = (id: string): RelationNode => ({
   key: ref("row", "id"),
   mode: "state",
 });
+
 const factSource = (id: string): RelationNode => ({
   kind: "source",
   id,
@@ -36,12 +40,14 @@ const factSource = (id: string): RelationNode => ({
   key: ref("row", "id"),
   mode: "facts",
 });
+
 const plan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
   version: 3,
   name,
   nodes,
   output,
 });
+
 const change = (
   key: string,
   before: JsonObject | undefined,
@@ -85,20 +91,24 @@ describe("stateless transformations and graph routing", () => {
     const open = { id: "i1", projectId: "p1", status: "open", title: "One", ignored: 1 };
     const ignored = { ...open, ignored: 2 };
     const closed = { ...ignored, status: "closed" };
+
     const entered = maintainGraph({
       plan: graph,
       inputs: [{ sourceId: "issues", changes: [change("i1", undefined, open)] }],
     });
+
     const suppressed = maintainGraph({
       plan: graph,
       state: entered.state,
       inputs: [{ sourceId: "issues", changes: [change("i1", open, ignored)] }],
     });
+
     const exited = maintainGraph({
       plan: graph,
       state: suppressed.state,
       inputs: [{ sourceId: "issues", changes: [change("i1", ignored, closed)] }],
     });
+
     expect(suppressed.changes).toEqual([]);
     expect(exited.changes).toEqual([
       { kind: "exit", key: "i1", before: { id: "i1", title: "One" } },
@@ -122,6 +132,7 @@ describe("stateless transformations and graph routing", () => {
       ],
       "filter",
     );
+
     expect(() =>
       maintainGraph({
         plan: bad,
@@ -147,11 +158,14 @@ describe("stateless transformations and graph routing", () => {
       ],
       "state-output",
     );
+
     const row = { id: "i1", projectId: "p1", sequence: "not-an-order-contract" };
+
     const result = maintainGraph({
       plan: statePlan,
       inputs: [{ sourceId: "issues", changes: [change("i1", undefined, row)] }],
     });
+
     expect(result.rows).toEqual([{ key: "i1", row: { id: "i1", projectId: "p1" } }]);
     expect(planRequirements(statePlan)[0]?.inputFields["issues"]).toEqual(["id", "projectId"]);
     expect(() =>
@@ -178,6 +192,7 @@ describe("stateless transformations and graph routing", () => {
       ],
       "fact-output",
     );
+
     expect(planRequirements(facts)[0]?.inputFields["events"]).toEqual(["id", "workspaceId"]);
   });
 
@@ -236,6 +251,7 @@ describe("inner and left joins", () => {
     const p1 = { id: "p1", projectId: "workspace", name: "One" };
     const p2 = { id: "p2", projectId: "workspace", name: "Two" };
     let state: OperatorStateSnapshot | undefined;
+
     const enteredIssues = maintainGraph({
       plan: graph,
       state,
@@ -246,6 +262,7 @@ describe("inner and left joins", () => {
         },
       ],
     });
+
     state = enteredIssues.state;
     expect(
       enteredIssues.patch.operatorIndexes.some((mutation) => mutation.operation === "put"),
@@ -260,11 +277,13 @@ describe("inner and left joins", () => {
       ],
     }));
     const moved = { ...i1, projectId: "p2" };
+
     const result = maintainGraph({
       plan: graph,
       state,
       inputs: [{ sourceId: "issues", changes: [change("i1", i1, moved)] }],
     });
+
     expect(result.rows).toHaveLength(2);
     expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
     expect(result.operations.indexLookups).toBeLessThanOrEqual(2);
@@ -274,10 +293,12 @@ describe("inner and left joins", () => {
   it("replaces an unmatched row on first match and restores it after the final match", () => {
     const graph = join("left-join");
     const issue = { id: "i1", projectId: "p1", title: "First" };
+
     let result = maintainGraph({
       plan: graph,
       inputs: [{ sourceId: "issues", changes: [change("i1", undefined, issue)] }],
     });
+
     expect(result.rows[0]?.key).toEqual(["unmatched", "s2:i1"]);
     const project = { id: "p1", projectId: "workspace", name: "One" };
     result = maintainGraph({
@@ -307,12 +328,14 @@ describe("inner and left joins", () => {
   it("rejects non-equality join plans and corrupt arrangement snapshots contextually", () => {
     const unsupported = join("inner-join");
     const node = unsupported.nodes.find((candidate) => candidate.kind === "inner-join")!;
+
     const bad = {
       ...unsupported,
       nodes: unsupported.nodes.map((candidate) =>
         candidate === node ? { ...node, on: literal(true) } : candidate,
       ),
     };
+
     expect(() => maintainGraph({ plan: bad, inputs: [] })).toThrow(OperatorFault);
 
     const valid = maintainGraph({
@@ -324,7 +347,9 @@ describe("inner and left joins", () => {
         },
       ],
     });
+
     const arrangement = valid.state.arrangements[0]!;
+
     const corrupt: OperatorStateSnapshot = {
       ...valid.state,
       arrangements: [
@@ -335,6 +360,7 @@ describe("inner and left joins", () => {
         ...valid.state.arrangements.slice(1),
       ],
     };
+
     expect(() => maintainGraph({ plan: join("left-join"), state: corrupt, inputs: [] })).toThrow(
       /references an absent row/,
     );
@@ -378,6 +404,7 @@ describe("inner and left joins", () => {
       ],
       "project-join",
     );
+
     const result = maintainGraph({
       plan: graph,
       inputs: [
@@ -393,6 +420,7 @@ describe("inner and left joins", () => {
         },
       ],
     });
+
     expect(planRequirements(graph).flatMap((item) => item.arrangements)).toHaveLength(4);
     expect(result.state.arrangements).toHaveLength(3);
     expect(result.state.arrangements.find((item) => item.relationId === "issues")).toMatchObject({
@@ -427,6 +455,7 @@ describe("grouped aggregates and exact top", () => {
   it("updates both groups, removes the last group, and exposes the next counted maximum", () => {
     const high = { id: "i1", projectId: "p", status: "open", score: 10 };
     const low = { id: "i2", projectId: "p", status: "open", score: 5 };
+
     let result = maintainGraph({
       plan: aggregate,
       inputs: [
@@ -436,6 +465,7 @@ describe("grouped aggregates and exact top", () => {
         },
       ],
     });
+
     expect(result.rows[0]?.row).toMatchObject({ count: 2, total: 15, maximum: 10 });
     result = maintainGraph({
       plan: aggregate,
@@ -498,6 +528,7 @@ describe("grouped aggregates and exact top", () => {
     const a = { id: "a", projectId: "p1", score: 3 };
     const b = { id: "b", projectId: "p1", score: 2 };
     const c = { id: "c", projectId: "p1", score: 1 };
+
     let result = maintainGraph({
       plan: top,
       inputs: [
@@ -511,6 +542,7 @@ describe("grouped aggregates and exact top", () => {
         },
       ],
     });
+
     expect(result.ordered[0]?.keys).toEqual(["a", "b"]);
     const promoted = { ...c, score: 4 };
     result = maintainGraph({
@@ -545,6 +577,7 @@ describe("grouped aggregates and exact top", () => {
         node.kind === "top-n" ? { ...node, limit: literal(0) } : node,
       ),
     };
+
     expect(() => maintainGraph({ plan: invalid, inputs: [] })).toThrow(/top limit/);
     expect(() =>
       maintainGraph({
