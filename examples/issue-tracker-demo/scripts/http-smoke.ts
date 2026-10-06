@@ -1,6 +1,6 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Console, Effect, Fiber, FileSystem, Layer, Path, Result, Schema } from "effect";
+import { Console, Effect, Fiber, FileSystem, Layer, Path, Result, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
@@ -20,6 +20,9 @@ import {
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,
 }) {}
+
+/** A read that does not hold the rows the smoke waits for yet. */
+class NotYet extends Schema.TaggedError<NotYet>()("NotYet", { waitingFor: Schema.String }) {}
 
 const check = (condition: boolean, message: string) =>
   condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));
@@ -75,6 +78,30 @@ const readStream = (streamUrl: string) =>
     return { events: [...events], head };
   });
 
+type StreamRead = Effect.Success<ReturnType<typeof readStream>>;
+
+/**
+ * Read until `ready` holds, for up to five seconds. The base app writes the
+ * State stream in the request, so the first read holds the change. A variant
+ * that projects the stream from events can answer before the row lands, as a
+ * browser that waits on the txid allows.
+ */
+const readUntil = (streamUrl: string, waitingFor: string, ready: (read: StreamRead) => boolean) =>
+  readStream(streamUrl).pipe(
+    Effect.flatMap((read) => (ready(read) ? Effect.succeed(read) : new NotYet({ waitingFor }))),
+    Effect.retry({ while: Schema.is(NotYet), schedule: Schedule.spaced("50 millis"), times: 100 }),
+    Effect.catchTag(
+      "NotYet",
+      () => new SmokeFailure({ message: `timed out waiting for ${waitingFor}` }),
+    ),
+  );
+
+/** The read holds a change with each txid. */
+const hasTxids =
+  (...txids: ReadonlyArray<string>) =>
+  ({ events }: StreamRead) =>
+    txids.every((txid) => events.some((event) => event.headers.txid === txid));
+
 const findEvent = (events: StateEvent[], type: string, key: string, operation: string) => {
   const match = events.find(
     (event) => event.type === type && event.key === key && event.headers.operation === operation,
@@ -92,7 +119,10 @@ const findEvent = (events: StateEvent[], type: string, key: string, operation: s
 const smoke = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cwd = path.resolve(import.meta.dir, "..");
+  // The app folder to start. The default is this demo. A variant passes its own
+  // folder, so one smoke checks every server against the same wire contract.
+  const cwd = path.resolve(process.argv[2] ?? path.resolve(import.meta.dir, ".."));
+  const app = path.basename(cwd);
   const tempDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "streamsy-issue-tracker-" });
   const databasePath = path.join(tempDirectory, "smoke.sqlite");
 
@@ -113,7 +143,11 @@ const smoke = Effect.gen(function* () {
 
   // === 0. The seed: five issues, two of them in progress in one project ===
 
-  const seed = yield* readStream(mainStreamUrl);
+  const seed = yield* readUntil(
+    mainStreamUrl,
+    "the seeded issues",
+    ({ events }) => events.filter((event) => event.type === "issue").length >= 5,
+  );
 
   const seededIssues = yield* Effect.forEach(
     seed.events.filter((event) => event.type === "issue"),
@@ -181,7 +215,11 @@ const smoke = Effect.gen(function* () {
 
   // 1f. Read the durable stream and verify every mutation produced a
   //     client-readable Durable State change event.
-  const { events } = yield* readStream(mainStreamUrl);
+  const { events } = yield* readUntil(
+    mainStreamUrl,
+    "the CRUD changes",
+    hasTxids(commentResult.txid),
+  );
 
   const projectEvent = yield* findEvent(events, "project", projectId, "upsert");
   const projectValue = yield* Schema.decodeUnknownEffect(Project)(projectEvent.value);
@@ -220,7 +258,11 @@ const smoke = Effect.gen(function* () {
   // === 3. New workspace stream contains exactly the starter-project upsert ===
 
   const workspaceStreamUrl = `${baseUrl}/streams/workspace/${workspaceId}`;
-  const starterRead = yield* readStream(workspaceStreamUrl);
+  const starterRead = yield* readUntil(
+    workspaceStreamUrl,
+    "the starter project",
+    (read) => read.events.length > 0,
+  );
   yield* check(
     starterRead.events.length === 1,
     `new workspace should hold exactly 1 seed event, got ${starterRead.events.length}`,
@@ -338,7 +380,11 @@ const smoke = Effect.gen(function* () {
     new Set(contentionIds).size === contentionCount,
     "contended issue creates should produce unique issues",
   );
-  const after = yield* readStream(mainStreamUrl);
+  const after = yield* readUntil(
+    mainStreamUrl,
+    "the contended issues",
+    hasTxids(...contentionResults.map((result) => result.txid)),
+  );
   yield* check(
     after.events.length === before.events.length + contentionCount,
     `stream should gain exactly ${contentionCount} events under contention ` +
@@ -355,7 +401,11 @@ const smoke = Effect.gen(function* () {
   const race = { ws: raceWorkspaceId };
 
   const raceProject = yield* Schema.decodeUnknownEffect(Project)(
-    (yield* readStream(`${baseUrl}/streams/workspace/${raceWorkspaceId}`)).events[0]?.value,
+    (yield* readUntil(
+      `${baseUrl}/streams/workspace/${raceWorkspaceId}`,
+      "the race starter project",
+      (read) => read.events.length > 0,
+    )).events[0]?.value,
   );
 
   const raceIssue = (title: string, status: "open" | "in_progress") =>
@@ -409,7 +459,11 @@ const smoke = Effect.gen(function* () {
 
   const restartWorkspaceId = yield* createWorkspace;
   const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
-  const beforeRestartIssue = yield* readStream(restartStreamUrl);
+  const beforeRestartIssue = yield* readUntil(
+    restartStreamUrl,
+    "the restart starter project",
+    (read) => read.events.length > 0,
+  );
 
   const restartProject = yield* Schema.decodeUnknownEffect(Project)(
     beforeRestartIssue.events[0]?.value,
@@ -421,6 +475,11 @@ const smoke = Effect.gen(function* () {
   });
 
   const restartIssueId = restartIssue.issue.id;
+  const { head: restartHead } = yield* readUntil(
+    restartStreamUrl,
+    "the issue before the restart",
+    hasTxids(restartIssue.txid),
+  );
 
   // A browser normally has a parked read when the server stops.
   // Serve.layer answers it like a long-poll timeout (204 at the same head),
@@ -436,7 +495,7 @@ const smoke = Effect.gen(function* () {
   const drained = yield* Fiber.join(parked);
   yield* check(drained.status === 204, `shutdown long-poll status ${drained.status}`);
   yield* check(
-    drained.headers["stream-next-offset"] === restartIssue.awaitOffset,
+    drained.headers["stream-next-offset"] === restartHead,
     "the drained long poll should answer at the workspace head",
   );
   yield* check(!(yield* fs.exists(`${databasePath}-wal`)), "shutdown should close SQLite WAL");
@@ -447,12 +506,23 @@ const smoke = Effect.gen(function* () {
   const afterRestart = yield* readStream(restartStreamUrl);
   yield* findEvent(afterRestart.events, "issue", restartIssueId, "upsert");
   yield* check(
-    afterRestart.head === restartIssue.awaitOffset,
+    afterRestart.head === restartHead,
     "workspace head after restart should match the persisted issue append",
   );
 
+  // The restarted server takes writes, and they reach the stream.
+  const afterRestartIssue = yield* api.issues.create({
+    params: { ws: restartWorkspaceId },
+    payload: { projectId: restartProject.id, title: "Written after restart" },
+  });
+  yield* readUntil(
+    restartStreamUrl,
+    "the issue after the restart",
+    hasTxids(afterRestartIssue.txid),
+  );
+
   yield* Console.log(
-    `issue-tracker-demo HTTP smoke passed: main project ${projectId}, issue ${issueId}, ` +
+    `${app} HTTP smoke passed: main project ${projectId}, issue ${issueId}, ` +
       `shared workspace ${workspaceId}, ${after.events.length} main stream events`,
   );
 });

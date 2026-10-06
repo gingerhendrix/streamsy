@@ -139,6 +139,12 @@ losing writer retries against the new state, the same race against the
 work-in-progress rule, and a writer that loses every race to prove the 409 after
 three retries.
 
+The smoke takes an optional app folder, for example
+`bun run scripts/http-smoke.ts ../issue-tracker-demo-event-sourced`. It starts
+that folder's `server/index.ts` and runs the same checks, so every server
+variant is held to this wire contract. Each read after a write waits for the
+write's txid on the stream, because a projected stream can trail the answer.
+
 ## Limits
 
 With no database path, restarting the server starts with a fresh memory store.
