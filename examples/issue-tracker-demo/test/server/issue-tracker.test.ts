@@ -1,9 +1,15 @@
 import { BunCrypto } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Context, Deferred, Effect, Layer, Ref, Stream } from "effect";
+import { Context, Deferred, Effect, Layer, Ref, Result, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
-import { createIssue, issueUpsert, projectUpsert, type Stamp } from "../../server/state.ts";
+import {
+  createIssue,
+  issueUpsert,
+  projectUpsert,
+  updateIssue,
+  type Stamp,
+} from "../../server/state.ts";
 import { workspaceEvents, Workspaces, type WorkspaceChange } from "../../server/streams.ts";
 import type { Issue, Project } from "../../shared/state-schema.ts";
 
@@ -16,11 +22,11 @@ const project: Project = {
   description: "",
   createdAt,
 };
-const makeIssue = (id: string): Issue => ({
+const makeIssue = (id: string, status: Issue["status"] = "open"): Issue => ({
   id,
   projectId: project.id,
   title: id,
-  status: "open",
+  status,
   createdAt,
   updatedAt: createdAt,
 });
@@ -49,36 +55,42 @@ const issueKeys = Effect.gen(function* () {
 const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
   Effect.runPromise(effect.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Workspaces)))));
 
+/**
+ * A tracker whose first two decisions wait until both have folded the same
+ * head, so exactly one of the two conditional appends must lose.
+ */
+const racingTracker = Effect.gen(function* () {
+  const reader = yield* Workspaces;
+  const firstReads = yield* Ref.make(0);
+  const bothRead = yield* Deferred.make<void>();
+  const barrierReader = Workspaces.of({
+    ...reader,
+    decide: (params, spec) =>
+      reader.decide(params, {
+        ...spec,
+        decide: (state, at) =>
+          Effect.gen(function* () {
+            const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+            if (readNumber <= 2) {
+              if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+              yield* Deferred.await(bothRead);
+            }
+            return yield* spec.decide(state, at);
+          }),
+      }),
+  });
+  return yield* IssueTracker.pipe(
+    Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+    Effect.provideService(Workspaces, barrierReader),
+  );
+});
+
 test("two concurrent writers land without a lost update", async () => {
   let attempts = 0;
   const { keys, written } = await runWithStore(
     Effect.gen(function* () {
       yield* seeded;
-      const reader = yield* Workspaces;
-      const firstReads = yield* Ref.make(0);
-      const bothRead = yield* Deferred.make<void>();
-      // Hold both writers' first decisions until each has folded the same head,
-      // so exactly one of the two conditional appends must lose.
-      const barrierReader = Workspaces.of({
-        ...reader,
-        decide: (params, spec) =>
-          reader.decide(params, {
-            ...spec,
-            decide: (state, at) =>
-              Effect.gen(function* () {
-                const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
-                if (readNumber <= 2) {
-                  if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
-                  yield* Deferred.await(bothRead);
-                }
-                return yield* spec.decide(state, at);
-              }),
-          }),
-      });
-      const tracker = yield* IssueTracker.pipe(
-        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
-        Effect.provideService(Workspaces, barrierReader),
-      );
+      const tracker = yield* racingTracker;
       const write = (issue: Issue) =>
         tracker.mutate(workspaceId, (state) => {
           attempts += 1;
@@ -101,6 +113,42 @@ test("two concurrent writers land without a lost update", async () => {
   expect(attempts).toBe(3);
   expect(written.map(({ value }) => value.id)).toEqual(["issue_a", "issue_b"]);
   expect(keys).toEqual(["issue_a", "issue_b"]);
+});
+
+test("two writers race for the last in-progress place: the loser's retry breaks the rule", async () => {
+  const { results, inProgress } = await runWithStore(
+    Effect.gen(function* () {
+      yield* seeded;
+      for (const issue of [
+        makeIssue("issue_busy_1", "in_progress"),
+        makeIssue("issue_busy_2", "in_progress"),
+        makeIssue("issue_a"),
+        makeIssue("issue_b"),
+      ]) {
+        yield* appendUnchecked(issueUpsert(issue, stamp(issue.id)));
+      }
+      const tracker = yield* racingTracker;
+      // Both writers fold a head with two issues in progress, so both pass the
+      // rule. One append lands. The other retries on the new head, where the
+      // project is at the limit.
+      const start = (issueId: string) =>
+        tracker
+          .mutate(workspaceId, updateIssue(issueId, { status: "in_progress" }, stamp(issueId)))
+          .pipe(Effect.result);
+      const answers = yield* Effect.all([start("issue_a"), start("issue_b")], {
+        concurrency: "unbounded",
+      });
+      const { state } = yield* tracker.materialize(workspaceId);
+      return { results: answers, inProgress: state.countInProgress(project.id) };
+    }),
+  );
+
+  const failures = results.filter(Result.isFailure).map((result) => result.failure);
+  expect(results.filter(Result.isSuccess)).toHaveLength(1);
+  expect(failures).toEqual([
+    expect.objectContaining({ _tag: "TooManyInProgress", projectId: project.id, limit: 3 }),
+  ]);
+  expect(inProgress).toBe(3);
 });
 
 test("a writer that loses every race answers WriteConflict after three retries", async () => {
