@@ -16,11 +16,13 @@
     "builtin": true
   },
   "rules": {
+    "anti-slop/no-array-filter-map": "error",
     "anti-slop/no-chained-type-assertions": "error",
     "anti-slop/no-conditional-empty-object-spread": "error",
     "anti-slop/no-known-value-widening": "error",
     "anti-slop/no-module-mocking": "error",
     "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
     "anti-slop/no-reflect-apply": "error",
     "anti-slop/no-reflect-get": "error",
     "anti-slop/no-runtime-typeof": "error",
@@ -30,12 +32,25 @@
     "anti-slop/no-unknown-type-aliases": "error",
     "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "anti-slop-effect/no-manual-effect-error-tag": "error",
+    "anti-slop-effect/no-manual-tag-comparison": "error",
+    "anti-slop-effect/no-manual-tagged-construction": "error",
     "anti-slop-effect/no-service-constructor-imports": "error",
+    "anti-slop-effect/prefer-effect-match": "error",
     "effect-idioms/no-tag-comparison": "error",
     "effect-idioms/no-tag-destructure": "error",
     "effect-idioms/no-tag-literal": "error",
-    "effect-idioms/no-tag-switch": "error"
+    "effect-idioms/no-tag-switch": "error",
+    // Effect 4 ships its HTTP, SQL, Reactivity and process modules only under
+    // `effect/unstable/*`, and Streamsy is built on them. No stable API exists
+    // to move to.
+    "effecttsgo/unstable-api-usage": "off",
+    // `schema-sync` flags every sync Schema call outside Effect, including
+    // module-level codecs and plain async browser code. `schema-sync-in-effect`
+    // stays on for the sync calls that do run inside an Effect.
+    "effecttsgo/schema-sync": "off"
   },
   "overrides": [
     {
@@ -51,7 +66,10 @@
         "effect-idioms/no-tag-comparison": "off",
         "effect-idioms/no-tag-destructure": "off",
         "effect-idioms/no-tag-literal": "off",
-        "effect-idioms/no-tag-switch": "off"
+        "effect-idioms/no-tag-switch": "off",
+        "anti-slop-effect/no-manual-effect-error-tag": "off",
+        "anti-slop-effect/no-manual-tag-comparison": "off",
+        "anti-slop-effect/no-manual-tagged-construction": "off"
       }
     }
   ],
