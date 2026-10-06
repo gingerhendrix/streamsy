@@ -21,6 +21,13 @@ export interface Access<S extends Any = Any> {
   readonly access: "read" | "append" | "full";
 }
 
+/** The `allow` header for each access level. */
+const allowedMethods: Readonly<Record<Access["access"], string>> = {
+  read: "GET, HEAD, OPTIONS",
+  append: "GET, HEAD, POST, OPTIONS",
+  full: "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+};
+
 export interface RoutesOptions extends Omit<HttpOptions, "pathPrefix"> {
   readonly prefix?: `/${string}`;
   readonly access: Access["access"] | ((stream: Any) => Access["access"]);
@@ -61,12 +68,7 @@ export function routes(group: Group.Group, options: RoutesOptions) {
       return HttpServerResponse.empty({ status: 404, headers: securityHeaders });
     }
 
-    const allow =
-      entry.access === "read"
-        ? "GET, HEAD, OPTIONS"
-        : entry.access === "append"
-          ? "GET, HEAD, POST, OPTIONS"
-          : "GET, HEAD, PUT, POST, DELETE, OPTIONS";
+    const allow = allowedMethods[entry.access];
 
     if (entry.access !== "full" && !allow.split(", ").includes(request.method)) {
       yield* discardRequestBody(request);

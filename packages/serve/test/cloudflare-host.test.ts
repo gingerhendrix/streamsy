@@ -71,12 +71,14 @@ test("one object scope serves mixed requests and one real alarm turn", async () 
   const harness = await makeHarness();
   expect((await create(harness, "/streams/reuse", 3)).status).toBe(201);
 
+  const requests: ReadonlyArray<RequestInit | undefined> = [
+    { method: "HEAD" },
+    undefined,
+    { method: "OPTIONS" },
+  ];
+
   for (let index = 0; index < 20; index += 1) {
-    const response = await dispatch(
-      harness,
-      "/streams/reuse",
-      index % 3 === 0 ? { method: "HEAD" } : index % 3 === 1 ? undefined : { method: "OPTIONS" },
-    );
+    const response = await dispatch(harness, "/streams/reuse", requests[index % requests.length]);
 
     expect([200, 204, 404]).toContain(response.status);
   }

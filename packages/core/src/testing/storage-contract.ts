@@ -9,6 +9,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Match,
   Option,
   Queue,
   Stream,
@@ -423,11 +424,13 @@ export const StorageContract = {
             if (action === "soft delete") yield* fork();
             const { queue } = yield* observe;
             yield* mutate(
-              action === "append"
-                ? append()
-                : action === "close"
-                  ? append({ messages: [], patch: { lifecycle: { closed: true } } })
-                  : remove(),
+              Match.value(action).pipe(
+                Match.when("append", () => append()),
+                Match.when("close", () =>
+                  append({ messages: [], patch: { lifecycle: { closed: true } } }),
+                ),
+                Match.orElse(() => remove()),
+              ),
             );
             yield* tick;
             const value = yield* Queue.take(queue);

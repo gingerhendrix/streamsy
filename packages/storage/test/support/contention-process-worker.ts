@@ -26,9 +26,9 @@ if (
 )
   database.run("INSERT INTO batch_c_lock VALUES (0)");
 
-database.run(
-  mode === "exclusive" ? "BEGIN EXCLUSIVE" : mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN",
-);
+const begin = { write: "BEGIN IMMEDIATE", read: "BEGIN", exclusive: "BEGIN EXCLUSIVE" };
+
+database.run(begin[mode]);
 
 if (mode !== "read") database.run("UPDATE batch_c_lock SET value=value+1");
 else database.query("SELECT * FROM batch_c_lock").all();

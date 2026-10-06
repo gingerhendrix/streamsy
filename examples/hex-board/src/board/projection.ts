@@ -857,6 +857,36 @@ export function aggregateBoardView(state: AggregateViewSource): BoardView {
   };
 }
 
+function pendingInteraction(combat: ProjectedCombat): PendingInteraction {
+  if (combat.status === "awaiting-defense") {
+    return {
+      type: "defense",
+      attackId: combat.attackId,
+      turnId: combat.turnId,
+      attackerId: combat.attackerId,
+      defenderId: combat.defenderId,
+      from: combat.from,
+      to: combat.to,
+      attackerDice: combat.attackerDice,
+      attackerRolls: combat.attackerRolls.slice(),
+      defenderDice: combat.defenderDice,
+      declaredAt: combat.declaredAt,
+      defenseDeadlineAt: combat.defenseDeadlineAt,
+    };
+  }
+
+  return {
+    type: "occupation",
+    attackId: combat.attackId,
+    turnId: combat.turnId,
+    playerId: combat.attackerId,
+    from: combat.from,
+    to: combat.to,
+    minArmies: combat.minArmies!,
+    maxArmies: combat.maxArmies!,
+  };
+}
+
 /**
  * The same view rebuilt from projected rows. The pending interaction is
  * reconstructed from the `combat` row, which is what proves the row carries
@@ -865,34 +895,7 @@ export function aggregateBoardView(state: AggregateViewSource): BoardView {
 export function projectionBoardView(state: ProjectionState): BoardView {
   const combat = state.combat;
 
-  const pending: PendingInteraction | undefined =
-    combat?.status === "awaiting-defense"
-      ? {
-          type: "defense",
-          attackId: combat.attackId,
-          turnId: combat.turnId,
-          attackerId: combat.attackerId,
-          defenderId: combat.defenderId,
-          from: combat.from,
-          to: combat.to,
-          attackerDice: combat.attackerDice,
-          attackerRolls: combat.attackerRolls.slice(),
-          defenderDice: combat.defenderDice,
-          declaredAt: combat.declaredAt,
-          defenseDeadlineAt: combat.defenseDeadlineAt,
-        }
-      : combat?.status === "awaiting-occupation"
-        ? {
-            type: "occupation",
-            attackId: combat.attackId,
-            turnId: combat.turnId,
-            playerId: combat.attackerId,
-            from: combat.from,
-            to: combat.to,
-            minArmies: combat.minArmies!,
-            maxArmies: combat.maxArmies!,
-          }
-        : undefined;
+  const pending = combat === null ? undefined : pendingInteraction(combat);
 
   return {
     status: state.game.status,

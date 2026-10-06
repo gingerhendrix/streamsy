@@ -2,7 +2,7 @@ import { spawnServer } from "@streamsy/test-support/server";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
-import { ServerConfig, storageChoice } from "../server/config.ts";
+import { ServerConfig, storageChoice, type StorageChoice } from "../server/config.ts";
 
 export class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,
@@ -29,8 +29,14 @@ export const scratchDatabase = (prefix: string) =>
 export const serverDatabase = Effect.gen(function* () {
   const choice = yield* storageChoice(yield* ServerConfig);
 
-  return choice.dialect === "pg" ? "Postgres" : choice.dialect === "mysql" ? "MySQL" : "SQLite";
+  return databaseNames[choice.dialect];
 });
+
+const databaseNames: Readonly<Record<StorageChoice["dialect"], string>> = {
+  pg: "Postgres",
+  mysql: "MySQL",
+  sqlite: "SQLite",
+};
 
 /**
  * Starts the server on `database`, a SQLite file. With a database URL set,

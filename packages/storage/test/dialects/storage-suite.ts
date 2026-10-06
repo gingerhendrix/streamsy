@@ -495,7 +495,11 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
     test("legacy and too-new schemas reject without changes", async () => {
       const outcomes: Array<unknown> = [];
 
-      for (const kind of ["legacy", "legacy-0.4", "newer"] as const) {
+      for (const { kind, table, version } of [
+        { kind: "legacy", table: "streamsy_schema_version", version: 3 },
+        { kind: "legacy-0.4", table: "streamsy_storage_schema_version", version: 2 },
+        { kind: "newer", table: STORAGE_VERSION_TABLE, version: STORAGE_SCHEMA_VERSION + 1 },
+      ]) {
         outcomes.push(
           await Effect.runPromise(
             withDatabase((fresh) =>
@@ -504,16 +508,6 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                   yield* Layer.build(dialectClient(dialect, fresh)),
                   SqlClient.SqlClient,
                 );
-
-                const table =
-                  kind === "legacy"
-                    ? "streamsy_schema_version"
-                    : kind === "legacy-0.4"
-                      ? "streamsy_storage_schema_version"
-                      : STORAGE_VERSION_TABLE;
-
-                const version =
-                  kind === "legacy" ? 3 : kind === "legacy-0.4" ? 2 : STORAGE_SCHEMA_VERSION + 1;
 
                 yield* sql`CREATE TABLE ${sql(table)} (version INTEGER PRIMARY KEY, applied_at_ms BIGINT NOT NULL)`;
                 yield* sql`INSERT INTO ${sql(table)} ${sql.insert({ version, applied_at_ms: 1 })}`;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer } from "effect";
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Match } from "effect";
 import { TestClock } from "effect/testing";
 import { ContractError, type EvidenceReport, type RunIdentity } from "../src/contract.ts";
 import { HttpOperation } from "../src/measurement.ts";
@@ -469,15 +469,19 @@ test("interrupted configured measurement is not reported as unavailable", async 
 
   const measurementHttp = Layer.succeed(HttpOperation, {
     request: (request: { readonly method: string }) =>
-      request.method === "GET"
-        ? Effect.succeed({ status: 400, body: "Stream path required: /{path}" })
-        : request.method === "PUT"
-          ? Effect.gen(function* () {
-              yield* Deferred.succeed(started, undefined);
+      Match.value(request.method).pipe(
+        Match.when("GET", () =>
+          Effect.succeed({ status: 400, body: "Stream path required: /{path}" }),
+        ),
+        Match.when("PUT", () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
 
-              return yield* Effect.never;
-            })
-          : Effect.succeed({ status: 200, body: "" }),
+            return yield* Effect.never;
+          }),
+        ),
+        Match.orElse(() => Effect.succeed({ status: 200, body: "" })),
+      ),
   });
 
   const exit = await interruptAt(
@@ -562,7 +566,11 @@ test("fake measurement success and invalid body failures are part of the owned w
               ? { status: 400, body: "Stream path required: /{path}" }
               : { status: 404, body: "" }
             : {
-                status: request.method === "PUT" ? 201 : request.method === "HEAD" ? 200 : 204,
+                status: Match.value(request.method).pipe(
+                  Match.when("PUT", () => 201),
+                  Match.when("HEAD", () => 200),
+                  Match.orElse(() => 204),
+                ),
                 body: "",
               },
         ),
@@ -586,11 +594,15 @@ test("fake measurement success and invalid body failures are part of the owned w
 
   const failingHttp = Layer.succeed(HttpOperation, {
     request: (request: { readonly method: string }) =>
-      request.method === "HEAD"
-        ? Effect.fail(new ContractError({ message: "body failed" }))
-        : request.method === "GET"
-          ? Effect.succeed({ status: 400, body: "Stream path required: /{path}" })
-          : Effect.succeed({ status: request.method === "PUT" ? 201 : 204, body: "" }),
+      Match.value(request.method).pipe(
+        Match.when("HEAD", () => Effect.fail(new ContractError({ message: "body failed" }))),
+        Match.when("GET", () =>
+          Effect.succeed({ status: 400, body: "Stream path required: /{path}" }),
+        ),
+        Match.orElse((method) =>
+          Effect.succeed({ status: method === "PUT" ? 201 : 204, body: "" }),
+        ),
+      ),
   });
 
   const failingExit = await runWithClock(

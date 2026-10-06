@@ -1,5 +1,5 @@
 import { Projection } from "@streamsy/projection";
-import { Effect, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { CommandRequest } from "../shared/api.ts";
 import type { IssueEvent } from "../domain/issue.ts";
@@ -38,23 +38,28 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
           occurredAt,
         };
 
-        const event: IssueEvent =
-          command.type === "create"
-            ? {
-                type: "IssueCreated",
-                ...common,
-                projectId: command.projectId,
-                title: command.title,
-                status: command.status ?? "backlog",
-              }
-            : command.type === "status"
-              ? { type: "IssueStatusChanged", ...common, status: command.status }
-              : {
-                  type: "IssueAssigned",
-                  ...common,
-                  status: previous!.status,
-                  assigneeId: command.assigneeId,
-                };
+        const event: IssueEvent = Match.value(command).pipe(
+          Match.discriminatorsExhaustive("type")({
+            create: (create): IssueEvent => ({
+              type: "IssueCreated",
+              ...common,
+              projectId: create.projectId,
+              title: create.title,
+              status: create.status ?? "backlog",
+            }),
+            status: (status): IssueEvent => ({
+              type: "IssueStatusChanged",
+              ...common,
+              status: status.status,
+            }),
+            assign: (assign): IssueEvent => ({
+              type: "IssueAssigned",
+              ...common,
+              status: previous!.status,
+              assigneeId: assign.assigneeId,
+            }),
+          }),
+        );
 
         return { value: event, items: [event] };
       }),
