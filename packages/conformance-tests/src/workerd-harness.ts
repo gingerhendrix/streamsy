@@ -1,5 +1,11 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { NodePath } from "@effect/platform-node";
+import { Context, Effect, Layer, Path } from "effect";
+
+const { basename, dirname, isAbsolute, relative, resolve, sep } = Context.get(
+  Effect.runSync(Effect.scoped(Layer.build(NodePath.layer))),
+  Path.Path,
+);
 
 export const isDescendant = (source: string, candidate: string): boolean => {
   const path = relative(source, candidate);
@@ -114,59 +120,78 @@ export const registerWorkerdState = <I extends WorkerdDisposable>(
   return state;
 };
 
-export const cleanupWorkerdState = async (
+export const cleanupWorkerdState = (
   state: WorkerdOwnedState,
   configuredRetention: string | undefined,
   removeOwned?: (path: string) => void,
-): Promise<{ readonly done: boolean; readonly errors: ReadonlyArray<unknown> }> => {
-  const errors: Array<unknown> = [];
+): Promise<{ readonly done: boolean; readonly errors: ReadonlyArray<unknown> }> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const errors: Array<unknown> = [];
 
-  if (!state.disposed && state.instance !== undefined) {
-    try {
-      await state.instance.dispose();
-      state.disposed = true;
-    } catch (error) {
-      errors.push(error);
-    }
-  } else if (state.instance === undefined) {
-    state.disposed = true;
-  }
+      if (!state.disposed && state.instance !== undefined) {
+        const instance = state.instance;
+        yield* Effect.promise(() => instance.dispose()).pipe(
+          Effect.andThen(() =>
+            Effect.sync(() => {
+              state.disposed = true;
+            }),
+          ),
+          Effect.catchDefect((error) =>
+            Effect.sync(() => {
+              errors.push(error);
+            }),
+          ),
+        );
+      } else if (state.instance === undefined) {
+        state.disposed = true;
+      }
 
-  if (!state.disposed) {
-    errors.push(new Error("Persistence root retained while Miniflare disposal is unresolved"));
+      if (!state.disposed) {
+        errors.push(new Error("Persistence root retained while Miniflare disposal is unresolved"));
 
-    return { done: false, errors };
-  }
+        return { done: false, errors };
+      }
 
-  const rootErrors = reclaimRoot(state.root, configuredRetention, removeOwned);
-  errors.push(...rootErrors);
-  const rootGone = !existsSync(state.root);
+      errors.push(...reclaimRoot(state.root, configuredRetention, removeOwned));
 
-  return { done: rootGone, errors };
-};
+      return { done: !existsSync(state.root), errors };
+    }),
+  );
 
-export const cleanupWorkerdRegistry = async <I extends WorkerdDisposable>(
+export const cleanupWorkerdRegistry = <I extends WorkerdDisposable>(
   registry: WorkerdOwnedRegistry<I>,
   configuredRetention: string | undefined,
   removeOwned?: (path: string) => void,
-): Promise<ReadonlyArray<unknown>> => {
-  const errors: Array<unknown> = [];
+): Promise<ReadonlyArray<unknown>> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const errors: Array<unknown> = [];
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    for (const state of Array.from(registry.states)) {
-      try {
-        const result = await cleanupWorkerdState(state, configuredRetention, removeOwned);
-        errors.push(...result.errors);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        for (const state of Array.from(registry.states)) {
+          yield* Effect.promise(() =>
+            cleanupWorkerdState(state, configuredRetention, removeOwned),
+          ).pipe(
+            Effect.andThen((result) =>
+              Effect.sync(() => {
+                errors.push(...result.errors);
 
-        if (result.done) registry.states.delete(state);
-      } catch (error) {
-        errors.push(error);
+                if (result.done) registry.states.delete(state);
+              }),
+            ),
+            Effect.catchDefect((error) =>
+              Effect.sync(() => {
+                errors.push(error);
+              }),
+            ),
+          );
+        }
       }
-    }
-  }
 
-  return errors;
-};
+      return errors;
+    }),
+  );
 
 export interface WorkerdRunnerLifecycleOptions<I extends WorkerdDisposable> {
   readonly createRoot: () => string;
@@ -183,80 +208,94 @@ export interface WorkerdRunnerLifecycle<I extends WorkerdDisposable> {
   readonly afterAll: () => Promise<void>;
 }
 
-/**
- * Shared lifecycle used by the real Vitest hooks.
- * Registration precedes construction, and an unresolved instance keeps its root owned.
- */
+/** Registration precedes construction; unresolved disposal keeps the root owned. */
 export const createWorkerdRunnerLifecycle = <I extends WorkerdDisposable>(
   options: WorkerdRunnerLifecycleOptions<I>,
 ): WorkerdRunnerLifecycle<I> => {
   const registry = createWorkerdOwnedRegistry<I>();
 
-  const cleanupOne = async (
-    state: WorkerdOwnedState<I>,
-    inspect: boolean,
-  ): Promise<ReadonlyArray<unknown>> => {
-    const errors: Array<unknown> = [];
+  const cleanupOne = (state: WorkerdOwnedState<I>, inspect: boolean) =>
+    Effect.gen(function* () {
+      const errors: Array<unknown> = [];
+      const instance = state.instance;
+      const inspectInstance = options.inspect;
 
-    if (inspect && state.instance !== undefined && options.inspect !== undefined) {
-      try {
-        await options.inspect(state.instance);
-      } catch (error) {
-        errors.push(error);
+      if (inspect && instance !== undefined && inspectInstance !== undefined) {
+        yield* Effect.promise(() => inspectInstance(instance)).pipe(
+          Effect.catchDefect((error) =>
+            Effect.sync(() => {
+              errors.push(error);
+            }),
+          ),
+        );
       }
-    }
 
-    try {
-      const cleanup = await cleanupWorkerdState(
-        state,
-        options.configuredRetention,
-        options.removeOwned,
+      yield* Effect.promise(() =>
+        cleanupWorkerdState(state, options.configuredRetention, options.removeOwned),
+      ).pipe(
+        Effect.andThen((cleanup) =>
+          Effect.sync(() => {
+            errors.push(...cleanup.errors);
+
+            if (cleanup.done) registry.states.delete(state);
+          }),
+        ),
+        Effect.catchDefect((error) =>
+          Effect.sync(() => {
+            errors.push(error);
+          }),
+        ),
       );
 
-      errors.push(...cleanup.errors);
+      return errors;
+    });
 
-      if (cleanup.done) registry.states.delete(state);
-    } catch (error) {
-      errors.push(error);
-    }
+  const beforeAll = (): Promise<string> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const root = options.createRoot();
+        const state = registerWorkerdState(registry, root);
 
-    return errors;
-  };
+        return yield* Effect.gen(function* () {
+          const instance = options.createInstance(root);
+          state.instance = instance;
 
-  const beforeAll = async (): Promise<string> => {
-    const root = options.createRoot();
-    const state = registerWorkerdState(registry, root);
+          return yield* Effect.promise(() => options.ready(instance));
+        }).pipe(
+          Effect.catchDefect((error) =>
+            Effect.gen(function* () {
+              const cleanupErrors = yield* cleanupOne(state, false);
 
-    try {
-      const instance = options.createInstance(root);
-      state.instance = instance;
+              return yield* Effect.die(
+                cleanupErrors.length > 0
+                  ? new AggregateError([error, ...cleanupErrors], "Workerd runner startup failed", {
+                      cause: error,
+                    })
+                  : error,
+              );
+            }),
+          ),
+        );
+      }),
+    );
 
-      return await options.ready(instance);
-    } catch (error) {
-      const cleanupErrors = await cleanupOne(state, false);
+  const afterAll = (): Promise<void> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const errors: Array<unknown> = [];
 
-      if (cleanupErrors.length > 0) {
-        // oxlint-disable-next-line preserve-caught-error -- Preserve startup and cleanup causes together.
-        throw new AggregateError([error, ...cleanupErrors], "Workerd runner startup failed", {
-          cause: error,
-        });
-      }
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          for (const state of Array.from(registry.states)) {
+            errors.push(...(yield* cleanupOne(state, true)));
+          }
+        }
 
-      throw error;
-    }
-  };
+        if (errors.length > 0)
+          return yield* Effect.die(new AggregateError(errors, "Workerd runner cleanup failed"));
 
-  const afterAll = async (): Promise<void> => {
-    const errors: Array<unknown> = [];
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      for (const state of Array.from(registry.states)) {
-        errors.push(...(await cleanupOne(state, true)));
-      }
-    }
-
-    if (errors.length > 0) throw new AggregateError(errors, "Workerd runner cleanup failed");
-  };
+        return undefined;
+      }),
+    );
 
   return { registry, beforeAll, afterAll };
 };

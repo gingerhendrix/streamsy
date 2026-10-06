@@ -62,7 +62,7 @@ export const Placement = {
         // SAFETY: `entry.stream.parse` decoded this value through the same
         // stream whose owner reads it, so the parameter set is the one the
         // owner was declared with.
-        // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- The invariant is stated in the comment above.
+        // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- The invariant is stated in the comment above.
         return entry.owner(params.value as never);
       }
 

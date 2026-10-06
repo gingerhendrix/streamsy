@@ -1,3 +1,4 @@
+import { Clock } from "effect";
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
 /* oxlint-disable effecttsgo/async-function -- This fixture owns the real workerd boundary. */
 import type {
@@ -226,7 +227,8 @@ class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter
   override alarm(info?: AlarmInvocationInfo): Promise<void> {
     this.#state.alarmInvocations += 1;
 
-    if (info !== undefined) this.#state.alarmInfo.push({ ...info, observedAt: Date.now() });
+    if (info !== undefined)
+      this.#state.alarmInfo.push({ ...info, observedAt: Effect.runSync(Clock.currentTimeMillis) });
 
     return super.alarm(info);
   }

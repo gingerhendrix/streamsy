@@ -8,7 +8,13 @@ import {
   rmSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { NodePath } from "@effect/platform-node";
+import { Context, DateTime, Effect, Layer, Path, Schema } from "effect";
+
+const { dirname, isAbsolute, join, relative, resolve } = Context.get(
+  Effect.runSync(Effect.scoped(Layer.build(NodePath.layer))),
+  Path.Path,
+);
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -146,108 +152,120 @@ const outputFile = (outputs: Array<Bun.BuildArtifact>, label: string): Bun.Build
   return output;
 };
 
-const readBytes = async (path: string): Promise<Uint8Array> =>
-  new Uint8Array(await Bun.file(path).arrayBuffer());
+const readBytes = (path: string) =>
+  Effect.promise(() => Bun.file(path).arrayBuffer()).pipe(
+    Effect.map((buffer) => new Uint8Array(buffer)),
+  );
 
-const spawnBytes = async (
-  command: Array<string>,
-  input?: Uint8Array,
-  cwd: string = repositoryRoot,
-): Promise<Uint8Array> => {
-  const process = Bun.spawn({
-    cmd: command,
-    cwd,
-    stdin: input,
-    stdout: "pipe",
-    stderr: "pipe",
+const spawnBytes = (command: Array<string>, input?: Uint8Array, cwd: string = repositoryRoot) =>
+  Effect.gen(function* () {
+    const child = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Bun.spawn({ cmd: command, cwd, stdin: input, stdout: "pipe", stderr: "pipe" }),
+      ),
+      (process) =>
+        Effect.sync(() => {
+          if (process.exitCode === null) process.kill();
+        }),
+    );
+
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        Effect.promise(() => child.stdout.bytes()),
+        Effect.promise(() => child.stderr.text()),
+        Effect.promise(() => child.exited),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    if (exitCode !== 0) throw new Error(`${command.join(" ")} failed with ${exitCode}: ${stderr}`);
+
+    return stdout;
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    process.stdout.bytes(),
-    process.stderr.text(),
-    process.exited,
-  ]);
+const commandText = (command: Array<string>, cwd: string = repositoryRoot) =>
+  spawnBytes(command, undefined, cwd).pipe(Effect.map((bytes) => new TextDecoder().decode(bytes)));
 
-  if (exitCode !== 0) throw new Error(`${command.join(" ")} failed with ${exitCode}: ${stderr}`);
+const build = () =>
+  Effect.gen(function* () {
+    assertOwnedAncestors(outputRoot, "Worker output root");
+    outputRootValidated = true;
+    invalidateReport();
+    assertOwnedAncestors(uploadDirectory, "Worker upload directory");
+    assertBuiltExports();
+    cleanOwnedUploadDirectory();
 
-  return stdout;
-};
+    const temporaryRoot = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "streamsy-worker-build-"))),
+      (root) => Effect.sync(() => rmSync(root, { recursive: true, force: true })),
+    );
 
-const commandText = async (command: Array<string>, cwd: string = repositoryRoot): Promise<string> =>
-  new TextDecoder().decode(await spawnBytes(command, undefined, cwd));
-
-const build = async (): Promise<void> => {
-  assertOwnedAncestors(outputRoot, "Worker output root");
-  outputRootValidated = true;
-  invalidateReport();
-  assertOwnedAncestors(uploadDirectory, "Worker upload directory");
-  assertBuiltExports();
-  cleanOwnedUploadDirectory();
-  let temporaryRoot: string | undefined;
-
-  try {
-    temporaryRoot = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "streamsy-worker-build-"));
     const minifiedRoot = join(temporaryRoot, "minified");
     const rawRoot = join(temporaryRoot, "raw");
     mkdirSync(minifiedRoot);
     mkdirSync(rawRoot);
 
-    const minified = await Bun.build({
-      entrypoints: [workerSource],
-      outdir: minifiedRoot,
-      naming: { entry: "worker.js" },
-      target: "browser",
-      format: "esm",
-      minify: true,
-      sourcemap: "none",
-      external: ["cloudflare:workers"],
-      metafile: true,
-    });
+    const minified = yield* Effect.promise(() =>
+      Bun.build({
+        entrypoints: [workerSource],
+        outdir: minifiedRoot,
+        naming: { entry: "worker.js" },
+        target: "browser",
+        format: "esm",
+        minify: true,
+        sourcemap: "none",
+        external: ["cloudflare:workers"],
+        metafile: true,
+      }),
+    );
 
     if (!minified.success || minified.metafile === undefined) {
-      throw new Error(`Worker build failed: ${JSON.stringify(minified.logs)}`);
+      throw new Error(`Worker build failed: ${minified.logs.map(String).join("; ")}`);
     }
 
     const minifiedOutput = outputFile(minified.outputs, "Minified");
 
-    const raw = await Bun.build({
-      entrypoints: [workerSource],
-      outdir: rawRoot,
-      naming: { entry: "worker.js" },
-      target: "browser",
-      format: "esm",
-      minify: false,
-      sourcemap: "none",
-      external: ["cloudflare:workers"],
-    });
+    const raw = yield* Effect.promise(() =>
+      Bun.build({
+        entrypoints: [workerSource],
+        outdir: rawRoot,
+        naming: { entry: "worker.js" },
+        target: "browser",
+        format: "esm",
+        minify: false,
+        sourcemap: "none",
+        external: ["cloudflare:workers"],
+      }),
+    );
 
-    if (!raw.success) throw new Error(`Raw worker build failed: ${JSON.stringify(raw.logs)}`);
+    if (!raw.success)
+      throw new Error(`Raw worker build failed: ${raw.logs.map(String).join("; ")}`);
     const rawOutput = outputFile(raw.outputs, "Raw");
-    const minifiedBytes = await readBytes(minifiedOutput.path);
-    const rawBytes = (await readBytes(rawOutput.path)).byteLength;
+    const minifiedBytes = yield* readBytes(minifiedOutput.path);
+    const rawBytes = (yield* readBytes(rawOutput.path)).byteLength;
     cpSync(minifiedOutput.path, workerPath);
     const outputModules = inspectUploadDirectory();
-    const publishedBytes = await readBytes(workerPath);
+    const publishedBytes = yield* readBytes(workerPath);
     const gzipInput = new ArrayBuffer(publishedBytes.byteLength);
     new Uint8Array(gzipInput).set(publishedBytes);
-    const gzipBytesCliFile = (await spawnBytes(["gzip", "-9", "-c", workerPath])).byteLength;
-    const gzipBytesCliStdin = (await spawnBytes(["gzip", "-9", "-c"], publishedBytes)).byteLength;
+    const gzipBytesCliFile = (yield* spawnBytes(["gzip", "-9", "-c", workerPath])).byteLength;
+    const gzipBytesCliStdin = (yield* spawnBytes(["gzip", "-9", "-c"], publishedBytes)).byteLength;
     const gzipBytesBun = Bun.gzipSync(gzipInput, { level: 9 }).byteLength;
-    const sourceSha = (await commandText(["git", "rev-parse", "HEAD"], repositoryRoot)).trim();
+    const sourceSha = (yield* commandText(["git", "rev-parse", "HEAD"], repositoryRoot)).trim();
 
-    const sourceStatus = await commandText(
+    const sourceStatus = yield* commandText(
       ["git", "status", "--porcelain=v1", "--untracked-files=all"],
       repositoryRoot,
     );
 
-    const gzipVersion = (await commandText(["gzip", "--version"])).split("\n")[0] ?? "unknown";
+    const gzipVersion = (yield* commandText(["gzip", "--version"])).split("\n")[0] ?? "unknown";
 
     const report = {
       sourceSha,
       sourceDirty: sourceStatus.trim().length > 0,
       sourceStatus: sourceStatus.trim().length > 0 ? "dirty" : "clean",
       workerSha256: new Bun.CryptoHasher("sha256").update(publishedBytes).digest("hex"),
-      buildTimestamp: new Date().toISOString(),
+      buildTimestamp: DateTime.formatIso(yield* DateTime.now),
       bunVersion: Bun.version,
       gzipToolVersion: gzipVersion,
       entrypoint: workerSource,
@@ -279,14 +297,12 @@ const build = async (): Promise<void> => {
         "Local bytes are not uploaded compressed bytes and do not establish hosted acceptance.",
     };
 
-    await Bun.write(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  } finally {
-    if (temporaryRoot !== undefined) rmSync(temporaryRoot, { recursive: true, force: true });
-  }
-};
+    const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(report);
+    yield* Effect.promise(() => Bun.write(reportPath, `${json}\n`));
+  }).pipe(Effect.scoped);
 
 try {
-  await build();
+  await Effect.runPromise(build());
 } catch (error) {
   // Only a validated output root may be touched by stale-report invalidation;
   // an unowned/symlinked root is left entirely untouched on every failure path.
@@ -296,7 +312,7 @@ try {
       invalidateReport();
     }
   } catch (cleanupError) {
-    // oxlint-disable-next-line eslint(preserve-caught-error) -- AggregateError retains both the original build failure and report-cleanup failure.
+    // oxlint-disable-next-line eslint/preserve-caught-error -- AggregateError retains both the original build failure and report-cleanup failure.
     throw new AggregateError(
       [error, cleanupError],
       "Worker build failed and report cleanup failed",

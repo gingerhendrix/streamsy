@@ -7,7 +7,7 @@ import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { SqlStorage } from "@streamsy/storage";
-import { Config, Effect, Layer, Option } from "effect";
+import { Config, Effect, Layer, Option, Schema } from "effect";
 import { HttpServer } from "effect/http";
 
 export const HostConfig = Config.all({
@@ -31,7 +31,13 @@ const announce = Layer.effectDiscard(
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
     const listening = HttpServer.formatAddress(server.address);
-    yield* Effect.sync(() => console.log(JSON.stringify({ listening })));
+
+    const line = yield* Schema.encodeEffect(
+      Schema.fromJsonString(Schema.Struct({ listening: Schema.String })),
+    )({ listening });
+
+    // The spawned-host wire protocol requires an unprefixed JSON line on stdout.
+    yield* Effect.sync(() => process.stdout.write(`${line}\n`));
   }),
 );
 

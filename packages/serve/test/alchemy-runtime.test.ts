@@ -1,55 +1,53 @@
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
-import { expect, test } from "bun:test";
+import { expect, it as baseIt } from "@streamsy/effect-test";
 import { Effect, Layer } from "effect";
 import { StorageFault, MemoryStorage } from "@streamsy/core";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
 import { objectHandlers } from "../src/alchemy.ts";
 
-test.each(["typed", "defect"])(
+baseIt.effect.each(["typed", "defect"])(
   "Alchemy retries %s acquisition failures and closes its scope",
-  async (failure) => {
-    let acquisitions = 0;
-    let releases = 0;
-    let alarms = 0;
-    const protocol = MemoryStorage.layerProtocol();
+  (failure) =>
+    Effect.gen(function* () {
+      let acquisitions = 0;
+      let releases = 0;
+      let alarms = 0;
+      const protocol = MemoryStorage.layerProtocol();
 
-    const layer = Layer.unwrap(
-      Effect.gen(function* () {
-        acquisitions += 1;
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            releases += 1;
-          }),
-        );
-
-        if (acquisitions === 1 && failure === "defect")
-          return yield* Effect.die(new Error("fixture acquisition defect"));
-
-        if (acquisitions === 1)
-          return yield* Effect.fail(
-            new StorageFault({
-              operation: "fixture.acquire",
-              message: "first build fails",
-              retryable: true,
+      const layer = Layer.unwrap(
+        Effect.gen(function* () {
+          acquisitions += 1;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              releases += 1;
             }),
           );
 
-        return Layer.mergeAll(
-          protocol,
-          Layer.succeed(Alarm, {
-            current: Effect.succeedNone,
-            arm: () => Effect.void,
-            clear: Effect.sync(() => {
-              alarms += 1;
-            }),
-          }),
-        );
-      }),
-    );
+          if (acquisitions === 1 && failure === "defect")
+            return yield* Effect.die(new Error("fixture acquisition defect"));
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
+          if (acquisitions === 1)
+            return yield* new StorageFault({
+              operation: "fixture.acquire",
+              message: "first build fails",
+              retryable: true,
+            });
+
+          return Layer.mergeAll(
+            protocol,
+            Layer.succeed(Alarm, {
+              current: Effect.succeedNone,
+              arm: () => Effect.void,
+              clear: Effect.sync(() => {
+                alarms += 1;
+              }),
+            }),
+          );
+        }),
+      );
+
+      yield* Effect.gen(function* () {
         const handlers = yield* objectHandlers({
           app: protocolRoutes({ prefix: "/streams" }),
           layer,
@@ -88,8 +86,7 @@ test.each(["typed", "defect"])(
         expect(acquisitions).toBe(2);
         expect(releases).toBe(1);
         expect(alarms).toBe(1);
-      }).pipe(Effect.scoped),
-    );
-    expect(releases).toBe(2);
-  },
+      }).pipe(Effect.scoped);
+      expect(releases).toBe(2);
+    }),
 );

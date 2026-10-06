@@ -1,7 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the real local workerd boundary. */
 import { afterEach, expect, test } from "bun:test";
-import { Effect } from "effect";
+import { Clock, DateTime, Effect } from "effect";
 import { MemoryStorage } from "@streamsy/core";
+import { request as httpRequest } from "./support/http.ts";
 import { testHost } from "./support/scoped-host.ts";
 import {
   cleanupHarnesses,
@@ -57,6 +58,23 @@ const twoOffset = "0000000000000000_0000000000000002";
 const largeJson = (prefix: string) =>
   JSON.stringify(Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
 
+const observe = async (response: Response) => {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? null;
+  const nextOffset = response.headers.get("stream-next-offset");
+  const notSupported = response.headers.get("stream-not-supported");
+  const rawLocation = response.headers.get("location");
+  const location = rawLocation === null ? null : new URL(rawLocation).pathname;
+
+  return {
+    status: response.status,
+    body: await response.text(),
+    contentType,
+    nextOffset,
+    notSupported,
+    location,
+  };
+};
+
 test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => {
   const harness = await makeHarness("worker-by-key.ts");
 
@@ -65,24 +83,9 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
   );
 
   closeAfterTest(() => Effect.runPromise(bun.stop));
-  const bunRequest = (path: string, init?: RequestInit) => fetch(new URL(path, bun.url), init);
 
-  const observe = async (response: Response) => {
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? null;
-    const nextOffset = response.headers.get("stream-next-offset");
-    const notSupported = response.headers.get("stream-not-supported");
-    const rawLocation = response.headers.get("location");
-    const location = rawLocation === null ? null : new URL(rawLocation).pathname;
-
-    return {
-      status: response.status,
-      body: await response.text(),
-      contentType,
-      nextOffset,
-      notSupported,
-      location,
-    };
-  };
+  const bunRequest = (path: string, init?: RequestInit) =>
+    httpRequest(new URL(path, bun.url), init);
 
   const compare = async (path: string, init?: RequestInit) => {
     const cloudflare = await dispatch(harness, path, init);
@@ -326,7 +329,7 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
   expect(
     (await put(harness, "/streams/t1/ttl-source", "x", "text/plain", { "stream-ttl": "2" })).status,
   ).toBe(201);
-  const now = Date.now();
+  const now = Effect.runSync(Clock.currentTimeMillis);
   expect(
     (
       await put(harness, "/streams/t1/ttl-child", "", "text/plain", {
@@ -361,9 +364,12 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
   const overrideExpiry = rowFor(override, "t1/override-child")?.[1];
 
   if (!isFiniteNumber(overrideExpiry)) throw new Error("B11 override expiry was not persisted");
-  expect(overrideExpiry - Date.now()).toBeGreaterThan(58_000);
+  expect(overrideExpiry - Effect.runSync(Clock.currentTimeMillis)).toBeGreaterThan(58_000);
 
-  const absolute = new Date(Date.now() + 2_000).toISOString();
+  const absolute = DateTime.formatIso(
+    DateTime.add(Effect.runSync(DateTime.now), { milliseconds: 2_000 }),
+  );
+
   expect(
     (
       await put(harness, "/streams/t1/date-source", "x", "text/plain", {
@@ -383,12 +389,12 @@ test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", asyn
 
   if (!isFiniteNumber(dateExpiry))
     throw new Error("B11 inherited absolute expiry was not persisted");
-  expect(dateExpiry).toBe(new Date(absolute).getTime());
+  expect(dateExpiry).toBe(DateTime.toEpochMillis(DateTime.makeUnsafe(absolute)));
 });
 
 test("B12 TTL zero uses the one-millisecond alarm floor", async () => {
   const harness = await makeHarness();
-  const started = Date.now();
+  const started = Effect.runSync(Clock.currentTimeMillis);
   expect(
     (await put(harness, "/streams/floor", "x", "text/plain", { "stream-ttl": "0" })).status,
   ).toBe(201);
@@ -505,7 +511,9 @@ test("B16 chain forks reconcile an inherited alarm before the PUT returns", asyn
   const after = await probe(harness, "t1");
   expect(after.alarm).not.toBeNull();
   expect(after.alarmAfterMutation).not.toBeNull();
-  expect(rowFor(after, "t1/alarm-child")?.[1]).toBeGreaterThan(Date.now());
+  expect(rowFor(after, "t1/alarm-child")?.[1]).toBeGreaterThan(
+    Effect.runSync(Clock.currentTimeMillis),
+  );
 });
 
 test(

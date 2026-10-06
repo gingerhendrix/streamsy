@@ -1,9 +1,10 @@
-// oxlint-disable effecttsgo/async-function -- Test support owns a child process at the Promise edge of vitest hooks.
 /**
  * Starts `src/hosts/<runtime>.ts` as a child process and waits for the JSON
  * line that names its URL. Node and Deno run the built `@streamsy/*` packages
  * from the workspace `node_modules`, so run `bun run build` first.
  */
+import { NodeCrypto } from "@effect/platform-node";
+import { Context, Crypto, Effect, Layer } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,7 +40,16 @@ export interface SpawnedHost {
 const exited = (child: ChildProcess): Promise<number | null> =>
   child.exitCode !== null || child.signalCode !== null
     ? Promise.resolve(child.exitCode)
-    : new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+    : Effect.runPromise(
+        Effect.callback<number | null>((resume) => {
+          const onExit = (code: number | null) => resume(Effect.succeed(code));
+          child.once("exit", onExit);
+
+          return Effect.sync(() => {
+            child.removeListener("exit", onExit);
+          });
+        }),
+      );
 
 export const spawnHost = (
   command: ReadonlyArray<string>,
@@ -47,7 +57,13 @@ export const spawnHost = (
   timeoutMs = 60_000,
 ): Promise<SpawnedHost> => {
   const scratch = process.env.STREAMSY_STORAGE_SCRATCH ?? tmpdir();
-  const filename = `${scratch}/${command[0]}-host-${process.pid}-${crypto.randomUUID()}.sqlite`;
+
+  const crypto = Context.get(
+    Effect.runSync(Effect.scoped(Layer.build(NodeCrypto.layer))),
+    Crypto.Crypto,
+  );
+
+  const filename = `${scratch}/${command[0]}-host-${process.pid}-${Effect.runSync(crypto.randomUUIDv4)}.sqlite`;
   const [executable, ...args] = command;
 
   if (executable === undefined) throw new Error("Expected a host command");
@@ -65,36 +81,59 @@ export const spawnHost = (
       rmSync(filename + suffix, { force: true });
   };
 
-  const stop = async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-    const code = await exited(child);
-    removeDatabase();
+  const stop = () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+        const code = yield* Effect.promise(() => exited(child));
+        removeDatabase();
 
-    return code;
+        return code;
+      }),
+    );
+
+  const onStderr = (chunk: Buffer) => {
+    output += chunk.toString();
   };
 
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`Host did not start within ${timeoutMs} ms:\n${output}`));
-    }, timeoutMs);
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    child.stdout?.on("data", (chunk: Buffer) => {
+  const awaitReady = Effect.callback<SpawnedHost>((resume) => {
+    const onStdout = (chunk: Buffer) => {
       output += chunk.toString();
       const match = /\{"listening":"([^"]+)"\}/.exec(output);
 
-      if (match?.[1] !== undefined) {
-        clearTimeout(timer);
-        resolve({ url: match[1], stop, output: () => output });
-      }
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
+      if (match?.[1] !== undefined)
+        resume(Effect.succeed({ url: match[1], stop, output: () => output }));
+    };
+
+    const onExit = (code: number | null) => {
       removeDatabase();
-      reject(new Error(`Host exited with ${code} before it listened:\n${output}`));
+      resume(Effect.die(new Error(`Host exited with ${code} before it listened:\n${output}`)));
+    };
+
+    child.stderr?.on("data", onStderr);
+    child.stdout?.on("data", onStdout);
+    child.once("exit", onExit);
+
+    return Effect.sync(() => {
+      // Output and database cleanup remain live after readiness until the child exits.
+      child.removeListener("exit", onExit);
+      child.once("exit", removeDatabase);
     });
   });
+
+  return Effect.runPromise(
+    awaitReady.pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        orElse: () =>
+          Effect.sync(() => {
+            child.kill("SIGKILL");
+          }).pipe(
+            Effect.andThen(
+              Effect.die(new Error(`Host did not start within ${timeoutMs} ms:\n${output}`)),
+            ),
+          ),
+      }),
+    ),
+  );
 };

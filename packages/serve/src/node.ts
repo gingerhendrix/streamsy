@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.layer requires a node:http Server factory; Effect has no server-options factory replacement.
 import { createServer, type ServerOptions } from "node:http";
 import { Effect, Layer, type Duration } from "effect";
 import { HttpServer, HttpServerResponse } from "effect/http";

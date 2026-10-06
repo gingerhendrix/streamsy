@@ -36,8 +36,7 @@ export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   options: Options,
 ): Layer.Layer<
   Layer.Success<ReturnType<typeof storageLayer>> | Streamsy.Host<Streamsy.Group<Keys>>,
-  Layer.Error<ReturnType<typeof storageLayer>>,
-  Layer.Services<ReturnType<typeof storageLayer>>
+  Layer.Error<ReturnType<typeof storageLayer>>
 >;
 export function layer(group: Streamsy.Group, options: Options) {
   const storage = storageLayer(options);

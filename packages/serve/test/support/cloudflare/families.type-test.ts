@@ -27,7 +27,7 @@ const missing = StreamsyObject.make<unknown, Streamsy.Services<typeof group>>({
 
 void [object, missing];
 
-const defaultRequirements = StreamsyObject.make<unknown>({
+const defaultRequirements = StreamsyObject.make({
   // @ts-expect-error Specifying only Env uses R = never; stream requirements must be named too.
   app,
   layer: (state) => DurableObjectStorage.layer(group, { client: { storage: state.storage } }),

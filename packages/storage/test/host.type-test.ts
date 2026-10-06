@@ -11,8 +11,9 @@ class Notes extends Streamsy.json<Notes>()("StorageHost/Notes", "notes", {
 
 const group = Streamsy.group(Notes);
 
-type Equal<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Assignability<To> = <From>(value: From) => From extends To ? 1 : 2;
+
+type Equal<A, B> = Assignability<A> extends Assignability<B> ? true : false;
 
 const services: Equal<Streamsy.Host<typeof group>, Notes | Streamsy.ChangeFeed<Notes>> = true;
 

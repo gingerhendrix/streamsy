@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, it as baseIt, layer } from "@streamsy/effect-test";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
 import { Alarm } from "../../src/cloudflare/alarm.ts";
@@ -21,11 +21,11 @@ const failingStorage = Storage.of({
   ),
 });
 
-test("mutation reconciliation runs after an interrupted committed mutation", async () => {
-  const events: Array<string> = [];
+baseIt.effect("mutation reconciliation runs after an interrupted committed mutation", () =>
+  Effect.gen(function* () {
+    const events: Array<string> = [];
 
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
+    const result = yield* Effect.gen(function* () {
       const committed = yield* Deferred.make<void>();
 
       const fiber = yield* Effect.forkChild(
@@ -45,41 +45,43 @@ test("mutation reconciliation runs after an interrupted committed mutation", asy
 
       yield* Deferred.await(committed);
       yield* Fiber.interrupt(fiber);
+    });
+
+    expect(result).toBeUndefined();
+    expect(events).toEqual(["mutation committed", "reconciled"]);
+  }),
+);
+
+baseIt.effect("a reconciliation defect cannot replace a committed mutation result", () =>
+  Effect.gen(function* () {
+    const response = yield* withMutationReconciliation(
+      Effect.succeed("committed"),
+      Effect.die("reconcile defect"),
+    );
+
+    expect(response).toBe("committed");
+  }),
+);
+
+layer(
+  Layer.mergeAll(
+    Layer.succeed(Storage, failingStorage),
+    Layer.succeed(Alarm, {
+      current: Effect.succeedNone,
+      arm: () => Effect.void,
+      clear: Effect.void,
+    }),
+  ),
+)((it) => {
+  it.effect("an alarm exposes StorageFault for platform retry without an HTTP request", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(alarm);
+      expect(Exit.isFailure(result)).toBe(true);
+
+      if (Exit.isFailure(result))
+        expect(result.cause.reasons).toMatchObject([
+          { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },
+        ]);
     }),
   );
-
-  expect(result).toBeUndefined();
-  expect(events).toEqual(["mutation committed", "reconciled"]);
-});
-
-test("a reconciliation defect cannot replace a committed mutation result", async () => {
-  const response = await Effect.runPromise(
-    withMutationReconciliation(Effect.succeed("committed"), Effect.die("reconcile defect")),
-  );
-
-  expect(response).toBe("committed");
-});
-
-test("an alarm exposes StorageFault for platform retry without an HTTP request", async () => {
-  const result = await Effect.runPromiseExit(
-    alarm.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(Storage, failingStorage),
-          Layer.succeed(Alarm, {
-            current: Effect.succeedNone,
-            arm: () => Effect.void,
-            clear: Effect.void,
-          }),
-        ),
-      ),
-    ),
-  );
-
-  expect(Exit.isFailure(result)).toBe(true);
-
-  if (Exit.isFailure(result))
-    expect(result.cause.reasons).toMatchObject([
-      { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },
-    ]);
 });

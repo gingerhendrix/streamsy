@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 /* oxlint-disable typescript/consistent-return -- The cleanup boundary returns Effect-style failure exits while successful branches complete with void. */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,27 +27,31 @@ const lifecycle = createWorkerdRunnerLifecycle<WorkerdDisposable & Miniflare>({
       durableObjects: { STREAMS: { className: "StreamsObject", useSQLite: true } },
       durableObjectsPersist: join(root, "state"),
     }),
-  ready: async (miniflare) => (await miniflare.ready).origin,
-  inspect: async (miniflare) => {
-    const ids = await miniflare.listDurableObjectIds("STREAMS");
-    process.stderr.write(
-      `workerd conformance profile=single-object-chain instantiated-objects=${ids.length} ids=${ids.join(",")}\n`,
-    );
+  ready: (miniflare) => miniflare.ready.then((url) => url.origin),
+  inspect: (miniflare) =>
+    miniflare.listDurableObjectIds("STREAMS").then((ids) => {
+      process.stderr.write(
+        `workerd conformance profile=single-object-chain instantiated-objects=${ids.length} ids=${ids.join(",")}\n`,
+      );
 
-    if (ids.length !== 1)
-      throw new Error(`Expected one instantiated Durable Object, got ${ids.length}`);
-  },
+      if (ids.length !== 1)
+        throw new Error(`Expected one instantiated Durable Object, got ${ids.length}`);
+    }),
   configuredRetention: Bun.env.STREAMSY_WORKERD_RETENTION,
 });
 
 describe("Effect workerd Cloudflare Durable Object host", () => {
-  beforeAll(async () => {
-    if (!(await Bun.file(workerPath).exists())) {
-      throw new Error("Missing workerd artifact; run bun run build:worker first");
-    }
+  beforeAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (!(yield* Effect.promise(() => Bun.file(workerPath).exists()))) {
+          throw new Error("Missing workerd artifact; run bun run build:worker first");
+        }
 
-    config.baseUrl = await lifecycle.beforeAll();
-  });
+        config.baseUrl = yield* Effect.promise(() => lifecycle.beforeAll());
+      }),
+    ),
+  );
   afterAll(() => lifecycle.afterAll());
   runConformanceTests(config);
 });

@@ -1,9 +1,9 @@
-import { join } from "node:path";
+import { Effect } from "effect";
 
 const modules = new Set<string>();
 
 const result = await Bun.build({
-  entrypoints: [join(import.meta.dir, "../src/browser/default.ts")],
+  entrypoints: [new URL("../src/browser/default.ts", import.meta.url).pathname],
   target: "browser",
   format: "esm",
   minify: true,
@@ -41,4 +41,4 @@ let gzip = 0;
 for (const output of result.outputs)
   gzip += Bun.gzipSync(new Uint8Array(await output.arrayBuffer())).byteLength;
 
-console.log(JSON.stringify({ modules: modules.size, bytes, gzipBytes: gzip, forbidden }, null, 2));
+await Effect.runPromise(Effect.log({ modules: modules.size, bytes, gzipBytes: gzip, forbidden }));

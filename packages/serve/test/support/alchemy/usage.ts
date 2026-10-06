@@ -9,10 +9,8 @@ import * as Host from "@streamsy/serve/alchemy";
 /** Only the runtime phase reads raw storage. No stack is executed by this fixture. */
 export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
   "Streams",
-  Effect.gen(function* () {
-    const state = yield* Cloudflare.DurableObjectState;
-
-    return Effect.suspend(() =>
+  Effect.map(Cloudflare.DurableObjectState, (state) =>
+    Effect.suspend(() =>
       Host.objectHandlers({
         app: protocolRoutes({ prefix: "/streams" }),
         layer: Layer.mergeAll(
@@ -20,8 +18,8 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
           Host.alarmLayer(state.raw.storage),
         ),
       }),
-    );
-  }),
+    ),
+  ),
 ) {}
 
 export const worker = Effect.gen(function* () {

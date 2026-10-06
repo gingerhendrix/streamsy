@@ -1,8 +1,25 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real HTTP host lifecycle test.
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, it as baseIt } from "@streamsy/effect-test";
 import { fileURLToPath } from "node:url";
-import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Schema, Scope } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Schema,
+  Scope,
+} from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+} from "effect/http";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { ShutdownSignal } from "@streamsy/core/http";
 import {
@@ -115,88 +132,81 @@ it("without a drain a parked long poll does not get the drain 204", async () => 
   }
 });
 
-it("a client abort of a long poll on a Serve.mount route interrupts the read", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const finished = yield* Deferred.make<boolean>();
+baseIt.live("a client abort of a long poll on a Serve.mount route interrupts the read", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const finished = yield* Deferred.make<boolean>();
 
-      const protocol = Layer.effectContext(
-        Effect.gen(function* () {
-          const reader = yield* StreamsReader;
-          const writer = yield* StreamsWriter;
+    const protocol = Layer.effectContext(
+      Effect.gen(function* () {
+        const reader = yield* StreamsReader;
+        const writer = yield* StreamsWriter;
 
-          return Context.make(StreamsWriter, writer).pipe(
-            Context.add(
-              StreamsReader,
-              StreamsReader.of({
-                ...reader,
-                readNext: (id, options) =>
-                  Deferred.succeed(started, undefined).pipe(
-                    Effect.andThen(reader.readNext(id, options)),
-                    Effect.onExit((exit) =>
-                      Deferred.succeed(
-                        finished,
-                        Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
-                      ),
+        return Context.make(StreamsWriter, writer).pipe(
+          Context.add(
+            StreamsReader,
+            StreamsReader.of({
+              ...reader,
+              readNext: (id, options) =>
+                Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(reader.readNext(id, options)),
+                  Effect.onExit((exit) =>
+                    Deferred.succeed(
+                      finished,
+                      Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
                     ),
                   ),
-              }),
-            ),
-          );
-        }),
-      ).pipe(Layer.provide(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })));
-
-      class Events extends Streamsy.json<Events>()(
-        "serve/serve-layer.test/Events",
-        "events/:seat",
-        {
-          params: { seat: Schema.String },
-          schema: Schema.String,
-        },
-      ) {}
-
-      const context = yield* Layer.build(
-        Serve.layer(Layer.mergeAll(protocolRoutes(), Serve.mount(Events, "/feed/:seat")), {
-          disableLogger: true,
-          disableListenLog: true,
-        }).pipe(
-          Layer.provide(
-            Protocol.bind(protocol, Streamsy.group(Events)).pipe(Layer.provideMerge(protocol)),
+                ),
+            }),
           ),
-          Layer.provideMerge(listener({ port: 0 })),
+        );
+      }),
+    ).pipe(Layer.provide(MemoryStorage.layerProtocol({ longPollTimeoutMs: 30_000 })));
+
+    class Events extends Streamsy.json<Events>()("serve/serve-layer.test/Events", "events/:seat", {
+      params: { seat: Schema.String },
+      schema: Schema.String,
+    }) {}
+
+    const context = yield* Layer.build(
+      Serve.layer(Layer.mergeAll(protocolRoutes(), Serve.mount(Events, "/feed/:seat")), {
+        disableLogger: true,
+        disableListenLog: true,
+      }).pipe(
+        Layer.provide(
+          Protocol.bind(protocol, Streamsy.group(Events)).pipe(Layer.provideMerge(protocol)),
         ),
-      );
+        Layer.provideMerge(listener({ port: 0 })),
+      ),
+    );
 
-      const base = HttpServer.formatAddress(Context.get(context, HttpServer.HttpServer).address);
+    const base = HttpServer.formatAddress(Context.get(context, HttpServer.HttpServer).address);
 
-      const created = yield* Effect.promise(() =>
-        fetch(`${base}/events/a`, {
+    const client = Context.get(yield* Layer.build(FetchHttpClient.layer), HttpClient.HttpClient);
+
+    const created = yield* client.execute(
+      HttpClientRequest.fromWeb(
+        new Request(`${base}/events/a`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: '"seed"',
         }),
-      );
+      ),
+    );
 
-      expect(created.status).toBe(201);
-      const tail = created.headers.get("stream-next-offset");
-      expect(tail).not.toBeNull();
-      const abort = new AbortController();
-      yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
+    expect(created.status).toBe(201);
+    const tail = created.headers["stream-next-offset"];
+    expect(tail).not.toBeNull();
 
-      const pending = fetch(`${base}/feed/a?offset=${tail}&live=long-poll`, {
-        signal: abort.signal,
-      }).then(
-        () => undefined,
-        () => undefined,
-      );
+    const pending = yield* Effect.forkChild(
+      client.get(`${base}/feed/a?offset=${tail}&live=long-poll`),
+    );
 
-      yield* Deferred.await(started).pipe(Effect.timeout(2000));
-      abort.abort();
-      yield* Effect.promise(() => pending);
-      expect(yield* Deferred.await(finished).pipe(Effect.timeout(2000))).toBe(true);
-    }).pipe(Effect.scoped),
-  ));
+    yield* Deferred.await(started).pipe(Effect.timeout(2000));
+    yield* Fiber.interrupt(pending);
+    expect(yield* Deferred.await(finished).pipe(Effect.timeout(2000))).toBe(true);
+  }),
+);
 
 /**
  * Serve one route that counts as a live read and never ends, so the drain can

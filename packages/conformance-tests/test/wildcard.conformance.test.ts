@@ -1,7 +1,7 @@
 /** Run the unchanged official protocol suite through an explicit Streamsy.Wildcard stream. */
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import { Streamsy, Http, MemoryStorage } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
@@ -21,10 +21,13 @@ describe("Streamsy.Wildcard memory Bun host", () => {
     ),
   );
 
-  beforeAll(async () => {
-    const server = await runtime.runPromise(HttpServer.HttpServer);
-    config.baseUrl = HttpServer.formatAddress(server.address);
-  });
+  beforeAll(() =>
+    runtime.runPromise(
+      Effect.map(HttpServer.HttpServer, (server) => {
+        config.baseUrl = HttpServer.formatAddress(server.address);
+      }),
+    ),
+  );
   afterAll(() => runtime.dispose());
   runConformanceTests(config);
 });

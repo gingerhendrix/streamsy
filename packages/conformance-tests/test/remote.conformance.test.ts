@@ -13,27 +13,28 @@ let gateway: TestHost | undefined;
 
 describe("Official conformance through RemoteStreams", () => {
   const config = { baseUrl: "" };
-  beforeAll(async () => {
-    backend = await Effect.runPromise(
-      testHost({ layer: MemoryStorage.layerProtocol({ longPollTimeoutMs: 1500 }), port: 0 }),
-    );
-    gateway = await Effect.runPromise(
-      testHost({
-        layer: RemoteStreams.layerProtocol({
-          baseUrl: new URL("/streams", backend.url).href,
-          capabilities: { expectedOffset: true, producer: true },
-        }).pipe(Layer.provide(FetchHttpClient.layer)),
-        port: 0,
+  beforeAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        backend = yield* testHost({
+          layer: MemoryStorage.layerProtocol({ longPollTimeoutMs: 1500 }),
+          port: 0,
+        });
+        gateway = yield* testHost({
+          layer: RemoteStreams.layerProtocol({
+            baseUrl: new URL("/streams", backend.url).href,
+            capabilities: { expectedOffset: true, producer: true },
+          }).pipe(Layer.provide(FetchHttpClient.layer)),
+          port: 0,
+        });
+        config.baseUrl = new URL(gateway.url).origin;
       }),
-    );
-    config.baseUrl = new URL(gateway.url).origin;
-  });
-  afterAll(async () => {
-    try {
-      if (gateway !== undefined) await Effect.runPromise(gateway.stop);
-    } finally {
-      if (backend !== undefined) await Effect.runPromise(backend.stop);
-    }
-  });
+    ),
+  );
+  afterAll(() =>
+    Effect.runPromise(
+      (gateway?.stop ?? Effect.void).pipe(Effect.ensuring(backend?.stop ?? Effect.void)),
+    ),
+  );
   runConformanceTests(config);
 });
