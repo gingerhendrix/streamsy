@@ -17,17 +17,19 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
 
-    return Effect.suspend(() =>
-      Host.objectHandlers({
-        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
-        layer: Layer.mergeAll(
-          DurableObjectStorage.layer(streams, {
-            client: { storage: state.raw.storage },
-            longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
-          }),
-          Host.alarmLayer(state.raw.storage),
-        ),
-      }),
+    return yield* Effect.succeed(
+      Effect.suspend(() =>
+        Host.objectHandlers({
+          app: Http.routes(streams, { prefix: "/streams", access: "full" }),
+          layer: Layer.mergeAll(
+            DurableObjectStorage.layer(streams, {
+              client: { storage: state.raw.storage },
+              longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
+            }),
+            Host.alarmLayer(state.raw.storage),
+          ),
+        }),
+      ),
     );
   }),
 ) {}
