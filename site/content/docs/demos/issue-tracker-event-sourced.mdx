@@ -111,16 +111,21 @@ The rules are the base app's rules. The work-in-progress race works in the same 
 ```ts title="server/decide.ts"
 const edit = { issueId, ...writer(input.updatedBy), at: stamp.now, txid: stamp.txid };
 const events: IssueEvent[] = [];
+
 if (input.title !== undefined) {
   events.push(IssueRenamed.make({ ...edit, title: input.title.trim() }));
 }
+
 if (input.status !== undefined) {
   if (startsWork(view, previous, input.status, previous.projectId)) {
     // ... fail with TooManyInProgress
   }
+
   events.push(IssueStatusChanged.make({ ...edit, status: input.status }));
 }
+
 const [first, ...rest] = events;
+
 if (first === undefined) return Effect.fail(new NothingToChange({ issueId }));
 ```
 
@@ -142,6 +147,7 @@ export const readModel = Projection.mapAccum({
   state: { schema: IssueRows, initial: {} },
   mapAccum: (issues, { item }) => {
     const [next, changes] = project(issues, item);
+
     return [next, { workspace: changes }] as const;
   },
 });
@@ -169,6 +175,7 @@ const boot = Effect.gen(function* () {
   yield* open(mainWorkspaceId);
   yield* seed;
   const registered = yield* registry.collect({});
+
   for (const { workspaceId } of registered.items) yield* watchers.start(workspaceId);
 }).pipe(Effect.withSpan("IssueTracker.boot"));
 ```
@@ -178,9 +185,11 @@ A runner catches up from the checkpoint, then follows the storage change feed wi
 ```ts title="server/watchers.ts"
     const runner = (workspaceId: string) => {
       const rows = readModel.at({ workspaceId });
+
       return Effect.scoped(
         Effect.gen(function* () {
           yield* Projection.run(rows);
+
           return yield* Fiber.join(yield* Projection.watch(rows));
         }),
       ).pipe(
