@@ -40,14 +40,12 @@ export const excerptSegments = (body: string): ReadonlyArray<ReadonlyArray<strin
     else segments.at(-1)?.push(line);
   }
 
-  return segments
-    .map((segment) => {
-      const first = segment.findIndex((line) => line !== "");
-      const last = segment.findLastIndex((line) => line !== "");
+  return segments.flatMap((segment) => {
+    const first = segment.findIndex((line) => line !== "");
+    const last = segment.findLastIndex((line) => line !== "");
 
-      return first === -1 ? [] : segment.slice(first, last + 1);
-    })
-    .filter((segment) => segment.length > 0);
+    return first === -1 ? [] : [segment.slice(first, last + 1)];
+  });
 };
 
 const indented = (line: string, indent: string): string => (line === "" ? "" : `${indent}${line}`);

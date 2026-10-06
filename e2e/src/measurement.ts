@@ -126,17 +126,16 @@ const sampleSummary = (
   samples: ReadonlyArray<LatencySample>,
   phase: LatencySample["phase"],
 ): StepResult<Summary> => {
-  const values = samples
-    .filter(
-      (sample) =>
-        sample.phase === phase &&
-        sample.error === undefined &&
-        sample.status !== undefined &&
-        sample.status >= 200 &&
-        sample.status < 300,
-    )
-    .map((sample) => sample.elapsedMs)
-    .filter((sample): sample is number => sample !== undefined);
+  const values = samples.flatMap((sample) =>
+    sample.phase === phase &&
+    sample.error === undefined &&
+    sample.status !== undefined &&
+    sample.status >= 200 &&
+    sample.status < 300 &&
+    sample.elapsedMs !== undefined
+      ? [sample.elapsedMs]
+      : [],
+  );
 
   const invalid = samples.some(
     (sample) =>

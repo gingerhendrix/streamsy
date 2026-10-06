@@ -646,9 +646,11 @@ const table = (cells: ReadonlyArray<Cell>): string => {
   const line = (row: ReadonlyArray<string>) =>
     `| ${row.map((value, i) => value.padEnd(widths[i] ?? 0)).join(" | ")} |`;
 
-  const notes = cells
-    .filter((cell) => cell.reason !== undefined)
-    .map((cell) => `- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`);
+  const notes = cells.flatMap((cell) =>
+    cell.reason === undefined
+      ? []
+      : [`- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`],
+  );
 
   const databases = cells.flatMap((cell) => [
     ...(cell.database === undefined
