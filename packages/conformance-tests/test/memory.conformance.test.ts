@@ -9,14 +9,23 @@ let host: TestHost | undefined;
 
 describe("Effect memory Bun host", () => {
   const config = { baseUrl: "" };
-  beforeAll(async () => {
-    host = await Effect.runPromise(
-      testHost({ layer: MemoryStorage.layerProtocol({ longPollTimeoutMs: 1500 }), port: 0 }),
-    );
-    config.baseUrl = new URL(host.url).origin;
-  });
-  afterAll(async () => {
-    if (host !== undefined) await Effect.runPromise(host.stop);
-  });
+  beforeAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        host = yield* testHost({
+          layer: MemoryStorage.layerProtocol({ longPollTimeoutMs: 1500 }),
+          port: 0,
+        });
+        config.baseUrl = new URL(host.url).origin;
+      }),
+    ),
+  );
+  afterAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (host !== undefined) yield* host.stop;
+      }),
+    ),
+  );
   runConformanceTests(config);
 });
