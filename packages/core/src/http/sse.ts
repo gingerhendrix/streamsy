@@ -73,7 +73,7 @@ export function sse(
         // moves the client's offset past it.
         const frame = concatBytes(chunks.map((data) => ({ data })));
 
-        return { frames: [frame], done: result.closed === true };
+        return { frames: [frame], done: result.closed };
       }).pipe(
         Effect.catchTags({
           StreamNotFound: () => Effect.succeed({ frames: [], done: true }),

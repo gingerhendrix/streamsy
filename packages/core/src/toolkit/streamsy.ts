@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Stream } from "effect";
+import { Context, Effect, Layer, Option, Predicate, Stream } from "effect";
 import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
 import { ChangeFeed } from "./changes.ts";
@@ -32,8 +32,9 @@ interface Wires {
 
 const templateOf = (route: Route.Matcher): string | undefined => {
   if (!("template" in route)) return undefined;
-  // SAFETY: StreamRoute carries a string template; custom routes carry the empty string.
-  const template = route.template as string;
+  const template = route.template;
+
+  if (!Predicate.isString(template)) return undefined;
 
   return template.length > 0 ? template : undefined;
 };
@@ -60,10 +61,10 @@ function wireApi<P, A, RD, RE>(
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
 
-  const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
+  const write = <Value, E>(id: string, run: () => Effect.Effect<Value, E>) =>
     checkWriteOwner(owner, id, storage !== undefined).pipe(Effect.andThen(Effect.suspend(run)));
 
-  const own = <A, E>(id: string, run: () => Effect.Effect<A, E>): Effect.Effect<A, E> =>
+  const own = <Value, E>(id: string, run: () => Effect.Effect<Value, E>): Effect.Effect<Value, E> =>
     Effect.suspend(() =>
       route.match(id)
         ? run()
@@ -230,6 +231,7 @@ function define<Self>() {
         const address: unknown = Object.assign(route.address(params), { stream: service });
 
         // SAFETY: the route returns its declared address, including State collections; only its key is added.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the generic route retains its exact address subtype at runtime.
         return address as ReturnType<R["address"]> & Address<A, Self, RD, RE>;
       },
     });
@@ -401,7 +403,7 @@ export function checkStreams(keys: ReadonlyArray<Any>): void {
  */
 export function bind<A, E, R, const Keys extends ReadonlyArray<Any>>(
   graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
-  group: Group<Keys>,
+  streams: Group<Keys>,
 ): Layer.Layer<
   Identifiers<Keys> | (Storage extends A ? ChangeFeed<Identifiers<Keys>> : never),
   E,
@@ -409,9 +411,9 @@ export function bind<A, E, R, const Keys extends ReadonlyArray<Any>>(
 >;
 export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
   source: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
-  group: Group<Keys>,
+  streams: Group<Keys>,
 ) {
-  const keys = group.streams;
+  const keys = streams.streams;
   checkStreams(keys);
 
   const bindContext = (wires: Wires, storage?: typeof Storage.Service) => {
@@ -436,6 +438,7 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
     }
 
     // SAFETY: each stream comes from its factory; feed keys are added only for an exposed Storage.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the loop installs every key in Keys; Context.empty cannot infer a dynamic tuple.
     return context as Context.Context<Identifiers<Keys>>;
   };
 

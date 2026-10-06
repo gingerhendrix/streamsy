@@ -38,12 +38,7 @@ export interface StreamRoute<
 }
 
 /** The stream codecs exposed to HTTP path decoding. */
-export type PathSchema<P> = Schema.Codec<
-  P,
-  Readonly<Record<string, string | undefined>>,
-  never,
-  never
->;
+export type PathSchema<P> = Schema.Codec<P, Readonly<Record<string, string | undefined>>>;
 
 type WithPathSchema<P> = { readonly paramSchema: PathSchema<P> };
 
@@ -80,7 +75,7 @@ export interface Matcher {
 }
 
 /** One codec per template parameter. Decoding runs from a string with no services. */
-export type ParamCodecs = Readonly<Record<string, Schema.Codec<unknown, string, never, never>>>;
+export type ParamCodecs = Readonly<Record<string, Schema.Codec<unknown, string>>>;
 
 export type Params<Codecs extends ParamCodecs> = {
   readonly [Name in keyof Codecs]: Codecs[Name]["Type"];
@@ -118,7 +113,7 @@ function decodeParams<Codecs extends ParamCodecs>(
     if (value === undefined || codec === undefined) return Option.none();
     // A parameter codec decodes from a string with no services, so this call is
     // synchronous, pure and total.
-    const result = Schema.decodeUnknownOption(codec)(value);
+    const result = Schema.decodeOption(codec)(value);
 
     if (Option.isNone(result)) return Option.none();
     decoded[name] = result.value;

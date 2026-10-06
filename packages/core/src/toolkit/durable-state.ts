@@ -60,7 +60,11 @@ export const remove = <const Type extends string, A = never>(
 ): Delete<NoInfer<A>, Type> => operations.Delete({ type, key, ...options });
 
 /** Reject keys that Durable State clients cannot address. */
-const checkKey = <Raw>(type: string, source: string, raw: Raw): string => {
+const checkKey = (
+  type: string,
+  source: string,
+  raw: string | number | null | undefined,
+): string => {
   if (raw === null || raw === undefined || raw === "") {
     throw new TypeError(
       `Invalid state key for type "${type}": ${source} must not be null, undefined, or empty`,
@@ -71,8 +75,8 @@ const checkKey = <Raw>(type: string, source: string, raw: Raw): string => {
 };
 
 /** Read the key field of a value. `StateKey` limits the field to strings and numbers. */
-const readKey = <A, Key extends StateKey<A>>(type: string, field: Key, value: A): string =>
-  checkKey(type, `field "${String(field)}"`, value[field]);
+const readKey = <A>(type: string, field: StateKey<A>, value: A): string =>
+  checkKey(type, `field "${String(field)}"`, String(value[field] ?? ""));
 
 /**
  * Stamp Durable State changes with their key and headers. With an `offset`, each

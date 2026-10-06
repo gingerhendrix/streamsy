@@ -69,7 +69,7 @@ export const optionalOffset = (
 ): Effect.Effect<string | undefined, TransportFault> => {
   const value = header(response, "stream-next-offset");
 
-  if (value === undefined) return Effect.succeed(undefined);
+  if (value === undefined) return Effect.as(Effect.void, undefined);
 
   if (!OFFSET.test(value))
     return Effect.fail(
@@ -133,7 +133,7 @@ export const integer = (
   name: string,
   value: string | undefined,
 ): Effect.Effect<number | undefined, TransportFault> => {
-  if (value === undefined) return Effect.succeed(undefined);
+  if (value === undefined) return Effect.as(Effect.void, undefined);
 
   if (!INTEGER.test(value))
     return Effect.fail(failure(operation, "response", `Invalid ${name} header: ${value}`));
@@ -231,7 +231,7 @@ const jsonMessages = (
   operation: string,
   decoded: string,
 ): Effect.Effect<ReadMessage[], TransportFault> =>
-  Schema.decodeUnknownEffect(jsonArray)(decoded).pipe(
+  Schema.decodeEffect(jsonArray)(decoded).pipe(
     Effect.mapError((cause) =>
       failure(operation, "decode", "Read body is not a JSON array", cause),
     ),

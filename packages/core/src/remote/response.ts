@@ -75,14 +75,12 @@ export const head = (
     const expiresAt = Wire.header(response, "stream-expires-at");
 
     if (expiresAt !== undefined && Option.isNone(DateTime.make(expiresAt)))
-      return yield* Effect.fail(
-        Wire.failure(
-          operation,
-          "response",
-          `Invalid stream-expires-at header: ${expiresAt}`,
-          undefined,
-          response.status,
-        ),
+      return yield* Wire.failure(
+        operation,
+        "response",
+        `Invalid stream-expires-at header: ${expiresAt}`,
+        undefined,
+        response.status,
       );
     const closed = yield* Wire.closedHeader(operation, response);
 
@@ -164,14 +162,12 @@ export const append = (
         return AppendResult.Appended({ offset, closed });
 
       if (producerEpoch === undefined || producerSeq === undefined)
-        return yield* Effect.fail(
-          Wire.failure(
-            operation,
-            "response",
-            "Duplicate acknowledgement is missing producer state",
-            undefined,
-            response.status,
-          ),
+        return yield* Wire.failure(
+          operation,
+          "response",
+          "Duplicate acknowledgement is missing producer state",
+          undefined,
+          response.status,
         );
 
       return AppendResult.Duplicate({ offset, producerEpoch, producerSeq, closed });
@@ -191,14 +187,12 @@ export const append = (
       );
 
       if (currentEpoch === undefined)
-        return yield* Effect.fail(
-          Wire.failure(
-            operation,
-            "response",
-            "Stale epoch response is missing producer-epoch",
-            undefined,
-            response.status,
-          ),
+        return yield* Wire.failure(
+          operation,
+          "response",
+          "Stale epoch response is missing producer-epoch",
+          undefined,
+          response.status,
         );
 
       return yield* new StaleEpoch({ id: context.id, currentEpoch });
@@ -352,7 +346,7 @@ export const remove = (
   context: DecodeContext,
 ): Effect.Effect<void, RemoveError | TransportFault> =>
   Effect.gen(function* () {
-    if (response.status === 204) return;
+    if (response.status === 204) return yield* Effect.void;
 
     if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
 
