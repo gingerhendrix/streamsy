@@ -3,6 +3,7 @@ import {
   checkDemoPage,
   excerptSegments,
   firstMissingLine,
+  resolveTitle,
   type SourceReader,
 } from "../../scripts/check-demo-excerpts.ts";
 
@@ -104,4 +105,21 @@ test("a missing file and a path outside the example fail", () => {
 
 test("other languages are not checked", () => {
   expect(checkDemoPage(page("bash", "bun run dev"), reader)).toEqual([]);
+});
+
+test("a title that starts with a listed folder name quotes that folder", () => {
+  const folders = ["examples/app", "examples/app-contract"] as const;
+  expect(resolveTitle(folders, "server/index.ts")).toEqual({
+    folder: "examples/app",
+    path: "server/index.ts",
+  });
+  expect(resolveTitle(folders, "app-contract/api.ts")).toEqual({
+    folder: "examples/app-contract",
+    path: "api.ts",
+  });
+  // The page's own folder name is not a prefix: its files are quoted directly.
+  expect(resolveTitle(folders, "app/server.ts")).toEqual({
+    folder: "examples/app",
+    path: "app/server.ts",
+  });
 });

@@ -3,9 +3,19 @@ import { spawnServer } from "@streamsy/test-support/server";
 import { Console, Effect, Fiber, FileSystem, Layer, Path, Result, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
-import { IssueTrackerApi } from "../shared/api.ts";
-import { BadRequest, Conflict, NotFound, WipLimitReached } from "../shared/api-schema.ts";
-import { decodeStateEvents, Issue, Project, type StateEvent } from "../shared/state-schema.ts";
+import { IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
+import {
+  BadRequest,
+  Conflict,
+  NotFound,
+  WipLimitReached,
+} from "@streamsy/issue-tracker-demo-contract/api-schema";
+import {
+  decodeStateEvents,
+  Issue,
+  Project,
+  type StateEvent,
+} from "@streamsy/issue-tracker-demo-contract/state-schema";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
   message: Schema.String,

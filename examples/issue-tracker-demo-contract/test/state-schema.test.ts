@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Result } from "effect";
-import { decodeStateEvents, issueTrackerState, type JsonValue } from "../../shared/state-schema.ts";
+import { decodeStateEvents, issueTrackerState, type JsonValue } from "../state-schema.ts";
 
 const project = {
   id: "proj_1",

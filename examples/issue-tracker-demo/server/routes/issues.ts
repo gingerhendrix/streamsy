@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
-import { IssueTrackerApi } from "../../shared/api.ts";
+import { IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
 import { IssueTracker } from "../issue-tracker.ts";
 import { createIssue, updateIssue } from "../state.ts";
 import { issueApiErrors } from "./errors.ts";

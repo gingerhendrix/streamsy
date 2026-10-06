@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
-import { CommentInput, IssueInput, ProjectInput } from "../../shared/api-schema.ts";
-import type { Issue } from "../../shared/state-schema.ts";
+import {
+  CommentInput,
+  IssueInput,
+  ProjectInput,
+} from "@streamsy/issue-tracker-demo-contract/api-schema";
+import type { Issue } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import {
   createComment,
   createIssue,

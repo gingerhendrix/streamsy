@@ -1,5 +1,5 @@
+import type { IssueStatus } from "@streamsy/issue-tracker-demo-contract/types";
 import { DateTime, Option } from "effect";
-import type { IssueStatus } from "../../shared/types.ts";
 
 export const STATUS_LABEL = {
   open: "open",

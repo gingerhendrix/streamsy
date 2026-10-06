@@ -1,8 +1,13 @@
 import { browserCrypto } from "../utils/crypto.ts";
 import { DateTime, Effect } from "effect";
 import { useState } from "react";
-import { anonymousAuthor } from "../../shared/state-schema.ts";
-import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
+import { anonymousAuthor } from "@streamsy/issue-tracker-demo-contract/state-schema";
+import type {
+  Comment,
+  Issue,
+  IssueStatus,
+  Project,
+} from "@streamsy/issue-tracker-demo-contract/types";
 import { awaitOptimisticAction, type IssueDb, type OptimisticAction } from "../db.ts";
 import {
   useCommentsByIssue,

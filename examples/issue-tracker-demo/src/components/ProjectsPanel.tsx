@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { Project } from "../../shared/types.ts";
+import type { Project } from "@streamsy/issue-tracker-demo-contract/types";
 
 export function ProjectsPanel({
   projects,

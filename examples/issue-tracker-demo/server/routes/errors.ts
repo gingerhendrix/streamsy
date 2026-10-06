@@ -7,7 +7,7 @@ import {
   InternalServerError,
   NotFound,
   WipLimitReached,
-} from "../../shared/api-schema.ts";
+} from "@streamsy/issue-tracker-demo-contract/api-schema";
 import type { WorkspaceNotFound, WriteConflict } from "../issue-tracker.ts";
 import type { IssueNotFound, TooManyInProgress, UnknownReference } from "../state.ts";
 

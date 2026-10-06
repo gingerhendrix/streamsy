@@ -87,13 +87,15 @@ API, and `Serve.mount(Workspaces, "/streams/workspace/:workspaceId")` from
 that router. On SIGINT or SIGTERM it answers parked long polls with 204, the
 listener stops, storage closes last, and the process exits 0.
 
-`shared/api.ts` declares `IssueTrackerApi`: one group each for workspaces,
-projects, issues and comments. Effect schemas in `shared/api-schema.ts` check
-the workspace id, the partial entity body and its optional `txid`, and describe
-the success bodies and the `{ "error": string }` error bodies. The same entity
-schemas in `shared/state-schema.ts` type the stream collections on the server
-and, through `Schema.toStandardSchemaV1`, the StreamDB collections in the
-browser.
+The wire contract lives in the private workspace package
+[`@streamsy/issue-tracker-demo-contract`](../issue-tracker-demo-contract), so
+the variants import the same schemas. Its `api.ts` declares `IssueTrackerApi`:
+one group each for workspaces, projects, issues and comments. Effect schemas in
+its `api-schema.ts` check the workspace id, the partial entity body and its
+optional `txid`, and describe the success bodies and the `{ "error": string }`
+error bodies. The same entity schemas in its `state-schema.ts` type the stream
+collections on the server and, through `Schema.toStandardSchemaV1`, the
+StreamDB collections in the browser.
 
 `IssueTracker.mutate` is the read, decide, append recipe in one
 `Workspaces.decide` call: fold the workspace's State changes, validate against

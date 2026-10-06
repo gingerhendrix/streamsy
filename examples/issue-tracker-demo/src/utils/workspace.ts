@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { WorkspaceCreated } from "../../shared/api-schema.ts";
+import { WorkspaceCreated } from "@streamsy/issue-tracker-demo-contract/api-schema";
 
 /** The always-present demo workspace, used when no `?w=` param is set. */
 export const mainWorkspaceId = "main";

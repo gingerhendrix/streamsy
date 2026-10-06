@@ -6,7 +6,7 @@ import {
   type Comment,
   type Issue,
   type Project,
-} from "../shared/state-schema.ts";
+} from "@streamsy/issue-tracker-demo-contract/state-schema";
 import type { WorkspaceChange } from "./streams.ts";
 
 /** Read-only view over one workspace's materialized state. */

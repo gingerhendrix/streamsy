@@ -7,7 +7,7 @@ import {
 } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
 import { type Array, Effect, Layer, Option, Schema } from "effect";
-import { Comment, Issue, Project } from "../shared/state-schema.ts";
+import { Comment, Issue, Project } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { ServerConfig } from "./config.ts";
 
 /** One stream owns every workspace's multi-collection stream. */

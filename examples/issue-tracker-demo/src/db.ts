@@ -6,9 +6,17 @@ import {
   type CommentInput,
   type IssueInput,
   type ProjectInput,
-} from "../shared/api-schema.ts";
-import { issueTrackerState, type JsonValue } from "../shared/state-schema.ts";
-import type { Comment, Issue, IssueStatus, Project } from "../shared/types.ts";
+} from "@streamsy/issue-tracker-demo-contract/api-schema";
+import {
+  issueTrackerState,
+  type JsonValue,
+} from "@streamsy/issue-tracker-demo-contract/state-schema";
+import type {
+  Comment,
+  Issue,
+  IssueStatus,
+  Project,
+} from "@streamsy/issue-tracker-demo-contract/types";
 import { trackConnection, type Connection } from "./connection.ts";
 
 export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
