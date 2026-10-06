@@ -12,6 +12,7 @@ export const request = (input: string | URL, init?: RequestInit): Promise<Respon
         );
 
         const web = new Request(input, init);
+
         // fromWeb normalizes an empty body by removing Content-Type. Fork parity
         // cases deliberately send that header without a body, so restore the wire headers.
         const response = yield* client.execute(
