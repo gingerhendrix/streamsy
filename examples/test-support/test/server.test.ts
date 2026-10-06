@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, layer } from "@streamsy/effect-test";
 import { Effect, Exit, Layer } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/http";
+import { FetchHttpClient } from "effect/http";
 import { spawnServer, UncleanStop } from "../server.ts";
 
 const services = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
@@ -9,38 +9,42 @@ const services = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 const fixture = (mode: string) =>
   spawnServer({ cwd: import.meta.dir, entry: "fixtures/server.ts", env: { FIXTURE_MODE: mode } });
 
-const run = <A, E>(effect: Effect.Effect<A, E, BunServices.BunServices | HttpClient.HttpClient>) =>
-  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each test is an entry point.
-  Effect.runPromiseExit(effect.pipe(Effect.provide(services)));
+layer(services, { excludeTestServices: true })((it) => {
+  describe("spawnServer", () => {
+    it.effect("stop and the scope finalizer fail with UncleanStop on a non-zero exit code", () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.scoped(
+          Effect.flatMap(fixture("interrupted"), (server) => Effect.flip(server.stop)),
+        ).pipe(Effect.exit);
 
-describe("spawnServer", () => {
-  test("stop and the scope finalizer fail with UncleanStop on a non-zero exit code", async () => {
-    const exit = await run(
-      Effect.scoped(Effect.flatMap(fixture("interrupted"), (server) => Effect.flip(server.stop))),
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value).toBeInstanceOf(UncleanStop);
+          expect(exit.value.exitCode).toBe(130);
+        }
+
+        const finalized = yield* Effect.scoped(Effect.asVoid(fixture("interrupted"))).pipe(
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(finalized)).toBe(true);
+        expect(String(finalized)).toContain("UncleanStop");
+      }),
     );
+    it.effect("stop fails with UncleanStop on stderr output", () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.scoped(
+          Effect.flatMap(fixture("stderr"), (server) => Effect.flip(server.stop)),
+        ).pipe(Effect.exit);
 
-    expect(Exit.isSuccess(exit)).toBe(true);
+        expect(Exit.isSuccess(exit)).toBe(true);
 
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value).toBeInstanceOf(UncleanStop);
-      expect(exit.value.exitCode).toBe(130);
-    }
-
-    const finalized = await run(Effect.scoped(Effect.asVoid(fixture("interrupted"))));
-    expect(Exit.isFailure(finalized)).toBe(true);
-    expect(String(finalized)).toContain("UncleanStop");
-  });
-
-  test("stop fails with UncleanStop on stderr output", async () => {
-    const exit = await run(
-      Effect.scoped(Effect.flatMap(fixture("stderr"), (server) => Effect.flip(server.stop))),
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value.exitCode).toBe(0);
+          expect(exit.value.stderr).toContain("fixture wrote to stderr");
+        }
+      }),
     );
-
-    expect(Exit.isSuccess(exit)).toBe(true);
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.exitCode).toBe(0);
-      expect(exit.value.stderr).toContain("fixture wrote to stderr");
-    }
   });
 });
