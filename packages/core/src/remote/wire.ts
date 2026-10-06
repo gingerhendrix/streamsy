@@ -90,18 +90,16 @@ export const offset = (
   response: HttpResponse,
 ): Effect.Effect<string, TransportFault> =>
   optionalOffset(operation, response).pipe(
-    Effect.flatMap((value) =>
-      value === undefined
-        ? Effect.fail(
-            failure(
-              operation,
-              "response",
-              "Missing stream-next-offset header",
-              undefined,
-              response.status,
-            ),
-          )
-        : Effect.succeed(value),
+    Effect.filterOrFail(
+      (value): value is string => value !== undefined,
+      () =>
+        failure(
+          operation,
+          "response",
+          "Missing stream-next-offset header",
+          undefined,
+          response.status,
+        ),
     ),
   );
 

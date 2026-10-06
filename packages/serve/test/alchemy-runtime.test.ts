@@ -4,7 +4,6 @@ import { Effect, Layer } from "effect";
 import { StorageFault, MemoryStorage } from "@streamsy/core";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
-import { Option } from "effect";
 import { objectHandlers } from "../src/alchemy.ts";
 
 test.each(["typed", "defect"])(
@@ -39,7 +38,7 @@ test.each(["typed", "defect"])(
         return Layer.mergeAll(
           protocol,
           Layer.succeed(Alarm, {
-            current: Effect.succeed(Option.none()),
+            current: Effect.succeedNone,
             arm: () => Effect.void,
             clear: Effect.sync(() => {
               alarms += 1;

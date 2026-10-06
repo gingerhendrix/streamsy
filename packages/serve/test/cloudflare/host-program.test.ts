@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
 import { Alarm } from "../../src/cloudflare/alarm.ts";
 import { withMutationReconciliation } from "../../src/cloudflare/host-program.ts";
@@ -7,9 +7,9 @@ import { alarm } from "../../src/cloudflare/host-program.ts";
 
 const failingStorage = Storage.of({
   capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
-  record: () => Effect.succeed(Option.none()),
+  record: () => Effect.succeedNone,
   messages: () => Effect.succeed([]),
-  producer: () => Effect.succeed(Option.none()),
+  producer: () => Effect.succeedNone,
   mutate: () => Effect.die("unused"),
   changes: () => Stream.empty,
   nextExpiry: Effect.fail(
@@ -67,7 +67,7 @@ test("an alarm exposes StorageFault for platform retry without an HTTP request",
         Layer.mergeAll(
           Layer.succeed(Storage, failingStorage),
           Layer.succeed(Alarm, {
-            current: Effect.succeed(Option.none()),
+            current: Effect.succeedNone,
             arm: () => Effect.void,
             clear: Effect.void,
           }),

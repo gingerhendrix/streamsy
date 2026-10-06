@@ -91,9 +91,9 @@ export function objectHandlers<R = never>(options: {
     return {
       fetch: Effect.flatMap(
         get.pipe(
-          Effect.map(Option.some),
-          Effect.catch(() => Effect.succeed(Option.none())),
-          Effect.catchDefect(() => Effect.succeed(Option.none())),
+          Effect.asSome,
+          Effect.catch(() => Effect.succeedNone),
+          Effect.catchDefect(() => Effect.succeedNone),
         ),
         (compiled) =>
           Option.isSome(compiled) ? compiled.value.fetch : Effect.succeed(unavailable()),

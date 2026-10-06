@@ -235,10 +235,9 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               ],
             });
 
-            const outcomes = yield* Effect.all(
-              [write, write].map((effect) =>
-                effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
-              ),
+            const outcomes = yield* Effect.forEach(
+              [write, write],
+              (effect) => effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
               { concurrency: 2 },
             );
 

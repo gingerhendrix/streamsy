@@ -621,7 +621,7 @@ it("readNext sees a commit in the read-to-subscribe window", () =>
               yield* writer.append(id, appendOptions);
 
               return control.storage.changes(target);
-            }).pipe(Effect.catch(Effect.die)),
+            }).pipe(Effect.orDie),
           ),
       });
 
@@ -829,7 +829,7 @@ it("purge/recreate with a lower tail is a change, including when its wake was co
               yield* writer.create(id, { contentType: "text/plain" });
 
               return control.storage.changes(target);
-            }).pipe(Effect.catch(Effect.die)),
+            }).pipe(Effect.orDie),
           ),
       });
 

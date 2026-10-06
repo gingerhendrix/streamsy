@@ -55,10 +55,10 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
     const missing = filename(label);
     expect(await Bun.file(missing).exists()).toBe(false);
 
-    const exit = await Effect.runPromise(
+    const exit = await Effect.runPromiseExit(
       Effect.scoped(
         Layer.build(BunStorage.layerProtocol({ client: { filename: missing, ...options } })),
-      ).pipe(Effect.exit),
+      ),
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
@@ -85,10 +85,10 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   writable.close(false);
   const before = new Uint8Array(await Bun.file(readonly).arrayBuffer());
 
-  const readonlyExit = await Effect.runPromise(
+  const readonlyExit = await Effect.runPromiseExit(
     Effect.scoped(
       Layer.build(BunStorage.layerProtocol({ client: { filename: readonly, readonly: true } })),
-    ).pipe(Effect.exit),
+    ),
   );
 
   expect(Exit.isSuccess(readonlyExit)).toBe(true);
@@ -134,7 +134,7 @@ test("an injected migration failure rolls back schema and version rows", async (
 
   const sql = Context.get(clientContext, SqlClientTag.SqlClient);
 
-  const failed = await Effect.runPromise(
+  const failed = await Effect.runPromiseExit(
     migrate(sql, {
       beforeVersion: (version) =>
         version === 1
@@ -146,7 +146,7 @@ test("an injected migration failure rolls back schema and version rows", async (
               }),
             )
           : Effect.void,
-    }).pipe(Effect.exit),
+    }),
   );
 
   expect(Exit.isFailure(failed)).toBe(true);
@@ -196,7 +196,7 @@ test("legacy and too-new files reject without changing retained bytes", async ()
 
     db.close(false);
     const before = await Bun.file(path).arrayBuffer();
-    const exit = await Effect.runPromise(acquire(path).pipe(Effect.exit));
+    const exit = await Effect.runPromiseExit(acquire(path));
     expect(Exit.isFailure(exit)).toBe(true);
 
     if (kind !== "legacy" && kind !== "newer" && Exit.isFailure(exit))

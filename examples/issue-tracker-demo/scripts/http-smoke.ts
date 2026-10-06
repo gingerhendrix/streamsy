@@ -362,12 +362,12 @@ const smoke = Effect.gen(function* () {
     yield* raceIssue("Contender B", "open"),
   ];
 
-  const raced = yield* Effect.all(
-    contenders.map((id) =>
+  const raced = yield* Effect.forEach(
+    contenders,
+    (id) =>
       api.issues
         .update({ params: { ...race, id }, payload: { status: "in_progress" } })
         .pipe(Effect.result),
-    ),
     { concurrency: "unbounded" },
   );
 

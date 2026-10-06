@@ -283,8 +283,8 @@ const program = Effect.gen(function* () {
 
   const servers = yield* Effect.forEach(DIALECTS, (dialect) =>
     Option.match(config[dialect.backend], {
-      onNone: () => Effect.succeed(Option.none<Server>()),
-      onSome: (url) => Effect.map(connect(dialect, url), Option.some),
+      onNone: () => Effect.succeedNone,
+      onSome: (url) => Effect.asSome(connect(dialect, url)),
     }),
   ).pipe(Effect.map((found) => found.flatMap(Option.toArray)));
 

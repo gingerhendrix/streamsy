@@ -11,7 +11,7 @@ const fixture = (mode: string) =>
 
 const run = <A, E>(effect: Effect.Effect<A, E, BunServices.BunServices | HttpClient.HttpClient>) =>
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each test is an entry point.
-  Effect.runPromise(Effect.exit(effect.pipe(Effect.provide(services))));
+  Effect.runPromiseExit(effect.pipe(Effect.provide(services)));
 
 describe("spawnServer", () => {
   test("stop and the scope finalizer fail with UncleanStop on a non-zero exit code", async () => {

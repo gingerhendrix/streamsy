@@ -177,14 +177,12 @@ test("latency does not produce a valid aggregate after a failed response", async
 test("latency rejects initial PUT, HEAD, and body failures", async () => {
   const result = await Effect.runPromise(
     measureLatency({ baseUrl: "https://example.test", paths: ["/a"], concurrency: 1 }).pipe(
-      Effect.provide(
-        Layer.succeed(HttpOperation, {
-          request: (request) =>
-            request.method === "PUT"
-              ? Effect.succeed({ status: 500, body: "put failed" })
-              : Effect.fail(new ContractError({ message: "body failed" })),
-        }),
-      ),
+      Effect.provideService(HttpOperation, {
+        request: (request) =>
+          request.method === "PUT"
+            ? Effect.succeed({ status: 500, body: "put failed" })
+            : Effect.fail(new ContractError({ message: "body failed" })),
+      }),
     ),
   );
 
@@ -204,19 +202,17 @@ test("throughput records invalid create and POST responses", async () => {
       postsPerTrial: 2,
       concurrency: 1,
     }).pipe(
-      Effect.provide(
-        Layer.succeed(HttpOperation, {
-          request: (request) => {
-            if (request.method === "PUT")
-              return Effect.succeed({ status: 500, body: "create failed" });
-            postCalls += 1;
+      Effect.provideService(HttpOperation, {
+        request: (request) => {
+          if (request.method === "PUT")
+            return Effect.succeed({ status: 500, body: "create failed" });
+          postCalls += 1;
 
-            return postCalls === 1
-              ? Effect.fail(new ContractError({ message: "post body failed" }))
-              : Effect.succeed({ status: 201, body: "" });
-          },
-        }),
-      ),
+          return postCalls === 1
+            ? Effect.fail(new ContractError({ message: "post body failed" }))
+            : Effect.succeed({ status: 201, body: "" });
+        },
+      }),
     ),
   );
 

@@ -444,7 +444,7 @@ test("commit contention defects once and is never replayed", async () => {
   const storage = Context.get(context, Storage);
   const reader = await startHolder(filename, "read", 300);
   const before = probe.transactionAttempts;
-  const result = await Effect.runPromise(storage.mutate(create("uncertain")).pipe(Effect.exit));
+  const result = await Effect.runPromiseExit(storage.mutate(create("uncertain")));
   expect(Exit.isFailure(result) && Cause.hasDies(result.cause)).toBe(true);
   expect(probe.transactionAttempts - before).toBe(1);
   await Effect.runPromise(Scope.close(scope, Exit.void));

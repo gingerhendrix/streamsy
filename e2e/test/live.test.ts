@@ -85,13 +85,11 @@ const http = (root: string) =>
   });
 
 const run = (paths: ReturnType<typeof setup>) =>
-  Effect.runPromise(
-    Effect.exit(
-      runEvidence(identity(paths.root)).pipe(
-        Effect.provide(
-          Layer.mergeAll(liveOperations(paths), liveReports(paths), http(paths.root)).pipe(
-            Layer.provide(BunServices.layer),
-          ),
+  Effect.runPromiseExit(
+    runEvidence(identity(paths.root)).pipe(
+      Effect.provide(
+        Layer.mergeAll(liveOperations(paths), liveReports(paths), http(paths.root)).pipe(
+          Layer.provide(BunServices.layer),
         ),
       ),
     ),

@@ -200,10 +200,9 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
             ],
           });
 
-        const outcomes = yield* Effect.all(
-          [write(1), write(2)].map((effect) =>
-            effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
-          ),
+        const outcomes = yield* Effect.forEach(
+          [write(1), write(2)],
+          (effect) => effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
           { concurrency: 2 },
         );
 

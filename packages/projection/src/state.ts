@@ -44,9 +44,9 @@ export const decodeState = <A>(
   encoded: Option.Option<string>,
 ): Effect.Effect<Option.Option<A>, ProjectionFault> =>
   Option.isNone(encoded)
-    ? Effect.succeed(Option.none())
+    ? Effect.succeedNone
     : Schema.decodeEffect(Schema.fromJsonString(schema))(encoded.value).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.mapError(
           (cause) =>
             new ProjectionFault({

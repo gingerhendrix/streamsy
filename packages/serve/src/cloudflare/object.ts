@@ -61,9 +61,9 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
         const owner = yield* ObjectOwner;
 
         const compiled = yield* owner.get.pipe(
-          Effect.map(Option.some),
-          Effect.catch(() => Effect.succeed(Option.none())),
-          Effect.catchDefect(() => Effect.succeed(Option.none())),
+          Effect.asSome,
+          Effect.catch(() => Effect.succeedNone),
+          Effect.catchDefect(() => Effect.succeedNone),
         );
 
         if (Option.isNone(compiled)) return HttpServerResponse.toWeb(unavailable());

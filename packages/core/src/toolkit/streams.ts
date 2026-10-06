@@ -128,9 +128,13 @@ export const append = Effect.fn("Streams.append")(function* <
   const possible = (error: AppendError | StreamsFault): error is AppendErrorFor<O> | StreamsFault =>
     possibleFor(callOptions, error);
 
-  return yield* (yield* StreamsWriter)
-    .append(address.id, { ...callOptions, data, contentType: address.contentType })
-    .pipe(Effect.catch((error) => (possible(error) ? Effect.fail(error) : Effect.die(error))));
+  const appended = (yield* StreamsWriter).append(address.id, {
+    ...callOptions,
+    data,
+    contentType: address.contentType,
+  });
+
+  return yield* Effect.catchIf(appended, possible, Effect.fail, Effect.die);
 });
 
 function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
