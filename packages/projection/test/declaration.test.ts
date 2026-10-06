@@ -1,7 +1,8 @@
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Effect, Option, Schema } from "effect";
+import { it as baseIt } from "@streamsy/effect-test";
+import { Effect, Layer, Option, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { producerId } from "../src/commit/producer.ts";
@@ -95,37 +96,48 @@ test("record keys and producer ids match the values before declarations", () => 
   );
 });
 
-test("the handler unit carries decoded params and the unit key stays encoded", async () => {
-  class numbered extends Streamsy.json<numbered>()("declaration.test/units", "units/:id", {
-    params: { id: Schema.FiniteFromString },
-    schema: Schema.String,
-  }) {}
+baseIt.effect("the handler unit carries decoded params and the unit key stays encoded", () =>
+  Effect.gen(function* () {
+    class numbered extends Streamsy.json<numbered>()("declaration.test/units", "units/:id", {
+      params: { id: Schema.FiniteFromString },
+      schema: Schema.String,
+    }) {}
 
-  const seen: Array<{ readonly id: number; readonly key: string }> = [];
+    const seen: Array<{ readonly id: number; readonly key: string }> = [];
 
-  const declared = Projection.process({
-    commit: Commit.atLeastOnce,
-    id: "units",
-    params: { id: Schema.FiniteFromString },
-    inputs: { numbered },
-    process: (_batch, unit) => Effect.sync(() => seen.push({ id: unit.params.id, key: unit.key })),
-  });
+    const declared = Projection.process({
+      commit: Commit.atLeastOnce,
+      id: "units",
+      params: { id: Schema.FiniteFromString },
+      inputs: { numbered },
+      process: (_batch, unit) =>
+        Effect.sync(() => seen.push({ id: unit.params.id, key: unit.key })),
+    });
 
-  const bound = declared.at({ id: 7 });
-  const host = FamilyFixture.withFamilies(memoryHost(), numbered);
+    const bound = declared.at({ id: 7 });
+    const host = FamilyFixture.withFamilies(memoryHost(), numbered);
 
-  const run = Effect.gen(function* () {
-    yield* Streams.create(bound.inputs.numbered);
-    yield* Streams.append(bound.inputs.numbered, ["a"]);
-    yield* Projection.run(bound);
-  });
+    const run = Effect.gen(function* () {
+      yield* Streams.create(bound.inputs.numbered);
+      yield* Streams.append(bound.inputs.numbered, ["a"]);
+      yield* Projection.run(bound);
+    });
 
-  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The test is the entry point.
-  await Effect.runPromise(run.pipe(Effect.provide(host)));
-  expect(seen.map(({ id }) => id)).toEqual([7]);
-  // The key is a list of encoded parts; its params part holds the string "7".
-  expect(JSON.parse(seen[0]?.key ?? "[]")).toContain(JSON.stringify({ id: "7" }));
-});
+    const services = yield* Layer.build(host);
+    yield* run.pipe(Effect.provideContext(services));
+    expect(seen.map(({ id }) => id)).toEqual([7]);
+    // The key is a list of encoded parts; its params part holds the string "7".
+    expect(
+      yield* Schema.decodeEffect(Schema.Array(Schema.String).pipe(Schema.fromJsonString))(
+        seen[0]?.key ?? "[]",
+      ),
+    ).toContain(
+      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Struct({ id: Schema.String })))({
+        id: "7",
+      }),
+    );
+  }),
+);
 
 test("number parameters encode to strings and parse back", () => {
   class numbered extends Streamsy.json<numbered>()("declaration.test/numbered", "numbered/:id", {

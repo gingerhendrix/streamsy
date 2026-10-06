@@ -1,18 +1,16 @@
-import { expect, test } from "bun:test";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { layer } from "@streamsy/effect-test";
+import { expect } from "bun:test";
+import { Layer, Cause, Effect, Exit, Option, Schema } from "effect";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
 
 class Input extends Streamsy.json<Input>()("atLeastOnce/Input", "at-least-once/input", {
   params: {},
-  schema: Schema.Number,
+  schema: Schema.Finite,
 }) {}
 
 const host = Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input));
-
-const run = <A, E>(effect: Effect.Effect<A, E, Input | CheckpointStore>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(host), Effect.provide(CheckpointStore.layerMemory)));
 
 const seed = Effect.gen(function* () {
   const input = yield* Input;
@@ -27,78 +25,83 @@ const fault = new ProjectionFault({
 });
 
 for (const failHandler of [true, false]) {
-  test(`atLeastOnce keeps the range after ${failHandler ? "handler" : "settle"} failure`, () =>
-    run(
-      Effect.gen(function* () {
-        yield* seed;
-        const keys: string[] = [];
-        const batches: number[][] = [];
-        let failed = false;
-        const compensations: string[] = [];
+  layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+    it.effect(
+      `atLeastOnce keeps the range after ${failHandler ? "handler" : "settle"} failure`,
+      () =>
+        Effect.gen(function* () {
+          yield* seed;
+          const keys: string[] = [];
+          const batches: number[][] = [];
+          let failed = false;
+          const compensations: string[] = [];
 
-        const base = Projection.process({
-          commit: Commit.atLeastOnce,
-          id: "effect",
-          params: {},
-          inputs: { input: Input },
-          process: (batch, unit) =>
-            Effect.gen(function* () {
-              keys.push(unit.key);
-              batches.push([...batch.input.items]);
+          const base = Projection.process({
+            commit: Commit.atLeastOnce,
+            id: "effect",
+            params: {},
+            inputs: { input: Input },
+            process: (batch, unit) =>
+              Effect.gen(function* () {
+                keys.push(unit.key);
+                batches.push([...batch.input.items]);
 
-              if (failHandler && !failed) {
-                failed = true;
+                if (failHandler && !failed) {
+                  failed = true;
 
-                return yield* Effect.fail("handler-error");
-              }
-            }),
-        }).at({});
+                  return yield* Effect.fail("handler-error");
+                }
 
-        const projection = {
-          ...base,
-          commit: Commit.atLeastOnce.pipe(
-            Commit.withCompensation((_result, _cause, unit) =>
-              Effect.sync(() => {
-                compensations.push(unit.key);
+                return yield* Effect.void;
               }),
+          }).at({});
+
+          const projection = {
+            ...base,
+            commit: Commit.atLeastOnce.pipe(
+              Commit.withCompensation((_result, _cause, unit) =>
+                Effect.sync(() => {
+                  compensations.push(unit.key);
+                }),
+              ),
             ),
-          ),
-        };
+          };
 
-        const store = yield* CheckpointStore;
+          const store = yield* CheckpointStore;
 
-        const first = yield* Projection.pass(projection).pipe(
-          Effect.provideService(CheckpointStore, {
-            ...store,
-            compareAndSet: (key, token, record) =>
-              !failHandler && record.pending === undefined
-                ? Effect.fail(fault)
-                : store.compareAndSet(key, token, record),
-          }),
-          Effect.result,
-        );
+          const first = yield* Projection.pass(projection).pipe(
+            Effect.provideService(CheckpointStore, {
+              ...store,
+              compareAndSet: (key, token, record) =>
+                !failHandler && record.pending === undefined
+                  ? Effect.fail(fault)
+                  : store.compareAndSet(key, token, record),
+            }),
+            Effect.result,
+          );
 
-        expect(first._tag).toBe("Failure");
+          expect(first._tag).toBe("Failure");
 
-        if (first._tag === "Failure")
-          expect(first.failure).toEqual(failHandler ? "handler-error" : fault);
-        const pinned = Option.getOrThrow((yield* store.load(projection)).record);
-        expect(pinned.pending).toBeDefined();
-        expect(pinned.pending?.seqs).toBeUndefined();
-        yield* (yield* Input).append({}, [2]);
-        yield* Projection.pass(projection);
-        expect(keys[1]).toBe(keys[0]);
-        expect(batches).toEqual([[1], [1]]);
-        expect(compensations).toEqual(failHandler ? [] : keys.slice(0, 1));
-        expect(Option.getOrThrow((yield* store.load(projection)).record).pending).toBeUndefined();
-        yield* Projection.run(projection);
-        expect(batches).toEqual([[1], [1], [2]]);
-      }),
-    ));
+          if (first._tag === "Failure")
+            expect(first.failure).toEqual(failHandler ? "handler-error" : fault);
+          const pinned = Option.getOrThrow((yield* store.load(projection)).record);
+          expect(pinned.pending).toBeDefined();
+          expect(pinned.pending?.seqs).toBeUndefined();
+          yield* (yield* Input).append({}, [2]);
+          yield* Projection.pass(projection);
+          expect(keys[1]).toBe(keys[0]);
+          expect(batches).toEqual([[1], [1]]);
+          expect(compensations).toEqual(failHandler ? [] : keys.slice(0, 1));
+          expect(Option.getOrThrow((yield* store.load(projection)).record).pending).toBeUndefined();
+          yield* Projection.run(projection);
+          expect(batches).toEqual([[1], [1], [2]]);
+        }),
+    );
+  });
 }
 
-test("compensation observes successful void and preserves a store defect", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("compensation observes successful void and preserves a store defect", () =>
     Effect.gen(function* () {
       yield* seed;
       const defect = new Error("store defect");
@@ -139,10 +142,11 @@ test("compensation observes successful void and preserves a store defect", () =>
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
       expect(observed).toEqual([undefined, defect]);
     }),
-  ));
+  );
+});
 
-test("a failed pin never runs the handler and a custom Commit cannot inherit pinning", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("a failed pin never runs the handler and a custom Commit cannot inherit pinning", () =>
     Effect.gen(function* () {
       yield* seed;
       let calls = 0;
@@ -190,4 +194,5 @@ test("a failed pin never runs the handler and a custom Commit cannot inherit pin
       });
       expect(calls).toBe(0);
     }),
-  ));
+  );
+});

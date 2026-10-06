@@ -1,9 +1,10 @@
+import { layer } from "@streamsy/effect-test";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { Effect, Option, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
-import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
+import { Streams } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Projection,
@@ -18,18 +19,6 @@ const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
 const b = FamilyFixture.json("multi-b", { schema: Schema.String });
 
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
-
-const run = <A, E>(
-  body: Effect.Effect<
-    A,
-    E,
-    CheckpointStore | import("@streamsy/core").Streamsy.Wildcard | StreamsReader | StreamsWriter
-  >,
-  readLimit = 1000,
-) =>
-  Effect.runPromise(
-    body.pipe(Effect.provide(FamilyFixture.withFamilies(memoryHost({ readLimit })))),
-  );
 
 const setup = Effect.gen(function* () {
   yield* Streams.create(a);
@@ -60,8 +49,8 @@ const recorder = (inputs: Inputs, id = "multi") => {
 const tags = (seen: ReadonlyArray<{ readonly entry: Entry<Inputs> }>) =>
   seen.map(({ entry }) => `${entry.input}:${String(entry.item)}#${entry.index}`);
 
-test("two inputs interleave in declaration order", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
+  it.effect("two inputs interleave in declaration order", () =>
     Effect.gen(function* () {
       yield* setup;
       const ab = recorder({ a, b }, "ab");
@@ -75,10 +64,11 @@ test("two inputs interleave in declaration order", () =>
       expect(Object.keys(ab.seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
       expect(ab.seen[0]?.unit.key).toBe(ba.seen[0]?.unit.key.replace('"ba"', '"ab"'));
     }),
-  ));
+  );
+});
 
-test("each input contributes one server page per pass", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 2 })))((it) => {
+  it.effect("each input contributes one server page per pass", () =>
     Effect.gen(function* () {
       yield* setup;
       const { projection, seen } = recorder({ a, b });
@@ -92,11 +82,11 @@ test("each input contributes one server page per pass", () =>
       expect(tags(seen).slice(3)).toEqual(["a:3#0"]);
       expect((yield* Projection.pass(projection)).status).toBe("caught-up");
     }),
-    2,
-  ));
+  );
+});
 
-test("one closed input stays in the batch while the other continues", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
+  it.effect("one closed input stays in the batch while the other continues", () =>
     Effect.gen(function* () {
       yield* setup;
       yield* Streams.append(a, [], { close: true });
@@ -130,10 +120,11 @@ test("one closed input stays in the batch while the other continues", () =>
       expect((yield* Projection.run(projection)).status).toBe("source-closed");
       expect(batches).toHaveLength(2);
     }),
-  ));
+  );
+});
 
-test("a missing second input fails the read naming that input", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
+  it.effect("a missing second input fails the read naming that input", () =>
     Effect.gen(function* () {
       yield* Streams.create(a);
       yield* Streams.append(a, [1]);
@@ -152,10 +143,11 @@ test("a missing second input fails the read naming that input", () =>
       const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.isNone(loaded.record)).toBe(true);
     }),
-  ));
+  );
+});
 
-test("items keeps declaration order and each runs one entry at a time", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
+  it.effect("items keeps declaration order and each runs one entry at a time", () =>
     Effect.gen(function* () {
       yield* setup;
       const order: Array<string> = [];
@@ -192,4 +184,5 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       expect(order).toEqual(["b:x", "a:1", "a:2", "a:3"]);
       expect(overlapped).toBe(false);
     }),
-  ));
+  );
+});

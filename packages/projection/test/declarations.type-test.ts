@@ -1,7 +1,7 @@
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { RemoteStreams } from "@streamsy/core/remote";
-import { Effect, Schema, type Scope } from "effect";
+import { Layer, Effect, Schema, type Scope } from "effect";
 import { Streamsy, StreamAddress, MemoryStorage } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
@@ -117,9 +117,15 @@ export type Checks = [
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
 ];
 
-const missing = namedRun.pipe(
-  Effect.provide(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input, Other))),
-);
+const missing = Effect.gen(function* () {
+  return yield* namedRun.pipe(
+    Effect.provideContext(
+      yield* Layer.build(
+        Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input, Other)),
+      ),
+    ),
+  );
+});
 
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
 // @ts-expect-error the declared output stream must be provided.
@@ -185,9 +191,11 @@ void cannotRunWidenedOutput;
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   MemoryStorage.layerProtocol();
 
-const withoutFeed = Projection.watch(transactional).pipe(
-  Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
-);
+const withoutFeed = Effect.gen(function* () {
+  return yield* Projection.watch(transactional).pipe(
+    Effect.provideContext(yield* Layer.build(Protocol.bind(protocolOnly, Streamsy.group(Input)))),
+  );
+});
 
 // @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
 const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Scope.Scope> =
@@ -195,9 +203,15 @@ const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Sco
 
 void missingFeed;
 
-const fetchWatch = Projection.watch(transactional).pipe(
-  Effect.provide(RemoteStreams.layer(Streamsy.group(Input), { baseUrl: "https://example.test" })),
-);
+const fetchWatch = Effect.gen(function* () {
+  return yield* Projection.watch(transactional).pipe(
+    Effect.provideContext(
+      yield* Layer.build(
+        RemoteStreams.layer(Streamsy.group(Input), { baseUrl: "https://example.test" }),
+      ),
+    ),
+  );
+});
 
 // @ts-expect-error RemoteStreams supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
 const missingFetchFeed: Effect.Effect<

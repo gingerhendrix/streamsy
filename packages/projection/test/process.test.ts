@@ -6,7 +6,7 @@ import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/proj
 import { layerSqlite } from "./support/sqlite.ts";
 import * as Family from "./support/families.ts";
 
-const input = Family.json("prepare-input", { schema: Schema.Number });
+const input = Family.json("prepare-input", { schema: Schema.Finite });
 
 const host = Family.withFamilies(layerSqlite());
 

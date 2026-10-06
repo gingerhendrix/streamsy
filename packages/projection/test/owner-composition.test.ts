@@ -1,6 +1,7 @@
+import { it as baseIt, layer } from "@streamsy/effect-test";
 import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { Array, Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
@@ -29,41 +30,43 @@ const host = Layer.merge(
   Protocol.bind(sqlite, Streamsy.group(Output)),
 ).pipe(Layer.provideMerge(sqlite));
 
-test("an transactional projection reads remote input and writes on its SQLite checkpoint owner", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const source = yield* Source;
-      const output = yield* Output;
-      const params = { name: "orders" };
-      yield* source.create(params);
-      yield* output.create(params);
-      yield* source.append(params, [1, 2, 3]);
+layer(host)((it) => {
+  it.effect(
+    "an transactional projection reads remote input and writes on its SQLite checkpoint owner",
+    () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+        const output = yield* Output;
+        const params = { name: "orders" };
+        yield* source.create(params);
+        yield* output.create(params);
+        yield* source.append(params, [1, 2, 3]);
 
-      const projection = Projection.process({
-        commit: Commit.transaction,
-        id: "mixed-double",
-        params: {},
-        inputs: { input: Source.at(params) },
-        process: (batch) =>
-          Effect.gen(function* () {
-            const doubled = batch.input.items.map((n) => n * 2);
+        const projection = Projection.process({
+          commit: Commit.transaction,
+          id: "mixed-double",
+          params: {},
+          inputs: { input: Source.at(params) },
+          process: (batch) =>
+            Effect.gen(function* () {
+              const doubled = batch.input.items.map((n) => n * 2);
 
-            if (Array.isReadonlyArrayNonEmpty(doubled)) yield* output.append(params, doubled);
-          }),
-      }).at({});
+              if (Array.isReadonlyArrayNonEmpty(doubled)) yield* output.append(params, doubled);
+            }),
+        }).at({});
 
-      const first = yield* Projection.run(projection);
-      expect(first.items).toBe(3);
-      expect(
-        (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
-      ).toEqual([2, 4, 6]);
-      expect((yield* Projection.run(projection)).items).toBe(0);
-    }).pipe(Effect.provide(host)),
+        const first = yield* Projection.run(projection);
+        expect(first.items).toBe(3);
+        expect(
+          (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
+        ).toEqual([2, 4, 6]);
+        expect((yield* Projection.run(projection)).items).toBe(0);
+      }),
   );
 });
 
-test("watch watches the input's feed even when checkpoints have a different owner", async () => {
-  await Effect.runPromise(
+layer(host)((it) => {
+  it.effect("watch watches the input's feed even when checkpoints have a different owner", () =>
     Effect.gen(function* () {
       const source = yield* Source;
       const params = { name: "watch" };
@@ -80,17 +83,17 @@ test("watch watches the input's feed even when checkpoints have a different owne
 
       const fiber = yield* Projection.watch(projection);
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
-    }).pipe(Effect.provide(host), Effect.scoped),
+    }),
   );
 });
 
-test("watch rejects a stream rebound without its matching feed", async () => {
-  const alternate = Protocol.bind(memoryHost(), Streamsy.group(Source)).pipe(
-    Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
-  );
+baseIt.effect("watch rejects a stream rebound without its matching feed", () =>
+  Effect.gen(function* () {
+    const alternate = Protocol.bind(memoryHost(), Streamsy.group(Source)).pipe(
+      Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
+    );
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const projection = Projection.process({
         commit: Commit.transaction,
         id: "rebound-feed",
@@ -99,15 +102,18 @@ test("watch rejects a stream rebound without its matching feed", async () => {
         process: () => Effect.void,
       }).at({});
 
-      const fiber = yield* Projection.watch(projection).pipe(Effect.provide(alternate));
+      const fiber = yield* Projection.watch(projection).pipe(
+        Effect.provideContext(yield* Layer.build(alternate)),
+      );
+
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
 
       if (result._tag === "Failure")
         expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
-    }).pipe(Effect.provide(host), Effect.scoped),
-  );
-});
+    }).pipe(Effect.provideContext(yield* Layer.build(host)), Effect.scoped);
+  }),
+);
 
 const memoryGraph = memoryHost();
 
@@ -123,13 +129,13 @@ const unowned = Layer.effectContext(
   }),
 ).pipe(Layer.provide(memoryGraph));
 
-test("a custom stream wire cannot establish the owner of an transactional write", async () => {
-  const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
-    Layer.provideMerge(sqlite),
-  );
+baseIt.effect("a custom stream wire cannot establish the owner of an transactional write", () =>
+  Effect.gen(function* () {
+    const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
+      Layer.provideMerge(sqlite),
+    );
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const source = yield* Source;
       const output = yield* Output;
       const params = { name: "orders" };
@@ -157,6 +163,6 @@ test("a custom stream wire cannot establish the owner of an transactional write"
         (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
       ).toEqual([]);
       expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
-    }).pipe(Effect.provide(unownedHost)),
-  );
-});
+    }).pipe(Effect.provideContext(yield* Layer.build(unownedHost)));
+  }),
+);
