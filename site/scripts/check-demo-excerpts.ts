@@ -20,6 +20,14 @@ export const demoExamples = new Map<string, readonly [string, ...Array<string>]>
   ["hackernews-newest-stream", ["examples/hackernews-newest-stream"]],
   ["hex-board", ["examples/hex-board"]],
   ["issue-tracker", ["examples/issue-tracker-demo", "examples/issue-tracker-demo-contract"]],
+  [
+    "issue-tracker-event-sourced",
+    [
+      "examples/issue-tracker-demo-event-sourced",
+      "examples/issue-tracker-demo",
+      "examples/issue-tracker-demo-contract",
+    ],
+  ],
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
   ["fold-agent", ["examples/fold-agent"]],
