@@ -42,16 +42,16 @@ export interface ReadOptions extends Http.ReadOptions {
 }
 
 /** Decode the matched route's parameters with the stream's codecs. */
-export const params = Effect.fn("Serve.params")(function* <P>(stream: {
+export const params = Effect.fn("Serve.params")(function* <P>(declaration: {
   readonly paramSchema: StreamRoute.PathSchema<P>;
 }) {
-  const { route } = yield* HttpRouter.RouteContext;
+  const { route: matchedRoute } = yield* HttpRouter.RouteContext;
 
-  return yield* HttpRouter.schemaPathParams(stream.paramSchema).pipe(
+  return yield* HttpRouter.schemaPathParams(declaration.paramSchema).pipe(
     Effect.mapError(
       () =>
         new InvalidParams({
-          route: route.path,
+          route: matchedRoute.path,
           parameter: "params",
           detail: "Invalid path parameters",
         }),
@@ -134,7 +134,7 @@ export function state<C extends StreamAddress.Collections, K, RD, RE>(
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Collection keys are decoded at this metadata boundary.
 function collectionDescriptor(value: unknown) {
   return Effect.gen(function* () {
-    const { route } = yield* HttpRouter.RouteContext;
+    const { route: matchedRoute } = yield* HttpRouter.RouteContext;
 
     const collections = yield* Schema.decodeUnknownEffect(
       Schema.Record(
@@ -143,7 +143,8 @@ function collectionDescriptor(value: unknown) {
       ),
     )(value).pipe(
       Effect.mapError(
-        () => new WireEncodeFailed({ route: route.path, detail: "Invalid collection metadata" }),
+        () =>
+          new WireEncodeFailed({ route: matchedRoute.path, detail: "Invalid collection metadata" }),
       ),
     );
 
@@ -160,8 +161,8 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
   descriptor: Effect.Effect<Contract.CanonicalValue, WireEncodeFailed, HttpRouter.RouteContext>,
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const { route } = yield* HttpRouter.RouteContext;
-  const path = route.path;
+  const { route: matchedRoute } = yield* HttpRouter.RouteContext;
+  const path = matchedRoute.path;
 
   const versionHeader =
     kind === "state" ? Contract.STATE_VERSION_HEADER : Contract.STREAM_VERSION_HEADER;
@@ -304,8 +305,8 @@ export const value = Effect.fn("Serve.value")(function* <
   options: ValueOptions = {},
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const { route } = yield* HttpRouter.RouteContext;
-  const path = route.path;
+  const { route: matchedRoute } = yield* HttpRouter.RouteContext;
+  const path = matchedRoute.path;
   const cache = options.cache ?? { visibility: "private", maxAgeSeconds: 0, mustRevalidate: true };
   const cacheControl = `${cache.visibility}, max-age=${cache.maxAgeSeconds}${cache.mustRevalidate ? ", must-revalidate" : ""}`;
 

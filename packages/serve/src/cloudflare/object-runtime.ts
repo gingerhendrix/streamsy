@@ -90,7 +90,7 @@ export function providedApp<R>(
 
   // SAFETY: ObjectApp only requires the services carried by ObjectServices<R>;
   // provideRequest supplies that complete context. The assertion resolves generic conditional request markers.
-  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- provideRequest supplies every service that the generic request markers name; see SAFETY.
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion, typescript/no-unsafe-type-assertion -- provideRequest supplies every service that the generic request markers name; see SAFETY.
   return provided as Layer.Layer<
     never,
     never,
