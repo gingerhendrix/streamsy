@@ -84,11 +84,14 @@ export function providedApp<R>(
   never,
   HttpRouter.HttpRouter | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
 > {
+  const provided = objectApp(app, context).pipe(
+    HttpRouter.provideRequest(Layer.succeedContext(context)),
+  );
+
   // SAFETY: ObjectApp only requires the services carried by ObjectServices<R>;
   // provideRequest supplies that complete context. The assertion resolves generic conditional request markers.
-  return objectApp(app, context).pipe(
-    HttpRouter.provideRequest(Layer.succeedContext(context)),
-  ) as Layer.Layer<
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- provideRequest supplies every service that the generic request markers name; see SAFETY.
+  return provided as Layer.Layer<
     never,
     never,
     HttpRouter.HttpRouter | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>

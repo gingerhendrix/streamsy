@@ -105,32 +105,36 @@ export const pass = Effect.fn("Projection.pass")(function* <
 
   let prepared: unknown;
 
-  // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
-  const run = Effect.suspend(() =>
+  const processed = Effect.suspend(() =>
     projection.process(batch, unit, before.record.state, prepared),
-  ).pipe(Effect.mapError((error) => new HandlerFailed({ error }))) as Effect.Effect<
-    Result,
-    HandlerFailed,
-    P
-  >;
+  ).pipe(Effect.mapError((error) => new HandlerFailed({ error })));
+
+  // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- TypeScript cannot prove that apply supplies P for Exclude<R, P>; see SAFETY.
+  const run = processed as Effect.Effect<Result, HandlerFailed, P>;
+
+  const preparing =
+    projection.prepare === undefined
+      ? undefined
+      : Effect.suspend(() => projection.prepare!(batch, unit)).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              prepared = value;
+            }),
+          ),
+          Effect.asVoid,
+          Effect.mapError((error) => new HandlerFailed({ error })),
+        );
+
+  // SAFETY: Q includes prepare requirements and the runner requires Q from its caller.
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- The runner's caller supplies the prepare requirements in Q; see SAFETY.
+  const prepare = preparing as Effect.Effect<void, HandlerFailed> | undefined;
 
   const request: Pending<Result, P> = setDetails(
     { key: projection, unit, loaded: before.loaded, next, run },
     {
       outputs,
-      // SAFETY: Q includes prepare requirements and the runner requires Q from its caller.
-      prepare:
-        projection.prepare === undefined
-          ? undefined
-          : (Effect.suspend(() => projection.prepare!(batch, unit)).pipe(
-              Effect.tap((value) =>
-                Effect.sync(() => {
-                  prepared = value;
-                }),
-              ),
-              Effect.asVoid,
-              Effect.mapError((error) => new HandlerFailed({ error })),
-            ) as Effect.Effect<void, HandlerFailed>),
+      prepare,
       ranges: Object.fromEntries(
         Object.entries(ranges).map(([name, range]) => [
           name,

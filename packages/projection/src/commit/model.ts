@@ -82,8 +82,8 @@ export const make = <Result, Provides = never, Requires = never>(
   extend({
     ...options,
     [TypeId]: {
-      result: (_: Result) => {},
-      provides: (_: Provides) => {},
+      result: () => {},
+      provides: () => {},
       requires: () => {
         throw new Error("Commit variance is type-only");
       },
