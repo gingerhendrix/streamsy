@@ -2,7 +2,7 @@ import { layer as memoryStorage } from "../../src/storage/memory/layer.ts";
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- Web boundary tests use requests and response body promises.
 import { expect, it } from "bun:test";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";
 import { Protocol, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
@@ -297,7 +297,9 @@ it("the default catch-up page holds 1000 messages", () =>
       yield* writer.create(id, {
         contentType: "application/json",
         initialData: new TextEncoder().encode(
-          JSON.stringify(Array.from({ length: 1001 }, (_, n) => n)),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Finite)))(
+            Array.from({ length: 1001 }, (_, n) => n),
+          ),
         ),
       });
       const first = yield* reader.read(id);

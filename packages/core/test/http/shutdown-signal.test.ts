@@ -33,7 +33,7 @@ const liveReads = async (signal: ShutdownSignalService, n: number) => {
 
   while ((await Effect.runPromise(signal.active)) !== n) {
     if (performance.now() > deadline) throw new Error(`Expected ${n} live reads`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Effect.runPromise(Effect.sleep("5 millis"));
   }
 };
 

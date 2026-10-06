@@ -1,7 +1,6 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real local HTTP server. */
-import { expect, it } from "bun:test";
+import { expect, it as baseIt } from "@streamsy/effect-test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import { FetchHttpClient, HttpRouter } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpRouter } from "effect/http";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { RemoteStreams } from "@streamsy/core/remote";
@@ -24,19 +23,29 @@ const program = Effect.gen(function* () {
   return batches.flatMap((batch) => batch.items);
 });
 
-it("one application program runs unchanged on memory and remote streams", async () => {
-  const local = await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(group))));
+baseIt.live("one application program runs unchanged on memory and remote streams", () =>
+  Effect.gen(function* () {
+    const local = yield* program.pipe(
+      Effect.provideContext(yield* Layer.build(MemoryStorage.layer(group))),
+    );
 
-  const edge = HttpRouter.toWebHandler(
-    Http.routes(group, { prefix: "/streams", access: "full" }).pipe(
-      Layer.provideMerge(MemoryStorage.layer(group)),
-    ),
-    { disableLogger: true },
-  );
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          Http.routes(group, { prefix: "/streams", access: "full" }).pipe(
+            Layer.provideMerge(MemoryStorage.layer(group)),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
 
-  const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => Bun.serve({ port: 0, fetch: (request) => edge.handler(request) })),
+      (acquired) => Effect.promise(() => acquired.stop(true)),
+    );
 
-  try {
     for (const host of [
       RemoteStreams.layer(group, { baseUrl: `${server.url.href}streams` }),
       RemoteStreams.layer(Streamsy.group(Notes), { baseUrl: `${server.url.href}streams` }),
@@ -52,15 +61,18 @@ it("one application program runs unchanged on memory and remote streams", async 
         return yield* program;
       });
 
-      expect(await Effect.runPromise(inspected.pipe(Effect.provide(remote)))).toEqual(local);
+      expect(yield* inspected.pipe(Effect.provideContext(yield* Layer.build(remote)))).toEqual(
+        local,
+      );
     }
 
     expect(local).toEqual(["hello", "world"]);
-    expect(
-      (await fetch(`${server.url.href}streams/private/secret`, { method: "PUT" })).status,
-    ).toBe(404);
-  } finally {
-    await server.stop(true);
-    await edge.dispose();
-  }
-});
+    const client = yield* Layer.build(FetchHttpClient.layer);
+
+    const response = yield* HttpClient.put(`${server.url.href}streams/private/secret`).pipe(
+      Effect.provideContext(client),
+    );
+
+    expect(response.status).toBe(404);
+  }),
+);

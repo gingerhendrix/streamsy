@@ -16,6 +16,7 @@ import type { AppendCallOptions } from "../../src/protocol/options.ts";
 import type { DecodeFault, EncodeFault, StreamsFault } from "../../src/fault.ts";
 
 type Equal<A, B> =
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Universal quantification checks equality in both directions, including unions.
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
 type ErrorOf<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never;
