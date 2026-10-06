@@ -77,7 +77,12 @@ export const collect = (
 
       (buffers[name] ??= []).push(...values);
     }
+
+    return yield* Effect.void;
   });
+
+const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
+  new ProjectionFault({ phase: "pin", reason, message, cause });
 
 /** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
 export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
@@ -86,9 +91,6 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
   items: NonEmptyReadonlyArray<O>,
   position: Producer.Position,
 ) {
-  const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
-    new ProjectionFault({ phase: "pin", reason, message, cause });
-
   return yield* Streams.append(output, items, { producer: position }).pipe(
     Effect.provideService(StreamsWriter, wire),
     Effect.catchTags({

@@ -1,17 +1,17 @@
-/* oxlint-disable effecttsgo/strict-effect-provide -- Tests assemble the complete memory host. */
-import { expect, test } from "bun:test";
-import { Effect, Schema } from "effect";
+import { it as baseIt, layer } from "@streamsy/effect-test";
+import { expect } from "bun:test";
+import { Layer, Effect, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { Commit, Projection } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
 import * as Family from "./support/families.ts";
 import { readAll } from "./support/scenarios.ts";
 
-const input = Family.json("step-input", { schema: Schema.Number });
+const input = Family.json("step-input", { schema: Schema.Finite });
 
-const output = Family.json("step-output", { schema: Schema.Number });
+const output = Family.json("step-output", { schema: Schema.Finite });
 
-const other = Family.json("step-other", { schema: Schema.Number });
+const other = Family.json("step-other", { schema: Schema.Finite });
 
 const host = Family.withFamilies(memoryHost());
 
@@ -20,8 +20,8 @@ const outputs = {
   other: other,
 };
 
-test("mapAccum threads the value and preserves entry and output order", () =>
-  Effect.runPromise(
+layer(host)((it) => {
+  it.effect("mapAccum threads the value and preserves entry and output order", () =>
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.append(input, [1, 2, 3]);
@@ -32,7 +32,7 @@ test("mapAccum threads the value and preserves entry and output order", () =>
         inputs: { input },
         outputs,
         commit: Commit.producer,
-        state: { schema: Schema.Number, initial: 0 },
+        state: { schema: Schema.Finite, initial: 0 },
         mapAccum: (previous, { item }) => [
           previous + item,
           { output: [previous, previous + item] },
@@ -42,8 +42,9 @@ test("mapAccum threads the value and preserves entry and output order", () =>
       yield* Projection.run(projection);
       expect(yield* readAll(output)).toEqual([0, 1, 1, 3, 3, 6]);
       expect((yield* Projection.read(projection)).state).toBe(6);
-    }).pipe(Effect.provide(host)),
-  ));
+    }),
+  );
+});
 
 const emitLog = (split: boolean) =>
   Effect.gen(function* () {
@@ -68,17 +69,31 @@ const emitLog = (split: boolean) =>
     yield* Projection.run(projection);
 
     return { even: yield* readAll(output), odd: yield* readAll(other) };
-  }).pipe(Effect.provide(host));
+  });
 
-test("emit permits missing keys, chooses one of two outputs, and is independent of unit size", async () => {
-  const whole = await Effect.runPromise(emitLog(false));
-  const split = await Effect.runPromise(emitLog(true));
-  expect(whole).toEqual({ even: [2, 20, 4, 40], odd: [1, 3] });
-  expect(split).toEqual(whole);
-});
+baseIt.effect(
+  "emit permits missing keys, chooses one of two outputs, and is independent of unit size",
+  () =>
+    Effect.gen(function* () {
+      const whole = yield* Effect.scoped(
+        Layer.build(host).pipe(
+          Effect.flatMap((services) => emitLog(false).pipe(Effect.provideContext(services))),
+        ),
+      );
 
-test("undeclared output keys fail at the adapter boundary", () =>
-  Effect.runPromise(
+      const split = yield* Effect.scoped(
+        Layer.build(host).pipe(
+          Effect.flatMap((services) => emitLog(true).pipe(Effect.provideContext(services))),
+        ),
+      );
+
+      expect(whole).toEqual({ even: [2, 20, 4, 40], odd: [1, 3] });
+      expect(split).toEqual(whole);
+    }),
+);
+
+layer(host)((it) => {
+  it.effect("undeclared output keys fail at the adapter boundary", () =>
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
@@ -97,5 +112,6 @@ test("undeclared output keys fail at the adapter boundary", () =>
         _tag: "Failure",
         failure: { phase: "process", reason: "invalid-output" },
       });
-    }).pipe(Effect.provide(host)),
-  ));
+    }),
+  );
+});

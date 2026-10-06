@@ -213,7 +213,10 @@ const typeChecks = () => {
     params: {},
     inputs: {},
     outputs: {},
-    state: { schema: Schema.Struct({ date: Schema.Date }), initial: { date: new Date(0) } },
+    state: {
+      schema: Schema.Struct({ date: Schema.Date }),
+      initial: { date: Schema.decodeSync(Schema.DateFromString)("1970-01-01T00:00:00.000Z") },
+    },
     mapAccumBatch: (state) => Effect.succeed([state, {}] as const),
   });
 

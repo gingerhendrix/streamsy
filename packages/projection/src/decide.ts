@@ -51,6 +51,7 @@ export const decide = Effect.fn("Projection.decide")(function* <
   spec: DecideSpec<Inputs, K, StateValue<S>, B, E, R>,
 ) {
   // SAFETY: `Inputs[K]` is this input's address; its items are `ItemOf<Inputs[K]>`.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the selected address and ItemOf share Inputs[K]; TS cannot reduce this conditional generic type.
   const address = projection.inputs[spec.input] as Streamsy.Address<
     ItemOf<Inputs[K]>,
     Inputs[K]["stream"]["Identifier"]
@@ -108,6 +109,7 @@ const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
         error instanceof LostRace
           ? Effect.fail(error.mismatch)
           : // SAFETY: `instanceof` ruled out `LostRace`; TS cannot narrow a type parameter.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: instanceof excludes LostRace above; TS cannot narrow the generic E to Exclude<E, LostRace>.
             Effect.succeed(Result.fail(error as Exclude<E, LostRace>)),
       onSuccess: (value) => Effect.succeed(Result.succeed(value)),
     }),

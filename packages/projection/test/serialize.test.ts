@@ -1,25 +1,14 @@
+import { layer } from "@streamsy/effect-test";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { expect, test } from "bun:test";
-import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
-import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { expect } from "bun:test";
+import { Deferred, Effect, Fiber, Schema } from "effect";
+import { Streams } from "@streamsy/core/protocol";
+import { Projection } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
 
-type Services =
-  | CheckpointStore
-  | import("@streamsy/core").Streamsy.Wildcard
-  | StreamsReader
-  | StreamsWriter
-  | Scope.Scope;
-
-const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(
-    body.pipe(Effect.scoped, Effect.provide(FamilyFixture.withFamilies(memoryHost()))),
-  );
-
-test("two calls on one key run in sequence without a token conflict", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost()))((it) => {
+  it.effect("two calls on one key run in sequence without a token conflict", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("serialized-one", { schema: Schema.Finite });
       yield* Streams.create(input);
@@ -54,10 +43,11 @@ test("two calls on one key run in sequence without a token conflict", () =>
       expect((yield* Fiber.join(second)).status).toBe("caught-up");
       expect(calls).toBe(1);
     }),
-  ));
+  );
+});
 
-test("different keys can run together", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost()))((it) => {
+  it.effect("different keys can run together", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("serialized-two", { schema: Schema.Finite });
       yield* Streams.create(input);
@@ -98,10 +88,11 @@ test("different keys can run together", () =>
       });
       expect(maximum).toBe(2);
     }),
-  ));
+  );
+});
 
-test("a failing handler releases the permit", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost()))((it) => {
+  it.effect("a failing handler releases the permit", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("serialized-failure", { schema: Schema.Finite });
       yield* Streams.create(input);
@@ -128,10 +119,11 @@ test("a failing handler releases the permit", () =>
       expect((yield* Projection.run(projection).pipe(Effect.result))._tag).toBe("Failure");
       expect((yield* Projection.run(projection)).status).toBe("caught-up");
     }),
-  ));
+  );
+});
 
-test("follow and run share the permit and release it after interruption", () =>
-  run(
+layer(FamilyFixture.withFamilies(memoryHost()))((it) => {
+  it.effect("follow and run share the permit and release it after interruption", () =>
     Effect.gen(function* () {
       const input = FamilyFixture.json("follow-permit", { schema: Schema.Finite });
       yield* Streams.create(input);
@@ -153,6 +145,8 @@ test("follow and run share the permit and release it after interruption", () =>
 
               return yield* Effect.never;
             }
+
+            return yield* Effect.void;
           }),
       }).at({});
 
@@ -165,4 +159,5 @@ test("follow and run share the permit and release it after interruption", () =>
       expect((yield* Fiber.join(request)).status).toBe("source-closed");
       expect(calls).toBe(2);
     }),
-  ));
+  );
+});

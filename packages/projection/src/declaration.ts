@@ -14,7 +14,7 @@ import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
-export type StreamDeclaration = StreamRoute.StreamRoute<any, any, never, never> &
+export type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & {
     readonly at: (params: any) => Streamsy.Address<any, any>;
   };

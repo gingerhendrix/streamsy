@@ -21,7 +21,7 @@ class Audit extends Context.Service<Audit, {}>()("commit-types/Audit") {}
 
 class Input extends Streamsy.json<Input>()("commit-types/Input", "commit-types/input", {
   params: {},
-  schema: Schema.Number,
+  schema: Schema.Finite,
 }) {}
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -59,7 +59,7 @@ const folded = Projection.fold({
   id: "fold",
   params: {},
   inputs: { input: Input },
-  state: { schema: Schema.Number, initial: 0 },
+  state: { schema: Schema.Finite, initial: 0 },
   fold: (state, { item }) => state + item,
 }).at({});
 
@@ -184,11 +184,15 @@ const hostProcess = Projection.process({
 
 const memoryGraph = memoryHost();
 
-const memoryRun = Projection.run(hostProcess).pipe(
-  Effect.provide(
-    Protocol.bind(memoryGraph, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryGraph)),
-  ),
-);
+const memoryRun = Effect.gen(function* () {
+  return yield* Projection.run(hostProcess).pipe(
+    Effect.provideContext(
+      yield* Layer.build(
+        Protocol.bind(memoryGraph, Streamsy.group(Input)).pipe(Layer.provideMerge(memoryGraph)),
+      ),
+    ),
+  );
+}).pipe(Effect.scoped);
 
 const sqlHost = Layer.merge(
   Protocol.bind(memoryGraph, Streamsy.group(Input)),
@@ -197,7 +201,11 @@ const sqlHost = Layer.merge(
   ),
 );
 
-const sqlRun = Projection.run(hostProcess).pipe(Effect.provide(sqlHost));
+const sqlRun = Effect.gen(function* () {
+  return yield* Projection.run(hostProcess).pipe(
+    Effect.provideContext(yield* Layer.build(sqlHost)),
+  );
+}).pipe(Effect.scoped);
 
 // oxlint-disable effecttsgo/missing-effect-context -- Proves that memory cannot satisfy Transaction.
 // @ts-expect-error A memory host leaves the SQL Transaction requirement unsatisfied

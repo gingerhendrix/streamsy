@@ -1,6 +1,7 @@
+import { layer } from "@streamsy/effect-test";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { Array, Deferred, Effect, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
@@ -19,14 +20,6 @@ import {
   type Services,
 } from "./support/scenarios.ts";
 
-const run = <A, E>(
-  body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
-  readLimit = 1000,
-) =>
-  Effect.runPromise(
-    body.pipe(Effect.provide(FamilyFixture.withFamilies(layerSqlite(readLimit), Numbers, Doubled))),
-  );
-
 const failure = <A, E>(
   body: Effect.Effect<A, E, Services | SqlClient.SqlClient | Numbers | Doubled>,
 ) =>
@@ -40,7 +33,7 @@ const failure = <A, E>(
 const fault = (value: Option.Option<unknown>): ProjectionFault => {
   const error = Option.getOrThrow(value);
 
-  if (!(error instanceof ProjectionFault)) throw new Error("Expected a ProjectionFault");
+  if (!Schema.is(ProjectionFault)(error)) throw new Error("Expected a ProjectionFault");
 
   return error;
 };
@@ -66,8 +59,8 @@ const withRead = <A, E, R>(
     );
   });
 
-test("a non-empty pass is progress even when its read is up to date", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("a non-empty pass is progress even when its read is up to date", () =>
     Effect.gen(function* () {
       yield* initialize;
       const full = yield* Projection.pass(positives);
@@ -79,10 +72,11 @@ test("a non-empty pass is progress even when its read is up to date", () =>
       expect(empty.items).toBe(0);
       expect(empty.offsets).toEqual(full.offsets);
     }),
-  ));
+  );
+});
 
-test("run reaches caught-up through a trailing empty pass without losing totals", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("run reaches caught-up through a trailing empty pass without losing totals", () =>
     Effect.gen(function* () {
       let reads = 0;
       yield* initialize;
@@ -99,10 +93,11 @@ test("run reaches caught-up through a trailing empty pass without losing totals"
       expect(reads).toBe(2);
       expect((yield* inspect).loaded.token).toBe("1");
     }),
-  ));
+  );
+});
 
-test("zero-output unit advances the checkpoint without output progress", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
+  it.effect("zero-output unit advances the checkpoint without output progress", () =>
     Effect.gen(function* () {
       yield* initialize;
       const first = yield* Projection.pass(positives);
@@ -114,11 +109,11 @@ test("zero-output unit advances the checkpoint without output progress", () =>
       expect(stored.loaded.token).toBe("2");
       expect(Option.getOrThrow(stored.loaded.record).inputs).toEqual(second.offsets);
     }),
-    1,
-  ));
+  );
+});
 
-test("first commit failure leaves no output and no record", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("first commit failure leaves no output and no record", () =>
     Effect.gen(function* () {
       yield* initialize;
 
@@ -134,10 +129,11 @@ test("first commit failure leaves no output and no record", () =>
       expect(stored.loaded.token).toBe("0");
       expect(stored.output).toEqual([]);
     }),
-  ));
+  );
+});
 
-test("limit counts checkpoint transactions", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
+  it.effect("limit counts checkpoint transactions", () =>
     Effect.gen(function* () {
       yield* initialize;
       const limited = yield* Projection.run(positives, { limit: 2 });
@@ -149,11 +145,11 @@ test("limit counts checkpoint transactions", () =>
       expect(rest.items).toBe(1);
       expect(rest.status).toBe("caught-up");
     }),
-    1,
-  ));
+  );
+});
 
-test("identity mismatch on inputs stops without reset", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("identity mismatch on inputs stops without reset", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.run(positives);
@@ -174,10 +170,11 @@ test("identity mismatch on inputs stops without reset", () =>
       expect(failed.reason).toBe("identity-mismatch");
       expect(yield* inspect).toEqual(before);
     }),
-  ));
+  );
+});
 
-test("closed input drains before source-closed", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
+  it.effect("closed input drains before source-closed", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Streams.append(input, [], { close: true });
@@ -190,11 +187,11 @@ test("closed input drains before source-closed", () =>
       expect((yield* inspect).output).toEqual([1, 3]);
       expect((yield* Projection.run(positives)).status).toBe("source-closed");
     }),
-    1,
-  ));
+  );
+});
 
-test("missing history preserves the accepted record", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("missing history preserves the accepted record", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.pass(positives);
@@ -206,10 +203,11 @@ test("missing history preserves the accepted record", () =>
       expect(failed.input).toBe("input");
       expect(yield* inspect).toEqual(before);
     }),
-  ));
+  );
+});
 
-test("invalid stored record stops", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("invalid stored record stops", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.run(positives);
@@ -231,10 +229,11 @@ test("invalid stored record stops", () =>
         expect(failed.reason).toBe("invalid-record");
       }
     }),
-  ));
+  );
+});
 
-test("invalid options fails before reading", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("invalid options fails before reading", () =>
     Effect.gen(function* () {
       let reads = 0;
       yield* initialize;
@@ -257,10 +256,11 @@ test("invalid options fails before reading", () =>
       expect(reads).toBe(0);
       expect(Option.isNone((yield* inspect).loaded.record)).toBe(true);
     }),
-  ));
+  );
+});
 
-test("compiled minimal example doubles three inputs", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("compiled minimal example doubles three inputs", () =>
     Effect.gen(function* () {
       const result = yield* minimal;
       expect(result.status).toBe("caught-up");
@@ -269,10 +269,11 @@ test("compiled minimal example doubles three inputs", () =>
       const doubled = FamilyFixture.json("doubled", { schema: Schema.Finite });
       expect(yield* readAll(doubled)).toEqual([2, 4, 6]);
     }),
-  ));
+  );
+});
 
-test("nonadvancing read is rejected without a commit", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("nonadvancing read is rejected without a commit", () =>
     Effect.gen(function* () {
       yield* initialize;
 
@@ -293,10 +294,11 @@ test("nonadvancing read is rejected without a commit", () =>
       expect(failed.input).toBe("input");
       expect(Option.isNone((yield* inspect).loaded.record)).toBe(true);
     }),
-  ));
+  );
+});
 
-test("record change between load and transaction is a token conflict", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("record change between load and transaction is a token conflict", () =>
     Effect.gen(function* () {
       yield* initialize;
       const services = yield* Effect.context<Services>();
@@ -327,65 +329,70 @@ test("record change between load and transaction is a token conflict", () =>
       expect((yield* Projection.read(sum)).state).toBe(3);
       expect((yield* (yield* CheckpointStore).load(sum)).token).toBe("1");
     }),
-  ));
+  );
+});
 
-test("two competing passes on one SQLite host: the second conflicts and output is not doubled", () =>
-  run(
-    Effect.gen(function* () {
-      yield* initialize;
-      const owner = yield* CheckpointStore;
-      const inside = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const loaded = yield* Deferred.make<void>();
-      const firstDone = yield* Deferred.make<void>();
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect(
+    "two competing passes on one SQLite host: the second conflicts and output is not doubled",
+    () =>
+      Effect.gen(function* () {
+        yield* initialize;
+        const owner = yield* CheckpointStore;
+        const inside = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const loaded = yield* Deferred.make<void>();
+        const firstDone = yield* Deferred.make<void>();
 
-      const gated = Projection.process({
-        commit: Commit.transaction,
-        id: positives.id,
-        params: {},
-        inputs: { input },
-        // Both runners load the old token before either SQL transaction starts.
-        prepare: () =>
-          Deferred.succeed(inside, undefined).pipe(Effect.andThen(Deferred.await(release))),
-        process: (batch, unit) => positives.process(batch, unit),
-      }).at({});
+        const gated = Projection.process({
+          commit: Commit.transaction,
+          id: positives.id,
+          params: {},
+          inputs: { input },
+          // Both runners load the old token before either SQL transaction starts.
+          prepare: () =>
+            Deferred.succeed(inside, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          process: (batch, unit) => positives.process(batch, unit),
+        }).at({});
 
-      const first = yield* Effect.forkChild(Projection.pass(gated));
-      yield* Deferred.await(inside);
+        const first = yield* Effect.forkChild(Projection.pass(gated));
+        yield* Deferred.await(inside);
 
-      const observing = CheckpointStore.of({
-        ...owner,
-        load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
-      });
+        const observing = CheckpointStore.of({
+          ...owner,
+          load: (key) =>
+            owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
+        });
 
-      const second = yield* Effect.forkChild(
-        Projection.pass(
-          Projection.process({
-            commit: Commit.transaction,
-            id: positives.id,
-            params: {},
-            inputs: { input },
-            prepare: () => Deferred.await(firstDone),
-            process: (batch, unit) => positives.process(batch, unit),
-          }).at({}),
-        ).pipe(Effect.provideService(CheckpointStore, observing)),
-      );
+        const second = yield* Effect.forkChild(
+          Projection.pass(
+            Projection.process({
+              commit: Commit.transaction,
+              id: positives.id,
+              params: {},
+              inputs: { input },
+              prepare: () => Deferred.await(firstDone),
+              process: (batch, unit) => positives.process(batch, unit),
+            }).at({}),
+          ).pipe(Effect.provideService(CheckpointStore, observing)),
+        );
 
-      yield* Deferred.await(loaded);
-      yield* Deferred.succeed(release, undefined);
-      expect((yield* Fiber.join(first)).items).toBe(3);
-      yield* Deferred.succeed(firstDone, undefined);
-      const failed = fault(yield* failure(Fiber.join(second)));
-      expect(failed.phase).toBe("checkpoint");
-      expect(failed.reason).toBe("token-conflict");
-      const stored = yield* inspect;
-      expect(stored.output).toEqual([1, 3]);
-      expect(stored.loaded.token).toBe("1");
-    }),
-  ));
+        yield* Deferred.await(loaded);
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(first)).items).toBe(3);
+        yield* Deferred.succeed(firstDone, undefined);
+        const failed = fault(yield* failure(Fiber.join(second)));
+        expect(failed.phase).toBe("checkpoint");
+        expect(failed.reason).toBe("token-conflict");
+        const stored = yield* inspect;
+        expect(stored.output).toEqual([1, 3]);
+        expect(stored.loaded.token).toBe("1");
+      }),
+  );
+});
 
-test("handler failure rolls back the output append and the checkpoint", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("handler failure rolls back the output append and the checkpoint", () =>
     Effect.gen(function* () {
       yield* initialize;
 
@@ -405,10 +412,11 @@ test("handler failure rolls back the output append and the checkpoint", () =>
       expect(stored.output).toEqual([]);
       expect(Option.isNone(stored.loaded.record)).toBe(true);
     }),
-  ));
+  );
+});
 
-test("run without a limit drains more than one hundred server pages", () =>
-  run(
+layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
+  it.effect("run without a limit drains more than one hundred server pages", () =>
     Effect.gen(function* () {
       yield* Streams.create(input);
       yield* Streams.append(
@@ -429,5 +437,5 @@ test("run without a limit drains more than one hundred server pages", () =>
       expect(result.units).toBe(101);
       expect(result.items).toBe(101);
     }),
-    1,
-  ));
+  );
+});

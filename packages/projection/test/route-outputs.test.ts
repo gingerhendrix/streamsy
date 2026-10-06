@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { layer } from "@streamsy/effect-test";
+import { expect } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
@@ -23,8 +24,8 @@ class Board extends Streamsy.state<Board>()("multi/Board", "multi/board/:id", {
 }) {}
 
 for (const commit of [Commit.transaction, Commit.producer]) {
-  test(`${commit.name}: one output routes ordered changes to two collections`, () =>
-    Effect.runPromise(
+  layer(Families.withFamilies(layerSqlite(), Input, Board))((it) => {
+    it.effect(`${commit.name}: one output routes ordered changes to two collections`, () =>
       Effect.gen(function* () {
         const params = { id: "one" };
         const input = yield* Input;
@@ -70,12 +71,13 @@ for (const commit of [Commit.transaction, Commit.producer]) {
           { type: "card", key: "old", headers: { operation: "delete" } },
           { type: "count", key: "8", headers: { operation: "delete" } },
         ]);
-      }).pipe(Effect.provide(Families.withFamilies(layerSqlite(), Input, Board))),
-    ));
+      }),
+    );
+  });
 }
 
-test("an invalid runtime collection fails without advancing the checkpoint", () =>
-  Effect.runPromise(
+layer(Families.withFamilies(memoryHost(), Input, Board))((it) => {
+  it.effect("an invalid runtime collection fails without advancing the checkpoint", () =>
     Effect.gen(function* () {
       const params = { id: "bad" };
       const input = yield* Input;
@@ -98,5 +100,6 @@ test("an invalid runtime collection fails without advancing the checkpoint", () 
         failure: { phase: "process", reason: "invalid-output" },
       });
       expect((yield* Projection.read(projection)).offsets.input).toBe(ZERO_OFFSET);
-    }).pipe(Effect.provide(Families.withFamilies(memoryHost(), Input, Board))),
-  ));
+    }),
+  );
+});

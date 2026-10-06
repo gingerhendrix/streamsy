@@ -1,7 +1,7 @@
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./families.ts";
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer } from "effect";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { composition } from "./scenarios.ts";
 
@@ -23,7 +23,7 @@ export class ProjectionObject {
   constructor(ctx: DurableObjectState) {
     this.#ctx = ctx;
   }
-  async fetch(): Promise<Response> {
+  fetch(): Promise<Response> {
     const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layerProtocol({
@@ -33,12 +33,14 @@ export class ProjectionObject {
       ),
     );
 
-    const runtime = ManagedRuntime.make(FamilyFixture.withFamilies(host));
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const services = yield* Layer.build(FamilyFixture.withFamilies(host));
 
-    try {
-      return Response.json(await runtime.runPromise(composition));
-    } finally {
-      await runtime.dispose();
-    }
+          return Response.json(yield* composition.pipe(Effect.provideContext(services)));
+        }),
+      ),
+    );
   }
 }

@@ -1,6 +1,6 @@
-/* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
-import { expect, test } from "bun:test";
-import { Effect, Schedule, Schema } from "effect";
+import { layer } from "@streamsy/effect-test";
+import { expect } from "bun:test";
+import { Layer, Effect, Schedule, Schema } from "effect";
 import { OffsetMismatch, StreamId, Streamsy, MemoryStorage } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
@@ -16,9 +16,6 @@ class Words extends Streamsy.json<Words>()("decide/Words", "decide/words", {
 }) {}
 
 const host = Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Numbers, Words));
-
-const run = <A, E>(effect: Effect.Effect<A, E, Numbers | Words | CheckpointStore>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(host), Effect.provide(CheckpointStore.layerMemory)));
 
 const Totals = Schema.Struct({ sum: Schema.Finite, words: Schema.Finite });
 
@@ -45,8 +42,8 @@ const seed = Effect.gen(function* () {
 const tailOf = (stream: typeof Numbers.Service | typeof Words.Service) =>
   stream.head({}).pipe(Effect.map((head) => head.nextOffset));
 
-test("decide appends to the named input with that input's offset", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide appends to the named input with that input's offset", () =>
     Effect.gen(function* () {
       yield* seed;
       const numbers = yield* Numbers;
@@ -80,10 +77,11 @@ test("decide appends to the named input with that input's offset", () =>
       expect((yield* words.collect({})).items).toEqual(["a", "sum 5"]);
       expect(yield* tailOf(numbers)).toBe(numbersTail);
     }),
-  ));
+  );
+});
 
-test("decide with no items does not append", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide with no items does not append", () =>
     Effect.gen(function* () {
       yield* seed;
       const words = yield* Words;
@@ -97,10 +95,11 @@ test("decide with no items does not append", () =>
       expect(decided).toEqual({ value: { sum: 5, words: 1 }, offset: tail, appended: false });
       expect(yield* tailOf(words)).toBe(tail);
     }),
-  ));
+  );
+});
 
-test("decide runs, reads and decides again after a lost race", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide runs, reads and decides again after a lost race", () =>
     Effect.gen(function* () {
       yield* seed;
       const numbers = yield* Numbers;
@@ -124,10 +123,11 @@ test("decide runs, reads and decides again after a lost race", () =>
       expect((yield* numbers.collect({})).items).toEqual([2, 3, 10, -15]);
       expect((yield* Projection.read(totals)).state.sum).toBe(15);
     }),
-  ));
+  );
+});
 
-test("decide fails with the last OffsetMismatch when the schedule ends", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide fails with the last OffsetMismatch when the schedule ends", () =>
     Effect.gen(function* () {
       yield* seed;
       const numbers = yield* Numbers;
@@ -150,10 +150,11 @@ test("decide fails with the last OffsetMismatch when the schedule ends", () =>
       expect(decisions).toBe(2);
       expect(failure).toBeInstanceOf(OffsetMismatch);
     }),
-  ));
+  );
+});
 
-test("decide works for a projection with no state", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide works for a projection with no state", () =>
     Effect.gen(function* () {
       yield* seed;
       const words = yield* Words;
@@ -192,10 +193,11 @@ test("decide works for a projection with no state", () =>
 
       expect(again).toMatchObject({ value: ["a", "b"], appended: false });
     }),
-  ));
+  );
+});
 
-test("decide does not retry an OffsetMismatch that its own decide raises", () =>
-  run(
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect("decide does not retry an OffsetMismatch that its own decide raises", () =>
     Effect.gen(function* () {
       yield* seed;
       const numbers = yield* Numbers;
@@ -224,4 +226,5 @@ test("decide does not retry an OffsetMismatch that its own decide raises", () =>
       expect(decisions).toBe(1);
       expect(yield* tailOf(numbers)).toBe(tail);
     }),
-  ));
+  );
+});

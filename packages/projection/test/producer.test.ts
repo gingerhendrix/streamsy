@@ -1,8 +1,8 @@
+import { layer } from "@streamsy/effect-test";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
-/* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import { StorageFault, StreamAddress, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {
@@ -50,19 +50,7 @@ const host = Layer.mergeAll(
   ),
 );
 
-type Services =
-  | In
-  | Out
-  | PagedReader
-  | CheckpointStore
-  | import("@streamsy/core").Streamsy.Wildcard
-  | StreamsReader
-  | StreamsWriter;
-
-const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(body.pipe(Effect.provide(FamilyFixture.withFamilies(host, In, Out))));
-
-const fault = <A>(result: { readonly _tag: string; readonly failure?: A }): ProjectionFault => {
+const fault = (result: { readonly _tag: string; readonly failure?: unknown }): ProjectionFault => {
   if (result._tag !== "Failure") throw new Error("Expected a failure");
 
   if (!Schema.is(ProjectionFault)(result.failure)) throw new Error("Expected a ProjectionFault");
@@ -200,143 +188,152 @@ const pinnedRecord = (record: CheckpointRecord | undefined) => {
   };
 };
 
-test("crash after append and before the checkpoint settles by Duplicate without duplicate output", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("settle-duplicate", 7);
-      yield* s.initialize;
-      let saves = 0;
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "crash after append and before the checkpoint settles by Duplicate without duplicate output",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("settle-duplicate", 7);
+        yield* s.initialize;
+        let saves = 0;
 
-      const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
-        compareAndSet: (key, token, record) => {
-          saves += 1;
+        const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
+          compareAndSet: (key, token, record) => {
+            saves += 1;
 
-          return saves === 2
-            ? Effect.fail(
-                new ProjectionFault({
-                  phase: "checkpoint",
-                  reason: "storage-failure",
-                  message: "after-append",
-                }),
-              )
-            : owner.compareAndSet(key, token, record);
-        },
-      })).pipe(Effect.result);
+            return saves === 2
+              ? Effect.fail(
+                  new ProjectionFault({
+                    phase: "checkpoint",
+                    reason: "storage-failure",
+                    message: "after-append",
+                  }),
+                )
+              : owner.compareAndSet(key, token, record);
+          },
+        })).pipe(Effect.result);
 
-      const failure = fault(crashed);
-      expect(failure.phase).toBe("checkpoint");
-      expect(failure.reason).toBe("storage-failure");
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      const before = yield* stored(s.doubled);
-      const pinned = pinnedRecord(before.record);
-      expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs?.output).toBe(0);
-      expect(pinned.pending.ranges.input?.count).toBe(3);
-      expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
+        const failure = fault(crashed);
+        expect(failure.phase).toBe("checkpoint");
+        expect(failure.reason).toBe("storage-failure");
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        const before = yield* stored(s.doubled);
+        const pinned = pinnedRecord(before.record);
+        expect(pinned.inputs.input).toBe(ZERO_OFFSET);
+        expect(pinned.pending.seqs?.output).toBe(0);
+        expect(pinned.pending.ranges.input?.count).toBe(3);
+        expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
 
-      const appends = failingAppends(0);
-      const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
-      expect(appends.outcomes).toEqual(["Duplicate"]);
-      expect(settled.status).toBe("caught-up");
-      expect(settled.units).toBe(1);
-      expect(settled.items).toBe(3);
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      const after = yield* stored(s.doubled);
-      expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
-      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
-      expect(after.token).toBe("2");
-      // The retry processed exactly the pinned range under the same unit key and version.
-      expect(s.seen.map((entry) => entry.items)).toEqual([
-        [1, 2, 3],
-        [1, 2, 3],
-      ]);
-      expect(s.seen[1]?.unit.key).toBe(s.seen[0]?.unit.key ?? "");
-      expect(s.seen.map((entry) => entry.unit.version)).toEqual([7, 7]);
-    }),
-  ));
+        const appends = failingAppends(0);
+        const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
+        expect(appends.outcomes).toEqual(["Duplicate"]);
+        expect(settled.status).toBe("caught-up");
+        expect(settled.units).toBe(1);
+        expect(settled.items).toBe(3);
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        const after = yield* stored(s.doubled);
+        expect(after.record?.pending).toBeUndefined();
+        expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
+        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
+        expect(after.token).toBe("2");
+        // The retry processed exactly the pinned range under the same unit key and version.
+        expect(s.seen.map((entry) => entry.items)).toEqual([
+          [1, 2, 3],
+          [1, 2, 3],
+        ]);
+        expect(s.seen[1]?.unit.key).toBe(s.seen[0]?.unit.key ?? "");
+        expect(s.seen.map((entry) => entry.unit.version)).toEqual([7, 7]);
+      }),
+  );
+});
 
-test("a competing save between the append and the settle fails in phase checkpoint, then settles by Duplicate", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("settle-conflict");
-      yield* s.initialize;
-      let saves = 0;
-      let pinned: CheckpointRecord | undefined;
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "a competing save between the append and the settle fails in phase checkpoint, then settles by Duplicate",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("settle-conflict");
+        yield* s.initialize;
+        let saves = 0;
+        let pinned: CheckpointRecord | undefined;
 
-      // The competing writer re-saves the pinned record under the pin token, so the
-      // kernel's settle save meets a real token conflict from the store.
-      const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
-        compareAndSet: (key, token, record) => {
-          saves += 1;
+        // The competing writer re-saves the pinned record under the pin token, so the
+        // kernel's settle save meets a real token conflict from the store.
+        const crashed = yield* withCheckpointStore(Projection.run(s.doubled), (owner) => ({
+          compareAndSet: (key, token, record) => {
+            saves += 1;
 
-          if (saves === 1) pinned = record;
+            if (saves === 1) pinned = record;
 
-          return saves === 2 && pinned !== undefined
-            ? owner
-                .compareAndSet(key, token, pinned)
-                .pipe(Effect.andThen(owner.compareAndSet(key, token, record)))
-            : owner.compareAndSet(key, token, record);
-        },
-      })).pipe(Effect.result);
+            return saves === 2 && pinned !== undefined
+              ? owner
+                  .compareAndSet(key, token, pinned)
+                  .pipe(Effect.andThen(owner.compareAndSet(key, token, record)))
+              : owner.compareAndSet(key, token, record);
+          },
+        })).pipe(Effect.result);
 
-      const failure = fault(crashed);
-      expect(failure.phase).toBe("checkpoint");
-      expect(failure.reason).toBe("token-conflict");
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      const before = yield* stored(s.doubled);
-      expect(before.token).toBe("2");
-      expect(pinnedRecord(before.record).pending.seqs?.output).toBe(0);
+        const failure = fault(crashed);
+        expect(failure.phase).toBe("checkpoint");
+        expect(failure.reason).toBe("token-conflict");
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        const before = yield* stored(s.doubled);
+        expect(before.token).toBe("2");
+        expect(pinnedRecord(before.record).pending.seqs?.output).toBe(0);
 
-      const appends = failingAppends(0);
-      const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
-      expect(appends.outcomes).toEqual(["Duplicate"]);
-      expect(settled.items).toBe(3);
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      const after = yield* stored(s.doubled);
-      expect(after.token).toBe("3");
-      expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
-    }),
-  ));
+        const appends = failingAppends(0);
+        const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
+        expect(appends.outcomes).toEqual(["Duplicate"]);
+        expect(settled.items).toBe(3);
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        const after = yield* stored(s.doubled);
+        expect(after.token).toBe("3");
+        expect(after.record?.pending).toBeUndefined();
+        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
+      }),
+  );
+});
 
-test("the first pin stores the stream epoch before the append; a crash there settles by Appended", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("settle-appended");
-      yield* s.initialize;
-      const failing = failingAppends(1);
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "the first pin stores the stream epoch before the append; a crash there settles by Appended",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("settle-appended");
+        yield* s.initialize;
+        const failing = failingAppends(1);
 
-      const crashed = yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(
-        Effect.result,
-      );
+        const crashed = yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(
+          Effect.result,
+        );
 
-      const failure = fault(crashed);
-      expect(failure.phase).toBe("pin");
-      expect(failure.reason).toBe("storage-failure");
-      expect(yield* readAll(s.output)).toEqual([]);
-      const before = yield* stored(s.doubled);
-      expect(before.token).toBe("1");
-      const pinned = pinnedRecord(before.record);
-      expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
-      expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs?.output).toBe(0);
-      expect(pinned.pending.ranges.input?.from).toBe(ZERO_OFFSET);
-      expect(pinned.pending.ranges.input?.count).toBe(3);
-      expect(pinned.pending.ranges.input?.nextOffset).not.toBe(ZERO_OFFSET);
+        const failure = fault(crashed);
+        expect(failure.phase).toBe("pin");
+        expect(failure.reason).toBe("storage-failure");
+        expect(yield* readAll(s.output)).toEqual([]);
+        const before = yield* stored(s.doubled);
+        expect(before.token).toBe("1");
+        const pinned = pinnedRecord(before.record);
+        expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
+        expect(pinned.inputs.input).toBe(ZERO_OFFSET);
+        expect(pinned.pending.seqs?.output).toBe(0);
+        expect(pinned.pending.ranges.input?.from).toBe(ZERO_OFFSET);
+        expect(pinned.pending.ranges.input?.count).toBe(3);
+        expect(pinned.pending.ranges.input?.nextOffset).not.toBe(ZERO_OFFSET);
 
-      const settled = yield* withWriter(Projection.run(s.doubled), failing.patch);
-      expect(failing.outcomes).toEqual(["Appended"]);
-      expect(settled.items).toBe(3);
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      const after = yield* stored(s.doubled);
-      expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
-    }),
-  ));
+        const settled = yield* withWriter(Projection.run(s.doubled), failing.patch);
+        expect(failing.outcomes).toEqual(["Appended"]);
+        expect(settled.items).toBe(3);
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        const after = yield* stored(s.doubled);
+        expect(after.record?.pending).toBeUndefined();
+        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
+      }),
+  );
+});
 
-test("an empty-output unit writes no pin and consumes no seq", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("an empty-output unit writes no pin and consumes no seq", () =>
     Effect.gen(function* () {
       const input = In.at({ name: "evens" });
       const output = Out.at({ name: "evens" });
@@ -373,10 +370,11 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
         nextSeq: 1,
       });
     }),
-  ));
+  );
+});
 
-test("a retry reproduces a pinned range across several pages", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a retry reproduces a pinned range across several pages", () =>
     Effect.gen(function* () {
       const s = scenario("paged");
       yield* s.initialize;
@@ -403,27 +401,31 @@ test("a retry reproduces a pinned range across several pages", () =>
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       expect(s.seen[1]?.items).toEqual([1, 2, 3]);
     }),
-  ));
+  );
+});
 
-test("a pinned range on a removed input fails pin/range-unreproducible naming the input", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("removed");
-      yield* s.initialize;
-      const failing = failingAppends(1);
-      fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
-      yield* Streams.remove(s.input);
-      const failure = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
-      expect(failure.phase).toBe("pin");
-      expect(failure.reason).toBe("range-unreproducible");
-      expect(failure.input).toBe("input");
-      expect(yield* readAll(s.output)).toEqual([]);
-      expect((yield* stored(s.doubled)).token).toBe("1");
-    }),
-  ));
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "a pinned range on a removed input fails pin/range-unreproducible naming the input",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("removed");
+        yield* s.initialize;
+        const failing = failingAppends(1);
+        fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
+        yield* Streams.remove(s.input);
+        const failure = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
+        expect(failure.phase).toBe("pin");
+        expect(failure.reason).toBe("range-unreproducible");
+        expect(failure.input).toBe("input");
+        expect(yield* readAll(s.output)).toEqual([]);
+        expect((yield* stored(s.doubled)).token).toBe("1");
+      }),
+  );
+});
 
-test("a short reproduction fails pin/range-unreproducible", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a short reproduction fails pin/range-unreproducible", () =>
     Effect.gen(function* () {
       const s = scenario("short");
       yield* s.initialize;
@@ -445,153 +447,163 @@ test("a short reproduction fails pin/range-unreproducible", () =>
       expect(failure.reason).toBe("range-unreproducible");
       expect(failure.input).toBe("input");
     }),
-  ));
+  );
+});
 
-test("two competing passes with one loaded token: the second pin fails before any append", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("token-race");
-      yield* s.initialize;
-      const gate = yield* Deferred.make<void>();
-      const reading = yield* Deferred.make<void>();
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "two competing passes with one loaded token: the second pin fails before any append",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("token-race");
+        yield* s.initialize;
+        const gate = yield* Deferred.make<void>();
+        const reading = yield* Deferred.make<void>();
 
-      const late = Projection.emit({
-        commit: Commit.producer,
-        ...s.definition,
-        emit: (entry) =>
-          Deferred.succeed(reading, undefined).pipe(
-            Effect.andThen(Deferred.await(gate)),
-            Effect.as({ output: [String(entry.item * 2)] }),
-          ),
-      }).at({});
+        const late = Projection.emit({
+          commit: Commit.producer,
+          ...s.definition,
+          emit: (entry) =>
+            Deferred.succeed(reading, undefined).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.as({ output: [String(entry.item * 2)] }),
+            ),
+        }).at({});
 
-      const appends = failingAppends(0);
+        const appends = failingAppends(0);
 
-      const second = yield* withWriter(Projection.pass(late), appends.patch).pipe(
-        Effect.result,
-        Effect.forkChild,
-      );
+        const second = yield* withWriter(Projection.pass(late), appends.patch).pipe(
+          Effect.result,
+          Effect.forkChild,
+        );
 
-      yield* Deferred.await(reading);
-      const first = yield* withWriter(Projection.pass(s.doubled), appends.patch);
-      expect(first.items).toBe(3);
-      yield* Deferred.succeed(gate, undefined);
-      const failure = fault(yield* Fiber.join(second));
-      expect(failure.phase).toBe("pin");
-      expect(failure.reason).toBe("token-conflict");
-      expect(appends.outcomes).toEqual(["Appended"]);
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-      expect((yield* stored(s.doubled)).token).toBe("2");
-    }),
-  ));
+        yield* Deferred.await(reading);
+        const first = yield* withWriter(Projection.pass(s.doubled), appends.patch);
+        expect(first.items).toBe(3);
+        yield* Deferred.succeed(gate, undefined);
+        const failure = fault(yield* Fiber.join(second));
+        expect(failure.phase).toBe("pin");
+        expect(failure.reason).toBe("token-conflict");
+        expect(appends.outcomes).toEqual(["Appended"]);
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+        expect((yield* stored(s.doubled)).token).toBe("2");
+      }),
+  );
+});
 
 for (const order of ["first-then-second", "second-then-first"] as const) {
-  test(`two competing passes settle the identical pinned unit (${order}): one Appended, one Duplicate, one checkpoint`, () =>
-    run(
-      Effect.gen(function* () {
-        const s = scenario(`identical-${order}`);
-        yield* s.initialize;
-        const failing = failingAppends(1);
-        fault(yield* withWriter(Projection.pass(s.doubled), failing.patch).pipe(Effect.result));
-        const pinToken = (yield* stored(s.doubled)).token;
+  layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+    it.effect(
+      `two competing passes settle the identical pinned unit (${order}): one Appended, one Duplicate, one checkpoint`,
+      () =>
+        Effect.gen(function* () {
+          const s = scenario(`identical-${order}`);
+          yield* s.initialize;
+          const failing = failingAppends(1);
+          fault(yield* withWriter(Projection.pass(s.doubled), failing.patch).pipe(Effect.result));
+          const pinToken = (yield* stored(s.doubled)).token;
 
-        // Both runners load the pin before either appends; the gate fixes the append order.
-        const loaded = yield* Deferred.make<void>();
-        const gate = yield* Deferred.make<void>();
-        const outcomes: Array<string> = [];
+          // Both runners load the pin before either appends; the gate fixes the append order.
+          const loaded = yield* Deferred.make<void>();
+          const gate = yield* Deferred.make<void>();
+          const outcomes: Array<string> = [];
 
-        const runner = (name: string, role: "leads" | "follows") =>
-          withWriter(
-            Projection.pass(
-              Projection.emit({
-                commit: Commit.producer,
-                ...s.definition,
-                emit: (entry) =>
-                  (role === "follows" ? Deferred.succeed(loaded, undefined) : Effect.void).pipe(
-                    Effect.as({ output: [String(entry.item * 2)] }),
+          const runner = (name: string, role: "leads" | "follows") =>
+            withWriter(
+              Projection.pass(
+                Projection.emit({
+                  commit: Commit.producer,
+                  ...s.definition,
+                  emit: (entry) =>
+                    (role === "follows" ? Deferred.succeed(loaded, undefined) : Effect.void).pipe(
+                      Effect.as({ output: [String(entry.item * 2)] }),
+                    ),
+                }).at({}),
+              ),
+              (writer) => ({
+                append: (id, options) =>
+                  (role === "leads" ? Deferred.await(loaded) : Deferred.await(gate)).pipe(
+                    Effect.andThen(writer.append(id, options)),
+                    Effect.tap((r) =>
+                      Effect.sync(() => {
+                        outcomes.push(`${name}:${r._tag}`);
+                      }),
+                    ),
+                    Effect.tap(() => Deferred.succeed(gate, undefined)),
                   ),
-              }).at({}),
-            ),
-            (writer) => ({
-              append: (id, options) =>
-                (role === "leads" ? Deferred.await(loaded) : Deferred.await(gate)).pipe(
-                  Effect.andThen(writer.append(id, options)),
-                  Effect.tap((r) =>
-                    Effect.sync(() => {
-                      outcomes.push(`${name}:${r._tag}`);
-                    }),
-                  ),
-                  Effect.tap(() => Deferred.succeed(gate, undefined)),
-                ),
-            }),
-          ).pipe(Effect.result);
+              }),
+            ).pipe(Effect.result);
 
-        const leads = order === "first-then-second" ? "first" : "second";
-        const follows = leads === "first" ? "second" : "first";
+          const leads = order === "first-then-second" ? "first" : "second";
+          const follows = leads === "first" ? "second" : "first";
 
-        const [a, b] = yield* Effect.all([runner(leads, "leads"), runner(follows, "follows")], {
-          concurrency: 2,
-        });
+          const [a, b] = yield* Effect.all([runner(leads, "leads"), runner(follows, "follows")], {
+            concurrency: 2,
+          });
 
-        expect(outcomes).toEqual([`${leads}:Appended`, `${follows}:Duplicate`]);
-        const failed = [a, b].filter((r) => r._tag === "Failure");
-        expect(failed.length).toBe(1);
-        const failure = fault(failed[0] ?? a);
-        expect(failure.phase).toBe("checkpoint");
-        expect(failure.reason).toBe("token-conflict");
-        expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
-        const after = yield* stored(s.doubled);
-        expect(after.token).toBe(String(Number(pinToken) + 1));
-        expect(after.record?.pending).toBeUndefined();
-        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
-      }),
-    ));
+          expect(outcomes).toEqual([`${leads}:Appended`, `${follows}:Duplicate`]);
+          const failed = [a, b].filter((r) => r._tag === "Failure");
+          expect(failed.length).toBe(1);
+          const failure = fault(failed[0] ?? a);
+          expect(failure.phase).toBe("checkpoint");
+          expect(failure.reason).toBe("token-conflict");
+          expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+          const after = yield* stored(s.doubled);
+          expect(after.token).toBe(String(Number(pinToken) + 1));
+          expect(after.record?.pending).toBeUndefined();
+          expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
+        }),
+    );
+  });
 }
 
-test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fails stale-epoch", () =>
-  run(
-    Effect.gen(function* () {
-      const s = scenario("generations");
-      yield* s.initialize;
-      const recording = recordingAppends();
-      yield* withWriter(Projection.run(s.doubled), recording.patch);
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect(
+    "generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fails stale-epoch",
+    () =>
+      Effect.gen(function* () {
+        const s = scenario("generations");
+        yield* s.initialize;
+        const recording = recordingAppends();
+        yield* withWriter(Projection.run(s.doubled), recording.patch);
 
-      const second = Projection.emit({
-        commit: Commit.producer,
-        ...s.definition,
-        generation: 2,
-        emit: (entry) => Effect.succeed({ output: [String(entry.item * 2)] }),
-      }).at({});
+        const second = Projection.emit({
+          commit: Commit.producer,
+          ...s.definition,
+          generation: 2,
+          emit: (entry) => Effect.succeed({ output: [String(entry.item * 2)] }),
+        }).at({});
 
-      const again = yield* withWriter(Projection.run(second), recording.patch);
-      expect(again.items).toBe(3);
-      expect(recording.positions).toEqual([
-        { epoch: 1, seq: 0 },
-        { epoch: 2, seq: 0 },
-      ]);
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
-      expect((yield* stored(second)).record?.adapters.outputs?.output).toEqual({
-        epoch: 2,
-        nextSeq: 1,
-      });
+        const again = yield* withWriter(Projection.run(second), recording.patch);
+        expect(again.items).toBe(3);
+        expect(recording.positions).toEqual([
+          { epoch: 1, seq: 0 },
+          { epoch: 2, seq: 0 },
+        ]);
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
+        expect((yield* stored(second)).record?.adapters.outputs?.output).toEqual({
+          epoch: 2,
+          nextSeq: 1,
+        });
 
-      yield* Streams.append(s.input, [4]);
+        yield* Streams.append(s.input, [4]);
 
-      const failure = fault(
-        yield* withWriter(Projection.run(s.doubled), recording.patch).pipe(Effect.result),
-      );
+        const failure = fault(
+          yield* withWriter(Projection.run(s.doubled), recording.patch).pipe(Effect.result),
+        );
 
-      expect(failure.phase).toBe("pin");
-      expect(failure.reason).toBe("stale-epoch");
-      expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
-      expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
-      // The pin stays until a new generation takes over; nothing advanced.
-      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs?.output).toBe(1);
-    }),
-  ));
+        expect(failure.phase).toBe("pin");
+        expect(failure.reason).toBe("stale-epoch");
+        expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
+        expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
+        // The pin stays until a new generation takes over; nothing advanced.
+        expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs?.output).toBe(1);
+      }),
+  );
+});
 
-test("a stored stream epoch that is not the generation fails load/stale-epoch", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a stored stream epoch that is not the generation fails load/stale-epoch", () =>
     Effect.gen(function* () {
       const s = scenario("tampered");
       yield* s.initialize;
@@ -608,10 +620,11 @@ test("a stored stream epoch that is not the generation fails load/stale-epoch", 
       expect(failure.phase).toBe("load");
       expect(failure.reason).toBe("stale-epoch");
     }),
-  ));
+  );
+});
 
-test("a two-input pending unit reproduces both ranges", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a two-input pending unit reproduces both ranges", () =>
     Effect.gen(function* () {
       const a = In.at({ name: "pair-a" });
       const b = In.at({ name: "pair-b" });
@@ -669,10 +682,11 @@ test("a two-input pending unit reproduces both ranges", () =>
         b: pinned.pending.ranges.b?.nextOffset ?? "",
       });
     }),
-  ));
+  );
+});
 
-test("a missing output is created before the first pin", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a missing output is created before the first pin", () =>
     Effect.gen(function* () {
       const s = scenario("auto-created");
       yield* Streams.create(s.input);
@@ -681,10 +695,11 @@ test("a missing output is created before the first pin", () =>
       expect(result.status).toBe("caught-up");
       expect(yield* readAll(s.output)).toEqual(["2", "4"]);
     }),
-  ));
+  );
+});
 
-test("a gone output still faults before pinning", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a gone output still faults before pinning", () =>
     Effect.gen(function* () {
       const s = scenario("gone-output");
       yield* s.initialize;
@@ -695,10 +710,11 @@ test("a gone output still faults before pinning", () =>
       expect(error.reason).toBe("invalid-output");
       expect((yield* stored(s.doubled)).token).toBe("0");
     }),
-  ));
+  );
+});
 
-test("an over-long retry page is truncated and settles by Duplicate", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("an over-long retry page is truncated and settles by Duplicate", () =>
     Effect.gen(function* () {
       const s = scenario("grown-retry");
       yield* s.initialize;
@@ -728,10 +744,11 @@ test("an over-long retry page is truncated and settles by Duplicate", () =>
       expect((yield* Projection.run(s.doubled)).items).toBe(2);
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "8", "10"]);
     }),
-  ));
+  );
+});
 
-test("an over-long page whose log ends before the pin is unreproducible", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("an over-long page whose log ends before the pin is unreproducible", () =>
     Effect.gen(function* () {
       const s = scenario("short-pin-boundary");
       yield* s.initialize;
@@ -768,10 +785,11 @@ test("an over-long page whose log ends before the pin is unreproducible", () =>
       expect(error.message).toContain("shorter than the pin");
       expect(yield* readAll(s.output)).toEqual([]);
     }),
-  ));
+  );
+});
 
-test("a closed output faults before pinning", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("a closed output faults before pinning", () =>
     Effect.gen(function* () {
       const s = scenario("closed-output");
       yield* s.initialize;
@@ -781,7 +799,8 @@ test("a closed output faults before pinning", () =>
       expect(error.reason).toBe("invalid-output");
       expect((yield* stored(s.doubled)).token).toBe("0");
     }),
-  ));
+  );
+});
 
 const provideWriter =
   (writer: Writer<StreamsFault>) =>
@@ -803,8 +822,8 @@ const provideReader =
       ),
     );
 
-test("output preparation reads the output stream wire", () =>
-  run(
+layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+  it.effect("output preparation reads the output stream wire", () =>
     Effect.gen(function* () {
       const s = scenario("output-head-failure");
       yield* s.initialize;
@@ -837,4 +856,5 @@ test("output preparation reads the output stream wire", () =>
       expect(fault(result).reason).toBe("storage-failure");
       expect((yield* stored(s.doubled)).record).toBeUndefined();
     }),
-  ));
+  );
+});

@@ -67,6 +67,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
     }
 
     // SAFETY: each slice is reproduced with its declared input codec.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Each slice is reproduced through its declared codec; TS cannot infer the mapped keys from a string record.
     batch = slices as Slices<Inputs>;
   } else {
     const read = yield* readInputs(projection.inputs, before.record.inputs);
@@ -110,7 +111,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
   ).pipe(Effect.mapError((error) => new HandlerFailed({ error })));
 
   // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
-  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- TypeScript cannot prove that apply supplies P for Exclude<R, P>; see SAFETY.
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion, typescript/no-unsafe-type-assertion -- TypeScript cannot prove that apply supplies P for Exclude<R, P>; see SAFETY.
   const run = processed as Effect.Effect<Result, HandlerFailed, P>;
 
   const preparing =
@@ -127,7 +128,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
         );
 
   // SAFETY: Q includes prepare requirements and the runner requires Q from its caller.
-  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- The runner's caller supplies the prepare requirements in Q; see SAFETY.
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion, typescript/no-unsafe-type-assertion -- The runner's caller supplies the prepare requirements in Q; see SAFETY.
   const prepare = preparing as Effect.Effect<void, HandlerFailed> | undefined;
 
   const request: Pending<Result, P> = setDetails(
@@ -147,6 +148,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
   yield* projection.commit.apply(request).pipe(
     Effect.catchTag("HandlerFailed", (failure) =>
       // SAFETY: this wrapper was made from this declaration's handler error immediately above.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: HandlerFailed was built from this declaration's error E above; the shared Commit wrapper erases E.
       Effect.fail(failure.error as E),
     ),
   );

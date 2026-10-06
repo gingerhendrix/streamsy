@@ -11,6 +11,7 @@ import {
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 
 type Equal<A, B> =
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- SAFETY: quantified conditional functions are required for this exact type-equality proof.
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
 class Numbers extends Streamsy.json<Numbers>()("decideTypes/Numbers", "numbers", {

@@ -239,6 +239,7 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
   }
 
   // SAFETY: `slices` has exactly the keys of `inputs`, each read through that input's codec.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: TypeScript cannot correlate Object.entries keys with each decoded input codec.
   return { slices: slices as Slices<Inputs>, items };
 });
 
@@ -253,5 +254,6 @@ export const items = <Inputs extends InputMap>(
   }
 
   // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: TypeScript cannot correlate the tagged input key with its already decoded item.
   return out as ReadonlyArray<Entry<Inputs>>;
 };

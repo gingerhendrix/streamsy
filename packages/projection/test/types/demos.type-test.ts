@@ -64,12 +64,12 @@ const tracker = Projection.mapAccumBatch({
 
 class Numbers extends Streamsy.json<Numbers>()("demos/Numbers", "numbers", {
   params: {},
-  schema: Schema.Number,
+  schema: Schema.Finite,
 }) {}
 
 class Doubled extends Streamsy.json<Doubled>()("demos/Doubled", "doubled", {
   params: {},
-  schema: Schema.Number,
+  schema: Schema.Finite,
 }) {}
 
 const outputs = { output: Doubled };
@@ -129,7 +129,7 @@ const invalid = () => {
     params: {},
     inputs: { input: Numbers },
     outputs,
-    state: { schema: Schema.Number, initial: 0 },
+    state: { schema: Schema.Finite, initial: 0 },
     // @ts-expect-error Accumulated has its own tag, so a value-only Commit cannot drop outputs
     commit: Commit.checkpoint,
     mapAccum: (state, { item }) => [state + item, { output: [item] }],
@@ -183,7 +183,7 @@ const sqlFold = Projection.fold({
   id: "sql-fold",
   params: {},
   inputs: { input: Numbers },
-  state: { schema: Schema.Number, initial: 0 },
+  state: { schema: Schema.Finite, initial: 0 },
   commit: Commit.transaction,
   fold: (previous, { item }) =>
     Effect.gen(function* () {

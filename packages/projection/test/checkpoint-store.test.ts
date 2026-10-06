@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { layer } from "@streamsy/effect-test";
+import { expect } from "bun:test";
 import { Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
@@ -15,43 +16,46 @@ const record: CheckpointRecord = {
   state: "42",
 };
 
-test("standalone memory checkpoints compare tokens and keep state without a Transaction", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const store = yield* CheckpointStore;
-      expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
-      expect(yield* store.load(key)).toEqual({ record: Option.none(), token: "0" });
+layer(CheckpointStore.layerMemory)((it) => {
+  it.effect(
+    "standalone memory checkpoints compare tokens and keep state without a Transaction",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore;
+        expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
+        expect(yield* store.load(key)).toEqual({ record: Option.none(), token: "0" });
 
-      const results = yield* Effect.all(
-        [
-          store.compareAndSet(key, "0", record).pipe(Effect.result),
-          store
-            .compareAndSet(key, "0", {
-              identity: record.identity,
-              inputs: record.inputs,
-              adapters: record.adapters,
-              state: "99",
-            })
-            .pipe(Effect.result),
-        ],
-        { concurrency: "unbounded" },
-      );
+        const results = yield* Effect.all(
+          [
+            store.compareAndSet(key, "0", record).pipe(Effect.result),
+            store
+              .compareAndSet(key, "0", {
+                identity: record.identity,
+                inputs: record.inputs,
+                adapters: record.adapters,
+                state: "99",
+              })
+              .pipe(Effect.result),
+          ],
+          { concurrency: "unbounded" },
+        );
 
-      expect(
-        results.map((result) => (Result.isSuccess(result) ? "Success" : "Failure")).toSorted(),
-      ).toEqual(["Failure", "Success"]);
-      expect((yield* store.load(key)).token).toBe("1");
-      yield* store.remove(key);
-      expect((yield* store.load(key)).record).toEqual(Option.none());
-    }).pipe(Effect.provide(CheckpointStore.layerMemory)),
-  ));
+        expect(
+          results.map((result) => (Result.isSuccess(result) ? "Success" : "Failure")).toSorted(),
+        ).toEqual(["Failure", "Success"]);
+        expect((yield* store.load(key)).token).toBe("1");
+        yield* store.remove(key);
+        expect((yield* store.load(key)).record).toEqual(Option.none());
+      }),
+  );
+});
 
 const sqlite = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
   Layer.provideMerge(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
 );
 
-test("SQL owner checkpoints join the owner transaction and roll back as one row", () =>
-  Effect.runPromise(
+layer(sqlite)((it) => {
+  it.effect("SQL owner checkpoints join the owner transaction and roll back as one row", () =>
     Effect.gen(function* () {
       const store = yield* CheckpointStore;
       const transaction = yield* Transaction;
@@ -78,28 +82,28 @@ test("SQL owner checkpoints join the owner transaction and roll back as one row"
         expect(
           yield* client.unsafe("SELECT name FROM sqlite_master WHERE name = ?", [legacy]),
         ).toHaveLength(0);
-    }).pipe(Effect.provide(sqlite)),
-  ));
+    }),
+  );
+});
 
-test("memory owner checkpoints roll back with the boundary transaction", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const store = yield* CheckpointStore;
-      const boundary = yield* CommitBoundary;
+layer(CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group()))))(
+  (it) => {
+    it.effect("memory owner checkpoints roll back with the boundary transaction", () =>
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore;
+        const boundary = yield* CommitBoundary;
 
-      const failed = yield* boundary
-        .withTransaction(
-          Effect.andThen(store.compareAndSet(key, "0", record), Effect.fail("rollback")),
-        )
-        .pipe(Effect.result);
+        const failed = yield* boundary
+          .withTransaction(
+            Effect.andThen(store.compareAndSet(key, "0", record), Effect.fail("rollback")),
+          )
+          .pipe(Effect.result);
 
-      expect(Result.isFailure(failed)).toBe(true);
-      expect((yield* store.load(key)).token).toBe("0");
-      expect(yield* store.compareAndSet(key, "0", record)).toBe("1");
-      expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
-    }).pipe(
-      Effect.provide(
-        CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group()))),
-      ),
-    ),
-  ));
+        expect(Result.isFailure(failed)).toBe(true);
+        expect((yield* store.load(key)).token).toBe("0");
+        expect(yield* store.compareAndSet(key, "0", record)).toBe("1");
+        expect(Option.isNone(yield* Effect.serviceOption(Transaction))).toBe(true);
+      }),
+    );
+  },
+);
