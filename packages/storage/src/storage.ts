@@ -634,14 +634,12 @@ const snapshot = (sql: SqlClient.SqlClient, id: StreamId) =>
     Effect.flatMap((rows) =>
       decodeSnapshotRow(rows[0] ?? { current_offset: null, closed: null, soft_deleted: null }),
     ),
-    Effect.map(
-      (row): ChangeSnapshot => ({
-        present: row.current_offset !== null,
-        currentOffset: row.current_offset ?? ZERO_OFFSET,
-        closed: row.closed === 1,
-        softDeleted: row.soft_deleted === 1,
-      }),
-    ),
+    Effect.map((row): ChangeSnapshot => ({
+      present: row.current_offset !== null,
+      currentOffset: row.current_offset ?? ZERO_OFFSET,
+      closed: row.closed === 1,
+      softDeleted: row.soft_deleted === 1,
+    })),
   );
 
 const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>

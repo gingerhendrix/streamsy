@@ -43,7 +43,7 @@ const recorder = () => {
     for (const span of spans) {
       if (span.name !== "sql.execute") continue;
       let outer: Tracer.AnySpan | undefined;
-      for (let parent = span.parent; Option.isSome(parent); ) {
+      for (let parent = span.parent; Option.isSome(parent);) {
         const value: Tracer.AnySpan = parent.value;
         if (!(value instanceof Tracer.NativeSpan)) break;
         if (value.name === "sql.transaction") outer = value;
