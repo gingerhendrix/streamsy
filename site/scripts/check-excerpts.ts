@@ -267,8 +267,8 @@ const isExactCitationParagraph = (node: Root["children"][number], source: string
   if (visible?.type !== "text" || visible.value !== source) return false;
   const destination = link.url;
 
-  const repositorySourcePrefix = repositorySourcePrefixes.find((prefix) =>
-    destination.startsWith(prefix),
+  const repositorySourcePrefix = repositorySourcePrefixes.find((sourcePrefix) =>
+    destination.startsWith(sourcePrefix),
   );
 
   if (repositorySourcePrefix === undefined) return false;

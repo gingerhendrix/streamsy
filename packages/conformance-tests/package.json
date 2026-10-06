@@ -36,6 +36,7 @@
     "@effect/sql-sqlite-bun": "4.0.1",
     "@effect/sql-sqlite-do": "4.0.1",
     "@effect/sql-sqlite-node": "4.0.1",
+    "@streamsy/effect-test": "workspace:*",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
     "effect": "4.0.1",

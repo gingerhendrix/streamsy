@@ -16,6 +16,7 @@
     "builtin": true
   },
   "rules": {
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
     "anti-slop/no-array-filter-map": "error",
     "anti-slop/no-chained-type-assertions": "error",
     "anti-slop/no-conditional-empty-object-spread": "error",
@@ -53,6 +54,49 @@
     "effecttsgo/schema-sync": "off"
   },
   "overrides": [
+    {
+      // The docs site and repository CLIs use their host APIs directly.
+      // Keep correctness and all other lint rules enabled.
+      "files": ["site/**", "scripts/**"],
+      "rules": {
+        "effecttsgo/abort-controller-in-effect": "off",
+        "effecttsgo/async-function": "off",
+        "effecttsgo/crypto-random-uuid": "off",
+        "effecttsgo/crypto-random-uuid-in-effect": "off",
+        "effecttsgo/extends-native-error": "off",
+        "effecttsgo/global-console": "off",
+        "effecttsgo/global-console-in-effect": "off",
+        "effecttsgo/global-date": "off",
+        "effecttsgo/global-date-in-effect": "off",
+        "effecttsgo/global-fetch": "off",
+        "effecttsgo/global-fetch-in-effect": "off",
+        "effecttsgo/global-random": "off",
+        "effecttsgo/global-random-in-effect": "off",
+        "effecttsgo/global-timers": "off",
+        "effecttsgo/global-timers-in-effect": "off",
+        "effecttsgo/instance-of-schema": "off",
+        "effecttsgo/new-promise": "off",
+        "effecttsgo/node-builtin-import": "off",
+        "effecttsgo/prefer-schema-over-json": "off",
+        "effecttsgo/process-env": "off",
+        "effecttsgo/process-env-in-effect": "off",
+        "effecttsgo/schema-sync": "off"
+      }
+    },
+    {
+      // External-host conformance fixtures own processes, scratch files and
+      // runner environment at the black-box HTTP boundary.
+      "files": [
+        "packages/conformance-tests/test/support/spawned-host.ts",
+        "packages/conformance-tests/test/sqlite.conformance.test.ts",
+        "packages/conformance-tests/test/workerd.conformance.test.ts"
+      ],
+      "rules": {
+        "effecttsgo/global-fetch": "off",
+        "effecttsgo/process-env": "off",
+        "effecttsgo/node-builtin-import": "off"
+      }
+    },
     {
       "files": ["packages/storage/test/support/do-worker.ts"],
       "rules": {

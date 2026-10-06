@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,11 +8,11 @@ import { join } from "node:path";
 // two-core CI runner past their timeouts.
 const repoRoot = join(import.meta.dirname, "..");
 
-// SAFETY: the root manifest is this repository's own file; `bun install` has
-// already parsed the same `workspaces.packages` array.
-const rootManifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-  readonly workspaces: { readonly packages: ReadonlyArray<string> };
-};
+const rootManifest = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({ workspaces: Schema.Struct({ packages: Schema.Array(Schema.String) }) }),
+  ),
+)(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
 const workspaceDirs = rootManifest.workspaces.packages.flatMap((pattern) => {
   if (!pattern.endsWith("/*")) throw new Error(`Unsupported workspace pattern: ${pattern}`);
@@ -20,7 +21,7 @@ const workspaceDirs = rootManifest.workspaces.packages.flatMap((pattern) => {
   return readdirSync(join(repoRoot, parent), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => `${parent}/${entry.name}`)
-    .sort();
+    .toSorted();
 });
 
 for (const dir of workspaceDirs) {
@@ -28,11 +29,11 @@ for (const dir of workspaceDirs) {
 
   if (!existsSync(manifestPath)) continue;
 
-  // SAFETY: a workspace manifest is a package.json that `bun install` accepted;
-  // only the optional scripts map is read.
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-    readonly scripts?: Record<string, string>;
-  };
+  const manifest = Schema.decodeSync(
+    Schema.fromJsonString(
+      Schema.Struct({ scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+    ),
+  )(readFileSync(manifestPath, "utf8"));
 
   if (manifest.scripts?.["test:unit"] === undefined) continue;
   console.log(`== ${dir}`);

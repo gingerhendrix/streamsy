@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { staleTerms, retiredNames } from "../../scripts/site-stale-terms";
@@ -6,14 +7,15 @@ const site = new URL("..", import.meta.url).pathname;
 
 const repo = dirname(site);
 
-interface Manifest {
-  readonly name?: string;
-  readonly private?: boolean;
-  readonly overrides?: { readonly effect?: string };
-}
+const manifestSchema = z.object({
+  name: z.string().optional(),
+  private: z.boolean().optional(),
+  overrides: z.object({ effect: z.string().optional() }).optional(),
+});
 
-// SAFETY: package manifests are trusted repository JSON; optional fields are checked before use.
-const rootManifest = JSON.parse(await readFile(join(repo, "package.json"), "utf8")) as Manifest;
+const rootManifest = manifestSchema.parse(
+  JSON.parse(await readFile(join(repo, "package.json"), "utf8")),
+);
 
 const effectPin = rootManifest.overrides?.effect;
 
@@ -93,8 +95,7 @@ for (const entry of await readdir(join(repo, "packages"), { withFileTypes: true 
   const manifestPath = join(repo, "packages", entry.name, "package.json");
 
   try {
-    // SAFETY: package manifests are trusted repository JSON; optional fields are checked before use.
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Manifest;
+    const manifest = manifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
 
     if (manifest.private !== true && manifest.name !== undefined) packageNames.push(manifest.name);
   } catch (error) {

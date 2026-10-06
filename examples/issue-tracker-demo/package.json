@@ -25,6 +25,7 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
+    "@streamsy/effect-test": "workspace:*",
     "@streamsy/test-support": "workspace:*",
     "@types/react": "latest",
     "@types/react-dom": "latest",

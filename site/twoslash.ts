@@ -89,6 +89,7 @@ export const twoslash = (): ShikiTransformer => {
   return transformerTwoslash({
     // fumadocs parses `title` out of the meta string, so `__raw` no longer holds it.
     filter: (lang, _code, options) =>
+      // oxlint-disable-next-line eslint/no-underscore-dangle -- __raw is Shiki’s public metadata field.
       isCheckedFence(lang, options.meta?.__raw ?? "", options.meta?.title),
     twoslashOptions: snippetTwoslashOptions(),
     includesMap,

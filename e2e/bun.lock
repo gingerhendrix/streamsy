@@ -7,6 +7,7 @@
       "devDependencies": {
         "@effect/platform-bun": "4.0.1",
         "@effect/platform-node": "4.0.1",
+        "@streamsy/effect-test": "file:../tools/effect-test",
         "@types/bun": "1.4.0",
         "alchemy": "2.0.0-beta.80",
         "effect": "4.0.1",
@@ -270,6 +271,8 @@
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
     "@smithy/types": ["@smithy/types@4.18.0", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-CgB6HHWer/vrKps24ulRIbpcpb7K4xAU7SkZ7YHzBPlwHsvsrCJFEXK421s+cJzX+ZrqtA/TuU5w1HzI7k9N8A=="],
+
+    "@streamsy/effect-test": ["@streamsy/effect-test@file:../tools/effect-test", { "dependencies": { "effect": "4.0.1" }, "devDependencies": { "@types/bun": "^1.2.0", "typescript": "^7.0.2" } }],
 
     "@types/aws-lambda": ["@types/aws-lambda@8.10.163", "", {}, "sha512-+4zuoEB3S8RIhimtOFT7zAEk2SbpwrKjjGl9CyYnQR6k08uynxfauIIB0pDU1ssr05F8oyGiETwpn+8eXZMqPw=="],
 

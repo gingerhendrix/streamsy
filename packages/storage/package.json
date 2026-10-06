@@ -52,6 +52,7 @@
     "@effect/sql-pg": "4.0.1",
     "@effect/sql-sqlite-bun": "4.0.1",
     "@effect/sql-sqlite-do": "4.0.1",
+    "@streamsy/effect-test": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@types/bun": "^1.2.0",
     "miniflare": "4.20260730.0",

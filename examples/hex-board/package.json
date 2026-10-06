@@ -17,6 +17,7 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
+    "@streamsy/effect-test": "workspace:*",
     "@types/bun": "^1.2.0"
   }
 }

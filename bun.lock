@@ -8,6 +8,7 @@
         "@effect/sql-sqlite-bun": "4.0.1",
         "@effect/tsgo": "0.48.1",
         "@oxlint/plugins": "1.86.0",
+        "effect": "4.0.1",
         "oxfmt": "0.72.0",
         "oxlint": "1.86.0",
         "oxlint-tsgolint": "7.0.2003",
@@ -31,6 +32,7 @@
         "typescript": "catalog:",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/test-support": "workspace:*",
         "@types/bun": "^1.2.0",
       },
@@ -48,6 +50,7 @@
         "effect": "4.0.1",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
       },
@@ -70,6 +73,7 @@
         "typescript": "catalog:",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/test-support": "workspace:*",
         "@types/bun": "^1.2.0",
         "@types/react": "latest",
@@ -88,6 +92,7 @@
         "typescript": "catalog:",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@types/bun": "^1.2.0",
       },
     },
@@ -108,6 +113,7 @@
         "typescript": "catalog:",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/test-support": "workspace:*",
         "@types/react": "latest",
         "@types/react-dom": "latest",
@@ -124,6 +130,7 @@
         "effect": "4.0.1",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/test-support": "workspace:*",
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
@@ -146,6 +153,7 @@
         "effect": "4.0.1",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
         "typescript": "catalog:",
@@ -159,6 +167,7 @@
         "effect": "4.0.1",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
@@ -184,6 +193,7 @@
         "@effect/sql-sqlite-bun": "4.0.1",
         "@effect/sql-sqlite-do": "4.0.1",
         "@effect/sql-sqlite-node": "4.0.1",
+        "@streamsy/effect-test": "workspace:*",
         "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
         "effect": "4.0.1",
@@ -199,6 +209,7 @@
         "effect": "4.0.1",
       },
       "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
       },
@@ -212,10 +223,12 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/platform-bun": "4.0.1",
         "@effect/sql-mysql2": "4.0.1",
         "@effect/sql-pg": "4.0.1",
         "@effect/sql-sqlite-bun": "4.0.1",
         "@effect/sql-sqlite-do": "4.0.1",
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "@types/bun": "^1.2.0",
@@ -238,6 +251,7 @@
         "@effect/sql-mysql2": "4.0.1",
         "@effect/sql-pg": "4.0.1",
         "@effect/sql-sqlite-do": "4.0.1",
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "@types/bun": "^1.2.0",
         "alchemy": "2.0.0-beta.80",
@@ -271,6 +285,7 @@
         "@effect/sql-pg": "4.0.1",
         "@effect/sql-sqlite-bun": "4.0.1",
         "@effect/sql-sqlite-do": "4.0.1",
+        "@streamsy/effect-test": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@types/bun": "^1.2.0",
         "miniflare": "4.20260730.0",
@@ -303,6 +318,16 @@
       },
       "devDependencies": {
         "typescript": "catalog:",
+      },
+    },
+    "tools/effect-test": {
+      "name": "@streamsy/effect-test",
+      "dependencies": {
+        "effect": "4.0.1",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^7.0.2",
       },
     },
   },
@@ -772,6 +797,8 @@
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/docs-snippets": ["@streamsy/docs-snippets@workspace:tools/docs-snippets"],
+
+    "@streamsy/effect-test": ["@streamsy/effect-test@workspace:tools/effect-test"],
 
     "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 

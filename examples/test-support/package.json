@@ -15,6 +15,7 @@
     "effect": "4.0.1"
   },
   "devDependencies": {
+    "@streamsy/effect-test": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@types/bun": "^1.2.0",
     "typescript": "catalog:"
