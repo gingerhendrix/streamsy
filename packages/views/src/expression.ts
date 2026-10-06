@@ -206,7 +206,7 @@ function nestedReference<T>(target: Expression, property: string): TypedExpressi
   return reference<T>(target.scope, [...target.path, property]);
 }
 
-function isExpression(value: unknown): value is Expression {
+function isExpression(value: JsonValue | Expression): value is Expression {
   return typeof value === "object" && value !== null && "kind" in value;
 }
 /* oxlint-enable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions */

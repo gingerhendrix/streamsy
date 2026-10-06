@@ -59,6 +59,30 @@ const change = (
       ? { kind: "exit", key, before }
       : { kind: "update", key, before, after };
 
+const join = (kind: "inner-join" | "left-join") =>
+  plan(
+    kind,
+    [
+      source("issues"),
+      source("projects"),
+      {
+        kind,
+        id: "join",
+        left: "issues",
+        right: "projects",
+        schema,
+        on: {
+          kind: "binary",
+          operator: "equal",
+          left: ref("left", "projectId"),
+          right: ref("right", "id"),
+        },
+        rightAlias: "project",
+      },
+    ],
+    "join",
+  );
+
 describe("stateless transformations and graph routing", () => {
   const graph = plan(
     "filtered",
@@ -222,30 +246,6 @@ describe("stateless transformations and graph routing", () => {
 });
 
 describe("inner and left joins", () => {
-  const join = (kind: "inner-join" | "left-join") =>
-    plan(
-      kind,
-      [
-        source("issues"),
-        source("projects"),
-        {
-          kind,
-          id: "join",
-          left: "issues",
-          right: "projects",
-          schema,
-          on: {
-            kind: "binary",
-            operator: "equal",
-            left: ref("left", "projectId"),
-            right: ref("right", "id"),
-          },
-          rightAlias: "project",
-        },
-      ],
-      "join",
-    );
-
   it("retracts an old pair, enters a new pair, and supports duplicate join values", () => {
     const graph = join("inner-join");
     const p1 = { id: "p1", projectId: "workspace", name: "One" };

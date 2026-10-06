@@ -198,12 +198,19 @@ function validateSourceKey(
   change: Change<JsonObject>,
   parameters: JsonObject,
 ): void {
-  const rows =
-    change.kind === "enter"
-      ? [change.after]
-      : change.kind === "exit"
-        ? [change.before]
-        : [change.before, change.after];
+  let rows: readonly JsonObject[];
+
+  switch (change.kind) {
+    case "enter":
+      rows = [change.after];
+      break;
+    case "exit":
+      rows = [change.before];
+      break;
+    case "update":
+      rows = [change.before, change.after];
+      break;
+  }
 
   for (const row of rows) {
     const key = asRowKey(evaluate(source.key, { row, parameter: parameters }));
@@ -458,9 +465,11 @@ function lookup(
   const keys = arrangement.buckets.get(canonicalJson(value))?.rows.values() ?? [];
   const relation = runtime.relations.get(relationId);
 
-  return [...keys]
-    .map((key) => relation?.get(encodeRowKey(key)))
-    .filter((row): row is KeyedRow => row !== undefined);
+  return [...keys].flatMap((key) => {
+    const row = relation?.get(encodeRowKey(key));
+
+    return row === undefined ? [] : [row];
+  });
 }
 
 function snapshot(plan: RelationPlan, revision: number, runtime: Runtime): OperatorStateSnapshot {
