@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { wipLimit } from "../../shared/state-schema.ts";
-import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
+import { wipLimit } from "@streamsy/issue-tracker-demo-contract/state-schema";
+import type {
+  Comment,
+  Issue,
+  IssueStatus,
+  Project,
+} from "@streamsy/issue-tracker-demo-contract/types";
 import type { StatusFilter } from "../queries.ts";
 import { shortId } from "../utils/format.ts";
 import { IssueRow } from "./IssueRow.tsx";

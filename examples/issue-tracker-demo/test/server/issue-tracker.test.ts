@@ -12,7 +12,7 @@ import {
   type Stamp,
 } from "../../server/state.ts";
 import { workspaceEvents, Workspaces, type WorkspaceChange } from "../../server/streams.ts";
-import type { Issue, Project } from "../../shared/state-schema.ts";
+import type { Issue, Project } from "@streamsy/issue-tracker-demo-contract/state-schema";
 
 const workspaceId = "concurrent-test";
 

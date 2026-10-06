@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { isAbsolute, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codeFences, fenceTitle } from "./mdx-code.ts";
 
@@ -9,17 +9,28 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 const demos = fileURLToPath(new URL("../content/docs/demos/", import.meta.url));
 
 /**
- * Each demo page, by slug, and the example folder that its titled excerpts quote.
- * A fence title is a path relative to this folder. `index` lists the demos and
- * quotes no example. Every other page in `content/docs/demos` needs an entry.
+ * Each demo page, by slug, and the example folders that its titled excerpts quote.
+ * The first folder is the page's own example. A fence title is a path relative to
+ * it. A title that starts with the name of another listed folder, for example
+ * `issue-tracker-demo-contract/api.ts`, quotes that folder. `index` lists the
+ * demos and quotes no example. Every other page in `content/docs/demos` needs an
+ * entry.
  */
-export const demoExamples = new Map<string, string>([
-  ["hackernews-newest-stream", "examples/hackernews-newest-stream"],
-  ["hex-board", "examples/hex-board"],
-  ["issue-tracker", "examples/issue-tracker-demo"],
-  ["bugsy", "examples/bugsy"],
-  ["memory-server", "examples/memory-server"],
-  ["fold-agent", "examples/fold-agent"],
+export const demoExamples = new Map<string, readonly [string, ...Array<string>]>([
+  ["hackernews-newest-stream", ["examples/hackernews-newest-stream"]],
+  ["hex-board", ["examples/hex-board"]],
+  ["issue-tracker", ["examples/issue-tracker-demo", "examples/issue-tracker-demo-contract"]],
+  [
+    "issue-tracker-event-sourced",
+    [
+      "examples/issue-tracker-demo-event-sourced",
+      "examples/issue-tracker-demo",
+      "examples/issue-tracker-demo-contract",
+    ],
+  ],
+  ["bugsy", ["examples/bugsy"]],
+  ["memory-server", ["examples/memory-server"]],
+  ["fold-agent", ["examples/fold-agent"]],
 ]);
 
 const excerptLanguages = new Set(["ts", "tsx"]);
@@ -164,10 +175,27 @@ export const checkDemoPage = (text: string, readSource: SourceReader): ReadonlyA
   return problems;
 };
 
+/**
+ * Where a fence title points: the listed folder whose name is the first part of the
+ * title, with the rest of the title, or else the first folder with the whole title.
+ */
+export const resolveTitle = (
+  folders: readonly [string, ...Array<string>],
+  title: string,
+): { readonly folder: string; readonly path: string } => {
+  const [head, ...rest] = normalize(title).split("/");
+  const quoted = folders.slice(1).find((folder) => basename(folder) === head);
+
+  return quoted === undefined || rest.length === 0
+    ? { folder: folders[0], path: title }
+    : { folder: quoted, path: rest.join("/") };
+};
+
 const exampleReader =
-  (example: string): SourceReader =>
-  (path) => {
-    const file = join(repo, example, path);
+  (folders: readonly [string, ...Array<string>]): SourceReader =>
+  (title) => {
+    const { folder, path } = resolveTitle(folders, title);
+    const file = join(repo, folder, path);
 
     return existsSync(file) ? readFileSync(file, "utf8") : undefined;
   };
@@ -175,7 +203,7 @@ const exampleReader =
 export const checkDemoExcerpts = async (): Promise<void> => {
   const failures: Array<string> = [];
 
-  for (const example of demoExamples.values()) {
+  for (const example of new Set([...demoExamples.values()].flat())) {
     if (!existsSync(join(repo, example))) failures.push(`missing example folder ${example}`);
   }
 
@@ -186,18 +214,18 @@ export const checkDemoExcerpts = async (): Promise<void> => {
 
   for (const page of pages) {
     if (page === "index") continue;
-    const example = demoExamples.get(page);
+    const folders = demoExamples.get(page);
 
-    if (example === undefined) {
+    if (folders === undefined) {
       failures.push(`${page}: no example folder in demoExamples`);
       continue;
     }
 
     const text = await readFile(join(demos, `${page}.mdx`), "utf8");
-    const problems = checkDemoPage(text, exampleReader(example));
+    const problems = checkDemoPage(text, exampleReader(folders));
 
     if (problems.length === 0) {
-      console.log(`ok demo excerpts ${page} ← ${example}`);
+      console.log(`ok demo excerpts ${page} ← ${folders.join(", ")}`);
       continue;
     }
 

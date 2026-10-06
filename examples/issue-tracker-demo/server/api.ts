@@ -1,8 +1,8 @@
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware, type HttpApiError } from "effect/http-api";
-import { RequestErrors, IssueTrackerApi } from "../shared/api.ts";
-import { BadRequest } from "../shared/api-schema.ts";
+import { RequestErrors, IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
+import { BadRequest } from "@streamsy/issue-tracker-demo-contract/api-schema";
 import { CommentsLive } from "./routes/comments.ts";
 import { IssuesLive } from "./routes/issues.ts";
 import { ProjectsLive } from "./routes/projects.ts";

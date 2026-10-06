@@ -87,13 +87,15 @@ API, and `Serve.mount(Workspaces, "/streams/workspace/:workspaceId")` from
 that router. On SIGINT or SIGTERM it answers parked long polls with 204, the
 listener stops, storage closes last, and the process exits 0.
 
-`shared/api.ts` declares `IssueTrackerApi`: one group each for workspaces,
-projects, issues and comments. Effect schemas in `shared/api-schema.ts` check
-the workspace id, the partial entity body and its optional `txid`, and describe
-the success bodies and the `{ "error": string }` error bodies. The same entity
-schemas in `shared/state-schema.ts` type the stream collections on the server
-and, through `Schema.toStandardSchemaV1`, the StreamDB collections in the
-browser.
+The wire contract lives in the private workspace package
+[`@streamsy/issue-tracker-demo-contract`](../issue-tracker-demo-contract), so
+the variants import the same schemas. Its `api.ts` declares `IssueTrackerApi`:
+one group each for workspaces, projects, issues and comments. Effect schemas in
+its `api-schema.ts` check the workspace id, the partial entity body and its
+optional `txid`, and describe the success bodies and the `{ "error": string }`
+error bodies. The same entity schemas in its `state-schema.ts` type the stream
+collections on the server and, through `Schema.toStandardSchemaV1`, the
+StreamDB collections in the browser.
 
 `IssueTracker.mutate` is the read, decide, append recipe in one
 `Workspaces.decide` call: fold the workspace's State changes, validate against
@@ -136,6 +138,12 @@ recipe tests use a read barrier to force a CAS conflict and prove that the
 losing writer retries against the new state, the same race against the
 work-in-progress rule, and a writer that loses every race to prove the 409 after
 three retries.
+
+The smoke takes an optional app folder, for example
+`bun run scripts/http-smoke.ts ../issue-tracker-demo-event-sourced`. It starts
+that folder's `server/index.ts` and runs the same checks, so every server
+variant is held to this wire contract. Each read after a write waits for the
+write's txid on the stream, because a projected stream can trail the answer.
 
 ## Limits
 

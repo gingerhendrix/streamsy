@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { useRef, useState } from "react";
-import { IssueStatus } from "../../shared/state-schema.ts";
-import type { Comment, Issue } from "../../shared/types.ts";
+import { IssueStatus } from "@streamsy/issue-tracker-demo-contract/state-schema";
+import type { Comment, Issue } from "@streamsy/issue-tracker-demo-contract/types";
 import { STATUS_LABEL, formatRelativeTime, shortId } from "../utils/format.ts";
 
 /**

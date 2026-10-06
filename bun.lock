@@ -103,6 +103,7 @@
         "@durable-streams/state": "^0.3.1",
         "@effect/platform-bun": "4.0.1",
         "@streamsy/core": "workspace:*",
+        "@streamsy/issue-tracker-demo-contract": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "@tanstack/db": "0.6.8",
@@ -117,6 +118,38 @@
         "@streamsy/test-support": "workspace:*",
         "@types/react": "latest",
         "@types/react-dom": "latest",
+        "bun-types": "^1.3.14",
+      },
+    },
+    "examples/issue-tracker-demo-contract": {
+      "name": "@streamsy/issue-tracker-demo-contract",
+      "version": "0.0.1",
+      "dependencies": {
+        "@durable-streams/state": "^0.3.1",
+        "effect": "4.0.1",
+      },
+      "devDependencies": {
+        "bun-types": "^1.3.14",
+        "typescript": "catalog:",
+      },
+    },
+    "examples/issue-tracker-demo-event-sourced": {
+      "name": "issue-tracker-demo-event-sourced",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform-bun": "4.0.1",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/issue-tracker-demo-contract": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.1",
+        "issue-tracker-demo": "workspace:*",
+        "typescript": "catalog:",
+      },
+      "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
+        "@streamsy/test-support": "workspace:*",
         "bun-types": "^1.3.14",
       },
     },
@@ -800,6 +833,8 @@
 
     "@streamsy/effect-test": ["@streamsy/effect-test@workspace:tools/effect-test"],
 
+    "@streamsy/issue-tracker-demo-contract": ["@streamsy/issue-tracker-demo-contract@workspace:examples/issue-tracker-demo-contract"],
+
     "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 
     "@streamsy/serve": ["@streamsy/serve@workspace:packages/serve"],
@@ -1059,6 +1094,8 @@
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
 
     "issue-tracker-demo": ["issue-tracker-demo@workspace:examples/issue-tracker-demo"],
+
+    "issue-tracker-demo-event-sourced": ["issue-tracker-demo-event-sourced@workspace:examples/issue-tracker-demo-event-sourced"],
 
     "js-base64": ["js-base64@3.9.3", "", {}, "sha512-uwYQp+VJ38FVvtim6qNbit6e9uT6dwWQ4Y1+H9TxhW5hcHjpHwoxlR0nMpqUmIFOmu4VqMxwdJA88gIVuZJQ/g=="],
 

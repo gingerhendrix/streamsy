@@ -18,7 +18,7 @@ import {
   Schema,
   type PlatformError,
 } from "effect";
-import type { Issue, Project } from "../shared/state-schema.ts";
+import type { Issue, Project } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { mainWorkspaceId } from "./config.ts";
 import {
   mainWorkspaceSeed,

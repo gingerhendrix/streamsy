@@ -9,7 +9,7 @@ This app is also the base for a set of variants. Each variant changes one side, 
 
 ![The issue tracker demo page: a projects list on the left, a name field in the header, and on the right the issues of the Streamsy Demo project with status filters and counts, a status pill, a status menu and comments with author names on each issue.](/docs/demos/issue-tracker-demo-screenshot.png)
 
-The full source is in [`examples/issue-tracker-demo`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo). Its README lists the settings and the smoke test.
+The full source is in [`examples/issue-tracker-demo`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo). Its README lists the settings and the smoke test. The wire contract, the row schemas and the JSON API declaration, is the private package [`examples/issue-tracker-demo-contract`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo-contract). The variants import the same package. Excerpts from it have titles that start with `issue-tracker-demo-contract/`.
 
 ## Run it
 
@@ -31,15 +31,15 @@ To see the work-in-progress rule, open the page in two tabs. "Streamsy Demo" sta
 
 The server has no read API. Writes go through the JSON API, and reads come from the stream. Each number in the diagram is also the number of a section below.
 
-| Step | What happens                                                                       | Feature                                                     | File                                                              |
-| ---- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| 1    | One stream per workspace holds projects, issues and comments                       | `Streamsy.state` with collections                           | `server/streams.ts`                                               |
-| 2    | One layer graph opens the storage, seeds `main` and starts the listener            | `MemoryStorage.layer`, `BunStorage.layer`, `Streamsy.group` | `server/streams.ts`, `server/index.ts`, `server/issue-tracker.ts` |
-| 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                | `src/db.ts`                                                       |
-| 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                            | `shared/api.ts`, `server/api.ts`, `server/routes/issues.ts`       |
-| 5    | The service reads and folds the workspace, then appends if the stream did not move | `decide`, `DurableState.changes`                            | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts` |
-| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `Serve.layer`, `Serve.teardown`              | `server/index.ts`                                                 |
-| 7    | The browser follows the stream and derives its views with live queries             | Durable State client, TanStack DB                           | `src/db.ts`, `src/App.tsx`, `src/queries.ts`                      |
+| Step | What happens                                                                       | Feature                                                     | File                                                                             |
+| ---- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1    | One stream per workspace holds projects, issues and comments                       | `Streamsy.state` with collections                           | `server/streams.ts`                                                              |
+| 2    | One layer graph opens the storage, seeds `main` and starts the listener            | `MemoryStorage.layer`, `BunStorage.layer`, `Streamsy.group` | `server/streams.ts`, `server/index.ts`, `server/issue-tracker.ts`                |
+| 3    | The browser shows the change at once and posts it with a txid                      | Durable State client actions                                | `src/db.ts`                                                                      |
+| 4    | An `HttpApi` handler decodes the request and calls the domain service              | Effect `HttpApi`                                            | `issue-tracker-demo-contract/api.ts`, `server/api.ts`, `server/routes/issues.ts` |
+| 5    | The service reads and folds the workspace, then appends if the stream did not move | `decide`, `DurableState.changes`                            | `server/issue-tracker.ts`, `server/state.ts`, `server/streams.ts`                |
+| 6    | The same router serves the stream for reads only                                   | `Serve.mount`, `Serve.layer`, `Serve.teardown`              | `server/index.ts`                                                                |
+| 7    | The browser follows the stream and derives its views with live queries             | Durable State client, TanStack DB                           | `src/db.ts`, `src/App.tsx`, `src/queries.ts`                                     |
 
 The code in each section is from the demo. Lines marked `// ...` are left out.
 
@@ -62,7 +62,7 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
 ) {}
 ```
 
-`Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `shared/state-schema.ts`. The browser uses the same schemas.
+`Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `state-schema.ts` of the contract package. The browser uses the same schemas.
 
 See [Durable State streams](/docs/streams/declare#durable-state-streams).
 
@@ -175,9 +175,9 @@ const run = async <T,>(action: OptimisticAction<T>, variables: T) => {
 
 ## 4. Decode the request in `HttpApi`
 
-The JSON API is an Effect `HttpApi`. `shared/api.ts` declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and four error schemas. The issue endpoints have a fifth: `WipLimitReached`, on HTTP 422.
+The JSON API is an Effect `HttpApi`. `api.ts` in the contract package declares one group for each kind of row. Each write endpoint has a workspace id in the path, a body schema, a success schema and four error schemas. The issue endpoints have a fifth: `WipLimitReached`, on HTTP 422.
 
-```ts title="shared/api.ts"
+```ts title="issue-tracker-demo-contract/api.ts"
 const inWorkspace = { ws: WorkspaceId };
 const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
 /** An issue write can also break the work-in-progress rule. */
@@ -206,7 +206,7 @@ export class IssueTrackerApi extends HttpApi.make("IssueTrackerApi")
 
 A body is a partial row. A missing field takes a server default. A field that is present must match the row schema. The optional `txid` must be a UUID. The body schema leaves out the time fields, because the server owns time.
 
-```ts title="shared/api-schema.ts"
+```ts title="issue-tracker-demo-contract/api-schema.ts"
 export const TxId = Schema.String.check(Schema.isUUID());
 // ...
 const input = <
@@ -461,7 +461,7 @@ See [Serve handlers](/docs/http/serve) and [Clean shutdown](/docs/hosting/bun#cl
 
 The state schema maps each change type to a collection. The type names are the same as the collection names in `Workspaces`. The row schemas are the Effect schemas from section 1, converted to Standard Schema.
 
-```ts title="shared/state-schema.ts"
+```ts title="issue-tracker-demo-contract/state-schema.ts"
 export const issueTrackerState = createStateSchema({
   projects: { schema: Schema.toStandardSchemaV1(Project), type: "project", primaryKey: "id" },
   issues: { schema: Schema.toStandardSchemaV1(Issue), type: "issue", primaryKey: "id" },

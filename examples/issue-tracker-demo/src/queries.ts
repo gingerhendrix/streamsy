@@ -1,6 +1,6 @@
 import { count, eq, useLiveQuery } from "@tanstack/react-db";
 import { useMemo } from "react";
-import type { Comment, IssueStatus } from "../shared/types.ts";
+import type { Comment, IssueStatus } from "@streamsy/issue-tracker-demo-contract/types";
 import type { IssueDb } from "./db.ts";
 
 /** The status filter: one status, or every issue. */

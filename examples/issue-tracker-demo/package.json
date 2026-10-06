@@ -15,6 +15,7 @@
     "@durable-streams/state": "^0.3.1",
     "@effect/platform-bun": "4.0.1",
     "@streamsy/core": "workspace:*",
+    "@streamsy/issue-tracker-demo-contract": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "@tanstack/db": "0.6.8",
