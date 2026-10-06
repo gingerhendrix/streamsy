@@ -1,5 +1,4 @@
-/* oxlint-disable effecttsgo/async-function -- Bun owns test execution. */
-import { expect, it } from "bun:test";
+import { expect, layer } from "@streamsy/effect-test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { type CommitBoundary, Storage, type StorageFault, Streamsy } from "@streamsy/core";
@@ -29,16 +28,21 @@ const sql = SqlStorage.layer(Streamsy.group(Notes)).pipe(
   ),
 );
 
-it("Bun and SQL stream layers share storage and feeds without exporting the generic pair", async () => {
-  for (const host of [bun, BunStorage.layer(Streamsy.group(Notes), options), sql]) {
-    await Effect.runPromise(
-      Effect.scoped(
+for (const [index, host] of [
+  bun,
+  BunStorage.layer(Streamsy.group(Notes), options),
+  sql,
+].entries()) {
+  layer(host)((it) => {
+    it.effect(
+      `Bun and SQL stream layers share storage and feeds without exporting the generic pair (${index})`,
+      () =>
         Effect.gen(function* () {
-          const context = yield* Layer.build(host);
+          const context = yield* Effect.context<Storage | Notes | Streamsy.ChangeFeed<Notes>>();
           expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
           expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
-          const notes = Context.get(context, Notes);
-          const feed = Context.get(context, Streamsy.ChangeFeed(Notes));
+          const notes = yield* Notes;
+          const feed = yield* Streamsy.ChangeFeed(Notes);
           expect(feed.owner).toBe(notes.owner);
           yield* notes.create({});
           yield* notes.append({}, ["hello"]);
@@ -48,18 +52,16 @@ it("Bun and SQL stream layers share storage and feeds without exporting the gene
           );
 
           expect(snapshot).toHaveLength(1);
-          expect(Option.isSome(yield* Context.get(context, Storage).record(Notes.at({}).id))).toBe(
-            true,
-          );
+          expect(Option.isSome(yield* (yield* Storage).record(Notes.at({}).id))).toBe(true);
           expect((yield* Stream.runCollect(notes.read({})))[0]?.items).toEqual(["hello"]);
         }),
-      ),
     );
-  }
-});
+  });
+}
 
-type Equal<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Assignability<To> = <From>(value: From) => From extends To ? 1 : 2;
+
+type Equal<A, B> = Assignability<A> extends Assignability<B> ? true : false;
 
 type SqlOutputs = Storage | CommitBoundary | OwnerRecords;
 
@@ -87,12 +89,12 @@ const sqlRequirements: Equal<Layer.Services<typeof rawSql>, ClientServices> = tr
 
 const sqlErrors: Equal<Layer.Error<typeof rawSql>, StorageFault> = true;
 
-const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Streamsy.ChangeFeed(Notes)).pipe(
-  Effect.provide(bun),
+const hasFeed: Effect.Effect<void, never, Streamsy.ChangeFeed<Notes>> = Effect.asVoid(
+  Streamsy.ChangeFeed(Notes),
 );
 
-function exactDurable(options: DurableObjectStorage.Options) {
-  const host = DurableObjectStorage.layer(group, options);
+function exactDurable(durableOptions: DurableObjectStorage.Options) {
+  const host = DurableObjectStorage.layer(group, durableOptions);
 
   const outputs: Equal<
     Layer.Success<typeof host>,
