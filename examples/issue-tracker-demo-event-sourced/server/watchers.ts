@@ -18,9 +18,11 @@ export const ProjectionWatchersLive = Layer.effect(
   Effect.gen(function* () {
     // The layer scope owns every runner, so they stop before storage closes.
     const runners = yield* FiberMap.make<string>();
+
     const context = yield* Effect.context<
       CheckpointStore | WorkspaceEvents | Workspaces | Streamsy.ChangeFeed<WorkspaceEvents>
     >();
+
     const retry = yield* ProjectionRetry;
 
     /**
@@ -30,9 +32,11 @@ export const ProjectionWatchersLive = Layer.effect(
      */
     const runner = (workspaceId: string) => {
       const rows = readModel.at({ workspaceId });
+
       return Effect.scoped(
         Effect.gen(function* () {
           yield* Projection.run(rows);
+
           return yield* Fiber.join(yield* Projection.watch(rows));
         }),
       ).pipe(

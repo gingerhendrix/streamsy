@@ -45,14 +45,21 @@ export const WorkspaceEvent = Schema.TaggedUnion({
     ...stamped,
   },
 });
+
 export type WorkspaceEvent = typeof WorkspaceEvent.Type;
 
 type Cases = typeof WorkspaceEvent.cases;
+
 export type ProjectCreated = Cases["ProjectCreated"]["Type"];
+
 export type IssueCreated = Cases["IssueCreated"]["Type"];
+
 export type IssueRenamed = Cases["IssueRenamed"]["Type"];
+
 export type IssueStatusChanged = Cases["IssueStatusChanged"]["Type"];
+
 export type CommentAdded = Cases["CommentAdded"]["Type"];
+
 /** The events that change an issue row. */
 export type IssueEvent = IssueCreated | IssueRenamed | IssueStatusChanged;
 
@@ -96,6 +103,7 @@ export function issueAfter(previous: Issue | undefined, event: IssueEvent): Issu
 /** The row with this edit's time and writer. `updatedBy` names this writer, or nobody. */
 function edited(previous: Issue, event: IssueEvent): Issue {
   const { updatedBy: _previousWriter, ...row } = previous;
+
   return { ...row, updatedAt: event.at, ...lastWriter(event.updatedBy) };
 }
 

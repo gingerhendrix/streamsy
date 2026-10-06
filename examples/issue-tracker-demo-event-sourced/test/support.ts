@@ -9,6 +9,7 @@ import { streams, Workspaces } from "../server/streams.ts";
 import { ProjectionWatchersLive } from "../server/watchers.ts";
 
 export const createdAt = "2026-10-06T00:00:00.000Z";
+
 export const later = "2026-10-06T00:05:00.000Z";
 
 export const stamp = (id: string, now = createdAt, txid = crypto.randomUUID()): Stamp => ({

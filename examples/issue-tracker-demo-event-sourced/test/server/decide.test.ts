@@ -17,7 +17,9 @@ const decide = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(Effect.exit
 
 const failure = <A, E>(effect: Effect.Effect<A, E>) => {
   const exit = decide(effect);
+
   if (Exit.isSuccess(exit)) throw new Error("expected the decision to fail");
+
   return exit.cause;
 };
 
@@ -47,6 +49,7 @@ describe("createIssue", () => {
         stamp("i"),
       )(view),
     );
+
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ _tag: "IssueCreated", status: "open", updatedBy: "Ann" });
     expect(value).toMatchObject({ id: "i", title: "Write", createdAt, updatedAt: createdAt });
@@ -62,6 +65,7 @@ describe("createIssue", () => {
     const third = Effect.runSync(
       createIssue({ projectId: "proj_streamsy", status: "in_progress" }, stamp("i3"))(view),
     );
+
     const full = third.events.reduce(applyEvent, view);
     expect(
       String(
@@ -76,9 +80,11 @@ describe("createIssue", () => {
 describe("updateIssue", () => {
   test("a title and a status give two events in one decision, rename first", () => {
     const at = stamp("ignored", later);
+
     const { events, value } = Effect.runSync(
       updateIssue("issue_names", { title: "Names", status: "done", updatedBy: "Bo" }, at)(view),
     );
+
     expect(events).toEqual([
       expect.objectContaining({ _tag: "IssueRenamed", title: "Names" }),
       expect.objectContaining({ _tag: "IssueStatusChanged", status: "done" }),
@@ -110,14 +116,17 @@ describe("updateIssue", () => {
     const third = Effect.runSync(
       updateIssue("issue_names", { status: "in_progress" }, stamp("x"))(view),
     );
+
     const full = third.events.reduce(applyEvent, view);
     expect(
       String(failure(updateIssue("issue_bootstrap", { status: "in_progress" }, stamp("y"))(full))),
     ).toContain("TooManyInProgress");
+
     // An issue that is already in progress can be renamed or set to in progress again.
     const again = decide(
       updateIssue("issue_optimistic", { title: "Again", status: "in_progress" }, stamp("z"))(full),
     );
+
     expect(Exit.isSuccess(again)).toBe(true);
   });
 
@@ -125,10 +134,13 @@ describe("updateIssue", () => {
     const third = Effect.runSync(
       updateIssue("issue_names", { status: "in_progress" }, stamp("x"))(view),
     );
+
     const full = third.events.reduce(applyEvent, view);
+
     const exit = decide(
       updateIssue("issue_bootstrap", { title: "Lost", status: "in_progress" }, stamp("y"))(full),
     );
+
     expect(Exit.isFailure(exit)).toBe(true);
   });
 });
@@ -138,6 +150,7 @@ describe("createComment", () => {
     const { events, value } = Effect.runSync(
       createComment({ issueId: "issue_names", author: " ", body: " Hi " }, stamp("c"))(view),
     );
+
     expect(events[0]).toMatchObject({ _tag: "CommentAdded", author: "anonymous", body: "Hi" });
     expect(value).toEqual({
       id: "c",
@@ -157,8 +170,10 @@ describe("createComment", () => {
 
 test("the seed is the base app's main workspace as events", () => {
   const events = mainWorkspaceSeed(stamp("seed"));
+
   const count = (tag: "ProjectCreated" | "IssueCreated" | "CommentAdded") =>
     events.filter(WorkspaceEvent.isAnyOf([tag])).length;
+
   expect([count("ProjectCreated"), count("IssueCreated"), count("CommentAdded")]).toEqual([
     2, 5, 1,
   ]);

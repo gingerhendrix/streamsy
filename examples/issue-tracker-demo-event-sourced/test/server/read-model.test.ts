@@ -8,9 +8,13 @@ import { WorkspaceEvents, Workspaces } from "../../server/streams.ts";
 import { createdAt, later, MemoryHost, stamp, stateChanges } from "../support.ts";
 
 const { IssueCreated, IssueRenamed, IssueStatusChanged } = WorkspaceEvent.cases;
+
 const workspaceId = "rows-test";
+
 const txid = crypto.randomUUID();
+
 const editTxid = crypto.randomUUID();
+
 const created = IssueCreated.make({
   issueId: "issue_a",
   projectId: "proj_streamsy",
@@ -22,10 +26,12 @@ const created = IssueCreated.make({
 
 test("a rename upserts the whole row with the event's time and txid headers", () => {
   const [rows] = project({}, created);
+
   const [next, changes] = project(
     rows,
     IssueRenamed.make({ issueId: "issue_a", title: "Second", at: later, txid: editTxid }),
   );
+
   expect(next["issue_a"]?.title).toBe("Second");
   expect(changes).toEqual([
     expect.objectContaining({
@@ -64,6 +70,7 @@ test("the projection writes the base app's rows to the State stream, once", asyn
       const first = yield* stateChanges(workspaceId);
       // A second run starts from the checkpoint and writes nothing.
       yield* Projection.run(rows);
+
       return { first, again: yield* stateChanges(workspaceId) };
     }).pipe(Effect.provide(MemoryHost)),
   );

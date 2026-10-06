@@ -77,6 +77,7 @@ export const createProject =
       at: stamp.now,
       txid: stamp.txid,
     });
+
     return Effect.succeed({ events: [created], value: projectRow(created) });
   };
 
@@ -84,12 +85,15 @@ export const createIssue =
   (input: Partial<Issue>, stamp: Stamp) =>
   (view: CommandView): Effect.Effect<Decision<Issue>, UnknownReference | TooManyInProgress> => {
     const created = issueCreated(input, stamp);
+
     if (!hasProject(view, created.projectId)) {
       return Effect.fail(new UnknownReference({ field: "projectId", id: created.projectId }));
     }
+
     if (startsWork(view, undefined, created.status, created.projectId)) {
       return Effect.fail(new TooManyInProgress({ projectId: created.projectId, limit: wipLimit }));
     }
+
     return decided([created], undefined);
   };
 
@@ -103,22 +107,29 @@ export const updateIssue =
     view: CommandView,
   ): Effect.Effect<Decision<Issue>, IssueNotFound | TooManyInProgress | NothingToChange> => {
     const previous = findIssue(view, issueId);
+
     if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
     const edit = { issueId, ...writer(input.updatedBy), at: stamp.now, txid: stamp.txid };
     const events: IssueEvent[] = [];
+
     if (input.title !== undefined) {
       events.push(IssueRenamed.make({ ...edit, title: input.title.trim() }));
     }
+
     if (input.status !== undefined) {
       if (startsWork(view, previous, input.status, previous.projectId)) {
         return Effect.fail(
           new TooManyInProgress({ projectId: previous.projectId, limit: wipLimit }),
         );
       }
+
       events.push(IssueStatusChanged.make({ ...edit, status: input.status }));
     }
+
     const [first, ...rest] = events;
+
     if (first === undefined) return Effect.fail(new NothingToChange({ issueId }));
+
     return decided([first, ...rest], previous);
   };
 
@@ -133,9 +144,11 @@ export const createComment =
       at: stamp.now,
       txid: stamp.txid,
     });
+
     if (!findIssue(view, added.issueId)) {
       return Effect.fail(new UnknownReference({ field: "issueId", id: added.issueId }));
     }
+
     return Effect.succeed({ events: [added], value: commentRow(added) });
   };
 
@@ -164,6 +177,7 @@ function decided(
   previous: Issue | undefined,
 ): Effect.Effect<Decision<Issue>> {
   const issue = events.reduce<Issue | undefined>(issueAfter, previous);
+
   return issue === undefined
     ? Effect.die(new Error(`An issue decision gave no row for ${events[0].issueId}`))
     : Effect.succeed({ events, value: issue });
@@ -187,6 +201,7 @@ function issueCreated(input: Partial<Issue>, stamp: Stamp): IssueCreated {
 /** A blank display name is no name. */
 function writer(name: string | undefined): { readonly updatedBy?: string } {
   const trimmed = name?.trim();
+
   return trimmed ? { updatedBy: trimmed } : {};
 }
 
@@ -206,12 +221,14 @@ export function starterProject(stamp: Stamp): Partial<Project> {
  */
 export function mainWorkspaceSeed(stamp: Stamp): NonEmptyReadonlyArray<WorkspaceEvent> {
   const stamped = { at: stamp.now, txid: stamp.txid };
+
   const issue = (
     issueId: string,
     projectId: string,
     title: string,
     status: Issue["status"],
   ): WorkspaceEvent => IssueCreated.make({ issueId, projectId, title, status, ...stamped });
+
   return [
     ProjectCreated.make({
       projectId: "proj_streamsy",

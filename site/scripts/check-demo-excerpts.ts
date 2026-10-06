@@ -185,6 +185,7 @@ export const resolveTitle = (
 ): { readonly folder: string; readonly path: string } => {
   const [head, ...rest] = normalize(title).split("/");
   const quoted = folders.slice(1).find((folder) => basename(folder) === head);
+
   return quoted === undefined || rest.length === 0
     ? { folder: folders[0], path: title }
     : { folder: quoted, path: rest.join("/") };

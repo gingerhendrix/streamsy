@@ -114,6 +114,7 @@ export const IssueTrackerLive = Layer.effect(
     const stamp = Effect.fn("IssueTracker.stamp")(function* (prefix: string, txid?: string) {
       const now = DateTime.formatIso(yield* DateTime.now);
       const id = `${prefix}_${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+
       return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4) };
     }, Effect.orDie);
 
@@ -145,6 +146,7 @@ export const IssueTrackerLive = Layer.effect(
       const starter = yield* stamp("proj");
       yield* registry.append({}, [{ workspaceId, createdAt: starter.now }]);
       yield* mutate(workspaceId, createProject(starterProject(starter), starter));
+
       return workspaceId;
     }).pipe(Effect.withSpan("IssueTracker.create"));
 
@@ -165,6 +167,7 @@ export const IssueTrackerLive = Layer.effect(
       yield* open(mainWorkspaceId);
       yield* seed;
       const registered = yield* registry.collect({});
+
       for (const { workspaceId } of registered.items) yield* watchers.start(workspaceId);
     }).pipe(Effect.withSpan("IssueTracker.boot"));
 

@@ -258,11 +258,13 @@ const smoke = Effect.gen(function* () {
   // === 3. New workspace stream contains exactly the starter-project upsert ===
 
   const workspaceStreamUrl = `${baseUrl}/streams/workspace/${workspaceId}`;
+
   const starterRead = yield* readUntil(
     workspaceStreamUrl,
     "the starter project",
     (read) => read.events.length > 0,
   );
+
   yield* check(
     starterRead.events.length === 1,
     `new workspace should hold exactly 1 seed event, got ${starterRead.events.length}`,
@@ -380,11 +382,13 @@ const smoke = Effect.gen(function* () {
     new Set(contentionIds).size === contentionCount,
     "contended issue creates should produce unique issues",
   );
+
   const after = yield* readUntil(
     mainStreamUrl,
     "the contended issues",
     hasTxids(...contentionResults.map((result) => result.txid)),
   );
+
   yield* check(
     after.events.length === before.events.length + contentionCount,
     `stream should gain exactly ${contentionCount} events under contention ` +
@@ -459,6 +463,7 @@ const smoke = Effect.gen(function* () {
 
   const restartWorkspaceId = yield* createWorkspace;
   const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
+
   const beforeRestartIssue = yield* readUntil(
     restartStreamUrl,
     "the restart starter project",
@@ -475,6 +480,7 @@ const smoke = Effect.gen(function* () {
   });
 
   const restartIssueId = restartIssue.issue.id;
+
   const { head: restartHead } = yield* readUntil(
     restartStreamUrl,
     "the issue before the restart",
@@ -515,6 +521,7 @@ const smoke = Effect.gen(function* () {
     params: { ws: restartWorkspaceId },
     payload: { projectId: restartProject.id, title: "Written after restart" },
   });
+
   yield* readUntil(
     restartStreamUrl,
     "the issue after the restart",

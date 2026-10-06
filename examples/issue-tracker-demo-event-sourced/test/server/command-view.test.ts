@@ -22,21 +22,26 @@ test("the seed folds into the base app's main workspace", () => {
 test("a status change moves an issue in and out of the in-progress count", () => {
   const { IssueStatusChanged } = WorkspaceEvent.cases;
   const txid = crypto.randomUUID();
+
   const started = applyEvent(
     seeded,
     IssueStatusChanged.make({ issueId: "issue_names", status: "in_progress", at: later, txid }),
   );
+
   expect(countInProgress(started, "proj_streamsy")).toBe(3);
+
   const finished = applyEvent(
     started,
     IssueStatusChanged.make({ issueId: "issue_filters", status: "done", at: later, txid }),
   );
+
   expect(countInProgress(finished, "proj_streamsy")).toBe(2);
   expect(findIssue(finished, "issue_filters")?.updatedAt).toBe(later);
 });
 
 test("a comment changes nothing that a rule reads", () => {
   const { CommentAdded } = WorkspaceEvent.cases;
+
   const comment = CommentAdded.make({
     commentId: "comment_b",
     issueId: "issue_names",
@@ -45,6 +50,7 @@ test("a comment changes nothing that a rule reads", () => {
     at: later,
     txid: crypto.randomUUID(),
   });
+
   expect(applyEvent(seeded, comment)).toBe(seeded);
   expect(hasProject(seeded, "proj_docs")).toBe(true);
   expect(hasProject(seeded, "proj_nope")).toBe(false);

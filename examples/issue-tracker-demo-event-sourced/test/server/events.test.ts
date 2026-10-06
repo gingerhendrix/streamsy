@@ -3,7 +3,9 @@ import { issueAfter, WorkspaceEvent } from "../../server/events.ts";
 import { createdAt, later } from "../support.ts";
 
 const { IssueCreated, IssueRenamed, IssueStatusChanged } = WorkspaceEvent.cases;
+
 const txid = "00000000-0000-4000-8000-000000000000";
+
 const created = IssueCreated.make({
   issueId: "issue_a",
   projectId: "proj_a",
@@ -29,6 +31,7 @@ describe("issueAfter", () => {
 
   test("a rename keeps the other fields and moves updatedAt", () => {
     const before = issueAfter(undefined, created);
+
     const renamed = IssueRenamed.make({
       issueId: "issue_a",
       title: "Second",
@@ -36,6 +39,7 @@ describe("issueAfter", () => {
       at: later,
       txid,
     });
+
     expect(issueAfter(before, renamed)).toMatchObject({
       title: "Second",
       status: "open",

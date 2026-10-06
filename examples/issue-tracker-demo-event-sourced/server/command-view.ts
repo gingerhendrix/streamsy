@@ -13,6 +13,7 @@ export const CommandView = Schema.Struct({
   projectIds: Schema.Array(Schema.String),
   issues: Schema.Record(Schema.String, Issue),
 });
+
 export interface CommandView extends Schema.Schema.Type<typeof CommandView> {}
 
 export const emptyView: CommandView = { projectIds: [], issues: {} };
@@ -33,6 +34,7 @@ export function applyEvent(view: CommandView, event: WorkspaceEvent): CommandVie
 
 function withIssue(view: CommandView, event: IssueEvent): CommandView {
   const row = issueAfter(view.issues[event.issueId], event);
+
   return row === undefined
     ? view
     : { projectIds: view.projectIds, issues: { ...view.issues, [row.id]: row } };

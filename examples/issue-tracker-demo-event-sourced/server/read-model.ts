@@ -13,6 +13,7 @@ import { WorkspaceEvents, Workspaces } from "./streams.ts";
 
 /** The issue rows by id. A rename or a status change needs the whole row to upsert. */
 export const IssueRows = Schema.Record(Schema.String, Issue);
+
 export type IssueRows = typeof IssueRows.Type;
 
 export type RowChange = DurableState.Change<typeof Workspaces.collections>;
@@ -46,7 +47,9 @@ function projectIssue(
   event: IssueEvent,
 ): readonly [IssueRows, ReadonlyArray<RowChange>] {
   const row = issueAfter(issues[event.issueId], event);
+
   if (row === undefined) return [issues, []];
+
   return [{ ...issues, [row.id]: row }, [DurableState.upsert("issue", row, headers(event))]];
 }
 
@@ -65,6 +68,7 @@ export const readModel = Projection.mapAccum({
   state: { schema: IssueRows, initial: {} },
   mapAccum: (issues, { item }) => {
     const [next, changes] = project(issues, item);
+
     return [next, { workspace: changes }] as const;
   },
 });
