@@ -1,9 +1,10 @@
 /** Human-readable rendering of durable Fold entries, shared by the CLI commands. */
 import type { LogEntry } from "@humanlayer/fold-core";
-import { Match } from "effect";
+import { Match, Predicate, Schema } from "effect";
 
 const preview = (text: string, limit = 110): string => {
   const flat = text.replace(/\s+/g, " ").trim();
+
   return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
 };
 
@@ -14,7 +15,7 @@ const preview = (text: string, limit = 110): string => {
 const renderContent = <Part extends { readonly type: string }>(
   content: string | ReadonlyArray<Part>,
   part: (value: Part) => string,
-): string => (typeof content === "string" ? content : content.map(part).join(" "));
+): string => (Predicate.isString(content) ? content : content.map(part).join(" "));
 
 const detail = (entry: LogEntry): string =>
   Match.value(entry).pipe(
@@ -26,16 +27,19 @@ const detail = (entry: LogEntry): string =>
         ),
       "assistant-message": (assistant) =>
         renderContent(assistant.message.content, (part) =>
-          part.type === "text"
-            ? part.text
-            : part.type === "tool-call"
-              ? `calls ${part.name}(${JSON.stringify(part.params)})`
-              : `<${part.type}>`,
+          Match.value(part).pipe(
+            Match.discriminators("type")({
+              text: (text) => text.text,
+              "tool-call": (call) =>
+                `calls ${call.name}(${Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(call.params)})`,
+            }),
+            Match.orElse((other) => `<${other.type}>`),
+          ),
         ),
       "tool-result": (tool) =>
         renderContent(tool.message.content, (part) =>
           part.type === "tool-result"
-            ? `${part.name} -> ${JSON.stringify(part.result)}`
+            ? `${part.name} -> ${Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(part.result)}`
             : `<${part.type}>`,
         ),
       "agent-finished": (finished) =>

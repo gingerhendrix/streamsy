@@ -27,7 +27,7 @@ export const unavailable = (message: string, retryable = false, cause?: unknown)
     operation: "append",
     message,
     retryable,
-    ...(cause === undefined ? {} : { cause }),
+    cause,
   });
 
 export const corrupt = (message: string) =>
@@ -44,15 +44,19 @@ export const decodeLog = Effect.fn("Fold.decodeLog")(function* (
   values: ReadonlyArray<Schema.Json>,
 ) {
   const entries: LogEntry[] = [];
+
   for (const value of values) {
     const entry = yield* decodeStoredLogEntry(value);
+
     if (entry.seq !== entries.length)
       return yield* corrupt(
         `Invalid EventLog sequence: expected ${entries.length}, got ${entry.seq}`,
       );
+
     if (entry.seq === 0 ? !isSessionStart(entry) : isSessionStart(entry))
       return yield* corrupt("Fold log must start with exactly one session_started at seq 0");
     entries.push(entry);
   }
+
   return entries;
 });

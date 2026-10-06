@@ -13,6 +13,7 @@ export interface StoreOptions {
 export const DEFAULT_DATABASE_PATH = Bun.fileURLToPath(
   new URL("../.data/agent.sqlite", import.meta.url),
 );
+
 export const DatabasePath = Config.String("FOLD_AGENT_DB").pipe(
   Config.withDefault(DEFAULT_DATABASE_PATH),
 );
@@ -26,14 +27,13 @@ export const memoryLayer = (options: { readonly longPollTimeoutMs?: number } = {
 export const sqliteLayer = (filename: string, options: StoreOptions = {}) =>
   BunStorage.layer(sessions, {
     client: { filename },
-    ...(options.longPollTimeoutMs === undefined
-      ? {}
-      : { longPollTimeoutMs: options.longPollTimeoutMs }),
+    longPollTimeoutMs: options.longPollTimeoutMs,
   });
 
 /** Memory for `:memory:` or no filename, Bun SQLite otherwise. */
 export const storeLayer = (options: StoreOptions = {}): Layer.Layer<Sessions, StorageFault> => {
   const filename = options.filename;
+
   return filename === undefined || filename === ":memory:"
     ? memoryLayer(options)
     : sqliteLayer(filename, options);
