@@ -1,3 +1,4 @@
+import { Clock, Effect, Schema } from "effect";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/crypto-random-uuid, anti-slop/no-chained-type-assertions -- This harness owns the real local workerd boundary for the Bun tests; Miniflare exposes a workers-types Fetch overload while the Bun tests use Bun Fetch values. */
 import {
   cpSync,
@@ -200,9 +201,9 @@ export const makeHarness = async (entry = "worker.ts", root?: string): Promise<H
     await miniflare.ready;
 
     // SAFETY: the local fixture exposes only idFromName/get/fetch to this harness.
-    const namespace = (await miniflare.getDurableObjectNamespace(
-      "STREAMS",
-    )) as unknown as TestNamespace;
+    const rawNamespace = await miniflare.getDurableObjectNamespace("STREAMS");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Miniflare and Bun use distinct Request declarations for the same local workerd stub.
+    const namespace = rawNamespace as unknown as TestNamespace;
 
     const harness = { bundleRoot, miniflare, ownership, root: ownedRoot, namespace };
     open.push(harness);
@@ -366,19 +367,19 @@ export const cleanupHarnesses = async (): Promise<void> => {
 };
 
 /** Dispatch through the worker's fetch handler. */
+type DispatchFetch = (input: string | Request, init?: RequestInit) => Promise<Response>;
+
 export const dispatchFetch = (
   harness: Harness,
   input: string | Request,
   init?: RequestInit,
-): Promise<Response> =>
-  // SAFETY: Miniflare dispatches the same local workerd boundary, while its
-  // declaration uses the workers-types Request overload instead of Bun's.
-  (
-    harness.miniflare.dispatchFetch as unknown as (
-      input: string | Request,
-      init?: RequestInit,
-    ) => Promise<Response>
-  )(input, init);
+): Promise<Response> => {
+  // SAFETY: Miniflare dispatches the same local workerd boundary; its declarations use the workers-types overload.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The cast bridges workers-types and Bun's Fetch declarations at this shared runtime boundary.
+  const fetch = harness.miniflare.dispatchFetch as unknown as DispatchFetch;
+
+  return fetch.call(harness.miniflare, input, init);
+};
 
 export const dispatch = (harness: Harness, path: string, init?: RequestInit) =>
   dispatchFetch(harness, `https://streams.test${path}`, init);
@@ -389,14 +390,34 @@ export const direct = (harness: Harness, name: string, path: string, init?: Requ
     .get(harness.namespace.idFromName(name))
     .fetch(new Request(`https://object.test${path}`, init));
 
-export const probe = async (harness: Harness, name: string) =>
-  // SAFETY: the fixture's `/__probe` branch always returns this fixed JSON shape.
-  (await direct(harness, name, "/__probe")).json() as unknown as ProbeResult;
+const probeSchema = Schema.Struct({
+  layerAcquisitions: Schema.Finite,
+  migrationAttempts: Schema.Finite,
+  alarmInvocations: Schema.Finite,
+  activeReads: Schema.Finite,
+  alarmInfo: Schema.Array(
+    Schema.Struct({
+      observedAt: Schema.Finite,
+      scheduledTime: Schema.Finite,
+      isRetry: Schema.Boolean,
+      retryCount: Schema.Finite,
+    }),
+  ),
+  alarm: Schema.NullOr(Schema.Finite),
+  alarmAfterMutation: Schema.NullOr(Schema.Finite),
+  rows: Schema.Array(Schema.Array(Schema.Unknown)),
+  messages: Schema.Array(Schema.Array(Schema.Unknown)),
+});
+
+export const probe = (harness: Harness, name: string): Promise<ProbeResult> =>
+  Promise.resolve(direct(harness, name, "/__probe"))
+    .then((response) => response.json())
+    .then(Schema.decodeUnknownSync(probeSchema));
 
 export const waitUntil = async (predicate: () => Promise<boolean>, timeoutMs = 6_000) => {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Effect.runSync(Clock.currentTimeMillis) + timeoutMs;
 
-  while (Date.now() < deadline) {
+  while (Effect.runSync(Clock.currentTimeMillis) < deadline) {
     if (await predicate()) return;
     await Bun.sleep(50);
   }

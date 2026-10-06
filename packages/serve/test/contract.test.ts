@@ -71,16 +71,16 @@ const errors: readonly PublicError[] = [
   { _tag: "WireEncodeFailed", route: "/value", detail: "invalid" },
 ];
 
+const accepts = (decode: (value: unknown) => PublicError, value: unknown) => {
+  try {
+    return { ok: true, value: decode(value) };
+  } catch {
+    return { ok: false };
+  }
+};
+
 test("S-4 server Schema and browser decoder agree on the wire JSON domain", () => {
   const server = Schema.decodeUnknownSync(PublicErrorSchema);
-
-  const accepts = (decode: (value: unknown) => PublicError, value: unknown) => {
-    try {
-      return { ok: true, value: decode(value) };
-    } catch {
-      return { ok: false };
-    }
-  };
 
   const candidates: unknown[] = [null, [], {}, 1, "error"];
 

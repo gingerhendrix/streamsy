@@ -1,4 +1,4 @@
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import { StreamAddress, MemoryStorage } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 
@@ -22,4 +22,10 @@ const program = Effect.gen(function* () {
   return { batches, first };
 });
 
-await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol())));
+await Effect.runPromise(
+  Effect.scoped(
+    Layer.build(MemoryStorage.layerProtocol()).pipe(
+      Effect.flatMap((context) => program.pipe(Effect.provideContext(context))),
+    ),
+  ),
+);

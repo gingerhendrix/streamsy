@@ -36,11 +36,11 @@ const makeNamespace = (): FakeNamespace => {
 
   // SAFETY: The router only uses idFromName, get and the returned stub's fetch;
   // the fake deliberately leaves unrelated Cloudflare namespace methods out.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Only the three namespace methods described above are exercised by this router fixture.
   return namespace as FakeNamespace;
 };
 
-const invoke = (handler: ExportedHandler<unknown>, request: Request) =>
-  handler.fetch?.(request, {}, {});
+const invoke = (handler: ExportedHandler, request: Request) => handler.fetch?.(request, {}, {});
 
 test("router uses the raw stripped stream path and forwards the unchanged request", async () => {
   const namespace = makeNamespace();
@@ -130,7 +130,9 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
     // SAFETY: This intentionally violates Placement's type to exercise the runtime boundary.
     placement: Placement.byKey(
       () =>
-        /* SAFETY: This intentionally violates Placement's type to exercise the runtime boundary. */ 7 as never,
+        /* SAFETY: This intentionally violates Placement's type to exercise the runtime boundary. */
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A non-string owner is deliberate input to the runtime validation test.
+        7 as never,
     ),
   });
 
@@ -152,7 +154,7 @@ const totals = StreamRoute.json("totals/:user", {
 });
 
 const orders = StreamRoute.json("orders/:orderId", {
-  params: { orderId: Schema.NumberFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
+  params: { orderId: Schema.FiniteFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
   schema: Note,
 });
 

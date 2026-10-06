@@ -43,7 +43,7 @@ const parkLongPoll = async (
     host,
     parked: () => !settled,
     settle: async (deadlineMs: number) => {
-      await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, deadlineMs))]);
+      await Promise.race([pending, Effect.runPromise(Effect.sleep(deadlineMs))]);
     },
   };
 };
