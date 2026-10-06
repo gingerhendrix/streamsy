@@ -1,14 +1,14 @@
 {
   "source": "oxlint-rules",
   "plugin": "effect-idioms",
-  "commit": "f7027c14fff771378165255820dea2ef4065845c",
+  "commit": "c21988b6d368d4fca2e7b4bbc561c1773642d127",
   "files": {
     "index.ts": "92680522f489f518eefeb981a722e0beeb4c48f6d33a7ffe60ed5760ac9ce000",
-    "rules/no-tag-comparison.ts": "9f4506c74f8100da2b461c632d10bfb3ab6cf43cf21f7188dbe03fd06abce107",
+    "rules/no-tag-comparison.ts": "8a52e116ed10196f118830199754758fe39e4d353e32a419a33999520f240d39",
     "rules/no-tag-destructure.ts": "0d41a5fa40bd3abb74a0f46f634bf60944365d3bbd74482621a5aa868f43d12a",
-    "rules/no-tag-literal.ts": "393c1e1d6a3f2bb399ca076ed02d8c48b908fac55455eea56a0aa487d1152a13",
-    "rules/no-tag-switch.ts": "880d41bafac1feb7a81e46799f8b3798572ed2ac6818bbc9698feafb9bd86195",
-    "shared/tag-context.ts": "263edc067fd56a96b14ea4a068b914d75f226e91f434760f0b6d73cdb9d8548b",
-    "shared/tag-syntax.ts": "6083aadda300b817c3f99c30a6687ab26bbfa11fde9a4b091528d5846c13f966"
+    "rules/no-tag-literal.ts": "10f1535bbb700643dd8ab37b4dbbcd7ee10c85b09b07905671e7795b2c767a98",
+    "rules/no-tag-switch.ts": "39452caef82f45161d7860dbf7bdf16ac7a9ccb420b670605e627839e6afd762",
+    "shared/tag-context.ts": "6d7ba9d991d538bc2bcd10ea083faf664c70fb9a56272749ad0b4715f0c1c259",
+    "shared/tag-syntax.ts": "86c14028d3648a9c4b12a785ad5509010e80f3713389265ac4881a82715f28e9"
   }
 }

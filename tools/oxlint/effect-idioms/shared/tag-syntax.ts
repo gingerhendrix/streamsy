@@ -61,3 +61,16 @@ export function tagRead(node: ESTree.Expression): ESTree.MemberExpression | unde
   if (expression.type !== "MemberExpression") return undefined;
   return isTagKey(expression.property, expression.computed) ? expression : undefined;
 }
+
+/**
+ * Reports whether a `_tag` read is on a nested `reason`, as in `error.reason._tag`.
+ * Effect 4 handles these with `Effect.catchReason` and `Effect.catchReasons`.
+ */
+export function isReasonTagRead(read: ESTree.MemberExpression): boolean {
+  const owner = unwrapExpression(read.object);
+  if (owner.type !== "MemberExpression") return false;
+  const key = owner.property;
+  if (key.type === "Identifier") return !owner.computed && key.name === "reason";
+  if (key.type === "PrivateIdentifier") return false;
+  return stringLiteralValue(key) === "reason";
+}

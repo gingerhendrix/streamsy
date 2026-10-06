@@ -5,26 +5,35 @@ import type { ESTree } from "@oxlint/plugins";
 import {
   builtInGuard,
   enclosingFunction,
-  isErrorHandler,
+  errorHandlerKind,
   isRetryPredicate,
   isTagPredicateLambda,
 } from "../shared/tag-context.ts";
-import { TAG_FIELD, stringLiteralValue, tagRead } from "../shared/tag-syntax.ts";
+import { TAG_FIELD, isReasonTagRead, stringLiteralValue, tagRead } from "../shared/tag-syntax.ts";
 
 const EQUALITY = new Set(["===", "!==", "==", "!="]);
 
-type MessageId = "builtInGuard" | "errorHandler" | "tagPredicate" | "tagComparison";
+type MessageId =
+  | "builtInGuard"
+  | "errorHandler"
+  | "reasonHandler"
+  | "mappingHandler"
+  | "tagPredicate"
+  | "tagComparison";
 
 interface TagComparison {
   readonly tag: string;
+  readonly read: ESTree.MemberExpression;
 }
 
 function comparedTag(node: ESTree.BinaryExpression): TagComparison | undefined {
   if (!EQUALITY.has(node.operator)) return undefined;
+  const leftRead = tagRead(node.left);
+  const rightRead = tagRead(node.right);
   const leftTag = stringLiteralValue(node.left);
   const rightTag = stringLiteralValue(node.right);
-  if (tagRead(node.left) !== undefined && rightTag !== undefined) return { tag: rightTag };
-  if (tagRead(node.right) !== undefined && leftTag !== undefined) return { tag: leftTag };
+  if (leftRead !== undefined && rightTag !== undefined) return { tag: rightTag, read: leftRead };
+  if (rightRead !== undefined && leftTag !== undefined) return { tag: leftTag, read: rightRead };
   return undefined;
 }
 
@@ -33,12 +42,16 @@ function isTagInCheck(node: ESTree.BinaryExpression): boolean {
   return stringLiteralValue(node.left) === TAG_FIELD;
 }
 
-function messageFor(node: ESTree.BinaryExpression, tag: string): MessageId {
-  if (builtInGuard(tag) !== undefined) return "builtInGuard";
+function messageFor(node: ESTree.BinaryExpression, comparison: TagComparison): MessageId {
+  if (builtInGuard(comparison.tag) !== undefined) return "builtInGuard";
   const fn = enclosingFunction(node);
   if (fn === undefined) return "tagComparison";
   if (isRetryPredicate(fn)) return "tagPredicate";
-  if (isErrorHandler(fn)) return "errorHandler";
+  const handler = errorHandlerKind(fn);
+  if (handler === "recovery") {
+    return isReasonTagRead(comparison.read) ? "reasonHandler" : "errorHandler";
+  }
+  if (handler === "mapping") return "mappingHandler";
   if (isTagPredicateLambda(fn, node)) return "tagPredicate";
   return "tagComparison";
 }
@@ -55,7 +68,11 @@ export const noTagComparisonRule = defineRule({
       builtInGuard:
         'Use `{{guard}}` in place of comparing `_tag` with "{{tag}}". Effect exports a named guard for this built-in tag.',
       errorHandler:
-        'Do not branch on `_tag` inside an error handler. Recover with `Effect.catchTag("{{tag}}", ...)` or `Effect.catchTags({ ... })` so the handled error leaves the error channel.',
+        'Do not branch on `_tag` inside a catch handler. Recover with `Effect.catchTag("{{tag}}", ...)` or `Effect.catchTags({ ... })` so the handled error leaves the error channel.',
+      reasonHandler:
+        'Do not branch on `reason._tag` inside a catch handler. Recover with `Effect.catchReason("<ErrorTag>", "{{tag}}", ...)` or `Effect.catchReasons("<ErrorTag>", { ... })`.',
+      mappingHandler:
+        'Do not compare `_tag` with "{{tag}}" inside `mapError` or `tapError`. Map with `Match.valueTags(error, { ... })` or test with `Predicate.isTagged("{{tag}}")`. To handle only this error, use `Effect.catchTag("{{tag}}", ...)`.',
       tagPredicate:
         'Use `Predicate.isTagged("{{tag}}")` in place of this `_tag` comparison. It is a real type guard.',
       tagComparison:
@@ -76,7 +93,7 @@ export const noTagComparisonRule = defineRule({
         const { tag } = comparison;
         context.report({
           node,
-          messageId: messageFor(node, tag),
+          messageId: messageFor(node, comparison),
           data: { tag, guard: builtInGuard(tag) ?? "" },
         });
       },

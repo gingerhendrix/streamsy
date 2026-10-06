@@ -2,7 +2,7 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
 
-import { calleeName } from "../shared/tag-context.ts";
+import { argumentCall, calleeName, isMatchPatternCall } from "../shared/tag-context.ts";
 import { isTagKey, literalTagNames } from "../shared/tag-syntax.ts";
 
 /** Test matchers whose expected value names the encoded `_tag` of the wire shape. */
@@ -15,19 +15,15 @@ const ASSERTION_CALLEES = new Set([
   "toHaveBeenCalledWith",
 ]);
 
-/** Reports whether an object literal is, or is nested in, the argument of a test assertion. */
-function isAssertionValue(node: ESTree.ObjectExpression): boolean {
-  let current: ESTree.Node = node;
-  while (
-    current.parent.type === "Property" ||
-    current.parent.type === "ObjectExpression" ||
-    current.parent.type === "ArrayExpression"
-  ) {
-    current = current.parent;
-  }
-  const parent = current.parent;
-  if (parent.type !== "CallExpression") return false;
-  const name = calleeName(parent);
+/**
+ * Reports whether an object literal is, or is nested in, a value that only describes a tag:
+ * the expected value of a test assertion, or a `Match.when` or `Match.not` pattern.
+ */
+function isTagDescription(node: ESTree.ObjectExpression): boolean {
+  const call = argumentCall(node);
+  if (call === undefined) return false;
+  if (isMatchPatternCall(call)) return true;
+  const name = calleeName(call);
   return name !== undefined && ASSERTION_CALLEES.has(name);
 }
 
@@ -53,7 +49,7 @@ export const noTagLiteralRule = defineRule({
           if (property.type !== "Property" || property.shorthand || property.method) continue;
           if (!isTagKey(property.key, property.computed)) continue;
           const tags = literalTagNames(property.value);
-          if (tags === undefined || isAssertionValue(node)) continue;
+          if (tags === undefined || isTagDescription(node)) continue;
           context.report({
             node: property,
             messageId: "tagLiteral",
