@@ -88,7 +88,7 @@ type StreamRead = Effect.Success<ReturnType<typeof readStream>>;
  */
 const readUntil = (streamUrl: string, waitingFor: string, ready: (read: StreamRead) => boolean) =>
   readStream(streamUrl).pipe(
-    Effect.flatMap((read) => (ready(read) ? Effect.succeed(read) : new NotYet({ waitingFor }))),
+    Effect.filterOrFail(ready, () => new NotYet({ waitingFor })),
     Effect.retry({ while: Schema.is(NotYet), schedule: Schedule.spaced("50 millis"), times: 100 }),
     Effect.catchTag(
       "NotYet",

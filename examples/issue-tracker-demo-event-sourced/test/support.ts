@@ -12,7 +12,16 @@ export const createdAt = "2026-10-06T00:00:00.000Z";
 
 export const later = "2026-10-06T00:05:00.000Z";
 
-export const stamp = (id: string, now = createdAt, txid = crypto.randomUUID()): Stamp => ({
+let issuedTxids = 0;
+
+/** A fresh, valid v4 txid for each call. Fixtures need distinct txids, not random ones. */
+export const fixtureTxid = (): string => {
+  issuedTxids += 1;
+
+  return `00000000-0000-4000-8000-${issuedTxids.toString(16).padStart(12, "0")}`;
+};
+
+export const stamp = (id: string, now = createdAt, txid = fixtureTxid()): Stamp => ({
   id,
   now,
   txid,
@@ -57,10 +66,21 @@ export const stateChanges = (workspaceId: string) =>
  */
 export const awaitTxids = (workspaceId: string, ...txids: ReadonlyArray<string>) =>
   stateChanges(workspaceId).pipe(
-    Effect.flatMap((items) =>
-      txids.every((txid) => items.some((item) => item.headers.txid === txid))
-        ? Effect.succeed(items)
-        : Effect.fail(new NotYet()),
+    Effect.filterOrFail(
+      (items) => txids.every((txid) => items.some((item) => item.headers.txid === txid)),
+      () => new NotYet(),
     ),
     Effect.retry({ while: Schema.is(NotYet), schedule: Schedule.spaced("10 millis"), times: 300 }),
   );
+
+/** Build local fixtures in a scope and supply their Context to the program. */
+export const withLayer =
+  <ROut, LE, RIn>(fixture: Layer.Layer<ROut, LE, RIn>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
+
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );

@@ -23,6 +23,7 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
+    "@streamsy/effect-test": "workspace:*",
     "@streamsy/test-support": "workspace:*",
     "bun-types": "^1.3.14"
   }

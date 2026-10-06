@@ -8,7 +8,7 @@ import {
 } from "../../server/command-view.ts";
 import { mainWorkspaceSeed } from "../../server/decide.ts";
 import { WorkspaceEvent } from "../../server/events.ts";
-import { later, stamp } from "../support.ts";
+import { fixtureTxid, later, stamp } from "../support.ts";
 
 const seeded = mainWorkspaceSeed(stamp("seed")).reduce(applyEvent, emptyView);
 
@@ -21,7 +21,7 @@ test("the seed folds into the base app's main workspace", () => {
 
 test("a status change moves an issue in and out of the in-progress count", () => {
   const { IssueStatusChanged } = WorkspaceEvent.cases;
-  const txid = crypto.randomUUID();
+  const txid = fixtureTxid();
 
   const started = applyEvent(
     seeded,
@@ -48,7 +48,7 @@ test("a comment changes nothing that a rule reads", () => {
     author: "Ann",
     body: "Hi",
     at: later,
-    txid: crypto.randomUUID(),
+    txid: fixtureTxid(),
   });
 
   expect(applyEvent(seeded, comment)).toBe(seeded);
