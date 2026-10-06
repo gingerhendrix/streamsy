@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { it as baseIt } from "@streamsy/effect-test";
+import { afterEach, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,44 +86,65 @@ const http = (root: string) =>
   });
 
 const run = (paths: ReturnType<typeof setup>) =>
-  Effect.runPromiseExit(
-    runEvidence(identity(paths.root)).pipe(
-      Effect.provide(
-        Layer.mergeAll(liveOperations(paths), liveReports(paths), http(paths.root)).pipe(
-          Layer.provide(BunServices.layer),
-        ),
+  runEvidence(identity(paths.root)).pipe(
+    withLayer(
+      Layer.mergeAll(liveOperations(paths), liveReports(paths), http(paths.root)).pipe(
+        Layer.provide(BunServices.layer),
       ),
     ),
+    Effect.exit,
   );
 
 const readReport = (paths: ReturnType<typeof setup>): EvidenceReport =>
   JSON.parse(readFileSync(join(paths.reports, `${stage}.json`), "utf8"));
 
-test("the live layers deploy, run the suite on the stack URL, destroy and pass the audit", async () => {
-  const paths = setup();
-  const exit = await run(paths);
-  expect(Exit.isSuccess(exit)).toBe(true);
-  expect(readFileSync(join(paths.root, "calls.log"), "utf8").trim().split("\n")).toEqual([
-    `deploy ${stage}`,
-    `suite https://${workerName}.example.workers.dev/`,
-    `destroy ${stage}`,
-    `destroy ${stage}`,
-  ]);
-  const report = readReport(paths);
-  expect(report.conformance).toEqual({
-    status: "success",
-    value: { passed: 332, skipped: 6, status: "success" },
-  });
-  expect(report.metadata.status).toBe("success");
-  expect(report.audit).toEqual({ status: "success", value: { complete: true, workers: [] } });
-}, 30_000);
+baseIt.live(
+  "the live layers deploy, run the suite on the stack URL, destroy and pass the audit",
+  () =>
+    Effect.gen(function* () {
+      const paths = setup();
+      const exit = yield* run(paths);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(readFileSync(join(paths.root, "calls.log"), "utf8").trim().split("\n")).toEqual([
+        `deploy ${stage}`,
+        `suite https://${workerName}.example.workers.dev/`,
+        `destroy ${stage}`,
+        `destroy ${stage}`,
+      ]);
+      const report = readReport(paths);
+      expect(report.conformance).toEqual({
+        status: "success",
+        value: { passed: 332, skipped: 6, status: "success" },
+      });
+      expect(report.metadata.status).toBe("success");
+      expect(report.audit).toEqual({ status: "success", value: { complete: true, workers: [] } });
+    }),
+  30_000,
+);
 
-test("state left after destroy fails the audit", async () => {
-  const paths = setup();
-  process.env.FAKE_KEEP_STATE = "1";
-  const exit = await run(paths);
-  expect(Exit.isFailure(exit)).toBe(true);
-  const report = readReport(paths);
-  expect(report.audit.status).toBe("failure");
-  expect(report.cleanupFailures).toContain("audit: planned worker still present");
-}, 30_000);
+baseIt.live(
+  "state left after destroy fails the audit",
+  () =>
+    Effect.gen(function* () {
+      const paths = setup();
+      process.env.FAKE_KEEP_STATE = "1";
+      const exit = yield* run(paths);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const report = readReport(paths);
+      expect(report.audit.status).toBe("failure");
+      expect(report.cleanupFailures).toContain("audit: planned worker still present");
+    }),
+  30_000,
+);
+
+/** Build local fixtures in a scope and supply their Context to the program. */
+const withLayer =
+  <ROut, LE, RIn>(fixture: Layer.Layer<ROut, LE, RIn>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
+
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );

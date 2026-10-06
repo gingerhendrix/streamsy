@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { DurableState } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
@@ -182,7 +183,7 @@ export const tracker = Projection.mapAccumBatch({
         const oldIssue = beforeIndex.issues.get(issue.issueId);
         const oldRow = oldIssue === undefined ? undefined : boardCard(beforeIndex, oldIssue);
 
-        if (JSON.stringify(row) !== JSON.stringify(oldRow))
+        if (oldRow === undefined || !Schema.toEquivalence(ProjectBoardCard)(row, oldRow))
           board.push(DurableState.upsert("board", row));
       }
 
@@ -194,7 +195,7 @@ export const tracker = Projection.mapAccumBatch({
         const oldLabel = beforeIndex.labels.get(label.labelId);
         const oldRow = oldLabel === undefined ? undefined : labelCount(beforeIndex, oldLabel);
 
-        if (JSON.stringify(row) !== JSON.stringify(oldRow))
+        if (oldRow === undefined || !Schema.toEquivalence(LabelCountRow)(row, oldRow))
           labelCounts.push(DurableState.upsert("labelCounts", row));
       }
 

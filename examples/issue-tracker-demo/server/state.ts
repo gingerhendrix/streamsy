@@ -46,7 +46,7 @@ export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()("IssueNot
 /** The project already has `limit` issues in progress. */
 export class TooManyInProgress extends Schema.TaggedError<TooManyInProgress>()(
   "TooManyInProgress",
-  { projectId: Schema.String, limit: Schema.Number },
+  { projectId: Schema.String, limit: Schema.Finite },
 ) {}
 
 const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });

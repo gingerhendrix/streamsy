@@ -1,6 +1,4 @@
 {
-  "$schema": "../../node_modules/oxlint/configuration_schema.json",
-  "rules": {
-    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }]
-  }
+  "$schema": "../../node_modules/@effect/tsgo/oxlint-schema.json",
+  "extends": ["../../.oxlintrc.json"]
 }

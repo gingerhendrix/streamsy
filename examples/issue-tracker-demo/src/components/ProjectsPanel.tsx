@@ -17,6 +17,7 @@ export function ProjectsPanel({
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const submitNewProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 

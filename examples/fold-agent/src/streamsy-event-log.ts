@@ -34,27 +34,31 @@ import {
 } from "./session-log.ts";
 
 export type StreamsyEventLogMode = "create" | "resume";
+
 export interface StreamsyEventLogOptions {
   readonly session: SessionId;
   readonly mode: StreamsyEventLogMode;
 }
+
 type LogFailure =
   | ReadFailure
   | FollowFailure
   | AppendFailure<{ expectedOffset: string }>
   | CreateFailure
   | Schema.SchemaError;
+
 const toUnavailable = (error: LogFailure) =>
   unavailable(error.message, isStreamsFault(error) && error.retryable, error);
+
 const toFoldError = (
-  error:
+  failure:
     | LogFailure
     | EventLogCorruptEntryError
     | EventLogUnavailableError
     | EventLogInvalidEntryError
     | EventLogUnsupportedVersionError,
 ) =>
-  Match.valueTags(error, {
+  Match.valueTags(failure, {
     EventLogCorruptEntryError: (error) => error,
     EventLogUnavailableError: (error) => error,
     EventLogInvalidEntryError: (error) => error,
@@ -83,13 +87,17 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     const sessions = yield* Sessions;
     const params: SessionParams = { session: options.session };
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
+
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
+
       if (CreateResult.$is("Exists")(result))
         return yield* unavailable(`Stream ${Sessions.address(params).id} already exists`);
     }
+
     const history = yield* readHistory(params);
     const decoded = yield* decodeLog(history.items);
+
     if (options.mode === "resume" && decoded.length === 0)
       return yield* unavailable("Cannot resume a log with no Fold entries");
 
@@ -97,10 +105,12 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     let nextEntrySeq = decoded.length;
     const lock = yield* Semaphore.make(1);
     let fenced = false;
+
     const append = Effect.fn("Fold.EventLog.append")((input: LogEntryInput) =>
       lock.withPermit(
         Effect.gen(function* () {
           if (fenced) return yield* unavailable("This writer is fenced; resume from the log");
+
           if (nextEntrySeq === 0 ? !isSessionStart(input) : isSessionStart(input))
             return yield* corrupt("Fold log requires exactly one initial session_started");
           const entry = yield* storedLogEntry(input, nextEntrySeq, yield* ids.makeEventId);
@@ -108,6 +118,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           const bytes = yield* Schema.encodeEffect(Schema.fromJsonString(LogEntrySchema))(entry);
           const json = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(bytes);
           fenced = true;
+
           const result = yield* sessions
             .append(params, [json], { expectedOffset: tail })
             .pipe(
@@ -115,13 +126,16 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
                 unavailable("Fenced: another writer advanced the log"),
               ),
             );
+
           tail = result.offset;
           nextEntrySeq++;
           fenced = false;
+
           return entry;
         }).pipe(Effect.mapError(toFoldError)),
       ),
     );
+
     const entries: EventLogService["entries"] = (fromSeq = 0) =>
       Stream.unwrap(
         readHistory(params).pipe(
@@ -131,22 +145,26 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           Effect.provideService(Sessions, sessions),
         ),
       );
+
     const subscribe: EventLogService["subscribe"] = (fromSeq = 0) =>
       Stream.unwrap(
         Effect.sync(() => {
           let seq = 0;
+
           // `follow` catches up, then long-polls, and retries storage faults from the same offset.
           return sessions.follow(params).pipe(
             Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
             Stream.mapEffect((value) =>
               Effect.gen(function* () {
                 const entry = yield* decodeStoredLogEntry(value);
+
                 if (
                   entry.seq !== seq ||
                   (seq === 0 ? !isSessionStart(entry) : isSessionStart(entry))
                 )
                   return yield* corrupt(`Invalid subscribed Fold sequence at ${seq}`);
                 seq++;
+
                 return entry;
               }),
             ),
@@ -155,6 +173,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           );
         }),
       );
+
     return { append, entries, subscribe } satisfies EventLogService;
   }).pipe(Effect.mapError(toFoldError));
 
@@ -163,6 +182,7 @@ export const streamsyEventLog = Effect.fn("Fold.streamsyEventLog")(function* (
   options: StreamsyEventLogOptions,
 ) {
   const sessions = yield* Sessions;
+
   return eventLogSource(makeEventLog(options).pipe(Effect.provideService(Sessions, sessions)));
 });
 

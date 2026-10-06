@@ -1,7 +1,10 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This SQLite restart fixture owns native temporary files; adding platform services would require a dependency and lock change.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The native temporary-directory fixture builds the retained SQLite file path.
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+import { it as baseIt } from "@streamsy/effect-test";
+import { expect } from "bun:test";
 import { Effect, Layer, Option, Result } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Streamsy } from "@streamsy/core";
@@ -38,12 +41,16 @@ const sqlite = (filename: string) =>
  * Two calls on the same SQLite file are a restart.
  */
 const asProcess =
-  <ROut, LE>(layer: Layer.Layer<ROut, LE>) =>
+  <ROut, LE>(fixture: Layer.Layer<ROut, LE>) =>
   <A, E, R>(program: Effect.Effect<A, E, R>) =>
-    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
-    Effect.provide(program, layer);
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
 
-/** A SQLite file in a temporary folder. The folder is removed when the scope closes. */
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );
+
 const tempFile = (prefix: string) =>
   Effect.acquireRelease(
     Effect.sync(() => mkdtempSync(join(tmpdir(), prefix))),
@@ -121,7 +128,7 @@ for (const [name, events, cut] of [
   ["12-event victory game split after 5 events", fullGame, split],
   ["450-event game split after 400 events", longGame, 400],
 ] as const) {
-  test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
+  baseIt.effect(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
     Effect.gen(function* () {
       const file = yield* tempFile("hex-board-");
       const before = yield* seed(events, cut).pipe(Effect.andThen(read), asProcess(sqlite(file)));
@@ -137,18 +144,22 @@ for (const [name, events, cut] of [
         expect(yield* read).toEqual(before);
         yield* advance(before, events, cut);
       }).pipe(asProcess(sqlite(file)));
-    }).pipe(Effect.scoped, Effect.runPromise));
+    }),
+  );
 }
 
-test("a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut", () =>
-  Effect.gen(function* () {
-    const file = yield* tempFile("hex-board-rollback-");
-    yield* Effect.gen(function* () {
-      yield* seed();
-      const before = yield* snapshot;
-      yield* (yield* GameEvents).append(params, [{ ...resolution, attackerRolls: [1, 1, 1] }]);
-      const error = yield* Effect.flip(Projection.run(board));
-      expect(error).toBeInstanceOf(ProjectionIntegrityError);
-      expect(yield* snapshot).toEqual(before);
-    }).pipe(asProcess(sqlite(file)));
-  }).pipe(Effect.scoped, Effect.runPromise));
+baseIt.effect(
+  "a contradictory AttackResolved fails typed and leaves SQLite state and checkpoint at the prior cut",
+  () =>
+    Effect.gen(function* () {
+      const file = yield* tempFile("hex-board-rollback-");
+      yield* Effect.gen(function* () {
+        yield* seed();
+        const before = yield* snapshot;
+        yield* (yield* GameEvents).append(params, [{ ...resolution, attackerRolls: [1, 1, 1] }]);
+        const error = yield* Effect.flip(Projection.run(board));
+        expect(error).toBeInstanceOf(ProjectionIntegrityError);
+        expect(yield* snapshot).toEqual(before);
+      }).pipe(asProcess(sqlite(file)));
+    }),
+);

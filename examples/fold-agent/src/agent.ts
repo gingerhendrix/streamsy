@@ -12,7 +12,7 @@ import {
   type AgentDefinition,
   type FoldModel,
 } from "@humanlayer/fold-core";
-import { Config, Effect, Option, Schema } from "effect";
+import { Config, Effect, Layer, Option, Schema } from "effect";
 import { FetchHttpClient, type HttpClient } from "effect/http";
 import { scriptedModel, textTurn, toolCallTurn } from "./scripted-model.ts";
 
@@ -109,7 +109,11 @@ const scriptedFromJson = (fixture: string) =>
 /** Fold's built-in providers need an HttpClient. The example reaches them over fetch. */
 const overFetch = (model: FoldModel<HttpClient.HttpClient>): FoldModel => ({
   ...model,
-  make: model.make.pipe(Effect.provide(FetchHttpClient.layer)),
+  make: Effect.gen(function* () {
+    const services = yield* Layer.build(FetchHttpClient.layer);
+
+    return yield* model.make.pipe(Effect.provideContext(services));
+  }),
 });
 
 /**
@@ -121,7 +125,9 @@ export const configuredModel: Effect.Effect<
   MissingCredentialsError | Config.ConfigError
 > = Effect.gen(function* () {
   const settings = yield* ModelSettings;
+
   if (Option.isSome(settings.script)) return yield* scriptedFromJson(settings.script.value);
+
   if (Option.isSome(settings.openaiKey))
     return overFetch(
       openaiModel({
@@ -129,6 +135,7 @@ export const configuredModel: Effect.Effect<
         model: Option.getOrElse(settings.model, () => "gpt-5.6"),
       }),
     );
+
   if (Option.isSome(settings.anthropicKey))
     return overFetch(
       anthropicModel({
@@ -136,5 +143,6 @@ export const configuredModel: Effect.Effect<
         ...Option.match(settings.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
       }),
     );
+
   return yield* missingCredentials();
 });

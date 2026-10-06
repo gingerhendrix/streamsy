@@ -1,3 +1,4 @@
+import { it as baseIt } from "@streamsy/effect-test";
 import { expect, test } from "bun:test";
 import { Effect, Exit, Fiber, Layer } from "effect";
 import { TestClock } from "effect/testing";
@@ -64,9 +65,9 @@ test("nearest-rank percentile uses index 284 for n=300 at p95", () => {
   expect(() => percentile([], 95)).toThrow(ContractError);
 });
 
-test("latency deltas preserve the historical first-minus-warm sign", async () => {
-  const exit = await Effect.runPromise(
-    Effect.gen(function* () {
+baseIt.live("latency deltas preserve the historical first-minus-warm sign", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.gen(function* () {
       const fiber = yield* measureLatency({
         baseUrl: "https://example.test",
         paths: ["/a"],
@@ -77,7 +78,7 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
 
       return yield* Fiber.join(fiber);
     }).pipe(
-      Effect.provide(
+      withLayer(
         Layer.mergeAll(
           Layer.succeed(HttpOperation, {
             request: (request) =>
@@ -88,23 +89,23 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
           TestClock.layer(),
         ),
       ),
-    ),
-  );
+    );
 
-  expect(exit.pairs[0]?.firstMinusWarmMs).toBe(7);
-  expect(exit.deltas.status).toBe("success");
-});
+    expect(exit.pairs[0]?.firstMinusWarmMs).toBe(7);
+    expect(exit.deltas.status).toBe("success");
+  }),
+);
 
-test("latency enforces bounded concurrent phases and completes all PUTs before HEADs", async () => {
-  const paths = Array.from({ length: 7 }, (_, index) => `/streams/${index}`);
-  let active = 0;
-  let maximumPut = 0;
-  let maximumHead = 0;
-  let putsCompleted = 0;
-  let headBeforeAllPuts = false;
+baseIt.live("latency enforces bounded concurrent phases and completes all PUTs before HEADs", () =>
+  Effect.gen(function* () {
+    const paths = Array.from({ length: 7 }, (_, index) => `/streams/${index}`);
+    let active = 0;
+    let maximumPut = 0;
+    let maximumHead = 0;
+    let putsCompleted = 0;
+    let headBeforeAllPuts = false;
 
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
+    const result = yield* Effect.gen(function* () {
       const fiber = yield* measureLatency({
         baseUrl: "https://example.test",
         paths,
@@ -123,7 +124,7 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
 
       return value;
     }).pipe(
-      Effect.provide(
+      withLayer(
         Layer.mergeAll(
           Layer.succeed(HttpOperation, {
             request: (request) =>
@@ -147,56 +148,62 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
           TestClock.layer(),
         ),
       ),
-    ),
-  );
+    );
 
-  expect(result.valid).toBe(true);
-  expect(result.pairs).toHaveLength(paths.length);
-  expect(maximumPut).toBe(3);
-  expect(maximumHead).toBe(3);
-  expect(headBeforeAllPuts).toBe(false);
-});
+    expect(result.valid).toBe(true);
+    expect(result.pairs).toHaveLength(paths.length);
+    expect(maximumPut).toBe(3);
+    expect(maximumHead).toBe(3);
+    expect(headBeforeAllPuts).toBe(false);
+  }),
+);
 
-test("latency does not produce a valid aggregate after a failed response", async () => {
-  const layer = Layer.succeed(HttpOperation, {
-    request: (request) =>
-      Effect.succeed({ status: request.method === "PUT" ? 500 : 200, body: "failure" }),
-  });
+baseIt.live("latency does not produce a valid aggregate after a failed response", () =>
+  Effect.gen(function* () {
+    const layer = Layer.succeed(HttpOperation, {
+      request: (request) =>
+        Effect.succeed({ status: request.method === "PUT" ? 500 : 200, body: "failure" }),
+    });
 
-  const result = await Effect.runPromise(
-    measureLatency({ baseUrl: "https://example.test", paths: ["/a"], concurrency: 1 }).pipe(
-      Effect.provide(layer),
-    ),
-  );
+    const result = yield* measureLatency({
+      baseUrl: "https://example.test",
+      paths: ["/a"],
+      concurrency: 1,
+    }).pipe(withLayer(layer));
 
-  expect(result.valid).toBe(false);
-  expect(result.first.status).toBe("failure");
-  expect(result.deltas.status).toBe("failure");
-});
+    expect(result.valid).toBe(false);
+    expect(result.first.status).toBe("failure");
+    expect(result.deltas.status).toBe("failure");
+  }),
+);
 
-test("latency rejects initial PUT, HEAD, and body failures", async () => {
-  const result = await Effect.runPromise(
-    measureLatency({ baseUrl: "https://example.test", paths: ["/a"], concurrency: 1 }).pipe(
+baseIt.live("latency rejects initial PUT, HEAD, and body failures", () =>
+  Effect.gen(function* () {
+    const result = yield* measureLatency({
+      baseUrl: "https://example.test",
+      paths: ["/a"],
+      concurrency: 1,
+    }).pipe(
       Effect.provideService(HttpOperation, {
         request: (request) =>
           request.method === "PUT"
             ? Effect.succeed({ status: 500, body: "put failed" })
             : Effect.fail(new ContractError({ message: "body failed" })),
       }),
-    ),
-  );
+    );
 
-  expect(result.valid).toBe(false);
-  expect(result.first.status).toBe("failure");
-  expect(result.warm.status).toBe("failure");
-  expect(result.pairs[0]?.error).toContain("body failed");
-});
+    expect(result.valid).toBe(false);
+    expect(result.first.status).toBe("failure");
+    expect(result.warm.status).toBe("failure");
+    expect(result.pairs[0]?.error).toContain("body failed");
+  }),
+);
 
-test("throughput records invalid create and POST responses", async () => {
-  let postCalls = 0;
+baseIt.live("throughput records invalid create and POST responses", () =>
+  Effect.gen(function* () {
+    let postCalls = 0;
 
-  const result = await Effect.runPromise(
-    measureThroughput({
+    const result = yield* measureThroughput({
       baseUrl: "https://example.test",
       trials: 1,
       postsPerTrial: 2,
@@ -213,25 +220,25 @@ test("throughput records invalid create and POST responses", async () => {
             : Effect.succeed({ status: 201, body: "" });
         },
       }),
-    ),
-  );
+    );
 
-  expect(result.valid).toBe(false);
-  expect(result.medianRate).toBeUndefined();
-  expect(result.trials[0]?.errors).toEqual(["create: HTTP 500", "post 0: post body failed"]);
-});
+    expect(result.valid).toBe(false);
+    expect(result.medianRate).toBeUndefined();
+    expect(result.trials[0]?.errors).toEqual(["create: HTTP 500", "post 0: post body failed"]);
+  }),
+);
 
-test("throughput runs its trials in order and reports the median rate", async () => {
-  const methods: Array<string> = [];
+baseIt.live("throughput runs its trials in order and reports the median rate", () =>
+  Effect.gen(function* () {
+    const methods: Array<string> = [];
 
-  const result = await Effect.runPromise(
-    measureThroughput({
+    const result = yield* measureThroughput({
       baseUrl: "https://example.test",
       trials: 5,
       postsPerTrial: 1,
       concurrency: 1,
     }).pipe(
-      Effect.provide(
+      withLayer(
         Layer.mergeAll(
           Layer.succeed(HttpOperation, {
             request: (request) =>
@@ -246,32 +253,32 @@ test("throughput runs its trials in order and reports the median rate", async ()
           TestClock.layer(),
         ),
       ),
-    ),
-  );
+    );
 
-  expect(methods).toEqual([
-    "PUT",
-    "POST",
-    "PUT",
-    "POST",
-    "PUT",
-    "POST",
-    "PUT",
-    "POST",
-    "PUT",
-    "POST",
-  ]);
-  expect(result.valid).toBe(true);
-  expect(result.medianRate).toBe(1);
-});
+    expect(methods).toEqual([
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+    ]);
+    expect(result.valid).toBe(true);
+    expect(result.medianRate).toBe(1);
+  }),
+);
 
-test("throughput bounds POST concurrency and keeps trials sequential", async () => {
-  let activePosts = 0;
-  let maximumPosts = 0;
-  let trialOverlap = false;
+baseIt.live("throughput bounds POST concurrency and keeps trials sequential", () =>
+  Effect.gen(function* () {
+    let activePosts = 0;
+    let maximumPosts = 0;
+    let trialOverlap = false;
 
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
+    const result = yield* Effect.gen(function* () {
       const fiber = yield* measureThroughput({
         baseUrl: "https://example.test",
         trials: 5,
@@ -291,7 +298,7 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
 
       return value;
     }).pipe(
-      Effect.provide(
+      withLayer(
         Layer.mergeAll(
           Layer.succeed(HttpOperation, {
             request: (request) =>
@@ -311,55 +318,55 @@ test("throughput bounds POST concurrency and keeps trials sequential", async () 
           TestClock.layer(),
         ),
       ),
-    ),
-  );
+    );
 
-  expect(result.valid).toBe(true);
-  expect(maximumPosts).toBe(2);
-  expect(trialOverlap).toBe(false);
-});
+    expect(result.valid).toBe(true);
+    expect(maximumPosts).toBe(2);
+    expect(trialOverlap).toBe(false);
+  }),
+);
 
 const clockLayer = (
   request: (request: HttpRequest) => Effect.Effect<FullResponse, ContractError>,
 ) => Layer.mergeAll(Layer.succeed(HttpOperation, { request }), TestClock.layer());
 
-test("readiness requires five consecutive exact full-body matches", async () => {
-  let calls = 0;
+baseIt.live("readiness requires five consecutive exact full-body matches", () =>
+  Effect.gen(function* () {
+    let calls = 0;
 
-  const program = Effect.gen(function* () {
-    const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
-    yield* TestClock.adjust("8 seconds");
+    const program = Effect.gen(function* () {
+      const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
+      yield* TestClock.adjust("8 seconds");
 
-    return yield* Fiber.join(fiber);
-  });
+      return yield* Fiber.join(fiber);
+    });
 
-  const result = await Effect.runPromise(
-    program.pipe(
-      Effect.provide(
+    const result = yield* program.pipe(
+      withLayer(
         clockLayer(() => {
           calls += 1;
 
           return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
         }),
       ),
-    ),
-  );
+    );
 
-  expect(result.attempts).toBe(5);
-  expect(calls).toBe(5);
-});
+    expect(result.attempts).toBe(5);
+    expect(calls).toBe(5);
+  }),
+);
 
-test("readiness resets on a transport failure and gone requires 404", async () => {
-  let calls = 0;
+baseIt.live("readiness resets on a transport failure and gone requires 404", () =>
+  Effect.gen(function* () {
+    let calls = 0;
 
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
+    const result = yield* Effect.gen(function* () {
       const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
 
       return yield* Fiber.join(fiber);
     }).pipe(
-      Effect.provide(
+      withLayer(
         clockLayer(() => {
           calls += 1;
 
@@ -368,33 +375,43 @@ test("readiness resets on a transport failure and gone requires 404", async () =
           return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
         }),
       ),
-    ),
-  );
+    );
 
-  expect(result.attempts).toBe(8);
-  expect(calls).toBe(8);
+    expect(result.attempts).toBe(8);
+    expect(calls).toBe(8);
 
-  const gone = await Effect.runPromise(
-    Effect.gen(function* () {
+    const gone = yield* Effect.gen(function* () {
       const fiber = yield* awaitGone("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("8 seconds");
 
       return yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(clockLayer(() => Effect.succeed({ status: 404, body: "" })))),
-  );
+    }).pipe(withLayer(clockLayer(() => Effect.succeed({ status: 404, body: "" }))));
 
-  expect(gone.attempts).toBe(5);
-});
+    expect(gone.attempts).toBe(5);
+  }),
+);
 
-test("a body that never completes is bounded by the probe timeout", async () => {
-  const exit = await Effect.runPromiseExit(
-    Effect.gen(function* () {
+baseIt.live("a body that never completes is bounded by the probe timeout", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.gen(function* () {
       const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
       yield* TestClock.adjust("60 seconds");
 
       return yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(clockLayer(() => Effect.never))),
-  );
+    }).pipe(withLayer(clockLayer(() => Effect.never)), Effect.exit);
 
-  expect(Exit.isFailure(exit)).toBe(true);
-});
+    expect(Exit.isFailure(exit)).toBe(true);
+  }),
+);
+
+/** Build local fixtures in a scope and supply their Context to the program. */
+const withLayer =
+  <ROut, LE, RIn>(fixture: Layer.Layer<ROut, LE, RIn>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
+
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );

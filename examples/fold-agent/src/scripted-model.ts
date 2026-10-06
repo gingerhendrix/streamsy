@@ -5,7 +5,7 @@ import {
   type ActiveModel,
   type FoldModel,
 } from "@humanlayer/fold-core";
-import { Effect, Ref, Stream } from "effect";
+import { Effect, Ref, Schema, Stream } from "effect";
 import { LanguageModel, type Response } from "effect/ai";
 
 export type ScriptedTurn = { readonly parts: ReadonlyArray<Response.StreamPartEncoded> };
@@ -29,7 +29,7 @@ export const textTurn = (text: string): ScriptedTurn => ({
   ],
 });
 
-export const toolCallTurn = (id: string, name: string, params: unknown): ScriptedTurn => ({
+export const toolCallTurn = (id: string, name: string, params: Schema.Json): ScriptedTurn => ({
   parts: [
     { type: "tool-call", id, name, params, providerExecuted: false },
     finishPart("tool-calls"),
@@ -56,6 +56,7 @@ export interface ScriptedModel {
 export const scriptedModel = (turns: ReadonlyArray<ScriptedTurn>): Effect.Effect<ScriptedModel> =>
   Effect.gen(function* () {
     const turnsRef = yield* Ref.make<ReadonlyArray<ScriptedTurn>>(turns);
+
     const make = LanguageModel.make({
       generateText: () => Effect.die(new Error("scripted model supports streamText only")),
       streamText: () =>
@@ -63,12 +64,15 @@ export const scriptedModel = (turns: ReadonlyArray<ScriptedTurn>): Effect.Effect
           Effect.gen(function* () {
             const remaining = yield* Ref.get(turnsRef);
             const turn = remaining[0];
+
             if (turn === undefined) return yield* Effect.die(new Error("scripted model exhausted"));
             yield* Ref.set(turnsRef, remaining.slice(1));
+
             return Stream.fromIterable(turn.parts);
           }),
         ),
     });
+
     return {
       model: customModel({ activeModel: scriptedActiveModel, make }),
       remainingTurns: Ref.get(turnsRef).pipe(Effect.map((remaining) => remaining.length)),

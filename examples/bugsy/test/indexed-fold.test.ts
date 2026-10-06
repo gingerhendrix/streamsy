@@ -1,20 +1,24 @@
+import { BunServices } from "@effect/platform-bun";
+import { layer as testLayer } from "@streamsy/effect-test";
+import { FetchHttpClient } from "effect/http";
+import { Layer } from "effect";
+
 import * as Addresses from "./support/addresses.ts";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { Projection } from "@streamsy/projection";
-import { Effect, ManagedRuntime, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker, Board, LabelCounts } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels, Projects, Users } from "../server/streams.ts";
 
-// Pre-index full-scan builders are an oracle for wire payloads and ordering.
 const cards = (state: WorkspaceState) =>
   state.issues.map((issue) => ({
     ...issue,
     labelIds: state.memberships
       .filter((row) => row.issueId === issue.issueId && row.attached)
       .map((row) => row.labelId)
-      .sort(),
+      .toSorted(),
     projectName: state.projects.find((row) => row.projectId === issue.projectId)?.name ?? null,
     assigneeName: state.users.find((row) => row.userId === issue.assigneeId)?.name ?? null,
   }));
@@ -32,211 +36,241 @@ const counts = (state: WorkspaceState) =>
     ).length,
   }));
 
-const at = "2026-09-23T10:00:00Z";
+testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
+  (it) => {
+    // Pre-index full-scan builders are an oracle for wire payloads and ordering.
 
-const common = { workspaceId: "live", occurredAt: at };
+    const at = "2026-09-23T10:00:00Z";
 
-const user = { workspaceId: "live", userId: "ada", name: "Ada", updatedAt: at };
+    const common = { workspaceId: "live", occurredAt: at };
 
-const project = { workspaceId: "live", projectId: "p1", key: "p1", name: "Project", updatedAt: at };
+    const user = { workspaceId: "live", userId: "ada", name: "Ada", updatedAt: at };
 
-const label = { workspaceId: "live", labelId: "bug", name: "Bug", color: "#123456", updatedAt: at };
+    const project = {
+      workspaceId: "live",
+      projectId: "p1",
+      key: "p1",
+      name: "Project",
+      updatedAt: at,
+    };
 
-test("indexed touched-key output matches full scans byte for byte across catalog and membership changes", async () => {
-  const runtime = ManagedRuntime.make(applicationLayer(sqliteStorage(":memory:")));
+    const label = {
+      workspaceId: "live",
+      labelId: "bug",
+      name: "Bug",
+      color: "#123456",
+      updatedAt: at,
+    };
 
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* createInputs("live");
+    it.effect(
+      "indexed touched-key output matches full scans byte for byte across catalog and membership changes",
+      () =>
+        Effect.gen(function* () {
+          const runtime = yield* Layer.build(applicationLayer(sqliteStorage(":memory:")));
 
-        const phases = [
-          Effect.gen(function* () {
-            yield* (yield* Labels).append({ workspaceId: "live" }, [
-              { type: "label", key: "bug", value: label, headers: { operation: "upsert" } },
-            ]);
-            yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
-              {
-                ...common,
-                type: "LabelAttached",
-                eventId: "l1",
-                issueId: "i1",
-                labelId: "bug",
-                membershipId: "i1.bug",
-                sequence: 1,
-              },
-            ]);
-          }),
-          (yield* Events).append({ workspaceId: "live" }, [
-            {
-              ...common,
-              type: "IssueCreated",
-              eventId: "e1",
-              issueId: "i1",
-              projectId: "p1",
-              title: "One",
-              status: "todo",
-              sequence: 1,
-            },
-            {
-              ...common,
-              type: "IssueCreated",
-              eventId: "e2",
-              issueId: "i2",
-              projectId: "p1",
-              title: "Two",
-              status: "todo",
-              sequence: 2,
-            },
-          ]),
-          Effect.gen(function* () {
-            yield* (yield* Projects).append({ workspaceId: "live" }, [
-              { type: "project", key: "p1", value: project, headers: { operation: "upsert" } },
-            ]);
-            yield* (yield* Users).append({ workspaceId: "live" }, [
-              { type: "user", key: "ada", value: user, headers: { operation: "upsert" } },
-            ]);
-            yield* (yield* Events).append({ workspaceId: "live" }, [
-              {
-                ...common,
-                type: "IssueAssigned",
-                eventId: "e3",
-                issueId: "i2",
-                assigneeId: "ada",
-                status: "todo",
-                sequence: 3,
-              },
-            ]);
-          }),
-          Effect.gen(function* () {
-            yield* (yield* Users).append({ workspaceId: "live" }, [
-              {
-                type: "user",
-                key: "ada",
-                value: { ...user, name: "Augusta" },
-                headers: { operation: "upsert" },
-              },
-            ]);
-            yield* (yield* Projects).append({ workspaceId: "live" }, [
-              {
-                type: "project",
-                key: "p1",
-                value: { ...project, name: "Renamed" },
-                headers: { operation: "upsert" },
-              },
-            ]);
-            yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
-              {
-                ...common,
-                type: "LabelDetached",
-                eventId: "l2",
-                issueId: "i1",
-                labelId: "bug",
-                membershipId: "i1.bug",
-                sequence: 2,
-              },
-              {
-                ...common,
-                type: "LabelAttached",
-                eventId: "stale",
-                issueId: "i1",
-                labelId: "bug",
-                membershipId: "i1.bug",
-                sequence: 1,
-              },
-            ]);
-          }),
-          (yield* Labels).append({ workspaceId: "live" }, [
-            { type: "label", key: "bug", headers: { operation: "delete" } },
-            {
-              type: "label",
-              key: "bug",
-              value: { ...label, name: "Readded" },
-              headers: { operation: "upsert" },
-            },
-          ]),
-          Effect.gen(function* () {
-            yield* (yield* Labels).append({ workspaceId: "live" }, [
-              { type: "label", key: "bug", headers: { operation: "delete" } },
-            ]);
-            yield* (yield* Projects).append({ workspaceId: "live" }, [
-              { type: "project", key: "p1", headers: { operation: "delete" } },
-            ]);
-            yield* (yield* Users).append({ workspaceId: "live" }, [
-              { type: "user", key: "ada", headers: { operation: "delete" } },
-            ]);
-          }),
-        ];
+          yield* Effect.gen(function* () {
+            yield* createInputs("live");
 
-        const boardRef = Board.address({ workspaceId: "live" });
-        const countsRef = LabelCounts.address({ workspaceId: "live" });
-        const expectedBoard: Array<string | Uint8Array> = [];
-        const expectedCounts: Array<string | Uint8Array> = [];
-        let previous = initialWorkspace("live");
-
-        for (const phase of phases) {
-          yield* phase;
-          yield* Projection.run(tracker.at({ workspaceId: "live" }));
-
-          const next = yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
-            Effect.map(({ state }) => state),
-          );
-
-          const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
-          const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));
-
-          for (const row of cards(next)) {
-            if (JSON.stringify(row) !== JSON.stringify(oldCards.get(row.issueId)))
-              expectedBoard.push(
-                Schema.encodeSync(boardRef.codec)({
-                  type: "board",
-                  key: row.issueId,
-                  value: row,
+            const phases = [
+              Effect.gen(function* () {
+                yield* (yield* Labels).append({ workspaceId: "live" }, [
+                  { type: "label", key: "bug", value: label, headers: { operation: "upsert" } },
+                ]);
+                yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
+                  {
+                    ...common,
+                    type: "LabelAttached",
+                    eventId: "l1",
+                    issueId: "i1",
+                    labelId: "bug",
+                    membershipId: "i1.bug",
+                    sequence: 1,
+                  },
+                ]);
+              }),
+              (yield* Events).append({ workspaceId: "live" }, [
+                {
+                  ...common,
+                  type: "IssueCreated",
+                  eventId: "e1",
+                  issueId: "i1",
+                  projectId: "p1",
+                  title: "One",
+                  status: "todo",
+                  sequence: 1,
+                },
+                {
+                  ...common,
+                  type: "IssueCreated",
+                  eventId: "e2",
+                  issueId: "i2",
+                  projectId: "p1",
+                  title: "Two",
+                  status: "todo",
+                  sequence: 2,
+                },
+              ]),
+              Effect.gen(function* () {
+                yield* (yield* Projects).append({ workspaceId: "live" }, [
+                  { type: "project", key: "p1", value: project, headers: { operation: "upsert" } },
+                ]);
+                yield* (yield* Users).append({ workspaceId: "live" }, [
+                  { type: "user", key: "ada", value: user, headers: { operation: "upsert" } },
+                ]);
+                yield* (yield* Events).append({ workspaceId: "live" }, [
+                  {
+                    ...common,
+                    type: "IssueAssigned",
+                    eventId: "e3",
+                    issueId: "i2",
+                    assigneeId: "ada",
+                    status: "todo",
+                    sequence: 3,
+                  },
+                ]);
+              }),
+              Effect.gen(function* () {
+                yield* (yield* Users).append({ workspaceId: "live" }, [
+                  {
+                    type: "user",
+                    key: "ada",
+                    value: { ...user, name: "Augusta" },
+                    headers: { operation: "upsert" },
+                  },
+                ]);
+                yield* (yield* Projects).append({ workspaceId: "live" }, [
+                  {
+                    type: "project",
+                    key: "p1",
+                    value: { ...project, name: "Renamed" },
+                    headers: { operation: "upsert" },
+                  },
+                ]);
+                yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
+                  {
+                    ...common,
+                    type: "LabelDetached",
+                    eventId: "l2",
+                    issueId: "i1",
+                    labelId: "bug",
+                    membershipId: "i1.bug",
+                    sequence: 2,
+                  },
+                  {
+                    ...common,
+                    type: "LabelAttached",
+                    eventId: "stale",
+                    issueId: "i1",
+                    labelId: "bug",
+                    membershipId: "i1.bug",
+                    sequence: 1,
+                  },
+                ]);
+              }),
+              (yield* Labels).append({ workspaceId: "live" }, [
+                { type: "label", key: "bug", headers: { operation: "delete" } },
+                {
+                  type: "label",
+                  key: "bug",
+                  value: { ...label, name: "Readded" },
                   headers: { operation: "upsert" },
-                }),
+                },
+              ]),
+              Effect.gen(function* () {
+                yield* (yield* Labels).append({ workspaceId: "live" }, [
+                  { type: "label", key: "bug", headers: { operation: "delete" } },
+                ]);
+                yield* (yield* Projects).append({ workspaceId: "live" }, [
+                  { type: "project", key: "p1", headers: { operation: "delete" } },
+                ]);
+                yield* (yield* Users).append({ workspaceId: "live" }, [
+                  { type: "user", key: "ada", headers: { operation: "delete" } },
+                ]);
+              }),
+            ];
+
+            const boardRef = Board.address({ workspaceId: "live" });
+            const countsRef = LabelCounts.address({ workspaceId: "live" });
+            const expectedBoard: Array<string | Uint8Array> = [];
+            const expectedCounts: Array<string | Uint8Array> = [];
+            let previous = initialWorkspace("live");
+
+            for (const phase of phases) {
+              yield* phase;
+              yield* Projection.run(tracker.at({ workspaceId: "live" }));
+
+              const next = yield* Projection.read(tracker.at({ workspaceId: "live" })).pipe(
+                Effect.map(({ state }) => state),
               );
-          }
 
-          for (const row of counts(next)) {
-            if (JSON.stringify(row) !== JSON.stringify(oldCounts.get(row.labelId)))
-              expectedCounts.push(
-                Schema.encodeSync(countsRef.codec)({
-                  type: "labelCounts",
-                  key: row.labelId,
-                  value: row,
-                  headers: { operation: "upsert" },
-                }),
+              const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
+              const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));
+
+              for (const row of cards(next)) {
+                if (
+                  (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(row)) !==
+                  (oldCards.has(row.issueId)
+                    ? yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+                        oldCards.get(row.issueId),
+                      )
+                    : undefined)
+                )
+                  expectedBoard.push(
+                    yield* Schema.encodeEffect(boardRef.codec)({
+                      type: "board",
+                      key: row.issueId,
+                      value: row,
+                      headers: { operation: "upsert" },
+                    }),
+                  );
+              }
+
+              for (const row of counts(next)) {
+                if (
+                  (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(row)) !==
+                  (oldCounts.has(row.labelId)
+                    ? yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+                        oldCounts.get(row.labelId),
+                      )
+                    : undefined)
+                )
+                  expectedCounts.push(
+                    yield* Schema.encodeEffect(countsRef.codec)({
+                      type: "labelCounts",
+                      key: row.labelId,
+                      value: row,
+                      headers: { operation: "upsert" },
+                    }),
+                  );
+              }
+
+              for (const row of previous.labels) {
+                if (!next.labels.some((candidate) => candidate.labelId === row.labelId))
+                  expectedCounts.push(
+                    yield* Schema.encodeEffect(countsRef.codec)({
+                      type: "labelCounts",
+                      key: row.labelId,
+                      headers: { operation: "delete" },
+                    }),
+                  );
+              }
+
+              // Before the first issue, board is correctly absent; label counts already exist.
+              if (expectedBoard.length > 0) {
+                const actual = yield* Addresses.readOutput(Board, "live");
+                expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
+                  expectedBoard,
+                );
+              }
+
+              const actual = yield* Addresses.readOutput(LabelCounts, "live");
+              expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
+                expectedCounts,
               );
-          }
-
-          for (const row of previous.labels) {
-            if (!next.labels.some((candidate) => candidate.labelId === row.labelId))
-              expectedCounts.push(
-                Schema.encodeSync(countsRef.codec)({
-                  type: "labelCounts",
-                  key: row.labelId,
-                  headers: { operation: "delete" },
-                }),
-              );
-          }
-
-          // Before the first issue, board is correctly absent; label counts already exist.
-          if (expectedBoard.length > 0) {
-            const actual = yield* Addresses.readOutput(Board, "live");
-            expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
-              expectedBoard,
-            );
-          }
-
-          const actual = yield* Addresses.readOutput(LabelCounts, "live");
-          expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
-            expectedCounts,
-          );
-          previous = next;
-        }
-      }),
+              previous = next;
+            }
+          }).pipe(Effect.provideContext(runtime));
+        }),
     );
-  } finally {
-    await runtime.dispose();
-  }
-});
+  },
+);

@@ -39,6 +39,7 @@ export function IssuesPanel({
 }) {
   const [issueTitle, setIssueTitle] = useState("");
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const submitNewIssue = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 

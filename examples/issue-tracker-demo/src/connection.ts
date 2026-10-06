@@ -22,16 +22,19 @@ export function trackConnection(): Connection {
 
   // Any HTTP answer, even an error status, means the server is reachable. A
   // rejected fetch is a network failure, unless the reader aborted it on close.
-  const tracked = async (input: RequestInfo | URL, init?: RequestInit) => {
-    try {
-      const response = await globalThis.fetch(input, init);
-      set(true);
+  const tracked = (input: RequestInfo | URL, init?: RequestInit) => {
+    // oxlint-disable-next-line effecttsgo/global-fetch -- The stream client requires native Response and AbortSignal behavior from its fetch adapter.
+    return globalThis.fetch(input, init).then(
+      (response) => {
+        set(true);
 
-      return response;
-    } catch (error) {
-      if (!init?.signal?.aborted) set(false);
-      throw error;
-    }
+        return response;
+      },
+      (error) => {
+        if (!init?.signal?.aborted) set(false);
+        throw error;
+      },
+    );
   };
 
   return {

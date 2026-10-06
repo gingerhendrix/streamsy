@@ -1,5 +1,5 @@
 import { Projection } from "@streamsy/projection";
-import { Effect, Match, Schema } from "effect";
+import { DateTime, Effect, Match, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { CommandRequest } from "../shared/api.ts";
 import type { IssueEvent } from "../domain/issue.ts";
@@ -28,7 +28,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
         }>`SELECT MAX(sequence) AS sequence FROM issues WHERE workspace_id = ${workspaceId}`;
 
         const sequence = (last?.sequence == null ? -1 : Number(last.sequence)) + 1;
-        const occurredAt = new Date().toISOString();
+        const occurredAt = DateTime.formatIso(yield* DateTime.now);
 
         const common = {
           eventId: command.commandId,

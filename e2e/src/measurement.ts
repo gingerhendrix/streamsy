@@ -1,3 +1,4 @@
+import { Crypto } from "effect";
 import { Clock, Context, Effect, Result } from "effect";
 import {
   CONFORMANCE_LONG_POLL_TIMEOUT_MS,
@@ -237,17 +238,21 @@ export const measureLatency = (
     let deltas: StepResult<Summary>;
 
     if (pairs.every((pair) => pair.firstMinusWarmMs !== undefined && pair.error === undefined)) {
-      try {
-        deltas = success(
+      deltas = yield* Effect.try({
+        try: () =>
           summarize(
             pairs
               .map((pair) => pair.firstMinusWarmMs)
               .filter((value): value is number => value !== undefined),
           ),
-        );
-      } catch (error) {
-        deltas = failure(error instanceof Error ? error.message : String(error));
-      }
+        catch: (error) =>
+          new ContractError({ message: error instanceof Error ? error.message : String(error) }),
+      }).pipe(
+        Effect.match({
+          onSuccess: (summary) => success(summary),
+          onFailure: (error) => failure<Summary>(error.message),
+        }),
+      );
     } else {
       deltas = failure("Paired latency deltas were incomplete");
     }
@@ -301,7 +306,7 @@ export const measureThroughput = (
       (trial) =>
         Effect.gen(function* () {
           const http = yield* HttpOperation;
-          const streamPath = `/streams/throughput-${trial}-${crypto.randomUUID()}`;
+          const streamPath = `/streams/throughput-${trial}-${yield* entropy.randomUUIDv4.pipe(Effect.orDie)}`;
           const errors: Array<string> = [];
 
           const created = yield* Effect.result(
@@ -371,3 +376,11 @@ export const measureThroughput = (
 export const measurementDefaults = {
   conformanceLongPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
 } as const;
+
+const entropy = Crypto.make({
+  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
+  digest: (algorithm, data) =>
+    Effect.promise(() =>
+      globalThis.crypto.subtle.digest(algorithm, new Uint8Array(data).buffer),
+    ).pipe(Effect.map((buffer) => new Uint8Array(buffer))),
+});

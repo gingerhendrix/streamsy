@@ -31,7 +31,7 @@ const streamId = Argument.String("stream-id").pipe(
 );
 
 /** The rest of the command line, joined with spaces. */
-const prompt = Argument.String("prompt").pipe(
+const promptArgument = Argument.String("prompt").pipe(
   Argument.withDescription("The user message for this turn"),
   Argument.atLeast(1),
   Argument.map((parts) => parts.join(" ").trim()),
@@ -50,6 +50,7 @@ const asUserError = <A, E extends { readonly message: string }, R>(
 const printTurn = (fold: FoldSession, session: SessionId) =>
   Effect.gen(function* () {
     const entries = yield* fold.entries;
+
     for (const entry of entries) yield* Console.log(formatEntry(entry));
     yield* Console.log("");
     yield* Console.log(`stream id:  ${sessionStreamId(session)}`);
@@ -58,9 +59,10 @@ const printTurn = (fold: FoldSession, session: SessionId) =>
   });
 
 /** Open the configured store for one command, and close it when the command ends. */
+// oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each CLI command is an entry point with one store lifetime.
 const withStore = Effect.provide(configuredStoreLayer);
 
-const start = Command.make("start", { prompt }, ({ prompt }) =>
+const start = Command.make("start", { prompt: promptArgument }, ({ prompt }) =>
   Effect.gen(function* () {
     const model = yield* configuredModel;
     const session = SessionId.create();
@@ -74,6 +76,7 @@ const start = Command.make("start", { prompt }, ({ prompt }) =>
             sessionId: session,
             cwd: process.cwd(),
           });
+
           yield* fold.send(prompt);
           yield* printTurn(fold, session);
         }),
@@ -82,29 +85,34 @@ const start = Command.make("start", { prompt }, ({ prompt }) =>
   }).pipe(asUserError),
 ).pipe(Command.withDescription("Start a fresh session and run one turn"));
 
-const resume = Command.make("resume", { session: streamId, prompt }, ({ session, prompt }) =>
-  Effect.gen(function* () {
-    const model = yield* configuredModel;
+const resume = Command.make(
+  "resume",
+  { session: streamId, prompt: promptArgument },
+  ({ session, prompt }) =>
+    Effect.gen(function* () {
+      const model = yield* configuredModel;
 
-    return yield* withStore(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fold = yield* resumeSession({
-            agent: exampleAgent(model),
-            log: yield* streamsyEventLog({ session, mode: "resume" }),
-          });
-          yield* fold.send(prompt);
-          yield* printTurn(fold, session);
-        }),
-      ),
-    );
-  }).pipe(asUserError),
+      return yield* withStore(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fold = yield* resumeSession({
+              agent: exampleAgent(model),
+              log: yield* streamsyEventLog({ session, mode: "resume" }),
+            });
+
+            yield* fold.send(prompt);
+            yield* printTurn(fold, session);
+          }),
+        ),
+      );
+    }).pipe(asUserError),
 ).pipe(Command.withDescription("Continue a session from its stored log and run one turn"));
 
 const inspect = Command.make("inspect", { session: streamId }, ({ session }) =>
   withStore(
     Effect.gen(function* () {
       const entries = yield* readFoldLog(session);
+
       for (const entry of entries) yield* Console.log(formatEntry(entry));
       yield* Console.log("");
       yield* Console.log(`stream id: ${sessionStreamId(session)}`);
@@ -131,6 +139,7 @@ export const cli = Command.make("fold-agent").pipe(
 
 if (import.meta.main) {
   BunRuntime.runMain(
+    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- BunRuntime owns the application scope at this CLI entry point.
     Command.run(cli, { version: packageJson.version }).pipe(Effect.provide(BunServices.layer)),
   );
 }

@@ -1,5 +1,5 @@
 /* oxlint-disable typescript/consistent-return -- Effect failure branches use return-yield* for never-successful effects; successful probes return their value. */
-import { Cause, Context, Effect, Exit, Ref, Schedule } from "effect";
+import { Cause, Context, Schema, Effect, Exit, Ref, Schedule } from "effect";
 import {
   ContractError,
   HOSTED_STATUS,
@@ -113,16 +113,14 @@ const boundedPoll = (
         yield* Ref.set(consecutive, 0);
       }
 
-      return yield* Effect.fail(
-        new ContractError({ message: `${label} probe did not satisfy its marker` }),
-      );
+      return yield* new ContractError({ message: `${label} probe did not satisfy its marker` });
     });
 
     const retryPolicy = Schedule.spaced("2 seconds").pipe(Schedule.upTo({ times: 30 }));
     yield* pass.pipe(
       Effect.retry({ schedule: retryPolicy }),
       Effect.timeout("60 seconds"),
-      Effect.catch(() => Effect.fail(new ContractError({ message: `${label} probe timed out` }))),
+      Effect.mapError(() => new ContractError({ message: `${label} probe timed out` })),
     );
 
     return { attempts: yield* Ref.get(attempts) };
@@ -276,13 +274,11 @@ export const runEvidence = (
   options: EvidenceRunOptions = {},
 ): Effect.Effect<void, ContractError, EvidenceOperations | HttpOperation | ReportPersistence> =>
   Effect.gen(function* () {
-    try {
-      validateIdentity(identity);
-    } catch (error) {
-      return yield* Effect.fail(
-        error instanceof ContractError ? error : new ContractError({ message: String(error) }),
-      );
-    }
+    yield* Effect.try({
+      try: () => validateIdentity(identity),
+      catch: (error) =>
+        Schema.is(ContractError)(error) ? error : new ContractError({ message: String(error) }),
+    });
 
     const stateRef = yield* Ref.make<State>({
       report: initialReport(identity, options.measurement !== undefined),
@@ -359,7 +355,7 @@ export const runEvidence = (
             report: { ...current.report, primaryFailure: target.reason },
           });
 
-          return yield* Effect.fail(new ContractError({ message: target.reason }));
+          return yield* new ContractError({ message: target.reason });
         }
 
         yield* Ref.update(stateRef, (state) => ({
@@ -440,7 +436,7 @@ export const runEvidence = (
             },
           }));
 
-          return yield* Effect.fail(new ContractError({ message: reason }));
+          return yield* new ContractError({ message: reason });
         }
 
         yield* Ref.update(stateRef, (state) => ({
@@ -526,7 +522,7 @@ export const runEvidence = (
               },
             }));
 
-            return yield* Effect.fail(new ContractError({ message: reason }));
+            return yield* new ContractError({ message: reason });
           }
 
           yield* Ref.update(stateRef, (state) => ({
@@ -568,7 +564,7 @@ export const runEvidence = (
             return yield* Effect.failCause(Cause.combine(result.cause, secondary));
           }
 
-          return yield* Effect.fail(new ContractError({ message }));
+          return yield* new ContractError({ message });
         }
 
         return yield* Effect.void;
