@@ -97,7 +97,9 @@ export type WorkspaceIndex = ReturnType<typeof indexWorkspace>;
 
 export const boardCard = (index: WorkspaceIndex, issue: IssueRow): ProjectBoardCard => ({
   ...issue,
-  labelIds: (index.membershipsByIssue.get(issue.issueId) ?? []).map((row) => row.labelId).sort(),
+  labelIds: (index.membershipsByIssue.get(issue.issueId) ?? [])
+    .map((row) => row.labelId)
+    .toSorted(),
   projectName: index.projects.get(issue.projectId)?.name ?? null,
   assigneeName:
     issue.assigneeId === undefined ? null : (index.users.get(issue.assigneeId)?.name ?? null),

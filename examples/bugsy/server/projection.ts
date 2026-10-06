@@ -17,13 +17,13 @@ type StoredIssue = {
   readonly issue_id: string;
   readonly project_id: string;
   readonly title: string;
-  readonly status: (typeof IssueRow.Type)["status"];
+  readonly status: IssueRow["status"];
   readonly sequence: number | bigint;
   readonly updated_at: string;
   readonly assignee_id: string | null;
 };
 
-const toIssue = (row: StoredIssue): typeof IssueRow.Type => ({
+const toIssue = (row: StoredIssue): IssueRow => ({
   workspaceId: row.workspace_id,
   issueId: row.issue_id,
   projectId: row.project_id,
@@ -199,7 +199,7 @@ export const issueRows = Projection.process({
               entry.input,
               workspaceId,
               item.key,
-              JSON.stringify(item.value),
+              yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(item.value),
             );
           }
 

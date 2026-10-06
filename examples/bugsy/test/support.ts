@@ -1,118 +1,42 @@
-import { Schema } from "effect";
-import { ProjectBoardCard } from "../domain/outputs.ts";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { Effect, FileSystem, Path, Schedule, Schema } from "effect";
+import { HttpClient } from "effect/http";
 
-// Promise helpers for the bun:test files. The scripts use the Effect helpers in
-// scripts/support.ts.
-export const packageDir = resolve(import.meta.dir, "..");
+export { post as postUrl, readBoard } from "../scripts/support.ts";
 
-export const scratchDirectory = async (name: string) => {
-  const directory = await mkdtemp(join(tmpdir(), `${name}-`));
+import { post as postUrl } from "../scripts/support.ts";
 
-  return {
-    directory,
-    database: join(directory, "tracker.sqlite"),
-    remove: () => rm(directory, { recursive: true, force: true }),
-  };
-};
+export const scratchDirectory = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: `${name}-` });
+
+    return { directory, database: path.join(directory, "tracker.sqlite") };
+  });
 
 export const startServer = (port: number, database: string) =>
   Bun.spawn(["bun", "server/index.ts"], {
-    cwd: packageDir,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      BUGSY_DB: database,
-      BUGSY_WORKSPACES: "acme,live",
-    },
+    cwd: Bun.fileURLToPath(new URL("..", import.meta.url)),
+    env: { ...process.env, PORT: String(port), BUGSY_DB: database, BUGSY_WORKSPACES: "acme,live" },
     stdout: "pipe",
     stderr: "pipe",
   });
 
-export const stopServer = async (process: ReturnType<typeof startServer>) => {
-  process.kill("SIGTERM");
-  await process.exited;
-};
-
-export const waitForServer = async (baseUrl: string) => {
-  const deadline = Date.now() + 10_000;
-
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(baseUrl)).ok) return;
-    } catch {
-      /* server is starting */
-    }
-
-    await Bun.sleep(50);
-  }
-
-  throw new Error("server did not become ready");
-};
-
-export const requestJson = async <A>(
-  baseUrl: string,
-  path: string,
-  init?: RequestInit,
-): Promise<A> => {
-  const response = await fetch(`${baseUrl}${path}`, init);
-  const text = await response.text();
-
-  if (!response.ok) throw new Error(`${init?.method ?? "GET"} ${path}: ${response.status} ${text}`);
-
-  // SAFETY: each evidence call names a concrete response shape and immediately
-  // asserts the fields that matter to that scenario.
-  return JSON.parse(text) as A;
-};
-
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<JsonValue>
-  | { readonly [key: string]: JsonValue };
-
-export const post = <A>(baseUrl: string, path: string, body: JsonValue) =>
-  requestJson<A>(baseUrl, path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+export const stopServer = (process: ReturnType<typeof startServer>) =>
+  Effect.gen(function* () {
+    process.kill("SIGTERM");
+    yield* Effect.promise(() => process.exited);
   });
 
-/** Reconstruct the board by replaying every retained page, starting at -1. */
-export const readBoard = async (baseUrl: string, workspaceId: string) => {
-  const rows = new Map<string, import("../domain/outputs.ts").ProjectBoardCard>();
-  let offset = "-1";
+export const waitForServer = (baseUrl: string) =>
+  HttpClient.get(baseUrl).pipe(
+    Effect.flatMap((response) => (response.status === 200 ? Effect.void : new ServerStarting({}))),
+    Effect.retry(Schedule.spaced("50 millis")),
+    Effect.timeout("10 seconds"),
+    Effect.asVoid,
+  );
 
-  for (;;) {
-    const response = await fetch(
-      `${baseUrl}/state/workspaces/${workspaceId}/issues?offset=${offset}`,
-    );
+export const post = (baseUrl: string, path: string, body: Parameters<typeof postUrl>[1]) =>
+  postUrl(`${baseUrl}${path}`, body);
 
-    if (!response.ok) throw new Error(`board: ${response.status} ${await response.text()}`);
-
-    const changes = Schema.decodeUnknownSync(
-      Schema.Array(
-        Schema.Struct({
-          key: Schema.String,
-          value: Schema.optionalKey(ProjectBoardCard),
-          headers: Schema.Struct({ operation: Schema.Literals(["upsert", "delete"]) }),
-        }),
-      ),
-    )(await response.json());
-
-    for (const change of changes) {
-      if (change.headers.operation === "delete") rows.delete(change.key);
-      else if (change.value !== undefined) rows.set(change.key, change.value);
-    }
-
-    if (response.headers.has("stream-up-to-date")) return { rows: [...rows.values()] };
-    const next = response.headers.get("stream-next-offset");
-
-    if (next === null || next === offset) throw new Error("board replay made no progress");
-    offset = next;
-  }
-};
+class ServerStarting extends Schema.TaggedError<ServerStarting>()("ServerStarting", {}) {}
