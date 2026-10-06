@@ -175,7 +175,7 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
     items,
     nextOffset: result.nextOffset,
     upToDate: result.upToDate,
-    closed: result.closed === true,
+    closed: result.closed,
   } satisfies Batch<A>;
 });
 
@@ -362,6 +362,7 @@ const retryLostRace = Effect.fnUntraced(function* <A, E, R>(
         error instanceof LostRace
           ? Effect.fail(error.mismatch)
           : // SAFETY: `instanceof` ruled out `LostRace`; TS cannot narrow a type parameter.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the preceding instanceof branch removes LostRace from the generic failure union.
             Effect.succeed(Result.fail(error as Exclude<E, LostRace>)),
       onSuccess: (value) => Effect.succeed(Result.succeed(value)),
     }),
@@ -377,7 +378,7 @@ export interface FollowOptions extends ReadOptions {
    * Default: exponential from 200 ms, jittered, capped at 30 s, forever. Other
    * failures end the stream at once.
    */
-  readonly retry?: Schedule.Schedule<unknown, unknown>;
+  readonly retry?: Schedule.Schedule<unknown>;
 }
 
 const capAt30Seconds = Schedule.modifyDelay(({ duration }: { duration: Duration.Duration }) =>
@@ -410,8 +411,8 @@ export function follow<A, RD, RE>(
 ): Stream.Stream<Batch<A>, FollowFailure, StreamsReader | RD> {
   const { retry = defaultFollowRetry, ...readOptions } = options;
 
-  const retrying = <T, E extends { readonly _tag: string }, R>(read: Effect.Effect<T, E, R>) =>
-    read.pipe(
+  const retrying = <T, E extends { readonly _tag: string }, R>(reading: Effect.Effect<T, E, R>) =>
+    reading.pipe(
       Effect.tapError((error) =>
         isRetryableFault(error) ? Effect.logWarning("Streams.follow retry", error) : Effect.void,
       ),

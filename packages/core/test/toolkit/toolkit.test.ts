@@ -388,18 +388,15 @@ it("Fold reduces existing items, waits for growth, and completes on close", () =
       const control = yield* StreamsTest;
       const seen = yield* Deferred.make<void>();
 
-      const fiber = yield* Streams.follow(address)
-        .pipe(
-          Streams.items,
-          Stream.runFold(
-            () => 0,
-            (sum, item) => sum + item.n,
-          ),
-        )
-        .pipe(
-          Effect.tap(() => Deferred.succeed(seen, undefined)),
-          Effect.forkScoped,
-        );
+      const fiber = yield* Streams.follow(address).pipe(
+        Streams.items,
+        Stream.runFold(
+          () => 0,
+          (sum, item) => sum + item.n,
+        ),
+        Effect.tap(() => Deferred.succeed(seen, undefined)),
+        Effect.forkScoped,
+      );
 
       yield* control.snapshot;
       expect(yield* Deferred.isDone(seen)).toBe(false);

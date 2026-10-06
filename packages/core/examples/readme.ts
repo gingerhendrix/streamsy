@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/strict-effect-provide -- This executable example is an application entry point that composes its complete host layer.
 import { Effect, Schema, Stream } from "effect";
 import { MemoryStorage, Streamsy } from "@streamsy/core";
 

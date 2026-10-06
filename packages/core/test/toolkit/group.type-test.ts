@@ -22,6 +22,7 @@ class B extends Streamsy.bytes<B>()("GroupTypes/B", "b", { params: {} }) {}
 const group = Streamsy.group(A, B);
 
 type Equal<A, B> =
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Universal quantification checks equality in both directions, including unions.
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
 const union: Equal<Streamsy.Services<typeof group>, A | B> = true;
@@ -53,17 +54,15 @@ const noFeed: Equal<
   never
 > = true;
 
-const needsFeed = Effect.gen(function* () {
-  yield* Streamsy.ChangeFeed(A);
-});
+const needsFeed = Effect.asVoid(Streamsy.ChangeFeed(A));
 
-// oxlint-disable effecttsgo/missing-effect-context -- This negative type test deliberately omits the Streamsy.ChangeFeed capability.
+// oxlint-disable effecttsgo/missing-layer-context -- This negative type test deliberately omits the Streamsy.ChangeFeed capability.
 // @ts-expect-error Remote streams cannot supply a Streamsy.ChangeFeed capability.
-const missingFeed: Effect.Effect<void, TransportFault, HttpClient.HttpClient> = needsFeed.pipe(
-  Effect.provide(remoteStreams),
-);
+const missingFeed: Layer.Layer<never, TransportFault, HttpClient.HttpClient> = Layer.effectDiscard(
+  needsFeed,
+).pipe(Layer.provide(remoteStreams));
 
-// oxlint-enable effecttsgo/missing-effect-context
+// oxlint-enable effecttsgo/missing-layer-context
 void [union, remote, remoteList, client, feeds, hidden, noFeed, missingFeed];
 
 const routes = Http.routes(group, { access: "full" });
@@ -102,7 +101,7 @@ const pointFreeRemote: Equal<
   StreamsReader | StreamsWriter
 > = true;
 
-const hasFeed: Effect.Effect<void> = needsFeed.pipe(Effect.provide(memory));
+const hasFeed: Layer.Layer<never> = Layer.effectDiscard(needsFeed).pipe(Layer.provide(memory));
 
 const emptyGroup = MemoryStorage.layer(Streamsy.group());
 

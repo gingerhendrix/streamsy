@@ -1,5 +1,5 @@
-import { expect, it } from "bun:test";
-import { Cause, Effect, Exit, Layer, Schedule, Schema } from "effect";
+import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { Cause, Effect, Exit, Schedule, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
@@ -12,18 +12,14 @@ import {
   StreamClosed,
   StreamNotFound,
 } from "../../src/protocol/errors.ts";
-import { StreamsReader, StreamsWriter, type Writer } from "../../src/protocol/tags.ts";
+import { StreamsWriter, type Writer } from "../../src/protocol/tags.ts";
 import { TransportFault, type StreamsFault } from "../../src/fault.ts";
 import { StreamId } from "../../src/schema/index.ts";
 
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
 
-/** One message per page, so every fold below reads several pages. */
-const run = <A, E>(program: Effect.Effect<A, E, StreamsReader | StreamsWriter>) =>
-  Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layerProtocol({ readLimit: 1 }))));
-
-it("fold reduces every page and returns the tail of the last page", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("fold reduces every page and returns the tail of the last page", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }, { n: 3 }]);
@@ -43,10 +39,11 @@ it("fold reduces every page and returns the tail of the last page", () =>
 
       expect(appended.offset).toBe((yield* Streams.head(address)).nextOffset);
     }),
-  ));
+  );
+});
 
-it("fold continues from a tail that an earlier fold returned", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("fold continues from a tail that an earlier fold returned", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }]);
@@ -65,10 +62,11 @@ it("fold continues from a tail that an earlier fold returned", () =>
         offset: (yield* Streams.head(address)).nextOffset,
       });
     }),
-  ));
+  );
+});
 
-it("fold calls the initial value once for each fold", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("fold calls the initial value once for each fold", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }]);
@@ -89,18 +87,20 @@ it("fold calls the initial value once for each fold", () =>
       expect(calls).toBe(2);
       expect(first.state).not.toBe(second.state);
     }),
-  ));
+  );
+});
 
-it("collect returns the items and the tail of an empty stream", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("collect returns the items and the tail of an empty stream", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       expect(yield* Streams.collect(address)).toEqual({ items: [], offset: ZERO_OFFSET });
     }),
-  ));
+  );
+});
 
-it("collect on a fork returns the fork offset, not the zero offset", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("collect on a fork returns the fork offset, not the zero offset", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }]);
@@ -114,14 +114,16 @@ it("collect on a fork returns the fork offset, not the zero offset", () =>
       expect(collected.offset).toBe((yield* Streams.head(child)).nextOffset);
       yield* Streams.append(child, [{ n: 3 }], { expectedOffset: collected.offset });
     }),
-  ));
+  );
+});
 
-it("collect fails with the read error of a missing stream", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("collect fails with the read error of a missing stream", () =>
     Effect.gen(function* () {
       expect(yield* Effect.flip(Streams.collect(address))).toBeInstanceOf(StreamNotFound);
     }),
-  ));
+  );
+});
 
 const unused = () => Effect.die(new Error("unused"));
 
@@ -136,7 +138,7 @@ const rejecting = (
     append: () => Effect.fail(error),
   };
 
-  return Layer.succeed(StreamsWriter, writer);
+  return writer;
 };
 
 const id = StreamId.make("events");
@@ -153,35 +155,33 @@ const producer = { producerId: "p", producerEpoch: 1, producerSeq: 0 };
 const answer = <A, E>(
   program: Effect.Effect<A, E, StreamsWriter>,
   error: OffsetMismatch | StaleEpoch | StreamClosed | InvalidAppendRequest | InvalidEpochSeq,
-) => program.pipe(Effect.provide(rejecting(error)));
+) => program.pipe(Effect.provideService(StreamsWriter, rejecting(error)));
 
-it("append keeps a rejection that its options make possible", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
-      expect(yield* Effect.flip(answer(conditional, mismatch))).toBe(mismatch);
-      const fenced = Streams.append(address, [{ n: 1 }], { producer });
-      expect(yield* Effect.flip(answer(fenced, stale))).toBe(stale);
-      const plain = Streams.append(address, [{ n: 1 }]);
-      expect(yield* Effect.flip(answer(plain, closed))).toBe(closed);
-    }),
-  ));
+baseIt.effect("append keeps a rejection that its options make possible", () =>
+  Effect.gen(function* () {
+    const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
+    expect(yield* Effect.flip(answer(conditional, mismatch))).toBe(mismatch);
+    const fenced = Streams.append(address, [{ n: 1 }], { producer });
+    expect(yield* Effect.flip(answer(fenced, stale))).toBe(stale);
+    const plain = Streams.append(address, [{ n: 1 }]);
+    expect(yield* Effect.flip(answer(plain, closed))).toBe(closed);
+  }),
+);
 
-it("append dies on a rejection that its options rule out", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const plain = Streams.append(address, [{ n: 1 }]);
-      const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
+baseIt.effect("append dies on a rejection that its options rule out", () =>
+  Effect.gen(function* () {
+    const plain = Streams.append(address, [{ n: 1 }]);
+    const conditional = Streams.append(address, [{ n: 1 }], { expectedOffset: "a" });
 
-      for (const [exit, error] of [
-        [yield* Effect.exit(answer(plain, mismatch)), mismatch],
-        [yield* Effect.exit(answer(conditional, stale)), stale],
-      ] as const) {
-        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
-      }
-    }),
-  ));
+    for (const [exit, error] of [
+      [yield* Effect.exit(answer(plain, mismatch)), mismatch],
+      [yield* Effect.exit(answer(conditional, stale)), stale],
+    ] as const) {
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
+    }
+  }),
+);
 
 const sum = {
   initial: () => 0,
@@ -206,8 +206,8 @@ const countingAppends = Effect.gen(function* () {
   return { appends, counted };
 });
 
-it("decide with no items makes no append and no tail check", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide with no items makes no append and no tail check", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }]);
@@ -229,10 +229,11 @@ it("decide with no items makes no append and no tail check", () =>
       // The one append is the rival's.
       expect(appends.count).toBe(1);
     }),
-  ));
+  );
+});
 
-it("decide retries a lost race and folds only the new items from the old tail", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide retries a lost race and folds only the new items from the old tail", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 1 }, { n: 2 }, { n: 3 }]);
@@ -274,10 +275,11 @@ it("decide retries a lost race and folds only the new items from the old tail", 
       });
       expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 2, 3, 10, 16]);
     }),
-  ));
+  );
+});
 
-it("decide fails with the last OffsetMismatch when the schedule ends", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide fails with the last OffsetMismatch when the schedule ends", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       const offsets: Array<string> = [];
@@ -301,10 +303,11 @@ it("decide fails with the last OffsetMismatch when the schedule ends", () =>
       expect(failure).toMatchObject({ expected: offsets[2] });
       expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 1, 1]);
     }),
-  ));
+  );
+});
 
-it("decide does not retry other append failures", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide does not retry other append failures", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [], { close: true });
@@ -353,12 +356,13 @@ it("decide does not retry other append failures", () =>
       expect(faultFailure).toBe(fault);
       expect(faultDecisions).toBe(1);
     }),
-  ));
+  );
+});
 
 class Refused extends Schema.TaggedError<Refused>()("Refused", { total: Schema.Finite }) {}
 
-it("decide passes its own failure through without an append or a retry", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide passes its own failure through without an append or a retry", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 4 }]);
@@ -380,10 +384,11 @@ it("decide passes its own failure through without an append or a retry", () =>
       expect(decisions).toBe(1);
       expect(appends.count).toBe(0);
     }),
-  ));
+  );
+});
 
-it("decide does not retry an OffsetMismatch that its own decide raises", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("decide does not retry an OffsetMismatch that its own decide raises", () =>
     Effect.gen(function* () {
       yield* Streams.create(address);
       yield* Streams.append(address, [{ n: 4 }]);
@@ -412,29 +417,29 @@ it("decide does not retry an OffsetMismatch that its own decide raises", () =>
       expect(decisions).toBe(1);
       expect(appends.count).toBe(0);
     }),
-  ));
+  );
+});
 
 for (const error of [
   new InvalidAppendRequest({ id, message: "malformed request" }),
   new InvalidEpochSeq({ id }),
 ]) {
-  it(`append dies on a host answer of ${error.name}, even with producer options`, () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        for (const options of [{}, { producer }] as const) {
-          const exit = yield* Effect.exit(
-            answer(Streams.append(address, [{ n: 1 }], options), error),
-          );
+  baseIt.effect(`append dies on a host answer of ${error.name}, even with producer options`, () =>
+    Effect.gen(function* () {
+      for (const options of [{}, { producer }] as const) {
+        const exit = yield* Effect.exit(
+          answer(Streams.append(address, [{ n: 1 }], options), error),
+        );
 
-          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
-        }
-      }),
-    ));
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
+      }
+    }),
+  );
 }
 
-it("append rejects each empty encoded bytes item before any write", () =>
-  run(
+layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
+  it.effect("append rejects each empty encoded bytes item before any write", () =>
     Effect.gen(function* () {
       const bytes = StreamAddress.bytes("bytes");
       yield* Streams.create(bytes);
@@ -463,4 +468,5 @@ it("append rejects each empty encoded bytes item before any write", () =>
       );
       expect(appends.count).toBe(1);
     }),
-  ));
+  );
+});

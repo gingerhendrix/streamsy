@@ -29,7 +29,7 @@ const wrongKey: Params<Codecs> = { account: "ann" };
 
 void wrongKey;
 
-const numbers = { orderId: Schema.NumberFromString };
+const numbers = { orderId: Schema.FiniteFromString };
 
 const numeric: Params<typeof numbers> = { orderId: 7 };
 

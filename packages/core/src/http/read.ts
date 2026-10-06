@@ -144,7 +144,8 @@ export const read = Effect.fn("Http.read")(function* (
     url.pathname,
     offset ?? "-1",
     result.nextOffset,
-    result.closed === true,
+
+    result.closed,
   );
 
   const literalNow = live && query.offset === "now";

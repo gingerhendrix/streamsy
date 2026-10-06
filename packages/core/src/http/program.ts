@@ -25,6 +25,11 @@ export interface HttpOptions {
 
 const responses = Responses;
 
+const failure = (error: ProtocolError) =>
+  Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+    protocolErrorResponse(error, { method: request.method }),
+  );
+
 /**
  * The public HTTP program. It is the whole application an Effect host serves.
  *
@@ -37,11 +42,6 @@ export function app(options: HttpOptions = {}) {
   checkReadOptions(options);
   const path = streamPath(options.pathPrefix ?? "/");
   const bodyReader = requestBodyReader(options.maxMessageSize ?? 1024 * 1024);
-
-  const failure = (error: ProtocolError) =>
-    Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-      protocolErrorResponse(error, { method: request.method }),
-    );
 
   return Effect.gen(function* (): Effect.fn.Return<
     Response | HttpServerResponse.HttpServerResponse,

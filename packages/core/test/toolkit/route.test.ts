@@ -44,7 +44,7 @@ it("multi-segment templates keep parameter identity", () => {
 
 it("a parameter that fails its codec is not a match", () => {
   const order = StreamRoute.json("orders/:orderId", {
-    params: { orderId: Schema.NumberFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
+    params: { orderId: Schema.FiniteFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
     schema: Entry,
   });
 

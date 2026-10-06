@@ -1,6 +1,6 @@
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
-// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/global-timers -- Bun tests own the real local HTTP boundary and its teardown.
-import { expect, it } from "bun:test";
+// oxlint-disable effecttsgo/global-fetch, effecttsgo/global-timers -- Bun tests own the real local HTTP boundary and its teardown.
+import { expect, it as baseIt } from "@streamsy/effect-test";
 import {
   Clock,
   Effect,
@@ -116,40 +116,64 @@ const fixture = Effect.gen(function* () {
   return results;
 });
 
-it("every operation stream returns the direct results over local HTTP", async () => {
-  const edge = HttpRouter.toWebHandler(
-    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
-    { disableLogger: true },
-  );
+baseIt.live("every operation stream returns the direct results over local HTTP", () =>
+  Effect.gen(function* () {
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+          { disableLogger: true },
+        ),
+      ),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
 
-  const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => Bun.serve({ port: 0, fetch: (request) => edge.handler(request) })),
+      (acquired) => Effect.promise(() => acquired.stop(true)),
+    );
 
-  try {
     const remote = RemoteStreams.layerProtocol({
       baseUrl: `${server.url.href}streams`,
       capabilities: { expectedOffset: true, producer: true },
     }).pipe(Layer.provide(FetchHttpClient.layer));
 
-    expect(
-      JSON.parse(JSON.stringify(await Effect.runPromise(fixture.pipe(Effect.provide(remote))))),
-    ).toEqual(
-      JSON.parse(JSON.stringify(await Effect.runPromise(fixture.pipe(Effect.provide(memory()))))),
+    const json = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+
+    const normalize = (results: ReadonlyArray<unknown>) =>
+      Schema.encodeEffect(json)(results).pipe(Effect.flatMap(Schema.decodeEffect(json)));
+
+    const overHttp = yield* fixture.pipe(
+      Effect.provideContext(yield* Layer.build(remote)),
+      Effect.flatMap(normalize),
     );
-  } finally {
-    await server.stop(true);
-    await edge.dispose();
-  }
-});
 
-it("merges text messages into one payload over the public wire", async () => {
-  const edge = HttpRouter.toWebHandler(
-    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
-    { disableLogger: true },
-  );
+    const direct = yield* fixture.pipe(
+      Effect.provideContext(yield* Layer.build(memory())),
+      Effect.flatMap(normalize),
+    );
 
-  const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+    expect(overHttp).toEqual(direct);
+  }),
+);
 
-  try {
+baseIt.live("merges text messages into one payload over the public wire", () =>
+  Effect.gen(function* () {
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+          { disableLogger: true },
+        ),
+      ),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
+
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => Bun.serve({ port: 0, fetch: (request) => edge.handler(request) })),
+      (acquired) => Effect.promise(() => acquired.stop(true)),
+    );
+
     const remote = RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
       Layer.provide(FetchHttpClient.layer),
     );
@@ -162,16 +186,13 @@ it("merges text messages into one payload over the public wire", async () => {
       return yield* batches(Streams.read(notes));
     });
 
-    const direct = await Effect.runPromise(program.pipe(Effect.provide(memory())));
-    const overHttp = await Effect.runPromise(program.pipe(Effect.provide(remote)));
+    const direct = yield* program.pipe(Effect.provideContext(yield* Layer.build(memory())));
+    const overHttp = yield* program.pipe(Effect.provideContext(yield* Layer.build(remote)));
     expect(direct.map((batch) => batch.items.map(asText))).toEqual([["ab", "cd"]]);
     // A text body is plain concatenation, so the batch carries one merged payload.
     expect(overHttp.map((batch) => batch.items.map(asText))).toEqual([["abcd"]]);
-  } finally {
-    await server.stop(true);
-    await edge.dispose();
-  }
-});
+  }),
+);
 
 function mock(response: () => Response) {
   return Layer.succeed(
@@ -188,42 +209,42 @@ const against = (response: () => Response, capabilities: { readonly producer?: b
   );
 
 const headOver = (response: () => Response) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
-    }).pipe(Effect.provide(against(response))),
-  );
+    }).pipe(Effect.provideContext(yield* Layer.build(against(response))));
+  });
 
 const headFailure = (response: () => Response) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
-    }).pipe(Effect.flip, Effect.provide(against(response))),
-  );
+    }).pipe(Effect.flip, Effect.provideContext(yield* Layer.build(against(response))));
+  });
 
 const readOver = (response: () => Response) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).read(id);
-    }).pipe(Effect.provide(against(response))),
-  );
+    }).pipe(Effect.provideContext(yield* Layer.build(against(response))));
+  });
 
 const readNextOver = (response: () => Response) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
-    }).pipe(Effect.provide(against(response))),
-  );
+    }).pipe(Effect.provideContext(yield* Layer.build(against(response))));
+  });
 
 const appendFailure = (response: () => Response) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsWriter).append(id, {
         data: bytes,
         contentType: "application/json",
       });
-    }).pipe(Effect.flip, Effect.provide(against(response))),
-  );
+    }).pipe(Effect.flip, Effect.provideContext(yield* Layer.build(against(response))));
+  });
 
 for (const [label, response] of [
   ["missing offset", () => new Response(null, { headers: { "content-type": "text/plain" } })],
@@ -265,36 +286,40 @@ for (const [label, response] of [
   ],
   ["unexpected status", () => new Response("something else", { status: 500 })],
 ] as const) {
-  it(`rejects ${label} on head as a response fault`, async () => {
-    expect(await headFailure(response)).toMatchObject({
-      _tag: "TransportFault",
-      reason: "response",
-    });
-  });
+  baseIt.live(`rejects ${label} on head as a response fault`, () =>
+    Effect.gen(function* () {
+      expect(yield* headFailure(response)).toMatchObject({
+        _tag: "TransportFault",
+        reason: "response",
+      });
+    }),
+  );
 }
 
-it("reads the head outcome from standard headers", async () => {
-  expect(
-    await headOver(
-      () =>
-        new Response(null, {
-          headers: {
-            "content-type": "text/plain",
-            "stream-next-offset": ZERO_OFFSET,
-            "stream-ttl": "60",
-            "stream-expires-at": "2030-01-01T00:00:00.000Z",
-            "stream-closed": "true",
-          },
-        }),
-    ),
-  ).toEqual({
-    contentType: "text/plain",
-    nextOffset: ZERO_OFFSET,
-    ttlSeconds: 60,
-    expiresAt: "2030-01-01T00:00:00.000Z",
-    closed: true,
-  });
-});
+baseIt.live("reads the head outcome from standard headers", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* headOver(
+        () =>
+          new Response(null, {
+            headers: {
+              "content-type": "text/plain",
+              "stream-next-offset": ZERO_OFFSET,
+              "stream-ttl": "60",
+              "stream-expires-at": "2030-01-01T00:00:00.000Z",
+              "stream-closed": "true",
+            },
+          }),
+      ),
+    ).toEqual({
+      contentType: "text/plain",
+      nextOffset: ZERO_OFFSET,
+      ttlSeconds: 60,
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      closed: true,
+    });
+  }),
+);
 
 for (const [label, response] of [
   [
@@ -323,87 +348,92 @@ for (const [label, response] of [
   ],
   ["unexpected status", () => new Response("[]", { status: 500 })],
 ] as const) {
-  it(`rejects ${label} during finite read`, async () => {
-    expect(
-      await readOver(response).then(
-        () => "resolved",
-        (failure) => failure,
-      ),
-    ).toMatchObject({
-      _tag: "TransportFault",
-    });
-  });
+  baseIt.live(`rejects ${label} during finite read`, () =>
+    Effect.gen(function* () {
+      expect(yield* Effect.flip(readOver(response))).toMatchObject({
+        _tag: "TransportFault",
+      });
+    }),
+  );
 }
 
-it("splits a JSON read body into one payload per message", async () => {
-  const result = await readOver(
-    () =>
-      new Response('[{"a":1},{"b":2}]', {
-        headers: {
-          "content-type": "application/json",
-          "stream-next-offset": ZERO_OFFSET,
-          "stream-up-to-date": "true",
-        },
-      }),
-  );
-
-  expect(result).toBeDefined();
-  expect(result.messages.map((message) => asText(message.data))).toEqual(['{"a":1}', '{"b":2}']);
-  expect(result.upToDate).toBe(true);
-});
-
-it("keeps a non-JSON read body as one merged payload", async () => {
-  const result = await readOver(
-    () =>
-      new Response("abcd", {
-        headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET },
-      }),
-  );
-
-  expect(result).toBeDefined();
-  expect(result.messages.map((message) => asText(message.data))).toEqual(["abcd"]);
-  expect(result.upToDate).toBe(false);
-});
-
-it("reads an empty long poll as a timeout", async () => {
-  expect(
-    await readNextOver(
+baseIt.live("splits a JSON read body into one payload per message", () =>
+  Effect.gen(function* () {
+    const result = yield* readOver(
       () =>
-        new Response(null, {
-          status: 204,
+        new Response('[{"a":1},{"b":2}]', {
           headers: {
+            "content-type": "application/json",
             "stream-next-offset": ZERO_OFFSET,
             "stream-up-to-date": "true",
-            "stream-cursor": "7",
-            "content-type": "text/plain",
           },
         }),
-    ),
-  ).toEqual({
-    contentType: "text/plain",
-    timedOut: true,
-    messages: [],
-    nextOffset: ZERO_OFFSET,
-    upToDate: true,
-    cursor: "7",
-    closed: false,
-  });
-});
+    );
+
+    expect(result).toBeDefined();
+    expect(result.messages.map((message) => asText(message.data))).toEqual(['{"a":1}', '{"b":2}']);
+    expect(result.upToDate).toBe(true);
+  }),
+);
+
+baseIt.live("keeps a non-JSON read body as one merged payload", () =>
+  Effect.gen(function* () {
+    const result = yield* readOver(
+      () =>
+        new Response("abcd", {
+          headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET },
+        }),
+    );
+
+    expect(result).toBeDefined();
+    expect(result.messages.map((message) => asText(message.data))).toEqual(["abcd"]);
+    expect(result.upToDate).toBe(false);
+  }),
+);
+
+baseIt.live("reads an empty long poll as a timeout", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* readNextOver(
+        () =>
+          new Response(null, {
+            status: 204,
+            headers: {
+              "stream-next-offset": ZERO_OFFSET,
+              "stream-up-to-date": "true",
+              "stream-cursor": "7",
+              "content-type": "text/plain",
+            },
+          }),
+      ),
+    ).toEqual({
+      contentType: "text/plain",
+      timedOut: true,
+      messages: [],
+      nextOffset: ZERO_OFFSET,
+      upToDate: true,
+      cursor: "7",
+      closed: false,
+    });
+  }),
+);
 
 for (const [label, response] of [
   ["stale epoch without a current epoch", () => new Response(null, { status: 403 })],
 ] as const) {
-  it(`rejects ${label} on append as a response fault`, async () => {
-    expect(await appendFailure(response)).toMatchObject({
-      _tag: "TransportFault",
-      reason: "response",
-    });
-  });
+  baseIt.live(`rejects ${label} on append as a response fault`, () =>
+    Effect.gen(function* () {
+      expect(yield* appendFailure(response)).toMatchObject({
+        _tag: "TransportFault",
+        reason: "response",
+      });
+    }),
+  );
 }
 
-it("keeps a bare append 400 generic without classifying its wording", async () => {
-  const appended = await Effect.runPromise(
-    Effect.gen(function* () {
+baseIt.live("keeps a bare append 400 generic without classifying its wording", () =>
+  Effect.gen(function* () {
+    const appended = yield* Effect.gen(function* () {
       return yield* (yield* StreamsWriter).append(id, {
         data: bytes,
         contentType: "application/json",
@@ -411,75 +441,79 @@ it("keeps a bare append 400 generic without classifying its wording", async () =
       });
     }).pipe(
       Effect.flip,
-      Effect.provide(
-        against(() => new Response("New epoch must start at seq=0", { status: 400 }), {
-          producer: true,
-        }),
+      Effect.provideContext(
+        yield* Layer.build(
+          against(() => new Response("New epoch must start at seq=0", { status: 400 }), {
+            producer: true,
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  expect(appended).toMatchObject({
-    _tag: "InvalidAppendRequest",
-    id,
-    message: "New epoch must start at seq=0",
-  });
-});
+    expect(appended).toMatchObject({
+      _tag: "InvalidAppendRequest",
+      id,
+      message: "New epoch must start at seq=0",
+    });
+  }),
+);
 
 const probe = (transport: Layer.Layer<StreamsReader | StreamsWriter, TransportFault>) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
+  Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id);
-    }).pipe(Effect.flip, Effect.provide(transport)),
-  );
+    }).pipe(Effect.flip, Effect.provideContext(yield* Layer.build(transport)));
+  });
 
-it("sends no Streamsy-specific request headers", async () => {
-  let accept: string | undefined = "unset";
-  let cacheControl: string | undefined;
+baseIt.live("sends no Streamsy-specific request headers", () =>
+  Effect.gen(function* () {
+    let accept: string | undefined = "unset";
+    let cacheControl: string | undefined;
 
-  const capture = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.sync(() => {
-        accept = request.headers.accept;
-        cacheControl = request.headers["cache-control"];
+    const capture = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          accept = request.headers.accept;
+          cacheControl = request.headers["cache-control"];
 
-        return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
-      }),
-    ),
-  );
+          return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+        }),
+      ),
+    );
 
-  await probe(
-    RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
-      Layer.provide(capture),
-    ),
-  );
-  expect(accept).toBeUndefined();
-  expect(cacheControl).toBe("no-cache");
-  await probe(
-    RemoteStreams.layerProtocol({
-      baseUrl: "http://localhost/streams",
-      headers: { accept: "application/json" },
-    }).pipe(Layer.provide(capture)),
-  );
-  expect(accept).toBe("application/json");
-});
+    yield* probe(
+      RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+        Layer.provide(capture),
+      ),
+    );
+    expect(accept).toBeUndefined();
+    expect(cacheControl).toBe("no-cache");
+    yield* probe(
+      RemoteStreams.layerProtocol({
+        baseUrl: "http://localhost/streams",
+        headers: { accept: "application/json" },
+      }).pipe(Layer.provide(capture)),
+    );
+    expect(accept).toBe("application/json");
+  }),
+);
 
-it("unknown CAS and producer support fail before any HTTP request", async () => {
-  let requests = 0;
+baseIt.live("unknown CAS and producer support fail before any HTTP request", () =>
+  Effect.gen(function* () {
+    let requests = 0;
 
-  const transport = RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
-    Layer.provide(
-      mock(() => {
-        requests++;
+    const transport = RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+      Layer.provide(
+        mock(() => {
+          requests++;
 
-        return new Response(null);
-      }),
-    ),
-  );
+          return new Response(null);
+        }),
+      ),
+    );
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const writer = yield* StreamsWriter;
       expect(
         yield* Effect.flip(
@@ -499,118 +533,138 @@ it("unknown CAS and producer support fail before any HTTP request", async () => 
           }),
         ),
       ).toMatchObject({ _tag: "NotSupported", feature: "producer" });
-    }).pipe(Effect.provide(transport)),
-  );
-  expect(requests).toBe(0);
-});
+    }).pipe(Effect.provideContext(yield* Layer.build(transport)));
+    expect(requests).toBe(0);
+  }),
+);
 
-it("connection failure stays in the typed fault channel", async () => {
-  const server = Bun.serve({ port: 0, fetch: () => new Response(null) });
-  const baseUrl = `${server.url.href}streams`;
-  await server.stop(true);
+baseIt.live("connection failure stays in the typed fault channel", () =>
+  Effect.gen(function* () {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => Bun.serve({ port: 0, fetch: () => new Response(null) })),
+      (acquired) => Effect.promise(() => acquired.stop(true)),
+    );
 
-  const failure = await Effect.runPromise(
-    Effect.gen(function* () {
+    const baseUrl = `${server.url.href}streams`;
+    yield* Effect.promise(() => server.stop(true));
+
+    const failure = yield* Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id).pipe(Effect.flip);
     }).pipe(
-      Effect.provide(
-        RemoteStreams.layerProtocol({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer)),
+      Effect.provideContext(
+        yield* Layer.build(
+          RemoteStreams.layerProtocol({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer)),
+        ),
       ),
-    ),
-  );
+    );
 
-  expect(failure).toMatchObject({ _tag: "TransportFault", reason: "request" });
-});
+    expect(failure).toMatchObject({ _tag: "TransportFault", reason: "request" });
+  }),
+);
 
 for (const phase of ["request", "body"] as const) {
-  it(`interrupting ${phase} closes the owned request scope`, async () => {
-    let aborted = false;
-    let cancelled = false;
-    const entered = Promise.withResolvers<void>();
+  baseIt.live(`interrupting ${phase} closes the owned request scope`, () =>
+    Effect.gen(function* () {
+      let aborted = false;
+      let cancelled = false;
+      const entered = Promise.withResolvers<void>();
 
-    const client = HttpClient.make((request, _url, signal) => {
-      signal.addEventListener(
-        "abort",
-        () => {
-          aborted = true;
-        },
-        { once: true },
-      );
+      const client = HttpClient.make((request, _url, signal) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+          },
+          { once: true },
+        );
 
-      if (phase === "request")
-        return Effect.sync(() => entered.resolve()).pipe(Effect.andThen(Effect.never));
+        if (phase === "request")
+          return Effect.sync(() => entered.resolve()).pipe(Effect.andThen(Effect.never));
 
-      return Effect.sync(() =>
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(
-            new ReadableStream({
-              start() {
-                entered.resolve();
-              },
-              cancel() {
-                cancelled = true;
-              },
-            }),
-            { headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET } },
+        return Effect.sync(() =>
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              new ReadableStream({
+                start() {
+                  entered.resolve();
+                },
+                cancel() {
+                  cancelled = true;
+                },
+              }),
+              { headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET } },
+            ),
+          ),
+        );
+      });
+
+      const runtime = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          ManagedRuntime.make(
+            RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+            ),
           ),
         ),
+        (acquired) => Effect.promise(() => acquired.dispose()),
       );
-    });
 
-    const runtime = ManagedRuntime.make(
-      RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
-        Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      const fiber = runtime.runFork(
+        Effect.gen(function* () {
+          return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
+        }),
+      );
+
+      yield* Effect.promise(() => entered.promise);
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(aborted).toBe(true);
+
+      if (phase === "body") expect(cancelled).toBe(true);
+      yield* Effect.promise(() => runtime.dispose());
+    }),
+  );
+}
+
+baseIt.live("disposing the Layer interrupts active requests", () =>
+  Effect.gen(function* () {
+    let aborted = false;
+    const entered = Promise.withResolvers<void>();
+
+    const client = HttpClient.make((_request, _url, signal) =>
+      Effect.sync(() => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+        });
+        entered.resolve();
+      }).pipe(Effect.andThen(Effect.never)),
+    );
+
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        ManagedRuntime.make(
+          RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
       ),
+      (acquired) => Effect.promise(() => acquired.dispose()),
     );
 
     const fiber = runtime.runFork(
       Effect.gen(function* () {
-        return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
+        return yield* (yield* StreamsReader).head(id);
       }),
     );
 
-    await entered.promise;
-    await Effect.runPromise(Fiber.interrupt(fiber));
-    const exit = await Effect.runPromise(Fiber.await(fiber));
-    expect(Exit.isFailure(exit)).toBe(true);
+    yield* Effect.promise(() => entered.promise);
+    yield* Effect.promise(() => runtime.dispose());
     expect(aborted).toBe(true);
-
-    if (phase === "body") expect(cancelled).toBe(true);
-    await runtime.dispose();
-  });
-}
-
-it("disposing the Layer interrupts active requests", async () => {
-  let aborted = false;
-  const entered = Promise.withResolvers<void>();
-
-  const client = HttpClient.make((_request, _url, signal) =>
-    Effect.sync(() => {
-      signal.addEventListener("abort", () => {
-        aborted = true;
-      });
-      entered.resolve();
-    }).pipe(Effect.andThen(Effect.never)),
-  );
-
-  const runtime = ManagedRuntime.make(
-    RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
-      Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
-    ),
-  );
-
-  const fiber = runtime.runFork(
-    Effect.gen(function* () {
-      return yield* (yield* StreamsReader).head(id);
-    }),
-  );
-
-  await entered.promise;
-  await runtime.dispose();
-  expect(aborted).toBe(true);
-  expect(Exit.isFailure(await Effect.runPromise(Fiber.await(fiber)))).toBe(true);
-});
+    expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true);
+  }),
+);
 
 // Ported behavioral cases from rename-http-client's stream-protocol-client-contract.
 // Promise sessions are replaced by the current reader/writer Effects.
@@ -620,75 +674,88 @@ for (const mode of ["direct", "remote"] as const) {
     "application/octet-stream",
     "application/json; charset=utf-8",
   ]) {
-    it(`${mode} client conformance: ${contentType} resumes after acknowledgement and closes atomically`, async () => {
-      const edge = HttpRouter.toWebHandler(
-        protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
-        { disableLogger: true },
-      );
+    baseIt.live(
+      `${mode} client conformance: ${contentType} resumes after acknowledgement and closes atomically`,
+      () =>
+        Effect.gen(function* () {
+          const stoppedServer = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const edge = yield* Effect.acquireRelease(
+                Effect.sync(() =>
+                  HttpRouter.toWebHandler(
+                    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+                    { disableLogger: true },
+                  ),
+                ),
+                (acquired) => Effect.promise(() => acquired.dispose()),
+              );
 
-      const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+              const server = yield* Effect.acquireRelease(
+                Effect.sync(() =>
+                  Bun.serve({ port: 0, fetch: (request) => edge.handler(request) }),
+                ),
+                (acquired) => Effect.promise(() => acquired.stop(true)),
+              );
 
-      const modeTransport =
-        mode === "direct"
-          ? memory()
-          : RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
-              Layer.provide(FetchHttpClient.layer),
-            );
+              const modeTransport =
+                mode === "direct"
+                  ? memory()
+                  : RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
+                      Layer.provide(FetchHttpClient.layer),
+                    );
 
-      try {
-        await Effect.runPromise(
-          Effect.gen(function* () {
-            const reader = yield* StreamsReader;
-            const writer = yield* StreamsWriter;
+              yield* Effect.gen(function* () {
+                const reader = yield* StreamsReader;
+                const writer = yield* StreamsWriter;
 
-            const data = contentType.startsWith("application/json")
-              ? new TextEncoder().encode('{"n":1}')
-              : new Uint8Array([0, 1, 65]);
+                const data = contentType.startsWith("application/json")
+                  ? new TextEncoder().encode('{"n":1}')
+                  : new Uint8Array([0, 1, 65]);
 
-            expect((yield* writer.create(id, { contentType }))._tag).toBe("Created");
-            const empty = yield* reader.read(id);
-            expect(empty).toMatchObject({ messages: [], upToDate: true });
-            const first = yield* writer.append(id, { data, contentType });
-            expect(first._tag).toBe("Appended");
-            expect(yield* reader.read(id, { offset: first.offset })).toMatchObject({
-              messages: [],
-            });
-            const final = yield* writer.append(id, { data, contentType, close: true });
-            expect(final._tag).toBe("Appended");
-            const read = yield* reader.read(id, { offset: first.offset });
-            expect(read).toMatchObject({ nextOffset: final.offset, closed: true });
-            expect(read.messages.map((message) => message.data)).toEqual([data]);
-          }).pipe(Effect.provide(modeTransport)),
-        );
-      } finally {
-        await server.stop(true);
-        await edge.dispose();
-      }
+                expect((yield* writer.create(id, { contentType }))._tag).toBe("Created");
+                const empty = yield* reader.read(id);
+                expect(empty).toMatchObject({ messages: [], upToDate: true });
+                const first = yield* writer.append(id, { data, contentType });
+                expect(first._tag).toBe("Appended");
+                expect(yield* reader.read(id, { offset: first.offset })).toMatchObject({
+                  messages: [],
+                });
+                const final = yield* writer.append(id, { data, contentType, close: true });
+                expect(final._tag).toBe("Appended");
+                const read = yield* reader.read(id, { offset: first.offset });
+                expect(read).toMatchObject({ nextOffset: final.offset, closed: true });
+                expect(read.messages.map((message) => message.data)).toEqual([data]);
+              }).pipe(Effect.provideContext(yield* Layer.build(modeTransport)));
 
-      expect(server.pendingRequests).toBe(0);
-    });
+              return server;
+            }),
+          );
+
+          expect(stoppedServer.pendingRequests).toBe(0);
+        }),
+    );
   }
 }
 
-it("resolves prefixes and application headers without letting IDs escape", async () => {
-  const seen: string[] = [];
+baseIt.live("resolves prefixes and application headers without letting IDs escape", () =>
+  Effect.gen(function* () {
+    const seen: string[] = [];
 
-  const client = HttpClient.make((request, url) =>
-    Effect.sync(() => {
-      seen.push(url.href);
-      expect(request.headers.authorization).toBe("Bearer fixture");
+    const client = HttpClient.make((request, url) =>
+      Effect.sync(() => {
+        seen.push(url.href);
+        expect(request.headers.authorization).toBe("Bearer fixture");
 
-      return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
-    }),
-  );
+        return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+      }),
+    );
 
-  const transport = RemoteStreams.layerProtocol({
-    baseUrl: "https://example.test/api/streams/",
-    headers: { authorization: "Bearer fixture" },
-  }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
+    const transport = RemoteStreams.layerProtocol({
+      baseUrl: "https://example.test/api/streams/",
+      headers: { authorization: "Bearer fixture" },
+    }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const reader = yield* StreamsReader;
       expect((yield* Effect.flip(reader.head(id)))._tag).toBe("StreamNotFound");
 
@@ -706,43 +773,56 @@ it("resolves prefixes and application headers without letting IDs escape", async
           reason: "configuration",
         });
       }
-    }).pipe(Effect.provide(transport)),
-  );
-  expect(seen).toEqual(["https://example.test/api/streams/orders/nested"]);
-});
+    }).pipe(Effect.provideContext(yield* Layer.build(transport)));
+    expect(seen).toEqual(["https://example.test/api/streams/orders/nested"]);
+  }),
+);
 
-it("keeps arbitrary append conflict bodies as typed conflicts", async () => {
-  for (const message of ["Content-Type mismatch", "Sequence conflict", "Some other conflict"]) {
-    expect(await appendFailure(() => new Response(message, { status: 409 }))).toMatchObject({
-      _tag: "AppendConflict",
-      id,
-      message,
-    });
-  }
-});
+baseIt.live("keeps arbitrary append conflict bodies as typed conflicts", () =>
+  Effect.gen(function* () {
+    for (const message of ["Content-Type mismatch", "Sequence conflict", "Some other conflict"]) {
+      expect(yield* appendFailure(() => new Response(message, { status: 409 }))).toMatchObject({
+        _tag: "AppendConflict",
+        id,
+        message,
+      });
+    }
+  }),
+);
 
-it("keeps arbitrary append bad-request bodies as typed request errors", async () => {
-  expect(
-    await appendFailure(() => new Response("Empty body not allowed", { status: 400 })),
-  ).toMatchObject({ _tag: "InvalidAppendRequest", id, message: "Empty body not allowed" });
-});
+baseIt.live("keeps arbitrary append bad-request bodies as typed request errors", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* appendFailure(() => new Response("Empty body not allowed", { status: 400 })),
+    ).toMatchObject({ _tag: "InvalidAppendRequest", id, message: "Empty body not allowed" });
+  }),
+);
 
 for (const retry of [false, true]) {
-  it(`decodes a close-only producer append${retry ? " retried after close" : " on an open stream"}`, async () => {
-    const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(memory())), {
-      disableLogger: true,
-    });
+  baseIt.live(
+    `decodes a close-only producer append${retry ? " retried after close" : " on an open stream"}`,
+    () =>
+      Effect.gen(function* () {
+        const edge = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(memory())), {
+              disableLogger: true,
+            }),
+          ),
+          (acquired) => Effect.promise(() => acquired.dispose()),
+        );
 
-    const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() => Bun.serve({ port: 0, fetch: (request) => edge.handler(request) })),
+          (acquired) => Effect.promise(() => acquired.stop(true)),
+        );
 
-    try {
-      const remote = RemoteStreams.layerProtocol({
-        baseUrl: server.url.href,
-        capabilities: { producer: true },
-      }).pipe(Layer.provide(FetchHttpClient.layer));
+        const remote = RemoteStreams.layerProtocol({
+          baseUrl: server.url.href,
+          capabilities: { producer: true },
+        }).pipe(Layer.provide(FetchHttpClient.layer));
 
-      await Effect.runPromise(
-        Effect.gen(function* () {
+        yield* Effect.gen(function* () {
           yield* Streams.create(notes);
           yield* Streams.append(notes, [new TextEncoder().encode("a")], { producer });
           const close = { producer: { ...producer, producerSeq: 1 }, close: true as const };
@@ -758,11 +838,7 @@ for (const retry of [false, true]) {
           expect(result).toMatchObject({ _tag: retry ? "Appended" : "Duplicate", closed: true });
           expect(result.producerEpoch).toBe(retry ? undefined : 0);
           expect(result.producerSeq).toBe(retry ? undefined : 1);
-        }).pipe(Effect.provide(remote)),
-      );
-    } finally {
-      await server.stop(true);
-      await edge.dispose();
-    }
-  });
+        }).pipe(Effect.provideContext(yield* Layer.build(remote)));
+      }),
+  );
 }

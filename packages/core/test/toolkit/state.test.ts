@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it as baseIt, layer } from "@streamsy/effect-test";
 import { Effect, Schema, Stream } from "effect";
 import * as DurableState from "../../src/toolkit/durable-state.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";
@@ -17,8 +17,8 @@ const slugs = StreamAddress.state("slugs", {
   collections: { slug: { schema: Slug, key: "slug" } },
 });
 
-it("state changes round trip with Durable State wire fields and source headers", () =>
-  Effect.runPromise(
+layer(MemoryStorage.layerProtocol())((it) => {
+  it.effect("state changes round trip with Durable State wire fields and source headers", () =>
     Effect.gen(function* () {
       const first = { id: 7, title: "first" };
       const second = { id: 8, title: "second" };
@@ -48,10 +48,11 @@ it("state changes round trip with Durable State wire fields and source headers",
         '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","offset":"source:4","txid":"source:4:0"}}',
         '{"type":"story","key":"8","old_value":{"id":8,"title":"second"},"headers":{"operation":"delete","offset":"source:4","txid":"source:4:1"}}',
       ]);
-    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
-  ));
+    }),
+  );
+});
 
-it("encodes the row with the collection codec and a string key", () => {
+baseIt("encodes the row with the collection codec and a string key", () => {
   const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
 
   const cards = StreamAddress.state("cards", {
@@ -62,8 +63,11 @@ it("encodes the row with the collection codec and a string key", () => {
     DurableState.upsert("card", { id: "a", total: 2 }),
   ]);
 
-  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
-  expect(JSON.parse(Schema.encodeSync(cards.codec)(event!) as string)).toEqual({
+  expect(
+    Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+      Schema.decodeUnknownSync(Schema.String)(Schema.encodeSync(cards.codec)(event)),
+    ),
+  ).toEqual({
     type: "card",
     key: "a",
     value: { id: "a", total: "2" },
@@ -71,7 +75,7 @@ it("encodes the row with the collection codec and a string key", () => {
   });
 });
 
-it("supports string keys and rejects empty derived keys", () => {
+baseIt("supports string keys and rejects empty derived keys", () => {
   expect(
     DurableState.changes(slugs, { offset: "source:5" }, [
       DurableState.upsert("slug", { slug: "a", title: "A" }),
@@ -91,7 +95,7 @@ it("supports string keys and rejects empty derived keys", () => {
   ).toThrow('Invalid state key for type "slug": field "slug"');
 });
 
-it("rejects an omitted optional key at runtime", () => {
+baseIt("rejects an omitted optional key at runtime", () => {
   const OptionalSlug = Schema.Struct({
     slug: Schema.optionalKey(Schema.String),
     title: Schema.String,
@@ -99,8 +103,8 @@ it("rejects an omitted optional key at runtime", () => {
 
   const optionalSlugs = StreamAddress.state("optional-slugs", {
     collections: {
-      // SAFETY: bypass the compile-time key constraint to cover the runtime boundary.
-      slug: { schema: OptionalSlug, key: "slug" as never },
+      // @ts-expect-error bypass the compile-time key constraint to cover the runtime boundary.
+      slug: { schema: OptionalSlug, key: "slug" },
     },
   });
 
@@ -111,7 +115,7 @@ it("rejects an omitted optional key at runtime", () => {
   ).toThrow(TypeError);
 });
 
-it("lets a change override txid and add source headers without replacing offset", () => {
+baseIt("lets a change override txid and add source headers without replacing offset", () => {
   const facts = DurableState.changes(stories, { offset: "source:8" }, [
     DurableState.upsert(
       "story",
@@ -132,13 +136,12 @@ it("lets a change override txid and add source headers without replacing offset"
     },
     { operation: "upsert", offset: "source:8", txid: "source:8:1" },
   ]);
-  const encoded = Schema.encodeSync(stories.codec)(facts[0]!);
-  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
-  const encodedText = encoded as string;
-  expect(JSON.parse(encodedText).headers).toEqual(facts[0]!.headers);
+  const encoded = Schema.encodeSync(stories.codec)(facts[0]);
+  const encodedText = Schema.decodeUnknownSync(Schema.String)(encoded);
+  expect(JSON.parse(encodedText).headers).toEqual(facts[0].headers);
 });
 
-it("stamps no offset and no default txid when the batch has no source offset", () => {
+baseIt("stamps no offset and no default txid when the batch has no source offset", () => {
   const facts = DurableState.changes(stories, {}, [
     DurableState.upsert("story", { id: 7, title: "first" }),
     DurableState.upsert("story", { id: 8, title: "second" }, { headers: { txid: "client-uuid" } }),
@@ -162,7 +165,7 @@ it("stamps no offset and no default txid when the batch has no source offset", (
   ]);
 });
 
-it("rejects an empty delete key and an unknown collection", () => {
+baseIt("rejects an empty delete key and an unknown collection", () => {
   expect(() => DurableState.changes(slugs, {}, [DurableState.remove("slug", "")])).toThrow(
     'Invalid state key for type "slug": key',
   );
@@ -172,8 +175,8 @@ it("rejects an empty delete key and an unknown collection", () => {
   ).toThrow(TypeError);
 });
 
-it("writes and reads several collections through one state address", () =>
-  Effect.runPromise(
+layer(MemoryStorage.layerProtocol())((it) => {
+  it.effect("writes and reads several collections through one state address", () =>
     Effect.gen(function* () {
       const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
 
@@ -207,56 +210,55 @@ it("writes and reads several collections through one state address", () =>
       );
 
       expect(names).toEqual(["Streamsy"]);
-    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
-  ));
-
-it("fails to decode an event whose type is not a declared collection", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const result = yield* Schema.decodeEffect(stories.codec)(
-        '{"type":"comment","key":"1","value":{"id":1,"title":"x"},"headers":{"operation":"upsert"}}',
-      ).pipe(Effect.result);
-
-      expect(result._tag).toBe("Failure");
     }),
-  ));
+  );
+});
 
-it("decodes foreign-writer optional headers and delete null values", () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      expect(
-        yield* Schema.decodeEffect(stories.codec)(
-          '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","timestamp":"2026-09-20T10:00:00Z","from":"source"}}',
-        ),
-      ).toEqual({
-        type: "story",
-        key: "7",
-        value: { id: 7, title: "first" },
-        headers: {
-          operation: "upsert",
-          timestamp: "2026-09-20T10:00:00Z",
-          from: "source",
-        },
-      });
-      expect(
-        yield* Schema.decodeEffect(stories.codec)(
-          '{"type":"story","key":"8","value":null,"old_value":{"id":8,"title":"second"},"headers":{"operation":"delete"}}',
-        ),
-      ).toEqual({
-        type: "story",
-        key: "8",
-        old_value: { id: 8, title: "second" },
-        headers: { operation: "delete" },
-      });
-    }),
-  ));
+baseIt.effect("fails to decode an event whose type is not a declared collection", () =>
+  Effect.gen(function* () {
+    const result = yield* Schema.decodeEffect(stories.codec)(
+      '{"type":"comment","key":"1","value":{"id":1,"title":"x"},"headers":{"operation":"upsert"}}',
+    ).pipe(Effect.result);
 
-it("decodes key-only deletes without inventing an old row", () => {
+    expect(result._tag).toBe("Failure");
+  }),
+);
+
+baseIt.effect("decodes foreign-writer optional headers and delete null values", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* Schema.decodeEffect(stories.codec)(
+        '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","timestamp":"2026-09-20T10:00:00Z","from":"source"}}',
+      ),
+    ).toEqual({
+      type: "story",
+      key: "7",
+      value: { id: 7, title: "first" },
+      headers: {
+        operation: "upsert",
+        timestamp: "2026-09-20T10:00:00Z",
+        from: "source",
+      },
+    });
+    expect(
+      yield* Schema.decodeEffect(stories.codec)(
+        '{"type":"story","key":"8","value":null,"old_value":{"id":8,"title":"second"},"headers":{"operation":"delete"}}',
+      ),
+    ).toEqual({
+      type: "story",
+      key: "8",
+      old_value: { id: 8, title: "second" },
+      headers: { operation: "delete" },
+    });
+  }),
+);
+
+baseIt("decodes key-only deletes without inventing an old row", () => {
   const change = { type: "story", key: "8", headers: { operation: "delete" } } as const;
   expect(Schema.decodeSync(stories.codec)(JSON.stringify(change))).toEqual(change);
 });
 
-it("normalizes Durable State insert, update, and upsert operations", () => {
+baseIt("normalizes Durable State insert, update, and upsert operations", () => {
   for (const operation of ["insert", "update", "upsert"] as const) {
     const decoded = Schema.decodeSync(stories.codec)(
       JSON.stringify({
@@ -277,6 +279,11 @@ it("normalizes Durable State insert, update, and upsert operations", () => {
     headers: { operation: "upsert" },
   });
 
-  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
-  expect(JSON.parse(encoded as string).headers.operation).toBe("upsert");
+  expect(
+    Schema.decodeSync(
+      Schema.fromJsonString(
+        Schema.Struct({ headers: Schema.Struct({ operation: Schema.String }) }),
+      ),
+    )(Schema.decodeUnknownSync(Schema.String)(encoded)).headers.operation,
+  ).toBe("upsert");
 });
