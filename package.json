@@ -28,7 +28,7 @@
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint",
     "typecheck": "bun run build && bun run --filter '*' typecheck",
-    "lint": "oxlint .",
+    "lint": "oxlint . --max-warnings 0",
     "lint:fix": "oxlint . --fix",
     "format": "oxfmt . --write",
     "format:check": "oxfmt . --check",
