@@ -54,6 +54,13 @@ Each unit decodes and saves the whole value. Use state for small values, for exa
 Keep large row sets in application tables, with `Commit.transaction` on a SQL host:
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+import { Effect, Schema } from "effect";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders } from "./streams.ts";
+// ---cut---
 import { SqlClient } from "effect/sql";
 
 const orderRows = Projection.fold({
@@ -142,6 +149,25 @@ The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pa
 `CheckpointStore.layer` keeps the records on the owner of the streams. Every storage host gives that owner: `MemoryStorage.layer`, `BunStorage.layer` and `DurableObjectStorage.layer`. The checkpoints and the streams then commit in one transaction. On a SQL host, add `Transaction.layer` for `Commit.transaction`:
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+export const orderTotalsProjection = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+}).at({});
+// @filename: run.ts
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+export const program = Projection.run(orderTotalsProjection, { limit: 10 });
+// @filename: index.ts
+// ---cut---
 import { Effect, Layer } from "effect";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";

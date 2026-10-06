@@ -6,6 +6,10 @@ description: Provide stream services from a remote Durable Streams host with the
 `RemoteStreams.layer(group, options)` gives the stream services of a group from a remote host.
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { RemoteStreams } from "@streamsy/core/remote";

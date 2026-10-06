@@ -6,6 +6,10 @@ description: Append items as one atomic write, retry with a producer position, a
 ## Append
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -36,6 +40,10 @@ A JSON stream keeps one message for each item. A bytes stream joins the items of
 `DurableState.changes` makes the change events for one address of a `Streamsy.state` stream.
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { DurableState } from "@streamsy/core";
 import { Workspace } from "./streams.ts";
@@ -62,6 +70,10 @@ const createIssue = (offset: string, issue: { id: string; projectId: string; tit
 ## Close
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -75,6 +87,10 @@ Later appends fail with `StreamClosed`.
 A producer position is `{ producerId, producerEpoch, producerSeq }`. `Producer.next` advances it.
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Producer } from "@streamsy/core";
 import { Notes } from "./streams.ts";
@@ -105,7 +121,25 @@ Advance the position only after `Appended` or `Duplicate`. Send the same bytes o
 
 `expectedOffset` writes only if the tail still equals it. `ZERO_OFFSET` means the stream must be empty. A miss writes nothing and fails with `OffsetMismatch`, with `expected` and `actual`.
 
-```ts
+```ts include write-reserve
+// @filename: orders.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+export const OrderEvent = Schema.Struct({ type: Schema.Literal("reserved"), sku: Schema.String });
+export class Orders extends Streamsy.json<Orders>()("Shop/Orders", "orders", {
+  params: {},
+  schema: OrderEvent,
+}) {}
+export interface OrdersState {
+  readonly reserved: ReadonlySet<string>;
+}
+export const initial: OrdersState = { reserved: new Set() };
+export const apply = (state: OrdersState, event: typeof OrderEvent.Type): OrdersState => ({
+  reserved: new Set([...state.reserved, event.sku]),
+});
+// - orders
+// @filename: index.ts
+// ---cut---
 import { Effect, Predicate } from "effect";
 import { Orders, apply, initial } from "./orders.ts";
 
@@ -132,6 +166,9 @@ The append's `AppendFailure<O>` type follows its options. Only an append with `e
 `decide` does the loop above in one call. It folds the stream, calls `decide` with the state and the tail it read, and appends with that tail as `expectedOffset`:
 
 ```ts
+// @include: write-reserve-orders
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Orders, apply, initial } from "./orders.ts";
 

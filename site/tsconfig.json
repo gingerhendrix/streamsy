@@ -3,7 +3,7 @@
   "exclude": [
     "test/scripts/check-excerpts.test.ts",
     "test/scripts/check-demo-excerpts.test.ts",
-    "test/scripts/check-snippets.test.ts"
+    "test/twoslash.test.ts"
   ],
   "compilerOptions": {
     "target": "ES2022",

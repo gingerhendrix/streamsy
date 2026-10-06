@@ -6,6 +6,18 @@ description: Provide stream services with a storage Layer, choose a backend, and
 A Streamsy program is an Effect that needs stream services. A Layer provides them and decides where the data is kept.
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: write.ts
+import { Effect } from "effect";
+import { Orders } from "./streams.ts";
+export const write = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  return (yield* orders.append({}, [{ orderId: "o-17", amount: 40 }])).offset;
+});
+// @filename: index.ts
+// ---cut---
 import { ManagedRuntime } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { shop } from "./streams.ts";
@@ -53,6 +65,10 @@ Each mutation copies the whole store, so an append takes linear time. Use memory
 Merge one Layer for each backend:
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
@@ -62,6 +78,17 @@ export const layer = Layer.merge(
   MemoryStorage.layer(Streamsy.group(Drafts)),
   BunStorage.layer(Streamsy.group(Journal), { client: { filename: "./journal.sqlite" } }),
 );
+// ---cut-after---
+// The merged layer provides both streams, with nothing left to provide.
+import { Effect, Stream } from "effect";
+const program = Effect.gen(function* () {
+  const drafts = yield* Drafts;
+  const journal = yield* Journal;
+  yield* drafts.create({ draftId: "a" });
+  yield* journal.append({}, ["x"]);
+  return yield* journal.read({}).pipe(Stream.runCollect);
+});
+const provided: Effect.Effect<unknown, unknown, never> = program.pipe(Effect.provide(layer));
 ```
 
 A missing stream service is a type error.

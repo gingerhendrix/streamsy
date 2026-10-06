@@ -9,7 +9,9 @@ An action is an external effect, for example an email or a webhook. `@streamsy/s
 
 ## Declare a sink
 
-```ts
+```ts include actions-sink
+// @filename: sink.ts
+// ---cut---
 import { Schema } from "effect";
 import { defineActionSink } from "@streamsy/serve/action";
 
@@ -40,6 +42,9 @@ export const welcome = defineActionSink<Welcome, { readonly key: "userId" }>({
 ## Enqueue
 
 ```ts
+// @include: actions-sink
+// @filename: index.ts
+// ---cut---
 import { Clock, Effect } from "effect";
 import { OutboxStore } from "@streamsy/serve/action/outbox";
 import { draftsFor } from "@streamsy/serve/action/runtime";
@@ -67,6 +72,9 @@ On SQLite and Postgres, the backing also creates the tables on first use. On MyS
 ## Deliver
 
 ```ts
+// @include: actions-sink
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { actionSinkHandler, drain } from "@streamsy/serve/action/runtime";
 import { welcome } from "./sink.ts";

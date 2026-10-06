@@ -7,7 +7,9 @@ This page builds one small shop application. Each step links to the page with th
 
 ## 1. Declare streams
 
-```ts
+```ts include tutorial-streams
+// @filename: streams.ts
+// ---cut---
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 
@@ -37,7 +39,10 @@ See [Declare streams](/docs/streams/declare).
 
 ## 2. Create and append
 
-```ts
+```ts include tutorial-write
+// @include: tutorial-streams
+// @filename: write.ts
+// ---cut---
 import { Effect } from "effect";
 import { Orders } from "./streams.ts";
 
@@ -56,6 +61,9 @@ See [Create and fork](/docs/streams/create) and [Write](/docs/streams/write).
 ## 3. Follow
 
 ```ts
+// @include: tutorial-streams
+// @filename: index.ts
+// ---cut---
 import { Effect, Stream } from "effect";
 import { Orders } from "./streams.ts";
 
@@ -71,7 +79,10 @@ See [Read](/docs/streams/read).
 
 ## 4. Project one stream into another
 
-```ts
+```ts include tutorial-projection
+// @include: tutorial-streams
+// @filename: projection.ts
+// ---cut---
 import { Effect } from "effect";
 import { Commit, Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
@@ -95,6 +106,9 @@ See [How projections work](/docs/projections).
 ## 5. Provide a Layer and run
 
 ```ts
+// @include: tutorial-write
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { shop } from "./streams.ts";
@@ -106,6 +120,10 @@ await Effect.runPromise(write.pipe(Effect.provide(MemoryStorage.layer(shop))));
 A projection also needs `CheckpointStore`. Merge its Layer over the same storage:
 
 ```ts
+// @include: tutorial-projection
+// @include: tutorial-write
+// @filename: index.ts
+// ---cut---
 import { Effect, Layer } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
@@ -120,7 +138,10 @@ await Effect.runPromise(write.pipe(Effect.andThen(catchUp), Effect.provide(host)
 
 Use SQLite when the data must survive a restart:
 
-```ts
+```ts include tutorial-storage
+// @include: tutorial-streams
+// @filename: storage.ts
+// ---cut---
 import { BunStorage } from "@streamsy/storage/bun";
 import { shop } from "./streams.ts";
 
@@ -132,6 +153,9 @@ export const storage = BunStorage.layer(shop, { client: { filename: "./streams.s
 ## 6. Serve on Bun
 
 ```ts
+// @include: tutorial-storage
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { BunRuntime } from "@effect/platform-bun";
 import { Http } from "@streamsy/core";
@@ -166,6 +190,9 @@ See [Cloudflare](/docs/hosting/cloudflare).
 ## 8. Read from another process
 
 ```ts
+// @include: tutorial-streams
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { RemoteStreams } from "@streamsy/core/remote";

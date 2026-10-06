@@ -28,7 +28,9 @@ Choose the guarantee with [a Commit](/docs/projections/define#commits). `fold` d
 
 `Projection.emit` maps each entry to output items. With `Commit.transaction`, the handler runs inside a SQL transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
 
-```ts
+```ts include projections-minimal
+// @filename: minimal.ts
+// ---cut---
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
@@ -68,7 +70,10 @@ One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/
 
 `Commit.producer` pins input ranges and output positions. The handler returns items for each route, and the runner appends them.
 
-```ts
+```ts include projections-tripled
+// @include: projections-minimal
+// @filename: tripled.ts
+// ---cut---
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
@@ -127,6 +132,9 @@ Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transa
 | SQLite storage (Bun, DO) | `CheckpointStore.layer` and `Transaction.layer` |
 
 ```ts
+// @include: projections-tripled
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { MemoryStorage, Streamsy } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
@@ -136,6 +144,22 @@ import { Tripled } from "./tripled.ts";
 export const host = CheckpointStore.layer.pipe(
   Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Numbers, Tripled))),
 );
+// ---cut-after---
+// The memory host runs `tripled`, and a SQL host runs `minimal`, with nothing left to provide.
+import { Effect } from "effect";
+import { Projection, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Doubled, minimal } from "./minimal.ts";
+import { tripled } from "./tripled.ts";
+const memory: Effect.Effect<unknown, unknown, never> = Projection.run(tripled.at({})).pipe(
+  Effect.provide(host),
+);
+const sqlHost = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Numbers, Doubled), { client: { filename: ":memory:" } }),
+  ),
+);
+const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.provide(sqlHost));
 ```
 
 The memory host runs `tripled` with `Commit.producer`. The `minimal` transaction example needs a SQL host. See [Layers](/docs/projections/state#checkpoints-and-generations).

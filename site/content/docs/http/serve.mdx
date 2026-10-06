@@ -5,7 +5,9 @@ description: Serve streams, Durable State changes, and values from response Effe
 
 Serve handlers return response Effects. Mount them alongside app routes with `HttpRouter.add`, `Serve.route`, or `Serve.mount`.
 
-```ts
+```ts include serve-app
+// @filename: app.ts
+// ---cut---
 import { Layer, Schema } from "effect";
 import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
@@ -121,6 +123,19 @@ The route app needs the output streams and the Commit's required services for th
 ## Auth and request parameters
 
 ```ts
+import { Context, Effect, Layer, Schema } from "effect";
+import { HttpRouter } from "effect/http";
+import { Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+class CurrentSeat extends Context.Service<CurrentSeat, { readonly id: string }>()("CurrentSeat") {}
+const SeatAuth = HttpRouter.middleware<{ provides: CurrentSeat }>()((handler) =>
+  Effect.provideService(handler, CurrentSeat, { id: "1" }),
+);
+// ---cut---
 const Mine = Serve.route(
   "/me",
   Effect.flatMap(CurrentSeat, (seat) => Serve.stream(Events.at({ seat: seat.id }))),
@@ -148,6 +163,13 @@ Protect the protocol routes too, if they expose private data.
 `handleRaw` accepts the same handler. Convert respondable errors to responses to retain Serve's headers; declared HttpApi errors use HttpApi's encoder.
 
 ```ts
+import { Serve } from "@streamsy/serve";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/ApiEvents", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+// ---cut---
 import { Effect, Schema } from "effect";
 import { HttpServerRespondable } from "effect/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
@@ -169,6 +191,12 @@ const Feeds = HttpApiBuilder.group(Api, "feeds", (handlers) =>
 `@streamsy/serve/contract` exports the header names and `decodePublicError`. It does not load Effect.
 
 ```ts
+// @include: serve-app
+// @filename: index.ts
+import { Layer } from "effect";
+import { HttpRouter } from "effect/http";
+import { App } from "./app.ts";
+// ---cut---
 const Cors = HttpRouter.cors({
   allowedOrigins: ["https://app.example.com"],
   allowedMethods: ["GET", "HEAD", "OPTIONS"],
@@ -209,6 +237,9 @@ Use URL-safe stream segments. Serve decodes parameters, and the protocol routes 
 `Serve.layer(routes, options)` is `HttpRouter.serve` with a drain for live reads. `Serve.teardown` sets the exit code. Both come from `@streamsy/serve` and work on any runtime. The host adds its listener and its runtime's `runMain`.
 
 ```ts
+// @include: serve-app
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { BunRuntime } from "@effect/platform-bun";
 import { MemoryStorage } from "@streamsy/core";
@@ -222,6 +253,20 @@ const Server = Serve.layer(App, { drainTimeout: "2 seconds" }).pipe(
 );
 
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
+// ---cut-after---
+// The app needs the Events stream, and the memory host leaves only the HTTP server to provide.
+import { Schema } from "effect";
+import { HttpRouter, type HttpServer } from "effect/http";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+const served = HttpRouter.serve(App);
+const requiresEvents: Events extends Layer.Services<typeof served> ? true : false = true;
+const provided = served.pipe(Layer.provide(MemoryStorage.layer(game)));
+type Left = Exclude<Layer.Services<typeof provided>, HttpServer.HttpServer>;
+const nothingElse: [Left] extends [never] ? true : false = true;
 ```
 
 `options` takes the options of `HttpRouter.serve`, plus `drainTimeout` (default 2 s).

@@ -30,6 +30,10 @@ Reads do not include the message at the given offset. Omit the offset to read fr
 ## Read
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect, Stream } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -41,6 +45,12 @@ const sizes = Effect.flatMap(Notes, (notes) =>
 );
 
 const everything = Effect.flatMap(Notes, (notes) => notes.collect({}));
+// ---cut-after---
+// A memory host for the Notes group provides everything that the reads need.
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+const provided: Effect.Effect<unknown, unknown, never> = Effect.all([sizes, everything]).pipe(
+  Effect.provide(MemoryStorage.layer(Streamsy.group(Notes))),
+);
 ```
 
 `read` is an Effect `Stream` of batches. It does nothing until a sink runs it. `limit` sets the maximum number of stored messages in one batch.
@@ -50,6 +60,10 @@ const everything = Effect.flatMap(Notes, (notes) => notes.collect({}));
 ## Follow
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect, Stream } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -71,6 +85,10 @@ const consumer = Effect.gen(function* () {
 ## Session
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -82,6 +100,10 @@ const once = (offset: string) => Effect.flatMap(Notes, (notes) => notes.session(
 ## Fold
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -99,6 +121,10 @@ const count = Effect.flatMap(Notes, (notes) =>
 To keep folding while the stream grows, fold over `follow`:
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect, Stream } from "effect";
 import { Notes } from "./streams.ts";
 

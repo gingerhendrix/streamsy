@@ -6,6 +6,10 @@ description: Create a stream with an optional lifecycle, fork a child stream fro
 ## Create
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Notes } from "./streams.ts";
 
@@ -43,6 +47,10 @@ A projection that stops reading can lose an expired input. It then stops with `h
 A fork is a child stream that starts with a prefix of a source stream. Appends to the child do not change the source.
 
 ```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect } from "effect";
 import { Drafts } from "./streams.ts";
 

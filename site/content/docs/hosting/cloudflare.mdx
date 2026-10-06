@@ -6,6 +6,10 @@ description: Route protocol paths from a Worker to Durable Objects that own thei
 A Worker router sends each protocol path to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app.
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { Http, Streamsy } from "@streamsy/core";
 import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
@@ -33,6 +37,12 @@ The second type parameter of `StreamsyObject.make` is the services that the app 
 ## Storage
 
 ```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+import type { DurableObjectState } from "@cloudflare/workers-types";
+declare const ctx: DurableObjectState;
+// ---cut---
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { shop } from "./streams.ts";
 

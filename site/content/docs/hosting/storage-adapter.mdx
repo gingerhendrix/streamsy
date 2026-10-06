@@ -9,7 +9,9 @@ The protocol, HTTP, forks, expiry, producer fencing, and projection checkpoints 
 
 ## The contract
 
-```ts
+```ts include storage-adapter
+// @filename: adapter.ts
+// ---cut---
 import { Effect, Layer, Option, Stream } from "effect";
 import { Storage, type StorageShape } from "@streamsy/core";
 
@@ -41,6 +43,11 @@ Each read must return new values, so a caller cannot change the store through a 
 ## Bind streams
 
 ```ts
+// @include: storage-adapter
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Layer } from "effect";
 import { Protocol } from "@streamsy/core/protocol";
 import { layer } from "./adapter.ts";
@@ -109,6 +116,9 @@ To offer `CommitBoundary.withTransaction`, an adapter needs one transaction owne
 ## Contract tests
 
 ```ts
+// @include: storage-adapter
+// @filename: index.ts
+// ---cut---
 import { StorageContract } from "@streamsy/core/testing";
 import { layer } from "./adapter.ts";
 

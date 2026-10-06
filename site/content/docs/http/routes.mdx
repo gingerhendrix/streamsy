@@ -5,7 +5,9 @@ description: Serve the Durable Streams protocol for a group of streams as an Htt
 
 `Http.routes(group, options)` serves the Durable Streams protocol for a group as an Effect `HttpRouter` route Layer.
 
-```ts
+```ts include routes-app
+// @filename: app.ts
+// ---cut---
 import { Layer, Schema } from "effect";
 import { Http, Streamsy } from "@streamsy/core";
 
@@ -73,6 +75,9 @@ A long poll that times out answers 204 with a cursor. An SSE response ends at `s
 ## Web handler
 
 ```ts
+// @include: routes-app
+// @filename: index.ts
+// ---cut---
 import { HttpRouter } from "effect/http";
 import { BunStorage } from "@streamsy/storage/bun";
 import { App, game } from "./app.ts";
