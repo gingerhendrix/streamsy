@@ -15,7 +15,8 @@
   "workspaces": {
     "packages": [
       "packages/*",
-      "examples/*"
+      "examples/*",
+      "tools/*"
     ],
     "catalog": {
       "alchemy": "0.82.1",

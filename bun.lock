@@ -287,6 +287,24 @@
         "@effect/sql-sqlite-do",
       ],
     },
+    "tools/docs-snippets": {
+      "name": "@streamsy/docs-snippets",
+      "dependencies": {
+        "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/platform-bun": "4.0.1",
+        "@effect/sql-sqlite-bun": "4.0.1",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "@types/bun": "^1.2.0",
+        "alchemy": "2.0.0-beta.80",
+        "effect": "4.0.1",
+      },
+      "devDependencies": {
+        "typescript": "catalog:",
+      },
+    },
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
@@ -752,6 +770,8 @@
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
+
+    "@streamsy/docs-snippets": ["@streamsy/docs-snippets@workspace:tools/docs-snippets"],
 
     "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 
