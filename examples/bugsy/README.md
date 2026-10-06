@@ -1,4 +1,4 @@
-# Issue tracker projection
+# Bugsy
 
 This example combines five workspace inputs in two checkpointed projections.
 Commands append canonical issue facts through `transact`, run both workspace addresses
@@ -9,41 +9,41 @@ addresses or the server. A failed address can serve stale rows and a stale summa
 repaired; a terminated watcher does not automatically restart.
 
 ```bash
-bun run --cwd examples/issue-tracker start
-bun run smoke:issue-tracker
-bun run app:issue-tracker
-bun run smoke:issue-tracker-serve
-ISSUE_TRACKER_DB=tracker.sqlite bun run --cwd examples/issue-tracker run:once acme
+bun run --cwd examples/bugsy start
+bun run smoke:bugsy
+bun run app:bugsy
+bun run smoke:bugsy-serve
+BUGSY_DB=tracker.sqlite bun run --cwd examples/bugsy run:once acme
 ```
 
 `server/config.ts` reads the settings with `Config`. `PORT` defaults to `1340`.
-`ISSUE_TRACKER_WORKSPACES` is the comma-separated fixed address list and
+`BUGSY_WORKSPACES` is the comma-separated fixed address list and
 defaults to `acme,live`.
 
 The server keeps streams, checkpoints and application tables in one database:
 
-| Set                  | Database                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------- |
-| `STREAMSY_PG_URL`    | Postgres at that URL (`@effect/sql-pg`)                                                |
-| `STREAMSY_MYSQL_URL` | MySQL at that URL (`@effect/sql-mysql2`)                                               |
-| neither              | Bun SQLite at `ISSUE_TRACKER_DB` (default: `/tmp/streamsy-issue-tracker-<pid>.sqlite`) |
+| Set                  | Database                                                               |
+| -------------------- | ---------------------------------------------------------------------- |
+| `STREAMSY_PG_URL`    | Postgres at that URL (`@effect/sql-pg`)                                |
+| `STREAMSY_MYSQL_URL` | MySQL at that URL (`@effect/sql-mysql2`)                               |
+| neither              | Bun SQLite at `BUGSY_DB` (default: `/tmp/streamsy-bugsy-<pid>.sqlite`) |
 
 Setting both URLs is an error. The server creates its tables at startup. Give
 it a database of its own. `hostLayer` and `applicationLayer` in `server/host.ts`
 take a storage Layer: `sqliteStorage(filename)` for Bun SQLite, or
 `sqlStorage(makeClient)` over any SQL client.
 
-`smoke:issue-tracker` uses the same config, so it runs against Postgres or MySQL
+`smoke:bugsy` uses the same config, so it runs against Postgres or MySQL
 when a URL is set, and restarts the server on that database. Start from an
-empty database. `smoke:issue-tracker-serve`, `app:issue-tracker` and `run:once`
+empty database. `smoke:bugsy-serve`, `app:bugsy` and `run:once`
 use SQLite only; run them with no URL set.
 
 ```bash
 bun run db:up
-STREAMSY_PG_URL=postgres://streamsy:streamsy@127.0.0.1:54329/<empty database> bun run smoke:issue-tracker
+STREAMSY_PG_URL=postgres://streamsy:streamsy@127.0.0.1:54329/<empty database> bun run smoke:bugsy
 ```
 
-`bun run --cwd examples/issue-tracker test:dialects` runs the application SQL
+`bun run --cwd examples/bugsy test:dialects` runs the application SQL
 (schema, upserts, the label sequence rule, ignored duplicates, catalog deletes)
 on SQLite, and on Postgres and MySQL when their URLs are set. It makes and drops
 its own database on each server. It is not part of `test:unit`.
@@ -103,6 +103,6 @@ input requires operator repair/rebuild; valid key-only deletes do not stop progr
 The named fold uses only the pinned batch and prior value, never mutable SQL rows.
 SQL and output checkpoints are independent, and there is no atomicity across outputs
 or across the two projections. A command can be accepted before projection failure;
-this demo does not add command idempotency. The new `smoke:issue-tracker-serve` script
+this demo does not add command idempotency. The new `smoke:bugsy-serve` script
 (package-local `smoke:serve`) checks rows, a key-only delete, transitions, summary
 ETags/304, restart on the same SQLite file, and another command after restart. Client bindings remain a later slice.

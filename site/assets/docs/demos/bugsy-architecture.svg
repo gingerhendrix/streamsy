@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 690" width="920" height="690" role="img" aria-labelledby="title desc">
-  <title id="title">Issue tracker projection architecture</title>
+  <title id="title">Bugsy architecture</title>
   <desc id="desc">A client posts a command to the API route. transact reads and folds the issue events stream, then appends one fact with expectedOffset. Five input streams hold issue facts, label facts and three catalogs. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams and a private state value. The command path and the watchers run both projections. Serve routes publish the output streams, the summary and the read-only input streams to clients.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -24,7 +24,7 @@
     </style>
   </defs>
 
-  <text class="heading" x="24" y="38">Issue tracker projection</text>
+  <text class="heading" x="24" y="38">Bugsy</text>
   <text class="caption" x="24" y="60">Commands append facts. Two projections read five inputs. Teal boxes are Streamsy streams.</text>
 
   <rect class="group" x="20" y="80" width="880" height="530" rx="18"/>

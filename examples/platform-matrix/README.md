@@ -4,7 +4,7 @@ One Streamsy app that runs on Bun, Node and Deno, with one storage backend for
 each path prefix. The runner starts all three runtimes and checks every
 `runtime × backend` pair with the official Durable Streams conformance suite
 and the memory-server HTTP smoke. On Bun, the Postgres and MySQL cells also run
-the issue-tracker HTTP smoke.
+the Bugsy HTTP smoke.
 
 ## Layout
 
@@ -87,24 +87,24 @@ runtime's cells end, also when a cell fails or you press Ctrl-C. The user in
 the URL needs the right to create and drop databases. The compose MySQL user
 may do so for databases named `streamsy_%`.
 
-### Issue-tracker smoke
+### Bugsy smoke
 
 On the Bun row, each `pg` and `mysql` cell runs a third check: the
-issue-tracker HTTP smoke (`examples/issue-tracker`, `bun run smoke:http`). The
-issue tracker has only a Bun entry, so the Node and Deno rows do not run it.
-The smoke starts its own issue-tracker server, sends a command, restarts the
+Bugsy HTTP smoke (`examples/bugsy`, `bun run smoke:http`). Bugsy
+has only a Bun entry, so the Node and Deno rows do not run it.
+The smoke starts its own Bugsy server, sends a command, restarts the
 server on the same database, and checks that the checkpoint and the row
 resumed. A failed smoke fails the cell:
 
 ```text
-| bun | ... | pass (332 passed, 6 skipped; smoke pass; issue-tracker pass) | pass (332 passed, 6 skipped; smoke pass; issue-tracker pass) |
+| bun | ... | pass (332 passed, 6 skipped; smoke pass; bugsy pass) | pass (332 passed, 6 skipped; smoke pass; bugsy pass) |
 ```
 
 The smoke gets its own fresh database, `streamsy_matrix_issues_<run id>`, and
 only that server's URL: the runner unsets the other dialect's variable, because
-the issue tracker refuses both. The runner drops the database after the smoke.
-The table notes name the database, `result.json` has an `issueTracker` record
-in the cell, and the raw output is in `bun-<backend>.issue-tracker.log`.
+Bugsy refuses both. The runner drops the database after the smoke.
+The table notes name the database, `result.json` has a `bugsy` record
+in the cell, and the raw output is in `bun-<backend>.bugsy.log`.
 
 The runner never prints a password. The logs, the table notes and
 `result.json` show each database URL with the password as `***`.

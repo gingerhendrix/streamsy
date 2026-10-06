@@ -21,8 +21,8 @@ export const startServer = (port: number, database: string) =>
     env: {
       ...process.env,
       PORT: String(port),
-      ISSUE_TRACKER_DB: database,
-      ISSUE_TRACKER_WORKSPACES: "acme,live",
+      BUGSY_DB: database,
+      BUGSY_WORKSPACES: "acme,live",
     },
     stdout: "pipe",
     stderr: "pipe",

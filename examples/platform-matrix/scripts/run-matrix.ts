@@ -14,9 +14,9 @@
  * runtime's cells end, also on failure and Ctrl-C. Logs, the table and
  * `result.json` show database URLs with the password redacted.
  *
- * On the Bun row, each pg and mysql cell also runs the issue-tracker HTTP
+ * On the Bun row, each pg and mysql cell also runs the Bugsy HTTP
  * smoke, in its own fresh database `streamsy_matrix_issues_<run id>`, dropped
- * after the smoke. The issue tracker has only a Bun entry.
+ * after the smoke. Bugsy has only a Bun entry.
  *
  * env: MATRIX_BASE_PORT (default 4101; Bun, Node and Deno take three ports
  * from it), MATRIX_OUT (default `<package>/.matrix`), STREAMSY_PG_URL,
@@ -78,8 +78,8 @@ interface Cell {
   /** The suite counts, or null when the output has no vitest summary. */
   readonly conformance?: Check & { readonly counts: Counts | null };
   readonly smoke?: Check;
-  /** The issue-tracker smoke and its own database, on the Bun pg and mysql cells. */
-  readonly issueTracker?: (Check & { readonly database: string }) | undefined;
+  /** The Bugsy smoke and its own database, on the Bun pg and mysql cells. */
+  readonly bugsy?: (Check & { readonly database: string }) | undefined;
 }
 
 interface Runtime {
@@ -121,8 +121,8 @@ const DIALECTS: ReadonlyArray<Dialect> = [
   },
 ];
 
-/** The runtime that runs the issue-tracker smoke. The issue tracker has only a Bun entry. */
-const ISSUE_TRACKER_RUNTIME: Runtime["name"] = "bun";
+/** The runtime that runs the Bugsy smoke. Bugsy has only a Bun entry. */
+const BUGSY_RUNTIME: Runtime["name"] = "bun";
 
 /** A dialect whose URL is set, with an open admin connection to its base database. */
 interface Server {
@@ -279,7 +279,7 @@ const program = Effect.gen(function* () {
 
   /**
    * Makes a fresh database `streamsy_matrix_<owner>_<run id>`, and drops it when
-   * the scope closes. The owner is a runtime, or `issues` for the issue tracker.
+   * the scope closes. The owner is a runtime, or `issues` for Bugsy.
    */
   const freshDatabase = (server: Server, owner: string) =>
     Effect.gen(function* () {
@@ -417,24 +417,24 @@ const program = Effect.gen(function* () {
     );
 
   /**
-   * The issue-tracker smoke in a fresh database of `server`, dropped after the
+   * The Bugsy smoke in a fresh database of `server`, dropped after the
    * smoke. The smoke starts and restarts its own server, so it gets only this
    * server's URL; the other dialect's variable is unset.
    */
-  const issueTrackerSmoke = (server: Server, name: string) =>
+  const bugsySmoke = (server: Server, name: string) =>
     Effect.scoped(
       Effect.gen(function* () {
         const database = yield* freshDatabase(server, "issues");
         const smoke = yield* check(
           ["bun", "run", "smoke:http"],
-          path.join(repoDir, "examples/issue-tracker"),
+          path.join(repoDir, "examples/bugsy"),
           Object.fromEntries(
             DIALECTS.map((dialect) => [
               dialect.variable,
               dialect === server.dialect ? database.url : undefined,
             ]),
           ),
-          `${name}.issue-tracker.log`,
+          `${name}.bugsy.log`,
         );
         return {
           status: smoke.status,
@@ -467,14 +467,14 @@ const program = Effect.gen(function* () {
         { BASE_URL: baseUrl },
         `${name}.smoke.log`,
       );
-      const issueTracker =
-        runtime.name === ISSUE_TRACKER_RUNTIME && server !== undefined
-          ? yield* issueTrackerSmoke(server, name)
+      const bugsy =
+        runtime.name === BUGSY_RUNTIME && server !== undefined
+          ? yield* bugsySmoke(server, name)
           : undefined;
       const status: Status =
         conformance.status === "pass" &&
         smoke.status === "pass" &&
-        (issueTracker === undefined || issueTracker.status === "pass")
+        (bugsy === undefined || bugsy.status === "pass")
           ? "pass"
           : "fail";
       const cell: Cell = {
@@ -490,7 +490,7 @@ const program = Effect.gen(function* () {
           counts: parseCounts(conformance.output),
         },
         smoke: { status: smoke.status, exitCode: smoke.exitCode, log: smoke.log },
-        issueTracker,
+        bugsy,
       };
       yield* Console.log(`  ${name}: ${describe(cell)}`);
       return cell;
@@ -567,7 +567,7 @@ class MatrixFailed extends Schema.TaggedError<MatrixFailed>()("MatrixFailed", {
 
 /**
  * A cell for the table, for example `pass (332 passed, 6 skipped; smoke pass)`,
- * with `; issue-tracker pass` when the cell ran the issue-tracker smoke.
+ * with `; bugsy pass` when the cell ran the Bugsy smoke.
  */
 const describe = (cell: Cell): string => {
   const counts = cell.conformance?.counts;
@@ -580,7 +580,7 @@ const describe = (cell: Cell): string => {
             `, ${counts.skipped} skipped`,
         ]),
     ...(cell.smoke === undefined ? [] : [`smoke ${cell.smoke.status}`]),
-    ...(cell.issueTracker === undefined ? [] : [`issue-tracker ${cell.issueTracker.status}`]),
+    ...(cell.bugsy === undefined ? [] : [`bugsy ${cell.bugsy.status}`]),
   ];
   return details.length === 0 ? cell.status : `${cell.status} (${details.join("; ")})`;
 };
@@ -607,11 +607,9 @@ const table = (cells: ReadonlyArray<Cell>): string => {
     ...(cell.database === undefined
       ? []
       : [`- ${cell.runtime} ${cell.backend}: database ${cell.database}`]),
-    ...(cell.issueTracker === undefined
+    ...(cell.bugsy === undefined
       ? []
-      : [
-          `- ${cell.runtime} ${cell.backend}: issue-tracker database ${cell.issueTracker.database}`,
-        ]),
+      : [`- ${cell.runtime} ${cell.backend}: Bugsy database ${cell.bugsy.database}`]),
   ]);
   return [
     line(header),
@@ -619,7 +617,7 @@ const table = (cells: ReadonlyArray<Cell>): string => {
     ...body.map(line),
     "",
     "Counts are the official suite. Smoke is the memory-server HTTP smoke.",
-    "Issue-tracker is the issue-tracker HTTP smoke, on the Bun pg and mysql cells.",
+    "Bugsy is the Bugsy HTTP smoke, on the Bun pg and mysql cells.",
     ...notes,
     ...databases,
   ].join("\n");

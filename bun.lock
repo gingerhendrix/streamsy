@@ -15,6 +15,26 @@
         "typescript": "catalog:",
       },
     },
+    "examples/bugsy": {
+      "name": "bugsy",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform-bun": "4.0.1",
+        "@effect/sql-mysql2": "4.0.1",
+        "@effect/sql-pg": "4.0.1",
+        "@effect/sql-sqlite-bun": "4.0.1",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.1",
+        "typescript": "catalog:",
+      },
+      "devDependencies": {
+        "@streamsy/test-support": "workspace:*",
+        "@types/bun": "^1.2.0",
+      },
+    },
     "examples/fold-agent": {
       "name": "fold-agent-example",
       "version": "0.0.1",
@@ -68,26 +88,6 @@
         "typescript": "catalog:",
       },
       "devDependencies": {
-        "@types/bun": "^1.2.0",
-      },
-    },
-    "examples/issue-tracker": {
-      "name": "issue-tracker",
-      "version": "0.0.1",
-      "dependencies": {
-        "@effect/platform-bun": "4.0.1",
-        "@effect/sql-mysql2": "4.0.1",
-        "@effect/sql-pg": "4.0.1",
-        "@effect/sql-sqlite-bun": "4.0.1",
-        "@streamsy/core": "workspace:*",
-        "@streamsy/projection": "workspace:*",
-        "@streamsy/serve": "workspace:*",
-        "@streamsy/storage": "workspace:*",
-        "effect": "4.0.1",
-        "typescript": "catalog:",
-      },
-      "devDependencies": {
-        "@streamsy/test-support": "workspace:*",
         "@types/bun": "^1.2.0",
       },
     },
@@ -905,6 +905,8 @@
 
     "bignumber.js": ["bignumber.js@9.3.1", "", {}, "sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ=="],
 
+    "bugsy": ["bugsy@workspace:examples/bugsy"],
+
     "bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
 
     "cac": ["cac@7.0.0", "", {}, "sha512-tixWYgm5ZoOD+3g6UTea91eow5z6AAHaho3g0V9CNSNb45gM8SmflpAc+GRd1InC4AqN/07Unrgp56Y94N9hJQ=="],
@@ -1008,8 +1010,6 @@
     "is-property": ["is-property@1.0.2", "", {}, "sha512-Ks/IoX00TtClbGQr4TWXemAnktAQvYB7HzcCxDGqEZU6oCmb2INHuOoKxbtR+HFkmYWBKv/dOZtGRiAjDhj92g=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
-
-    "issue-tracker": ["issue-tracker@workspace:examples/issue-tracker"],
 
     "issue-tracker-demo": ["issue-tracker-demo@workspace:examples/issue-tracker-demo"],
 

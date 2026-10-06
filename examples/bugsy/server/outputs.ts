@@ -18,24 +18,24 @@ import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
 export class Board extends Streamsy.state<Board>()(
-  "IssueTracker/Board",
-  "issue-tracker/:workspaceId/outputs/board",
+  "Bugsy/Board",
+  "bugsy/:workspaceId/outputs/board",
   {
     params: { workspaceId: Identifier },
     collections: { board: { schema: ProjectBoardCard, key: "issueId" } },
   },
 ) {}
 export class LabelCounts extends Streamsy.state<LabelCounts>()(
-  "IssueTracker/LabelCounts",
-  "issue-tracker/:workspaceId/outputs/label-counts",
+  "Bugsy/LabelCounts",
+  "bugsy/:workspaceId/outputs/label-counts",
   {
     params: { workspaceId: Identifier },
     collections: { labelCounts: { schema: LabelCountRow, key: "labelId" } },
   },
 ) {}
 export class Transitions extends Streamsy.json<Transitions>()(
-  "IssueTracker/Transitions",
-  "issue-tracker/:workspaceId/outputs/transitions",
+  "Bugsy/Transitions",
+  "bugsy/:workspaceId/outputs/transitions",
   { params: { workspaceId: Identifier }, schema: IssueTransition },
 ) {}
 export const outputStreams = [Board, LabelCounts, Transitions] as const;
@@ -43,7 +43,7 @@ export const outputStreams = [Board, LabelCounts, Transitions] as const;
 /** Declared outputs for one workspace, separate from the SQL rows of issueRows. */
 export const tracker = Projection.mapAccumBatch({
   commit: Commit.producer,
-  id: "issue-tracker",
+  id: "bugsy",
   params: { workspaceId: Identifier },
   inputs: routes,
   outputs: {

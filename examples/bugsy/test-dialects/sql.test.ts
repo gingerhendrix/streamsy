@@ -1,12 +1,12 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 /**
- * The issue-tracker SQL on every dialect: the schema, the issue upsert, the
+ * The Bugsy SQL on every dialect: the schema, the issue upsert, the
  * ignored duplicate inserts, the label sequence rule, the catalog upsert and
  * delete, and the next command sequence. SQLite always runs. Postgres and
  * MySQL run in a fresh database when `STREAMSY_PG_URL` or `STREAMSY_MYSQL_URL`
  * is set, and skip otherwise.
  *
- * Run: `bun run --cwd examples/issue-tracker test:dialects`.
+ * Run: `bun run --cwd examples/bugsy test:dialects`.
  */
 import { describe, expect, test } from "bun:test";
 import { MysqlClient } from "@effect/sql-mysql2";
@@ -215,7 +215,7 @@ const run = <E>(storage: Layer.Layer<HostStorage, E>) =>
     Effect.scoped(scenario.pipe(Effect.provide(applicationLayer(storage)))),
   );
 
-describe("issue-tracker SQL", () => {
+describe("bugsy SQL", () => {
   test(
     "sqlite",
     async () => {

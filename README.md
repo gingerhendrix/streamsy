@@ -52,7 +52,7 @@ from a typed stream address to a served projection.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.
-- [Issue tracker projection](examples/issue-tracker/README.md): five workspace
+- [Bugsy](examples/bugsy/README.md): an issue tracker with five workspace
   inputs in two checkpointed SQLite projections, with output streams and HTTP
   routes.
 - [Hex board](examples/hex-board/README.md): a whole game board kept as fold
