@@ -239,23 +239,23 @@ const stuckReadHost = (drainTimeout: Duration.Input | undefined) =>
     };
   });
 
+const stopStuck = async (drainTimeout: Duration.Input | undefined) => {
+  const host = await Effect.runPromise(stuckReadHost(drainTimeout));
+
+  const outcome = fetch(new URL("stuck", host.url)).then(
+    (response) => response.status,
+    () => "error",
+  );
+
+  await Effect.runPromise(host.started.pipe(Effect.timeout(2000)));
+  const elapsed = await Effect.runPromise(host.close);
+  // The serve layer interrupts the stuck handler after the drain gives up.
+  expect(await outcome).not.toBe(200);
+
+  return elapsed;
+};
+
 describe("the drain bound", () => {
-  const stopStuck = async (drainTimeout: Duration.Input | undefined) => {
-    const host = await Effect.runPromise(stuckReadHost(drainTimeout));
-
-    const outcome = fetch(new URL("stuck", host.url)).then(
-      (response) => response.status,
-      () => "error",
-    );
-
-    await Effect.runPromise(host.started.pipe(Effect.timeout(2000)));
-    const elapsed = await Effect.runPromise(host.close);
-    // The serve layer interrupts the stuck handler after the drain gives up.
-    expect(await outcome).not.toBe(200);
-
-    return elapsed;
-  };
-
   it("drainTimeout bounds the wait for a live read that does not end", async () => {
     const elapsed = await stopStuck(Duration.millis(300));
     expect(elapsed).toBeGreaterThanOrEqual(250);

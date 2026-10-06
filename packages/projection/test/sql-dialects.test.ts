@@ -158,9 +158,18 @@ for (const dialect of dialects) {
 
         const result = await onFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
-            const pool = () => Layer.build(checkpoints(dialect, fresh));
-            const first = Context.get(yield* pool(), CheckpointStore);
-            const stores = [first, Context.get(yield* pool(), CheckpointStore)];
+            // Two separate layer builds, so the saves race across two pools.
+            const first = Context.get(
+              yield* Layer.build(checkpoints(dialect, fresh)),
+              CheckpointStore,
+            );
+
+            const second = Context.get(
+              yield* Layer.build(checkpoints(dialect, fresh)),
+              CheckpointStore,
+            );
+
+            const stores = [first, second];
 
             /** SAVES saves of `id` from `ifToken`, alternating pools, all at once. */
             const race = (id: string, ifToken: string) =>

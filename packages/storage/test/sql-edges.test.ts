@@ -228,13 +228,13 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
 
 test("stream ids longer than 512 characters fail before any insert", async () => {
   const result = await Effect.runPromise(
-    withStore("stream-id-limit", (storage, sql) =>
-      Effect.gen(function* () {
-        const create = (id: string) =>
-          storage.mutate({
-            operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
-          });
+    withStore("stream-id-limit", (storage, sql) => {
+      const create = (id: string) =>
+        storage.mutate({
+          operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
+        });
 
+      return Effect.gen(function* () {
         // 512 code points pass, even when they take 1024 UTF-16 units.
         yield* create("a".repeat(512));
         yield* create("\u{1F600}".repeat(512));
@@ -250,8 +250,8 @@ test("stream ids longer than 512 characters fail before any insert", async () =>
             : tooLong,
           count: rows[0]?.count,
         };
-      }),
-    ),
+      });
+    }),
   );
 
   expect(result).toEqual({

@@ -426,6 +426,13 @@ it("keeps a bare append 400 generic without classifying its wording", async () =
   });
 });
 
+const probe = (transport: Layer.Layer<StreamsReader | StreamsWriter, TransportFault>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* (yield* StreamsReader).head(id);
+    }).pipe(Effect.flip, Effect.provide(transport)),
+  );
+
 it("sends no Streamsy-specific request headers", async () => {
   let accept: string | undefined = "unset";
   let cacheControl: string | undefined;
@@ -441,13 +448,6 @@ it("sends no Streamsy-specific request headers", async () => {
       }),
     ),
   );
-
-  const probe = (transport: Layer.Layer<StreamsReader | StreamsWriter, TransportFault>) =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* (yield* StreamsReader).head(id);
-      }).pipe(Effect.flip, Effect.provide(transport)),
-    );
 
   await probe(
     RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(

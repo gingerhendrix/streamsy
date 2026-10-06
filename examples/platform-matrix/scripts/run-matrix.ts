@@ -227,6 +227,40 @@ const fail = (runtime: Runtime, backend: string, reason: string): Cell => ({
   reason,
 });
 
+/**
+ * Opens an admin connection to a set URL and checks that the server answers
+ * (plan 3.2 step 1). The connection stays open for the run, to make and drop
+ * the per-runtime databases.
+ */
+const connect = (dialect: Dialect, url: Redacted.Redacted) =>
+  Effect.gen(function* () {
+    const shown = redactUrl(Redacted.value(url));
+
+    const admin = yield* Layer.build(SqlStorage.clientLayer(dialect.client(url))).pipe(
+      Effect.map(Context.get(SqlClient.SqlClient)),
+      Effect.tap((sql) => sql.unsafe("SELECT 1")),
+      Effect.mapError(
+        (error) =>
+          new DatabaseError({
+            message: `${dialect.variable} is set, but ${shown} does not answer: ${errorMessage(error)}`,
+          }),
+      ),
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () =>
+          Effect.fail(
+            new DatabaseError({
+              message: `${dialect.variable} is set, but ${shown} did not answer in 15 seconds`,
+            }),
+          ),
+      }),
+    );
+
+    yield* Console.log(`${dialect.backend}: ${shown} answers`);
+
+    return { dialect, url, admin } satisfies Server;
+  });
+
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -246,40 +280,6 @@ const program = Effect.gen(function* () {
   yield* Console.log(`platform matrix: writing results to ${outDir}`);
   // A database name part from the result folder name, for example `20261002t104535346z`.
   const runId = stamp.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-  /**
-   * Opens an admin connection to a set URL and checks that the server answers
-   * (plan 3.2 step 1). The connection stays open for the run, to make and drop
-   * the per-runtime databases.
-   */
-  const connect = (dialect: Dialect, url: Redacted.Redacted) =>
-    Effect.gen(function* () {
-      const shown = redactUrl(Redacted.value(url));
-
-      const admin = yield* Layer.build(SqlStorage.clientLayer(dialect.client(url))).pipe(
-        Effect.map(Context.get(SqlClient.SqlClient)),
-        Effect.tap((sql) => sql.unsafe("SELECT 1")),
-        Effect.mapError(
-          (error) =>
-            new DatabaseError({
-              message: `${dialect.variable} is set, but ${shown} does not answer: ${errorMessage(error)}`,
-            }),
-        ),
-        Effect.timeoutOrElse({
-          duration: "15 seconds",
-          orElse: () =>
-            Effect.fail(
-              new DatabaseError({
-                message: `${dialect.variable} is set, but ${shown} did not answer in 15 seconds`,
-              }),
-            ),
-        }),
-      );
-
-      yield* Console.log(`${dialect.backend}: ${shown} answers`);
-
-      return { dialect, url, admin } satisfies Server;
-    });
 
   const servers = yield* Effect.forEach(DIALECTS, (dialect) =>
     Option.match(config[dialect.backend], {

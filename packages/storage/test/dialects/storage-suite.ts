@@ -263,13 +263,13 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
 
     test("stream ids longer than 512 characters fail before any insert", async () => {
       const result = await Effect.runPromise(
-        withStore((storage, sql) =>
-          Effect.gen(function* () {
-            const create = (id: string) =>
-              storage.mutate({
-                operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
-              });
+        withStore((storage, sql) => {
+          const create = (id: string) =>
+            storage.mutate({
+              operations: [{ _tag: "Create", record: record(id), initialMessages: [] }],
+            });
 
+          return Effect.gen(function* () {
             // 512 code points pass, even when they take 1024 UTF-16 units.
             yield* create("a".repeat(512));
             yield* create("\u{1F600}".repeat(512));
@@ -281,8 +281,8 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
                 : tooLong,
               count: yield* count(sql, "streamsy_streams"),
             };
-          }),
-        ),
+          });
+        }),
       );
 
       expect(result).toEqual({
@@ -397,12 +397,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
     });
   });
 
-  describe(`${dialect.name} migrations`, () => {
-    const tableNames = (sql: SqlClient.SqlClient) =>
-      sql
-        .unsafe<{ readonly name: string }>(dialect.tables)
-        .pipe(Effect.map((rows) => rows.map(({ name }) => name)));
+  const tableNames = (sql: SqlClient.SqlClient) =>
+    sql
+      .unsafe<{ readonly name: string }>(dialect.tables)
+      .pipe(Effect.map((rows) => rows.map(({ name }) => name)));
 
+  describe(`${dialect.name} migrations`, () => {
     test("reopens a nonempty current-format database", async () => {
       const result = await Effect.runPromise(
         withDatabase((fresh) =>
