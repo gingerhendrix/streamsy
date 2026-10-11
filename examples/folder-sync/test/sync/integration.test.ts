@@ -451,10 +451,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const directory = yield* testDirectory("sync-existing-");
         const mirror = `${directory}/mirror`;
         const fs = yield* FileSystem.FileSystem;
+
         const server = yield* spawnServer({
           cwd: `${import.meta.dir}/../..`,
           entry: "server/index.ts",
         });
+
         yield* create(server.url, "docs");
         const same = yield* put(server.url, "docs", "same.md", "identical", "same");
         const stale = yield* put(server.url, "docs", "stale.md", "new on server", "stale");
@@ -462,12 +464,14 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         yield* fs.writeFileString(`${mirror}/docs/same.md`, "identical");
         yield* fs.writeFileString(`${mirror}/docs/stale.md`, "old local copy");
         yield* fs.writeFileString(`${mirror}/docs/new.md`, "local new file");
+
         const daemon = yield* sync({
           server: server.url,
           directory: mirror,
           folders: ["docs"],
           writable: ["docs"],
         }).pipe(Effect.forkScoped);
+
         yield* until(
           fs.readFileString(`${mirror}/docs/stale.md`),
           (value) => value === "new on server",
@@ -486,6 +490,74 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
             operation: expect.objectContaining({ inline: "new on server" }),
           }),
         ]);
+        yield* Fiber.interrupt(daemon);
+        yield* server.stop;
+      }),
+    { timeout: 20000 },
+  );
+  it.effect(
+    "two offline saves rebase onto their own receipts without unseen overwrite marks",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-own-saves-");
+        const mirror = `${directory}/mirror`;
+        const fs = yield* FileSystem.FileSystem;
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+        yield* create(server.url, "docs");
+        const seed = yield* put(server.url, "docs", "a.md", "seed", "seed");
+        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+        const context = yield* Layer.build(
+          Layer.merge(
+            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+          ),
+        );
+
+        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+        const state = yield* SyncState.pipe(Effect.provideContext(context));
+        const reconnect = yield* Deferred.make<void>();
+        let offline = true;
+
+        const wrapped = SyncRemote.of({
+          ...remote,
+          push: (op, origin) =>
+            Effect.gen(function* () {
+              if (offline) yield* Deferred.await(reconnect);
+
+              return yield* remote.push(op, origin);
+            }),
+        });
+
+        const daemon = yield* runSync({
+          server: server.url,
+          directory: mirror,
+          folders: ["docs"],
+          writable: ["docs"],
+        }).pipe(
+          Effect.provideService(SyncRemote, wrapped),
+          Effect.provideContext(context),
+          Effect.forkScoped,
+        );
+
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 1");
+        yield* until(state.pending(), (rows) => rows.length === 1);
+        yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 2");
+        const queued = yield* until(state.pending(), (rows) => rows.length === 2);
+        expect(queued.map((row) => row.base)).toEqual([seed.version, seed.version]);
+        offline = false;
+        yield* Deferred.succeed(reconnect, undefined);
+        yield* until(state.pending(), (rows) => rows.length === 0);
+        const rows = yield* history(server.url, "docs", "a.md");
+        expect(rows).toHaveLength(3);
+        expect(rows[1]?.operation.base).toBe(seed.version);
+        expect(rows[2]?.operation.base).toBe(rows[1]?.version);
+        expect(rows.every((row) => row.operation.overwrote === undefined)).toBe(true);
+        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("save 2");
         yield* Fiber.interrupt(daemon);
         yield* server.stop;
       }),

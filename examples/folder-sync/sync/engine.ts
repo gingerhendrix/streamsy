@@ -389,7 +389,12 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         if (!(yield* hasPending(operation.folderId, operation.path, operation.seq)))
           yield* install(operation.folderId, operation.path, head, operation.seq, true);
         // Retain the replayable receipt until both disk replacement and known-head state have settled.
-        yield* state.drop(operation.seq);
+        yield* state.dropAndRebase(
+          operation.seq,
+          operation,
+          operation.base,
+          receipt.version ?? head.version,
+        );
 
         return yield* Effect.void;
       }),

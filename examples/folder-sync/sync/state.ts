@@ -72,8 +72,23 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const drop = Effect.fn("SyncState.drop")(function* (seq: number) {
-    yield* sql`DELETE FROM outbox WHERE seq = ${seq}`;
+  const dropAndRebase = Effect.fn("SyncState.dropAndRebase")(function* (
+    seq: number,
+    path: { folderId: string; path: string },
+    oldBase: string | null,
+    newBase: string | null,
+  ) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM outbox WHERE seq = ${seq}`;
+        yield* sql`UPDATE outbox SET base = ${newBase}
+        WHERE seq > ${seq} AND folderId = ${path.folderId} AND path = ${path.path} AND base IS ${oldBase}`;
+        // Later observations have seen this author's accepted write, even while another save waits.
+        yield* sql`UPDATE known SET localVersion = ${newBase}
+        WHERE folderId = ${path.folderId} AND path = ${path.path} AND localVersion IS ${oldBase}
+        AND EXISTS (SELECT 1 FROM outbox WHERE folderId = ${path.folderId} AND path = ${path.path})`;
+      }),
+    );
   });
 
   const get = Effect.fn("SyncState.get")(function* (key: string) {
@@ -97,7 +112,7 @@ const make = Effect.gen(function* () {
     yield* sql`INSERT INTO folders (folderId) VALUES (${folderId}) ON CONFLICT DO NOTHING`;
   });
 
-  return { heads, head, save, pending, enqueue, drop, get, set, folders, addFolder };
+  return { heads, head, save, pending, enqueue, dropAndRebase, get, set, folders, addFolder };
 });
 
 export class SyncState extends Context.Service<SyncState, Effect.Success<typeof make>>()(
