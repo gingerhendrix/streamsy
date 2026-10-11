@@ -161,3 +161,17 @@ logs the full backup path. These saved bytes stay outside the watched mirror.
 The default ignore list covers Vim `.swp` and `.swx` files, `~` backups and `4913`
 probes; Emacs `#file#` and `.#file` files; and `.DS_Store`. Matching names at any
 path depth are ignored by scans, bootstrap, live pulls, and watcher triggers.
+
+Bootstrap, per-change head reads, and the post-push head read run inside the local
+sync gate. A slow server or a `minVersion` timeout can delay scans and other
+mirror decisions for up to the server's ten-second wait.
+
+Past-tail and regressing cursors detect some feed resets. Client cursors are not
+safe across a projection rebuild: a different cross-folder replay order may put
+unseen changes before the stored cursor even when the new tail is as long as the
+old one. Replacing the server database can also invalidate known folder versions.
+A feed epoch is deferred to batch E; affected clients need a fresh bootstrap.
+
+Atomic replacement still has a final local read-to-rename window in which an
+external editor save can be replaced. SQLite and disk replacement have no shared
+transaction or explicit filesystem fsync.
