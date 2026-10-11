@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { FILE_LIMIT, FileOp, Version } from "../../server/domain.ts";
-import { encodeFilePath } from "../../sync/decisions.ts";
+import { conflictPath, encodeFilePath } from "../../sync/decisions.ts";
 import { runSync, sync as startSync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
@@ -930,6 +930,9 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         );
         expect(bootstraps).toBe(2);
         expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("replacement index");
+        expect(yield* fs.readFileString(`${mirror}/.folder-sync/rejected/docs/a.md`)).toBe(
+          "old index",
+        );
         expect(yield* state.get("cursor")).toBe(oldCursor);
         expect(yield* state.pending()).toEqual([]);
         yield* Fiber.interrupt(daemon);
@@ -937,6 +940,190 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
       }),
     { timeout: 20000 },
   );
+
+  for (const { writable, older } of [
+    { writable: true, older: false },
+    { writable: false, older: false },
+    { writable: true, older: true },
+  ]) {
+    it.effect(
+      `a new feed epoch preserves synced files after an ${older ? "older" : "empty"} replacement in a ${writable ? "writable" : "read-only"} folder`,
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("sync-epoch-empty-");
+          const mirror = `${directory}/mirror`;
+          const files = older ? ["a.md", "b.md", "c.md"] : ["a.md", "b.md"];
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+          const server = yield* spawnServer({
+            cwd: `${import.meta.dir}/../..`,
+            entry: "server/index.ts",
+            env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
+          });
+
+          yield* create(server.url, "docs");
+
+          for (const file of files)
+            yield* put(server.url, "docs", file, `original ${file}`, `old-${file}`);
+
+          const context = yield* Layer.build(
+            Layer.merge(
+              stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+              remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
+            ),
+          );
+
+          const state = yield* SyncState.pipe(Effect.provideContext(context));
+          const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+          yield* until(remote.snapshot, (snapshot) => snapshot.files.length === files.length);
+          const blocked = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const deliver = yield* Deferred.make<void>();
+          let pauseReads = false;
+          let pauseWrites = false;
+
+          const read = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.gen(function* () {
+              if (pauseReads) {
+                yield* Deferred.succeed(blocked, undefined);
+                yield* Deferred.await(resume);
+              }
+
+              return yield* effect;
+            });
+
+          const daemon = yield* runSync({
+            server: server.url,
+            directory: mirror,
+            folders: ["docs"],
+            writable: writable ? ["docs"] : [],
+          }).pipe(
+            Effect.provideService(SyncRemote, {
+              ...remote,
+              snapshot: read(remote.snapshot),
+              tail: read(remote.tail),
+              head: (...args) => read(remote.head(...args)),
+              page: (cursor) => read(remote.page(cursor, false)),
+              push: (...args) =>
+                Effect.gen(function* () {
+                  if (pauseWrites) yield* Deferred.await(deliver);
+
+                  return yield* remote.push(...args);
+                }),
+            }),
+            Effect.provideContext(context),
+            Effect.forkScoped,
+          );
+
+          yield* until(state.get("ready"), (value) => value === "true");
+          const oldEpoch = yield* state.get("epoch");
+
+          for (const file of files)
+            expect(yield* fs.readFileString(`${mirror}/docs/${file}`)).toBe(`original ${file}`);
+          pauseReads = true;
+          pauseWrites = true;
+          yield* Deferred.await(blocked);
+          yield* server.stop;
+
+          const replacement = yield* spawnServer({
+            cwd: `${import.meta.dir}/../..`,
+            entry: "server/index.ts",
+            port: server.port,
+            env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
+          });
+
+          if (older) {
+            yield* create(replacement.url, "docs");
+            yield* put(replacement.url, "docs", "a.md", "original a.md", "same");
+            yield* put(replacement.url, "docs", "b.md", "older b.md", "different");
+          }
+
+          const snapshot = yield* until(
+            remote.snapshot,
+            (value) => value.files.length === (older ? 2 : 0),
+          );
+
+          if (!older) expect(snapshot.files).toEqual([]);
+          expect(snapshot.epoch).not.toBe(oldEpoch);
+          pauseReads = false;
+          yield* Deferred.succeed(resume, undefined);
+          yield* until(
+            Effect.gen(function* () {
+              return { epoch: yield* state.get("epoch"), ready: yield* state.get("ready") };
+            }),
+            (value) => value.epoch === snapshot.epoch && value.ready === "true",
+          );
+          const pending = yield* state.pending();
+
+          if (writable) {
+            expect(pending).toHaveLength(2);
+
+            const origin = yield* Schema.decodeUnknownEffect(Schema.String)(
+              yield* state.get("origin"),
+            );
+
+            const conflict = conflictPath("b.md", origin);
+
+            const uploads = older
+              ? [
+                  { path: "c.md", bytes: "original c.md" },
+                  { path: conflict, bytes: "original b.md" },
+                ]
+              : files.map((file) => ({ path: file, bytes: `original ${file}` }));
+
+            for (const upload of uploads) {
+              expect(yield* fs.readFileString(`${mirror}/docs/${upload.path}`)).toBe(upload.bytes);
+              expect(pending.find((entry) => entry.path === upload.path)).toMatchObject({
+                base: null,
+                bytes: text(upload.bytes),
+              });
+            }
+
+            if (older) {
+              expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("original a.md");
+              expect(yield* fs.readFileString(`${mirror}/docs/b.md`)).toBe("older b.md");
+            }
+
+            // Empty replacements have no registry either. Only recreate the folder
+            // after the local bytes and base-null outbox have been verified.
+            if (!older) yield* create(replacement.url, "docs");
+            pauseWrites = false;
+            yield* Deferred.succeed(deliver, undefined);
+            yield* until(state.pending(), (entries) => entries.length === 0);
+
+            for (const upload of uploads) {
+              expect((yield* remote.head("docs", upload.path)).bytes).toEqual(text(upload.bytes));
+              const rows = yield* history(replacement.url, "docs", upload.path);
+              expect(rows).toHaveLength(1);
+              expect(rows[0]?.operation.base).toBeNull();
+              expect(rows[0]?.operation.overwrote).toBeUndefined();
+            }
+
+            if (older) {
+              // Matching heads are adopted and differing heads remain authoritative.
+              expect(yield* history(replacement.url, "docs", "a.md")).toHaveLength(1);
+              expect(yield* history(replacement.url, "docs", "b.md")).toHaveLength(1);
+              expect((yield* remote.head("docs", "b.md")).bytes).toEqual(text("older b.md"));
+            }
+          } else {
+            expect(pending).toEqual([]);
+
+            for (const file of files) {
+              expect(yield* fs.readFileString(`${mirror}/.folder-sync/rejected/docs/${file}`)).toBe(
+                `original ${file}`,
+              );
+              expect(yield* fs.exists(`${mirror}/docs/${file}`)).toBe(false);
+              expect((yield* remote.head("docs", file)).bytes).toBeNull();
+            }
+          }
+
+          yield* Fiber.interrupt(daemon);
+          yield* replacement.stop;
+        }),
+      { timeout: 20000 },
+    );
+  }
 
   it.effect(
     "writer authorization failures stop the daemon and leave its write in the outbox",

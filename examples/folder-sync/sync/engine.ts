@@ -172,8 +172,11 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     head: { version: string | null; hash: string | null; bytes: Uint8Array | null },
     exceptSeq?: number,
     force = false,
+    unknownServer = false,
   ) {
-    const known = yield* state.head(folderId, file);
+    // An epoch change invalidates old echo hashes as well as remote versions.
+    // Keep pending observations in storage, but adopt unqueued paths as fresh files.
+    const known = unknownServer ? undefined : yield* state.head(folderId, file);
 
     if (!force && head.version !== null && known !== undefined && !applyChange(known, head.version))
       return yield* Effect.void;
@@ -322,7 +325,9 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       Effect.gen(function* () {
         const oldEpoch = yield* state.get("epoch");
 
-        if (oldEpoch !== undefined && oldEpoch !== snapshot.epoch) yield* state.resetVersions;
+        const epochChanged = oldEpoch !== undefined && oldEpoch !== snapshot.epoch;
+
+        if (epochChanged) yield* state.resetVersions;
 
         for (const row of snapshot.files) yield* addFolder(row.folderId);
         const paths = new Map<string, { folderId: string; path: string }>();
@@ -341,7 +346,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
           const head = yield* remote.head(row.folderId, row.path);
 
           if (yield* hasPending(row.folderId, row.path)) continue;
-          yield* install(row.folderId, row.path, head, undefined, true);
+          yield* install(row.folderId, row.path, head, undefined, true, epochChanged);
         }
 
         yield* scan();
