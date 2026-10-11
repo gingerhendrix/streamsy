@@ -107,28 +107,32 @@ export const makeWakeups = <R>(
       ),
     );
 
-    const reconcile = reconcilePermit.withPermit(
-      Effect.gen(function* () {
-        let target = Infinity;
+    // A forced pass replaces the in-flight guard, which is always earlier than real work.
+    const reconcileWith = (force: boolean) =>
+      reconcilePermit.withPermit(
+        Effect.gen(function* () {
+          let target = Infinity;
 
-        for (const state of states) {
-          const next = yield* state.wakeup.next;
+          for (const state of states) {
+            const next = yield* state.wakeup.next;
 
-          if (Option.isSome(next)) target = Math.min(target, Math.max(next.value, state.floor));
-        }
+            if (Option.isSome(next)) target = Math.min(target, Math.max(next.value, state.floor));
+          }
 
-        if (target === Infinity) return yield* slot.clear;
-        const now = yield* Clock.currentTimeMillis;
-        const current = yield* slot.current;
+          if (target === Infinity) return yield* slot.clear;
+          const now = yield* Clock.currentTimeMillis;
+          const current = yield* slot.current;
 
-        if (Option.isSome(current) && now < current.value && current.value <= target)
-          return undefined;
+          if (!force && Option.isSome(current) && now < current.value && current.value <= target)
+            return undefined;
 
-        if (Option.isSome(current) && current.value <= now) yield* slot.clear;
+          if (Option.isSome(current) && current.value <= now) yield* slot.clear;
 
-        return yield* slot.arm(Math.max(target, now + 1));
-      }),
-    );
+          return yield* slot.arm(Math.max(target, now + 1));
+        }),
+      );
+
+    const reconcile = reconcileWith(false);
 
     const service = Wakeups.of({
       touch: Effect.flatMap(RequestTouch, (marker) =>
@@ -184,7 +188,7 @@ export const makeWakeups = <R>(
         }
       }).pipe(
         Effect.ensuring(
-          reconcile.pipe(
+          reconcileWith(true).pipe(
             Effect.catchCause((cause) => Effect.logError("Wakeup reconciliation failed", cause)),
           ),
         ),
@@ -193,7 +197,13 @@ export const makeWakeups = <R>(
     );
 
     const complete = provided();
-    yield* reconcile.pipe(Effect.provide(complete));
+    // A failing `next` must not make the object unavailable. The next write or alarm retries.
+    yield* reconcile.pipe(
+      Effect.provide(complete),
+      Effect.catchCause((cause) =>
+        Effect.logError("Wakeup reconciliation at acquire failed", cause),
+      ),
+    );
 
     return { context: complete, alarm: alarm.pipe(Effect.provide(complete)) };
   });

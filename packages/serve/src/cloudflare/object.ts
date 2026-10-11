@@ -86,7 +86,7 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
         const owner = yield* ObjectOwner;
         const compiled = yield* owner.get;
         yield* compiled.alarm;
-      }).pipe(Effect.catchCause((cause) => Effect.logError("Wakeup acquisition failed", cause))),
+      }),
     );
   }
 }

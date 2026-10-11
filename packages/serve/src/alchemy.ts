@@ -104,9 +104,8 @@ export function objectHandlers<R = never>(options: {
           Option.isSome(compiled) ? compiled.value.fetch : Effect.succeed(unavailable()),
       ),
       alarm: () =>
-        Effect.flatMap(get, (compiled) => compiled.alarm).pipe(
-          Effect.catchCause((cause) => Effect.logError("Wakeup acquisition failed", cause)),
-        ),
+        // Acquisition failed, so no reconcile ran. Platform retry is the only re-arm.
+        Effect.flatMap(get, (compiled) => compiled.alarm).pipe(Effect.orDie),
     };
   });
 }

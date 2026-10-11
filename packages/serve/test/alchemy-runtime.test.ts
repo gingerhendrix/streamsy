@@ -161,6 +161,79 @@ baseIt.effect("multiple wakeups choose the earliest deadline and clear only toge
   }),
 );
 
+const recordingSlot = () => {
+  const slot = { current: Option.none<number>() };
+
+  const layer = Layer.succeed(AlarmSlot, {
+    current: Effect.sync(() => slot.current),
+    arm: (at) =>
+      Effect.sync(() => {
+        slot.current = Option.some(at);
+      }),
+    clear: Effect.sync(() => {
+      slot.current = Option.none();
+    }),
+  });
+
+  return { slot, layer };
+};
+
+baseIt.effect("an alarm turn replaces its in-flight guard with a later deadline", () =>
+  Effect.gen(function* () {
+    const { slot, layer } = recordingSlot();
+    const context = yield* Layer.build(Layer.merge(MemoryStorage.layerProtocol(), layer));
+
+    const scheduler = yield* makeWakeups(context, [
+      Wakeup.make({
+        name: "app/hourly",
+        next: Effect.succeedSome(3_600_000),
+        run: Effect.void,
+      }),
+    ]);
+
+    yield* TestClock.setTime(1000);
+    yield* scheduler.alarm;
+    expect(slot.current).toEqual(Option.some(3_600_000));
+  }),
+);
+
+baseIt.effect("a failing next at acquire leaves the object available", () =>
+  Effect.gen(function* () {
+    const { slot, layer } = recordingSlot();
+    const context = yield* Layer.build(Layer.merge(MemoryStorage.layerProtocol(), layer));
+
+    const scheduler = yield* makeWakeups(context, [
+      Wakeup.make({
+        name: "app/broken",
+        next: Effect.fail(
+          new StorageFault({ operation: "fixture.next", message: "down", retryable: true }),
+        ),
+        run: Effect.void,
+      }),
+    ]);
+
+    expect(Context.get(scheduler.context, Wakeups)).toBeDefined();
+    expect(slot.current).toEqual(Option.none());
+  }),
+);
+
+baseIt.effect("an alarm whose acquisition fails rejects for platform retry", () =>
+  Effect.gen(function* () {
+    const handlers = yield* objectHandlers({
+      app: protocolRoutes({ prefix: "/streams" }),
+      layer: Layer.effect(
+        AlarmSlot,
+        Effect.fail(
+          new StorageFault({ operation: "fixture.acquire", message: "down", retryable: true }),
+        ),
+      ).pipe(Layer.merge(MemoryStorage.layerProtocol())),
+    });
+
+    const exit = yield* Effect.exit(handlers.alarm());
+    expect(Exit.isFailure(exit)).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
 baseIt.effect.each(["failure", "still due"])("%s backs off and caps", (mode) =>
   Effect.gen(function* () {
     let due = Option.some(0);
