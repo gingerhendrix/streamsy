@@ -364,6 +364,87 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
     { timeout: 20000 },
   );
   it.effect(
+    "a remote write after the delivery head read still reaches the mirror",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-delivery-race-");
+        const mirror = `${directory}/mirror`;
+        const fs = yield* FileSystem.FileSystem;
+        const http = yield* HttpClient.HttpClient;
+
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+
+        yield* create(server.url, "docs");
+        yield* put(server.url, "docs", "a.md", "seed", "seed");
+        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+        const context = yield* Layer.build(
+          Layer.merge(
+            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+          ),
+        );
+
+        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+        const state = yield* SyncState.pipe(Effect.provideContext(context));
+        let delivered: string | null = null;
+        let external: string | undefined;
+
+        const wrapped = SyncRemote.of({
+          ...remote,
+          push: (op, origin) =>
+            remote.push(op, origin).pipe(
+              Effect.tap((receipt) =>
+                Effect.sync(() => {
+                  delivered = receipt.version;
+                }),
+              ),
+            ),
+          head: (folder, file, minVersion) =>
+            Effect.gen(function* () {
+              const head = yield* remote.head(folder, file, minVersion);
+
+              if (delivered !== null && minVersion === delivered) {
+                delivered = null;
+
+                const receipt = yield* put(server.url, "docs", "a.md", "from B", "B").pipe(
+                  Effect.provideService(HttpClient.HttpClient, http),
+                );
+
+                external = receipt.version;
+                // Let the feed fetch B while delivery still owns its outbox entry.
+                yield* Effect.yieldNow;
+              }
+
+              return head;
+            }),
+        });
+
+        const daemon = yield* runSync({
+          server: server.url,
+          directory: mirror,
+          folders: ["docs"],
+          writable: ["docs"],
+        }).pipe(
+          Effect.provideService(SyncRemote, wrapped),
+          Effect.provideContext(context),
+          Effect.forkScoped,
+        );
+
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* fs.writeFileString(`${mirror}/docs/a.md`, "from A");
+        yield* until(fs.readFileString(`${mirror}/docs/a.md`), (value) => value === "from B");
+        yield* until(state.pending(), (rows) => rows.length === 0);
+        expect((yield* state.head("docs", "a.md"))?.version).toBe(external);
+        yield* Fiber.interrupt(daemon);
+        yield* server.stop;
+      }),
+    { timeout: 20000 },
+  );
+  it.effect(
     "the CLI executable accepts flags and the runner supports custom folder mappings",
     () =>
       Effect.gen(function* () {

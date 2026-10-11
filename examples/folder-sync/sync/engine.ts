@@ -348,15 +348,15 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         `Replaced unseen version ${receipt.overwrote}: ${operation.folderId}/${operation.path}`,
       );
 
-    // A lost response is replayed with its original opId. Read the authoritative head after replay.
-    const head = yield* remote.head(
-      operation.folderId,
-      operation.path,
-      receipt.version ?? undefined,
-    );
-
     yield* gate.withPermit(
       Effect.gen(function* () {
+        // Cover changes skipped while this entry was pending before releasing its receipt.
+        const head = yield* remote.head(
+          operation.folderId,
+          operation.path,
+          receipt.version ?? undefined,
+        );
+
         yield* observe(operation.folderId, operation.path);
 
         if (!(yield* hasPending(operation.folderId, operation.path, operation.seq)))
