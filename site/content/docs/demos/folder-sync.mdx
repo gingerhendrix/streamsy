@@ -1,0 +1,193 @@
+---
+title: Folder sync
+description: Files with full history, live search, a browser editor, and two local mirrors that converge after an outage.
+---
+
+This demo stores files in folders. Each folder has an append-only log. A write wins by commit order and keeps the version it replaced in history. If the writer did not see that version, the new entry carries an `overwrote` mark. A shared change feed drives a live file manifest and an FTS5 search index. A browser reads the manifest into TanStack DB, and a Bun CLI mirrors selected folders into local directories.
+
+The source is in [`examples/folder-sync`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/folder-sync). Its README has the complete HTTP contract, settings, and a two-mirror walkthrough. This page follows the write, projection, and browser paths. Each titled excerpt is from that example; `// ...` leaves out lines.
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
+```
+
+Open http://localhost:1339. In another terminal, load the docs through the API:
+
+```bash
+bun run --cwd examples/folder-sync seed
+```
+
+The seed creates one folder per docs section, plus `docs/root` for files at the docs root. Running it again adds no versions. Its operation IDs include the content hash. It includes the metadata JSON files too.
+
+Run these in two separate terminals:
+
+```bash
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-a --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-b --write docs/root
+```
+
+Edit `docs/root/tutorial.mdx` in the browser. Both mirrors update. Edit it under `mirror-a/docs/root/`, and the browser and the other mirror update. Stop the server, edit a writable mirror, and restart with the same database. Its SQLite outbox delivers the saved operations on reconnect.
+
+Leave a draft open in the browser, edit the same file from a mirror, then save the browser draft. The history panel shows “replaced a change you did not see”. Its link opens the replaced version. Another browser save uses the previous receipt as its base, so it does not mark that save as unseen. Search opens the version it indexed; **Open current** returns to the head.
+
+## Streams and versions
+
+| Stream                    | Role                                                          |
+| ------------------------- | ------------------------------------------------------------- |
+| `folders`                 | Registry that starts per-folder projection bindings           |
+| `folders/:folderId/files` | Authoritative file operations; its offset is the file version |
+| `changes`                 | Shared projected feed; its offset is the sync cursor          |
+| `manifest`                | Durable State events for current live file rows               |
+
+Folder IDs are opaque strings, including slashes. HTTP clients encode the whole ID as one URL segment. Internal stream IDs use a hex UTF-8 codec to keep each ID within one route segment. File paths encode each segment separately. There is no rename operation; directories are implicit.
+
+The file stream takes its schema from the domain. The manifest collection uses the same row schema that the browser reads.
+
+```ts title="server/streams.ts"
+export class Files extends Streamsy.json<Files>()("FolderSync/Files", "folders/:folderId/files", {
+  params: { folderId: FolderKey },
+  schema: FileOp,
+}) {}
+```
+
+```ts title="server/streams.ts"
+export class Manifest extends Streamsy.state<Manifest>()("FolderSync/Manifest", "manifest", {
+  params: {},
+  collections: { file: { schema: ManifestFile, key: "id" } },
+}) {}
+```
+
+## Decide at the folder head
+
+`Projection.decide` catches the folder fold up before deciding. A retained operation receipt makes a replay return its earlier version without appending. New writes use the input offset as the append condition. The write records an unseen head in `overwrote`; the server time never chooses the winner. The domain has no HTTP or host imports.
+
+```ts title="server/folder-store.ts"
+const replay = operationAt(state.ops, meta.opId);
+
+if (replay !== undefined) {
+  if (replay.path !== normalized)
+    return Effect.fail(new InvalidFile({ message: "opId already used" }));
+
+  return Effect.succeed({ value: { replay }, items: [] });
+}
+
+const head = headAt(state.heads, normalized);
+```
+
+```ts title="server/folder-store.ts"
+const common = {
+  ...meta,
+  path: normalized,
+  ...overwriteMark(head, meta.base),
+  updatedAt: DateTime.formatIso(writtenAt),
+};
+```
+
+## Project into shared outputs
+
+A parameterized `emit` binding reads each folder log and writes into the shared changes stream with `Commit.producer`. The producer key keeps retries from duplicating output. One-item storage pages let the range end identify the exact folder version. This costs one checkpoint and one HTTP page per entry.
+
+```ts title="server/projections.ts"
+  const folderChanges = Projection.emit({
+    id: "folder-changes",
+    generation,
+    params: { folderId: FolderKey },
+    inputs: { input: Files },
+    outputs: { output: Changes },
+    commit: Commit.producer,
+```
+
+The manifest projection uses `Commit.transaction`: its Durable State append and consumed changes offset commit together. Search uses the same transaction mode for FTS rows and its checkpoint. Deletes remove the manifest row and the search text, while history stays in the folder log. Startup restores known folder bindings before following the registry. Failed followers log and restart after one second.
+
+`/api/ls` returns rows and their consumed changes offset in one SQL owner transaction. The CLI bootstraps from this pair and tails changes from that cursor, even when the manifest is behind.
+
+```ts title="server/file-index.ts"
+const snapshot = Effect.fn("FileIndex.snapshot")(function* (
+  options: { folder?: string; prefix?: string; glob?: string } = {},
+) {
+  return yield* boundary.withTransaction(
+    Effect.gen(function* () {
+      const files = yield* list(options);
+
+      const progress = yield* Projection.read(manifest.at({})).pipe(
+        Effect.provideService(CheckpointStore, checkpoints),
+      );
+
+      return { files, cursor: progress.offsets.input ?? ZERO_OFFSET };
+    }),
+  );
+});
+```
+
+## Follow the manifest in the browser
+
+`createStateSchema` maps manifest upserts and removes into the file collection. `createStreamDB` replays the retained events, then follows new ones. React reads the collection with TanStack DB live queries. Clean file viewers refresh when their manifest version changes; unsaved drafts retain the base they opened.
+
+```ts title="src/db.ts"
+export const manifestState = createStateSchema({
+  files: { schema: Schema.toStandardSchemaV1(ManifestFile), type: "file", primaryKey: "id" },
+});
+```
+
+```ts title="src/db.ts"
+const db = createStreamDB({
+  streamOptions: {
+    url: new URL("/streams/manifest", window.location.origin).href,
+    contentType: "application/json",
+    warnOnHttp: false,
+    fetch: connection.fetch,
+  },
+  state: manifestState,
+});
+```
+
+A successful save advances the editor base immediately to the returned receipt. This happens before the eventually consistent manifest needs to catch up. Metadata headers, including the author name, are percent-encoded.
+
+```tsx title="src/FilePanel.tsx"
+// The accepted receipt becomes the base of the next save, before the manifest catches up.
+setFile({
+  text: sent.text,
+  size: new TextEncoder().encode(sent.text).length,
+  version: receipt.version,
+});
+retry.current = null;
+```
+
+## Search and local rejection
+
+Search orders results by FTS5 bm25 relevance and keeps a 100-hit limit. Each snippet contains text segments and match flags. React escapes the text in both ordinary and highlighted segments. Markdown rendering also leaves HTML and JSX unexecuted. Binary files use raw downloads, including immutable blob URLs.
+
+```tsx title="src/Snippet.tsx"
+export function Snippet({ parts }: { parts: SearchResult["snippet"] }) {
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.match ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>,
+      )}
+    </>
+  );
+}
+```
+
+A local edit in a read-only folder is backed up before restoration. Unsupported local files are skipped; unchanged files produce one warning per daemon run. Non-retryable HTTP writes retain their bodies in a rejected SQLite table so other paths can continue. Inspect its summaries offline:
+
+```bash
+bun run --cwd examples/folder-sync sync rejected --dir ./mirror-a
+```
+
+## Limits
+
+- The listener has no authentication. Anyone who can reach it can read and write files.
+- A browser load replays all retained manifest events, one entry per page. Load time grows with history.
+- Head checkpoints keep all paths and operation receipts. History reads and search preparation scan folder logs. The example suits a small corpus.
+- Sync scans hash every selected file. Its local outbox and backup files have no quota.
+- The CLI preserves pending local edits, but an external editor can still save during the final local read-to-rename window.
+- Feed cursors are unsafe across an index rebuild. Use a fresh mirror after rebuilding; a feed epoch belongs to the Cloudflare slice.
+- Browser drafts stay in memory. Navigation and reload discard unsaved drafts. The page has no phone cache.
+- Cloudflare hosting and the agent filesystem are later slices. This demo has no hosted deployment.

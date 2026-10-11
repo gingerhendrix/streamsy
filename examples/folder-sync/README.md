@@ -1,15 +1,95 @@
 # Folder sync
 
-An append-only file log per folder, with commit-order heads and retained history.
-The Bun server exposes the file API, a shared change feed, a live manifest, and FTS5 search.
-Later batches add local sync and the browser.
+A durable file workspace with one append-only log per folder, full history, a live
+browser, full-text search, and a local sync CLI. Commit order chooses the latest
+version. A write that replaces an unseen change records an `overwrote` mark.
+The change feed, manifest, and search index rebuild from the folder logs.
+
+## Try it by hand
+
+From the repository root, install and build the workspace packages:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+```
+
+Start a persistent server in one terminal. `start` builds the Vite UI before
+launching Bun. Open http://localhost:1339 in your browser.
+
+```sh
+FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
+```
+
+In another terminal, seed the Streamsy docs through the HTTP API:
+
+```sh
+bun run --cwd examples/folder-sync seed
+bun run --cwd examples/folder-sync seed
+```
+
+The second run adds no versions. The first docs directory becomes the section
+folder: `docs/streams`, `docs/projections`, `docs/demos`, `docs/hosting`, and
+`docs/http`. Root files live in `docs/root`. The script includes metadata JSON
+and uses a stable operation ID made from folder, path, and content hash. Repeating
+an earlier seed does not undo subsequent user edits. Changed seed content gets a
+new operation ID. `--server <url>` selects another server.
+
+Start two mirrors in separate terminals. Use fresh directories for this check:
+
+```sh
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-a --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-b --write docs/root
+```
+
+Choose `docs/root/tutorial.mdx` in the browser and open **Edit**. Change a paragraph,
+set an author name, and save. Both mirrors update. Edit the same file under
+`mirror-a/docs/root/` and watch the browser and the other mirror update. Search
+for a distinctive word from the edit. Search results open the exact version they
+indexed. **Open current** returns to the latest file.
+
+To see an overwrite mark, leave an unsaved draft in the browser, edit the file
+in a mirror, wait for the server change, then save the draft. History says
+“replaced a change you did not see”. Its link opens the replaced version. Save
+again from the browser; this save uses the first receipt as its base and does
+not mark that first save as unseen.
+
+Stop the server, edit a writable mirror, and restart the server with the same
+SQLite path. Queued writes deliver and both mirrors converge. The browser shows
+**Offline** while its stream reader cannot connect. Stop both CLIs with Ctrl+C
+when finished. Their state stays under `.folder-sync` in each mirror.
+
+## Browser and development
+
+The folder tree uses a TanStack DB collection fed by `/streams/manifest` through
+`@durable-streams/state/db`. It loads every retained event, then follows new
+ones. Clean viewers refresh on manifest changes. An unsaved draft retains its
+open version and shows when a newer head arrives. Historical views are read-only.
+The browser editor supports UTF-8 text. Markdown and MDX show Markdown without
+executing HTML or JSX. Other files offer a raw download; blob files download by
+immutable hash. Search snippets are text segments with boolean match flags,
+rendered as escaped React children. An author name is a display label.
+
+For browser development, run the server and the Vite client separately:
 
 ```sh
 bun run --cwd examples/folder-sync start
-FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
+bun run --cwd examples/folder-sync dev:web
+```
+
+Open http://localhost:5179. Vite proxies `/api` and `/streams` to port 1339. The
+Bun listener serves the built HTML and its assets, with API and stream routes
+falling through to the Effect router. It uses the same scoped shutdown as the
+issue tracker. `/health` is a small health response. Rebuild the UI or restart
+`start` after frontend changes; `dev:web` provides live frontend development.
+
+```sh
 bun run --cwd examples/folder-sync test
 bun run --cwd examples/folder-sync smoke:http
+bun run --cwd examples/folder-sync typecheck
 ```
+
+## File API and storage
 
 The default port is 1339 (`PORT` overrides it). An unset or empty `FOLDER_SYNC_DB`
 uses transient SQLite (`:memory:`), including FTS5. Setting a path persists logs,
@@ -58,8 +138,9 @@ log versions, so a search hit can be opened with `?at=<version>`.
   text stored as blobs. The optional folder filter is exact. Binary content and
   deleted files are removed. FTS5 query syntax is accepted; malformed queries
   answer 400 and an empty query returns no hits. Results contain folder, path,
-  version, and snippet, sorted by folder and path, with a limit of 100. Snippets
-  contain `<mark>` delimiters; treat file content as text when displaying them.
+  version, and snippet, sorted by FTS5 bm25 relevance with folder/path tie breaks,
+  with a limit of 100. A snippet is an array of `{ text, match }` segments. Render
+  every segment as text; `match` says which segments to highlight.
 - `GET /streams/manifest?offset=-1` serves the read-only Durable State contract
   for the `file` collection. Consume every page, then tail from
   `stream-next-offset` with `live=long-poll`. Upserts replace the row and deletes
@@ -111,7 +192,8 @@ function returning a relative directory, so another host can choose its layout.
 Mappings must stay inside the mirror and use disjoint roots. Absolute IDs,
 traversal-like IDs, overlapping roots such as `docs` and `docs/api`, and the
 reserved `.folder-sync` directory require a different mapping or selection.
-Symlinks, special files, and files over 8 MiB are skipped and logged. Run one daemon per mirror directory.
+Symlinks, special files, and files over 8 MiB are skipped and logged once per
+path and metadata change during each daemon run. Run one daemon per mirror directory.
 
 The CLI bootstraps from `/api/ls` and its consumed cursor, fetches current heads,
 and tails every change page using long-poll. It keeps folder versions separate
@@ -155,7 +237,7 @@ no server head become new writes.
 
 Read-only edits and new local files are moved before restoration to
 `<dir>/.folder-sync/rejected/<folderId>/<path>` (using the configured folder mapping).
-An existing backup gets a numeric suffix; no earlier backup is replaced. The CLI
+An existing backup gets a numeric suffix before its extension (`read-1.md`); no earlier backup is replaced. The CLI
 logs the full backup path. These saved bytes stay outside the watched mirror.
 
 The default ignore list covers Vim `.swp` and `.swx` files, `~` backups and `4913`
@@ -175,3 +257,30 @@ A feed epoch is deferred to batch E; affected clients need a fresh bootstrap.
 Atomic replacement still has a final local read-to-rename window in which an
 external editor save can be replaced. SQLite and disk replacement have no shared
 transaction or explicit filesystem fsync.
+
+## Rejected writes and operational limits
+
+Inspect rejected writes without connecting to the server or running a watcher:
+
+```sh
+bun run --cwd examples/folder-sync sync rejected --dir ./mirror-a
+```
+
+The command opens existing SQLite state read-only and prints a JSON array of
+sequence, folder, path, operation ID, base, byte size, HTTP status, and reason.
+It does not print file bodies or requeue writes. Read-only backup files are
+separate from rejected HTTP operations and remain under `.folder-sync/rejected`.
+
+Index followers log terminal failures and restart after one second, resuming
+persisted checkpoints. A permanent failure repeats that log until repaired;
+HTTP head writes can continue while an index catches up.
+
+This demo has no authentication. Anyone who can reach the Bun listener can read
+and write files. It has no hosted deployment or phone cache. One-item stream
+pages and retained manifest events make browser load time grow with history.
+Head checkpoints keep all paths and operation receipts; history reads and search
+preparation scan folder logs. Browser bundle size and sync scans suit a small
+demo corpus. Rejected records, backups, and blob storage have no retention quota.
+Browser drafts are held in memory; navigating to another file or reloading loses
+an unsaved draft. Search shows at most 100 hits. Use fresh client state after a
+feed rebuild; the feed epoch belongs to the Cloudflare slice.

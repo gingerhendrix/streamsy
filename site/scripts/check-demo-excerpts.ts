@@ -32,6 +32,7 @@ export const demoExamples = new Map<string, readonly [string, ...Array<string>]>
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
   ["fold-agent", ["examples/fold-agent"]],
+  ["folder-sync", ["examples/folder-sync"]],
 ]);
 
 const excerptLanguages = new Set(["ts", "tsx"]);
