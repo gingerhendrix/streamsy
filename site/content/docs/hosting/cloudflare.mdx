@@ -74,19 +74,48 @@ Rules:
 
 ## Object lifecycle
 
-| Event             | Behaviour                                                 |
-| ----------------- | --------------------------------------------------------- |
-| First access      | Acquires storage and builds the handler once              |
-| Acquisition fails | 503 with `retry-after: 1`. The next access tries again    |
-| PUT, POST, DELETE | Reconciles the alarm after the request, also on rejection |
-| Alarm             | Runs the expiry sweep. Failures use platform retry        |
-| Defect            | 500 with security headers                                 |
+| Event                                  | Behaviour                                                           |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| First access                           | Acquires storage, reconciles deadlines, and builds the handler once |
+| Acquisition fails                      | 503 with `retry-after: 1`. The next access tries again              |
+| PUT, POST, DELETE                      | Reconciles the alarm after the request, also on rejection           |
+| Alarm                                  | Arms a recovery guard, runs due wakeups, and reconciles             |
+| Any request that calls `Wakeups.touch` | Reconciles when the request ends                                    |
+| Defect                                 | 500 with security headers                                           |
 
-Request logging is off. No URL or request header can start the sweep.
+Request logging is off. No URL or request header can start an alarm turn.
+
+## Wakeups
+
+Pass `wakeups` to `StreamsyObject.make` or `objectHandlers`. Each wakeup reads its next deadline from committed state and runs bounded, idempotent work when due. Return `Option.none()` when there is no work. The host always runs stream expiry first. Names must be unique within the object, including `streamsy/expiry`; duplicates fail at acquisition.
+
+```ts
+import { Effect, Option } from "effect";
+import type { StorageFault } from "@streamsy/core";
+declare const nextDeadline: Effect.Effect<Option.Option<number>, StorageFault>;
+declare const runDueWork: Effect.Effect<void>;
+// ---cut---
+import { Wakeup } from "@streamsy/serve/cloudflare";
+
+const catchUp = Wakeup.make({
+  name: "app/catch-up",
+  next: nextDeadline,
+  run: runDueWork,
+});
+// Add wakeups: [catchUp] to the object's configuration.
+```
+
+The earliest deadline owns the object's one alarm slot. Due work arms an alarm at `now + 1` after a write; it runs in an alarm turn. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` to reconcile when the request ends. Work outside a request can call `Wakeups.use((wakeups) => wakeups.reconcile)`.
+
+Failures are logged and do not stop the other wakeups. A failed run, or a successful run whose deadline stays due, backs off from one second to one hour. Override these floors with `retry: { initial, max }`. Progress to a future deadline or no work resets the failure count. Backoff lives in memory and resets on eviction. The alarm turn sets a 30-second recovery guard before dispatch. Delivery is at least once.
+
+For an action outbox, import `Wakeup` from `@streamsy/serve/action/runtime` and register `Wakeup.outbox(sink, handler, options)`. The wakeup reads the outbox deadline and drains it in the same acquired context as requests. Set `ordered: true` to stop behind a retrying entry. With `partitionId`, order applies to that lane; otherwise it applies to the whole sink. The default lets later due entries pass a retry. Request drains and alarm drains share a permit for the sink.
+
+Reconciliation at acquisition restores deadlines left by a crash between a commit and arming the alarm. An object must wake again for that recovery to happen.
 
 ## Projections
 
-Run projections in request middleware or in the alarm, over the same storage Layer as their checkpoints. See [Triggers](/docs/projections/define#triggers). A long-lived `follow` fiber does not suit an object.
+Run projections in request middleware or register a wakeup to run them in an alarm turn, over the same storage Layer as their checkpoints. See [Triggers](/docs/projections/define#triggers). A long-lived `follow` fiber does not suit an object.
 
 ## Alchemy
 
@@ -110,7 +139,7 @@ export class Streams extends Cloudflare.DurableObject<Streams>()(
         app: Http.routes(streams, { prefix: "/streams", access: "full" }),
         layer: Layer.mergeAll(
           DurableObjectStorage.layer(streams, { client: { storage: state.raw.storage } }),
-          Host.alarmLayer(state.raw.storage),
+          Host.alarmSlotLayer(state.raw.storage),
         ),
       }),
     );
