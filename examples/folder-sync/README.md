@@ -358,10 +358,16 @@ processing time. Larger backlogs may take multiple passes. The local runner
 calls the same pass every minute because Miniflare does not fire cron itself.
 `POST /api/admin/drain`, protected by the writer token, triggers it immediately.
 
-Index requests catch up notices, changes, manifest, and search before answering.
-Projection failures are logged and answer 503 with `Retry-After: 1`; later
-requests and cron passes retry from checkpoints. Both hosts read manifest rows,
-the consumed change cursor, and epoch in one SQL transaction.
+Index reads catch up notices, changes, manifest, and search before answering.
+Projection failures are logged and reads answer 503 with `Retry-After: 1`;
+registry access and durable notice intake continue while projections are down.
+Later passes retry from checkpoints. Both hosts read manifest rows, the consumed
+change cursor, and epoch in one SQL transaction.
+
+Each notice attempts the index projections twice: a best-effort pass before
+intake and a pass after durable intake. A folder write can wait for both the
+pre-request and post-request outbox drains, each bounded to two seconds. These
+extra passes add latency when the index is slow.
 
 The stock Streamsy expiry alarm remains untouched. The package follow-up is an
 application alarm hook in `@streamsy/serve`; the stock host currently runs only
