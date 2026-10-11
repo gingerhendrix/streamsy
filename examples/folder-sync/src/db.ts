@@ -9,7 +9,11 @@ export const manifestState = createStateSchema({
 });
 
 export const createFileDb = () => {
-  const connection = trackConnection();
+  const connection = trackConnection(globalThis.fetch, {
+    online: window,
+    visibility: document,
+    isVisible: () => document.visibilityState === "visible",
+  });
 
   const db = createStreamDB({
     streamOptions: {
