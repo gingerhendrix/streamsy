@@ -35,6 +35,76 @@ const worker = Effect.gen(function* () {
 layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
   (it) => {
     it.effect(
+      "workerd persists notices and runs cron while projection reads fail",
+      () =>
+        Effect.gen(function* () {
+          const host = yield* worker;
+
+          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: yield* HttpBody.json({ folderId: "fault", title: "Fault" }),
+          });
+
+          expect(create.status).toBe(200);
+          yield* create.text;
+
+          const configured = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
+            headers,
+            body: yield* HttpBody.json({ fail: false, projection: true }),
+          });
+
+          yield* configured.text;
+
+          const put = yield* HttpClient.put(`${host.url}/api/folders/fault/files/a.md`, {
+            headers: {
+              ...headers,
+              "x-file-op-id": "fault",
+              "x-file-author": "test",
+              "x-file-origin": "test",
+            },
+            body: HttpBody.text("projectionneedle"),
+          });
+
+          expect(put.status).toBe(200);
+          yield* put.text;
+
+          const pending = yield* HttpClient.get(`${host.url}/api/admin/pending?folder=fault`, {
+            headers,
+          });
+
+          const entries = yield* Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ state: Schema.String })),
+          )(yield* pending.json);
+
+          expect(entries.filter((row) => row.state === "pending")).toHaveLength(0);
+          const drain = yield* HttpClient.post(`${host.url}/api/admin/drain`, { headers });
+          expect(drain.status).toBe(200);
+          yield* drain.text;
+          const stalled = yield* HttpClient.get(`${host.url}/api/ls`);
+          expect(stalled.status).toBe(503);
+          expect(stalled.headers["retry-after"]).toBe("1");
+          yield* stalled.text;
+
+          const restored = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
+            headers,
+            body: yield* HttpBody.json({ fail: false }),
+          });
+
+          yield* restored.text;
+          const rows = yield* HttpClient.get(`${host.url}/api/ls`);
+          expect(yield* rows.json).toHaveLength(1);
+          const hits = yield* HttpClient.get(`${host.url}/api/search?q=projectionneedle`);
+          expect(yield* hits.json).toHaveLength(1);
+
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const feed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
+            expect(yield* feed.json).toHaveLength(1);
+            expect(feed.headers["stream-up-to-date"]).toBe("true");
+          }
+        }),
+      { timeout: 15000 },
+    );
+    it.effect(
       "workerd validates folder limits and content type before registry changes",
       () =>
         Effect.gen(function* () {
@@ -55,7 +125,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const unsupported = yield* HttpClient.post(`${host.url}/api/folders`, {
             headers,
             body: HttpBody.text(
-              Schema.encodeSync(Schema.fromJsonString(CreateFolder))({
+              yield* Schema.encodeEffect(Schema.fromJsonString(CreateFolder))({
                 folderId: "ghost",
                 title: "Ghost",
               }),

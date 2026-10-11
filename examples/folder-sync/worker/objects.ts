@@ -107,9 +107,18 @@ const passLayer = Layer.effect(
   IndexPass,
   Effect.gen(function* () {
     const run = Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      const flags = yield* sql<{
+        failProjection: number;
+      }>`SELECT failProjection FROM folder_sync_test WHERE id = 1`;
+
+      if (flags[0]?.failProjection === 1) return yield* Effect.die("Injected projection failure");
       yield* Projection.run(noticeChanges.at({}));
       yield* Projection.run(manifest.at({}));
       yield* Projection.run(search.at({}));
+
+      return yield* Effect.void;
     });
 
     const context = yield* Effect.context<
@@ -133,13 +142,6 @@ const IndexInternal = Layer.mergeAll(
     "GET",
     "/__project",
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-
-      const flags = yield* sql<{
-        failProjection: number;
-      }>`SELECT failProjection FROM folder_sync_test WHERE id = 1`;
-
-      if (flags[0]?.failProjection === 1) return yield* Effect.die("Injected projection failure");
       const pass = yield* IndexPass;
       yield* pass.run;
 
@@ -163,7 +165,11 @@ const IndexInternal = Layer.mergeAll(
       yield* receiveNotice(notice);
       // Persist intake before projecting. A failed response can safely replay the same notice.
       const pass = yield* IndexPass;
-      yield* pass.run;
+      yield* pass.run.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Notice persisted; index projection deferred", cause),
+        ),
+      );
 
       return HttpServerResponse.text("accepted");
     }).pipe(Effect.orDie),
@@ -253,10 +259,12 @@ export class IndexObject extends StreamsyObject.make<
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
 
-    if (path === "/__project" || path === "/__test/intake") return super.fetch(request);
+    if (path === "/__project" || path === "/__test/intake" || path === "/__registry")
+      return super.fetch(request);
     const ready = await super.fetch(new Request("https://internal/__project"));
 
-    if (!ready.ok) return ready;
+    // Notice intake skips the read gate. Retain the best-effort prepass and post-intake pass.
+    if (!ready.ok && path !== "/__notice") return ready;
     const response = await super.fetch(request);
 
     if (path !== "/streams/changes") return response;
