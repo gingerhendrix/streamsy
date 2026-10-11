@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { draftReads } from "./draft-reads.ts";
 import { fileUrl, history, readFile, saveFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
 
@@ -21,6 +22,7 @@ export function FilePanel({
   const [message, setMessage] = useState("");
   const [readError, setReadError] = useState("");
   const dirty = file !== null && file.text !== null && file.text !== draft;
+  const reads = useRef(draftReads());
   const retry = useRef<{ text: string; base: string; author: string; opId: string } | null>(null);
 
   useEffect(() => {
@@ -36,17 +38,23 @@ export function FilePanel({
 
   useEffect(() => {
     if (dirty || saving) return undefined;
+    const applyRead = reads.current.begin();
     const controller = new AbortController();
     void readFile(selection, controller.signal)
       .then((loaded) => {
-        setReadError("");
-        setFile(loaded);
-        setDraft(loaded.text ?? "");
+        if (controller.signal.aborted) return;
+        applyRead(() => {
+          setReadError("");
+          setFile(loaded);
+          setDraft(loaded.text ?? "");
+        });
       })
       .catch((error: Error) => {
         if (!controller.signal.aborted) {
-          setReadError(error.message);
-          setFile(null);
+          applyRead(() => {
+            setReadError(error.message);
+            setFile(null);
+          });
         }
       });
 
@@ -150,7 +158,10 @@ export function FilePanel({
             aria-label="File text"
             value={draft}
             disabled={saving}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              reads.current.edited();
+              setDraft(event.target.value);
+            }}
           />
           <div className="save-bar">
             <label>
