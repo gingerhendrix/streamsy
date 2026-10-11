@@ -83,3 +83,9 @@ followers, clears output streams and FTS rows, and replays a new generation from
 the folder logs. A rebuild resets feed cursors and requires clients to bootstrap
 again. Cross-folder replay can interleave differently, while each folder retains
 its original commit order and final heads.
+
+`/api/ls` also returns `stream-next-offset`: the shared changes offset consumed by
+these manifest rows, read in the same SQL transaction. Bootstrap files from the
+rows, then tail `/streams/changes` from this header. A lagging manifest is safe:
+changes newer than its cursor are replayed. Filtered lists still return the global
+cursor; keep the same folder selection when tailing.

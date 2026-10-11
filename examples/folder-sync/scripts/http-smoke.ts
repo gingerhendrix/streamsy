@@ -68,6 +68,10 @@ const listUntil = (url: string, query: string, version: string) =>
   Effect.gen(function* () {
     const response = yield* HttpClient.get(`${url}/api/ls?${query}`);
     yield* check(response.status === 200, `list status ${response.status}`);
+    yield* check(
+      Schema.is(Version)(response.headers["stream-next-offset"]),
+      "ls includes its consumed feed cursor",
+    );
 
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
       yield* response.json,

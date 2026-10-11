@@ -1,7 +1,19 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, layer } from "@streamsy/effect-test";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Clock, Console, Effect, Exit, Layer, Result, Schedule, Schema, Scope } from "effect";
+import {
+  Clock,
+  Console,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Result,
+  Schedule,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise, NoWriteHook } from "../server/folder-store.ts";
 import { FileIndex, FileIndexLive, IndexLive, manifestRows } from "../server/file-index.ts";
@@ -42,6 +54,49 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 );
 
 layer(Layer.empty, { excludeTestServices: true })((it) => {
+  it.effect("a manifest snapshot plus its feed cursor misses no burst writes", () =>
+    Effect.gen(function* () {
+      yield* Layer.build(IndexLive);
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      const changes = yield* Changes;
+      yield* store.create("burst", "Burst");
+
+      const writer = yield* Effect.forEach(
+        Array.from({ length: 80 }, (_, n) => n),
+        (n) =>
+          store.write("burst", `file-${n % 20}.md`, metadata(`burst-${n}`), bytes(`value-${n}`)),
+      ).pipe(Effect.forkScoped);
+
+      const snapshot = yield* index.snapshot();
+      yield* Fiber.join(writer);
+      yield* until(changes.collect({}), (feed) => feed.items.length === 80);
+      const heads = new Map(snapshot.files.map((row) => [row.path, row.version]));
+      yield* changes.read({}, { offset: snapshot.cursor }).pipe(
+        Stream.runForEach((page) =>
+          Effect.sync(() => {
+            for (const change of page.items) {
+              const known = heads.get(change.path);
+
+              if (known === undefined || change.version > known)
+                heads.set(change.path, change.version);
+            }
+          }),
+        ),
+      );
+
+      const final = yield* until(
+        index.list(),
+        (rows) => rows.length === 20 && rows.every((row) => heads.get(row.path) === row.version),
+      );
+
+      expect(new Map(final.map((row) => [row.path, row.version]))).toEqual(heads);
+    }).pipe(
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Isolated scoped SQL test runtime.
+      Effect.provide(graph),
+    ),
+  );
+
   it.effect(
     "live outputs handle slash ids, same-second writes, overwrites, deletes and text blobs",
     () =>

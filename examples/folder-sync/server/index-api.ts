@@ -1,3 +1,4 @@
+import { HttpServerResponse } from "effect/http";
 import { Effect, Layer, Match, Schema } from "effect";
 import {
   HttpApi,
@@ -56,7 +57,8 @@ class IndexApi extends HttpApi.make("FolderSyncIndexApi")
 
 type IndexError =
   | Effect.Error<ReturnType<typeof FileIndex.Service.list>>
-  | Effect.Error<ReturnType<typeof FileIndex.Service.search>>;
+  | Effect.Error<ReturnType<typeof FileIndex.Service.search>>
+  | Effect.Error<ReturnType<typeof FileIndex.Service.snapshot>>;
 
 const indexErrors = <A, R>(self: Effect.Effect<A, IndexError, R>) =>
   self.pipe(
@@ -79,7 +81,14 @@ const HandlersLive = HttpApiBuilder.group(IndexApi, "index", (handlers) =>
     const index = yield* FileIndex;
 
     return handlers
-      .handle("list", ({ query }) => index.list(query).pipe(indexErrors))
+      .handle("list", ({ query }) =>
+        index.snapshot(query).pipe(
+          indexErrors,
+          Effect.map(({ files, cursor }) =>
+            HttpServerResponse.jsonUnsafe(files, { headers: { "stream-next-offset": cursor } }),
+          ),
+        ),
+      )
       .handle("search", ({ query }) => index.search(query.q, query.folder).pipe(indexErrors));
   }),
 );

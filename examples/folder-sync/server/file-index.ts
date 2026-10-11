@@ -1,5 +1,5 @@
-import { CommitBoundary } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { CommitBoundary, ZERO_OFFSET } from "@streamsy/core";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 import { Context, Effect, Layer, Schema, Scope, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { InvalidFile } from "./domain.ts";
@@ -42,6 +42,8 @@ export const manifestRows = Effect.gen(function* () {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const stream = yield* Manifest;
+  const boundary = yield* CommitBoundary;
+  const checkpoints = yield* CheckpointStore;
 
   const list = Effect.fn("FileIndex.list")(function* (
     options: {
@@ -68,6 +70,23 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Rows and their consumed feed offset share the manifest writer's SQL boundary. */
+  const snapshot = Effect.fn("FileIndex.snapshot")(function* (
+    options: { folder?: string; prefix?: string; glob?: string } = {},
+  ) {
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const files = yield* list(options);
+
+        const progress = yield* Projection.read(manifest.at({})).pipe(
+          Effect.provideService(CheckpointStore, checkpoints),
+        );
+
+        return { files, cursor: progress.offsets.input ?? ZERO_OFFSET };
+      }),
+    );
+  });
+
   const find = Effect.fn("FileIndex.search")(function* (q: string, folder?: string) {
     if (q.trim() === "") return [];
 
@@ -91,7 +110,7 @@ const make = Effect.gen(function* () {
     return yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(rows);
   });
 
-  return { list, search: find };
+  return { list, snapshot, search: find };
 });
 
 export class FileIndex extends Context.Service<FileIndex, Effect.Success<typeof make>>()(
