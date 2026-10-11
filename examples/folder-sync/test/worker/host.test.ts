@@ -400,6 +400,22 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(denied.status).toBe(401);
           yield* denied.text;
 
+          for (const authorization of [
+            "Bearer worker-test-tokem",
+            "Bearer short",
+            "Bearer worker-test-token-extra",
+            "Bearer",
+            "Bearer WORKER-TEST-TOKEN",
+          ]) {
+            const wrong = yield* HttpClient.post(`${host.url}/api/folders`, {
+              headers: { authorization },
+              body: yield* HttpBody.json({ folderId: "denied", title: "Denied" }),
+            });
+
+            expect(wrong.status).toBe(401);
+            expect(yield* wrong.text).toContain("Writer authorization required");
+          }
+
           const create = yield* HttpClient.post(`${host.url}/api/folders`, {
             headers,
             body: yield* HttpBody.json({ folderId: "docs", title: "Docs" }),

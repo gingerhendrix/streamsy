@@ -26,6 +26,17 @@ const json = (error: string, status: number) =>
     headers: { "content-type": "application/json" },
   });
 
+/** Equal-length credentials use the Workers constant-time primitive. Only length can short-circuit. */
+const authorized = (request: Request, env: Env) => {
+  const expected = new TextEncoder().encode(`Bearer ${env.WRITER_TOKEN}`);
+  const supplied = new TextEncoder().encode(request.headers.get("authorization") ?? "");
+
+  const equal =
+    supplied.length === expected.length && crypto.subtle.timingSafeEqual(supplied, expected);
+
+  return Boolean(env.WRITER_TOKEN) && equal;
+};
+
 /** One scheduled pass, also called by the authenticated local trigger. A failed folder does not stop the other folders. */
 export const scheduledDrain = async (env: Env) => {
   const response = await index(env).fetch("https://internal/__registry");
@@ -52,11 +63,7 @@ export default {
     const url = new URL(request.url);
     const write = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 
-    if (
-      write &&
-      (!env.WRITER_TOKEN || request.headers.get("authorization") !== `Bearer ${env.WRITER_TOKEN}`)
-    )
-      return json("Writer authorization required", 401);
+    if (write && !authorized(request, env)) return json("Writer authorization required", 401);
 
     // Internal object routes are not exposed through the public router.
     if (url.pathname === "/api/admin/drain" && request.method === "POST") {
@@ -83,7 +90,7 @@ export default {
       url.pathname === "/api/admin/pending" &&
       request.method === "GET" &&
       env.TEST_HOOKS === "true" &&
-      request.headers.get("authorization") === `Bearer ${env.WRITER_TOKEN}`
+      authorized(request, env)
     )
       return folder(env, url.searchParams.get("folder") ?? "").fetch("https://internal/__pending");
 
