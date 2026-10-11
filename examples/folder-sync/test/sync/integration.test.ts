@@ -421,4 +421,77 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
       }),
     { timeout: 15000 },
   );
+  it.effect(
+    "an interrupted pull finishes on restart without pushing an echo",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-interrupted-pull-");
+        const fs = yield* FileSystem.FileSystem;
+        const mirror = `${directory}/mirror`;
+        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+        yield* create(server.url, "docs");
+        const original = yield* put(server.url, "docs", "a.md", "original", "original");
+
+        const context = yield* Layer.build(
+          Layer.merge(
+            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+          ),
+        );
+
+        const state = yield* SyncState.pipe(Effect.provideContext(context));
+        const interrupted = yield* Deferred.make<void>();
+        let blockRename = false;
+
+        const wrapped = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            blockRename && to === `${mirror}/docs/a.md`
+              ? Deferred.succeed(interrupted, undefined).pipe(Effect.andThen(Effect.never))
+              : fs.rename(from, to),
+        });
+
+        const options = {
+          server: server.url,
+          directory: mirror,
+          folders: ["docs"],
+          writable: ["docs"],
+        };
+        const daemon = yield* runSync(options).pipe(
+          Effect.provideService(FileSystem.FileSystem, wrapped),
+          Effect.provideContext(context),
+          Effect.forkScoped,
+        );
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* until(state.head("docs", "a.md"), (head) => head?.localVersion === original.version);
+        blockRename = true;
+        const replacement = yield* put(server.url, "docs", "a.md", "replacement", "replacement");
+        yield* Deferred.await(interrupted);
+        yield* Fiber.interrupt(daemon);
+        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("original");
+        const unfinished = yield* state.head("docs", "a.md");
+        expect(unfinished?.version).toBe(replacement.version);
+        expect(unfinished?.localVersion).toBe(original.version);
+        const restarted = yield* runSync(options).pipe(
+          Effect.provideContext(context),
+          Effect.forkScoped,
+        );
+        yield* until(
+          state.head("docs", "a.md"),
+          (head) => head?.localVersion === replacement.version,
+        );
+        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("replacement");
+        const before = yield* state.get("lastScan");
+        yield* until(state.get("lastScan"), (value) => value !== before);
+        expect(yield* state.pending()).toEqual([]);
+        expect(yield* history(server.url, "docs", "a.md")).toHaveLength(2);
+        yield* Fiber.interrupt(restarted);
+        yield* server.stop;
+      }),
+    { timeout: 15000 },
+  );
 });

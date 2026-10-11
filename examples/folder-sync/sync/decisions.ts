@@ -3,12 +3,13 @@ export interface KnownHead {
   readonly version: string | null;
   readonly hash: string | null;
   readonly localHash: string | null;
+  readonly localVersion: string | null;
 }
 
 export const applyChange = (known: KnownHead | undefined, version: string) =>
   known?.version == null || version > known.version;
 
-export const conflictBase = (known: KnownHead | undefined) => known?.version ?? null;
+export const conflictBase = (known: KnownHead | undefined) => known?.localVersion ?? null;
 
 export const isEcho = (hash: string | null, known: KnownHead | undefined, pending = false) =>
   hash === (known?.localHash ?? null) || (!pending && hash === known?.hash);

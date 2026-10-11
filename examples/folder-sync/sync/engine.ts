@@ -166,6 +166,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
           version: known?.version ?? null,
           hash: known?.hash ?? null,
           localHash,
+          localVersion: known?.localVersion ?? null,
         },
       );
 
@@ -178,13 +179,14 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       version: head.version,
       hash: head.hash,
       localHash: known?.localHash ?? null,
+      localVersion: known?.localVersion ?? null,
     };
 
     // Write intent precedes the disk rename. Cursor settlement follows both disk and observation.
     yield* state.save(row);
     yield* replaceLocal(root, filePath(folderId, file), head.bytes);
 
-    return yield* state.save({ ...row, localHash: head.hash });
+    return yield* state.save({ ...row, localHash: head.hash, localVersion: head.version });
   });
 
   const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
@@ -193,7 +195,18 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const hash = yield* hashBytes(bytes);
     const known = yield* state.head(folderId, normalized);
 
-    if (isEcho(hash, known, yield* hasPending(folderId, normalized))) return yield* Effect.void;
+    const pending = yield* hasPending(folderId, normalized);
+
+    if (known !== undefined && !pending && known.localVersion !== known.version) {
+      // An interrupted pull recorded its intent before replacing disk bytes. Finish it even if
+      // the replayed feed version equals the saved head, while preserving edits based on localVersion.
+      const head = yield* remote.head(folderId, normalized, known.version ?? undefined);
+      yield* install(folderId, normalized, head, undefined, true);
+
+      return yield* Effect.void;
+    }
+
+    if (isEcho(hash, known, pending)) return yield* Effect.void;
 
     if (!writable(folderId)) {
       yield* Effect.logWarning(`Restoring read-only file: ${folderId}/${normalized}`);
@@ -212,6 +225,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         version: known?.version ?? null,
         hash: known?.hash ?? null,
         localHash: hash,
+        localVersion: known?.localVersion ?? null,
       },
     );
 

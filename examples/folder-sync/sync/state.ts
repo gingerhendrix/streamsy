@@ -9,6 +9,7 @@ const Known = Schema.Struct({
   version: Schema.NullOr(Version),
   hash: Schema.NullOr(Hash),
   localHash: Schema.NullOr(Hash),
+  localVersion: Schema.NullOr(Version),
 });
 
 export type Known = typeof Known.Type;
@@ -28,7 +29,7 @@ export type Pending = typeof Pending.Type;
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS known (
-    folderId TEXT NOT NULL, path TEXT NOT NULL, version TEXT, hash TEXT, localHash TEXT,
+    folderId TEXT NOT NULL, path TEXT NOT NULL, version TEXT, hash TEXT, localHash TEXT, localVersion TEXT,
     PRIMARY KEY (folderId, path))`);
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, folderId TEXT NOT NULL, path TEXT NOT NULL,
@@ -50,7 +51,7 @@ const make = Effect.gen(function* () {
 
   const save = Effect.fn("SyncState.save")(function* (row: Known) {
     yield* sql`INSERT INTO known ${sql.insert(row)} ON CONFLICT (folderId, path) DO UPDATE SET
-      version = excluded.version, hash = excluded.hash, localHash = excluded.localHash`;
+      version = excluded.version, hash = excluded.hash, localHash = excluded.localHash, localVersion = excluded.localVersion`;
   });
 
   const pending = Effect.fn("SyncState.pending")(function* () {

@@ -122,8 +122,9 @@ The selection and server URL are bound to the state directory; use another
 and any pending writes. `Ctrl+C` or `SIGTERM` closes watchers, requests, and SQLite;
 the Effect runtime uses exit code 130 for interruption.
 
-`.folder-sync/state.sqlite` stores known heads, observed hashes, tombstone
-versions, the feed cursor, and an immutable write outbox. The watcher ignores
+`.folder-sync/state.sqlite` stores known heads, observed versions and hashes, tombstone
+versions, the feed cursor, and an immutable write outbox. A saved pull intent
+whose observed version has not settled is finished after restart. The watcher ignores
 `.folder-sync`, waits 100 ms for editor bursts to settle, and hashes the resulting
 files. A periodic reconciliation scan also covers coalesced or missing watcher
 events. Pulled bytes with a known hash do not push back. A temp-file-then-rename

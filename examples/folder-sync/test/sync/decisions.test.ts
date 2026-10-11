@@ -9,7 +9,12 @@ import {
 } from "../../sync/decisions.ts";
 import { parseArguments } from "../../sync/arguments.ts";
 
-const head = { version: "0000000000000001_0000000000000002", hash: "a", localHash: "b" };
+const head = {
+  version: "0000000000000001_0000000000000002",
+  hash: "a",
+  localHash: "b",
+  localVersion: "0000000000000001_0000000000000002",
+};
 
 test("echo checks distinguish a pending edit reverted to the server's bytes", () => {
   expect(isEcho("b", head, true)).toBe(true);
@@ -27,6 +32,9 @@ test("apply decisions ignore duplicate and older per-folder versions", () => {
   expect(conflictBase(head)).toBe(head.version);
   expect(conflictBase({ ...head, hash: null, localHash: null })).toBe(head.version);
   expect(conflictBase(undefined)).toBeNull();
+  expect(conflictBase({ ...head, localVersion: "0000000000000001_0000000000000001" })).toBe(
+    "0000000000000001_0000000000000001",
+  );
 });
 
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {
