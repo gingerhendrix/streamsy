@@ -106,7 +106,7 @@ const write = Effect.fn("Folder.write")(function* (
         decide: ({
           state,
           offsets,
-        }): Effect.Effect<Decision<WriteDecision, FileOp>, InvalidFile> => {
+        }): Effect.Effect<Decision<WriteDecision, FileOp>, InvalidFile | MissingFile> => {
           const replay = operationAt(state.ops, meta.opId);
 
           if (replay !== undefined) {
@@ -117,6 +117,9 @@ const write = Effect.fn("Folder.write")(function* (
           }
 
           const head = headAt(state.heads, normalized);
+
+          if (content === undefined && (head === undefined || head.deleted))
+            return Effect.fail(new MissingFile({ message: "File not found" }));
 
           if (meta.base !== null && meta.base > (offsets.input ?? ZERO_OFFSET))
             return Effect.fail(

@@ -149,8 +149,41 @@ const smoke = Effect.gen(function* () {
     });
 
     yield* check(oversized.status === 413, `oversized body: ${oversized.status}`);
+
+    const missingDelete = yield* HttpClient.del(`${folderUrl}/files/never-written`, {
+      headers: metadata("missing-delete"),
+    });
+
+    yield* check(missingDelete.status === 404, "delete of a never-written path answers 404");
+    const missingHistory = yield* HttpClient.get(`${folderUrl}/history/never-written`);
+    yield* check(
+      (yield* Schema.decodeUnknownEffect(History)(yield* missingHistory.json)).length === 0,
+      "missing delete appends nothing",
+    );
     const deleted = yield* HttpClient.del(url, { headers: metadata("delete", third.version) });
     yield* check(deleted.status === 200, "delete status");
+    const deletion = yield* Schema.decodeUnknownEffect(Written)(yield* deleted.json);
+
+    const repeatedDelete = yield* HttpClient.del(url, {
+      headers: metadata("new-delete", deletion.version),
+    });
+
+    yield* check(repeatedDelete.status === 404, "a new delete of a tombstone answers 404");
+
+    const replayedDelete = yield* HttpClient.del(url, {
+      headers: metadata("delete", third.version),
+    });
+
+    const deleteReplay = yield* Schema.decodeUnknownEffect(Written)(yield* replayedDelete.json);
+    yield* check(
+      replayedDelete.status === 200 && deleteReplay.version === deletion.version,
+      "known delete replay reuses its original version",
+    );
+    const deletedHistory = yield* HttpClient.get(`${folderUrl}/history/docs/hello%20world.md`);
+    yield* check(
+      (yield* Schema.decodeUnknownEffect(History)(yield* deletedHistory.json)).length === 4,
+      "failed and replayed deletes append nothing",
+    );
     const deletedHead = yield* HttpClient.get(url);
     yield* check(deletedHead.status === 404, "deleted head status");
     const retained = yield* HttpClient.get(`${url}?at=${third.version}`);

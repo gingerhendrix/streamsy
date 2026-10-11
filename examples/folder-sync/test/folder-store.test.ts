@@ -106,12 +106,14 @@ for (const [name, storage] of [
           const initial = yield* store.write("replay", "a", metadata("initial"), bytes("initial"));
           const a1 = yield* store.write("replay", "a", metadata("__proto__"), bytes("A1"));
           expect(a1.overwrote).toBe(initial.version);
+
           const b1 = yield* store.write(
             "replay",
             "a",
             metadata("constructor", a1.version),
             bytes("B1"),
           );
+
           const tail = (yield* files.head({ folderId: "replay" })).nextOffset;
           expect(yield* store.write("replay", "./a", metadata("__proto__"), bytes("A1"))).toEqual(
             a1,
@@ -120,9 +122,11 @@ for (const [name, storage] of [
           expect((yield* store.read("replay", "a")).bytes).toEqual(bytes("B1"));
           expect((yield* store.read("replay", "a")).version).toBe(b1.version);
           expect(yield* store.history("replay", "a")).toHaveLength(3);
+
           const reused = yield* Effect.flip(
             store.write("replay", "other", metadata("__proto__"), bytes("bad")),
           );
+
           expect(reused).toMatchObject({ message: "opId already used" });
           expect((yield* files.head({ folderId: "replay" })).nextOffset).toBe(tail);
           expect(yield* store.history("replay", "other")).toEqual([]);
@@ -161,6 +165,37 @@ for (const [name, storage] of [
         expect((yield* store.read("history", "a", { at: first.version })).bytes).toEqual(
           bytes("a"),
         );
+      }),
+    );
+    it.effect("delete requires a live head, while known delete replays never append again", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const files = yield* Files;
+        yield* store.create("delete", "Delete");
+        expect(
+          yield* Effect.flip(store.write("delete", "missing", metadata("missing-delete"))),
+        ).toBeInstanceOf(MissingFile);
+        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(ZERO_OFFSET);
+        expect(yield* store.history("delete", "missing")).toEqual([]);
+        const put = yield* store.write("delete", "a", metadata("put"), bytes("first"));
+        const deleted = yield* store.write("delete", "a", metadata("delete", put.version));
+        expect(
+          yield* Effect.flip(store.write("delete", "a", metadata("delete-again", deleted.version))),
+        ).toBeInstanceOf(MissingFile);
+        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(deleted.version);
+        expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
+
+        const restored = yield* store.write(
+          "delete",
+          "a",
+          metadata("restore", deleted.version),
+          bytes("restored"),
+        );
+
+        expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
+        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(restored.version);
+        expect((yield* store.read("delete", "a")).bytes).toEqual(bytes("restored"));
+        expect(yield* store.history("delete", "a")).toHaveLength(3);
       }),
     );
     it.effect("concurrent stale edits commit in log order and expose the replaced versions", () =>

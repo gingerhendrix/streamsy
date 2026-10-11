@@ -23,7 +23,9 @@ File paths are relative POSIX paths; encode each segment separately.
   `encodeURIComponent`. Invalid encoding answers 400. Supply `x-file-base` with the version last
   seen, or omit it for a file you have not seen. Text up to 64 KiB is inline;
   other files use immutable blobs. Files above 8 MiB answer 413.
-- `DELETE` on that path uses the same headers. Writes return `{ version, overwrote? }`.
+- `DELETE` on that path uses the same headers. A new delete requires a live head;
+  missing or already deleted files answer 404 without an append. Writes return
+  `{ version, overwrote? }`.
   Replaying an opId for the same path returns its original version and overwrite
   mark, even after another writer changes the head. Reusing it for a different
   path in the same folder answers 400.
