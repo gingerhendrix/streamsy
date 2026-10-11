@@ -429,10 +429,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const fs = yield* FileSystem.FileSystem;
         const mirror = `${directory}/mirror`;
         yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
         const server = yield* spawnServer({
           cwd: `${import.meta.dir}/../..`,
           entry: "server/index.ts",
         });
+
         yield* create(server.url, "docs");
         const original = yield* put(server.url, "docs", "a.md", "original", "original");
 
@@ -461,11 +463,13 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
           folders: ["docs"],
           writable: ["docs"],
         };
+
         const daemon = yield* runSync(options).pipe(
           Effect.provideService(FileSystem.FileSystem, wrapped),
           Effect.provideContext(context),
           Effect.forkScoped,
         );
+
         yield* until(state.get("ready"), (value) => value === "true");
         yield* until(state.head("docs", "a.md"), (head) => head?.localVersion === original.version);
         blockRename = true;
@@ -476,10 +480,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const unfinished = yield* state.head("docs", "a.md");
         expect(unfinished?.version).toBe(replacement.version);
         expect(unfinished?.localVersion).toBe(original.version);
+
         const restarted = yield* runSync(options).pipe(
           Effect.provideContext(context),
           Effect.forkScoped,
         );
+
         yield* until(
           state.head("docs", "a.md"),
           (head) => head?.localVersion === replacement.version,

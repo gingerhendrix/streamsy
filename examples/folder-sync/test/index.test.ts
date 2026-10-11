@@ -56,21 +56,40 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 layer(Layer.empty, { excludeTestServices: true })((it) => {
   it.effect("a manifest snapshot plus its feed cursor misses no burst writes", () =>
     Effect.gen(function* () {
-      yield* Layer.build(IndexLive);
       const store = yield* FolderStore;
       const index = yield* FileIndex;
       const changes = yield* Changes;
+      const state = yield* Manifest;
+      yield* changes.create({});
+      yield* state.create({});
+
       yield* store.create("burst", "Burst");
 
+      const write = (n: number) =>
+        store.write("burst", `file-${n % 20}.md`, metadata(`burst-${n}`), bytes(`value-${n}`));
+
+      yield* Effect.forEach(
+        Array.from({ length: 40 }, (_, n) => n),
+        write,
+      );
+      const pipeline = indexProjections();
+
+      yield* Projection.run(pipeline.folderChanges.at({ folderId: "burst" }));
+      // Force a lagging manifest. A feed-tail cursor here would skip 30 committed changes.
+      yield* Projection.run(pipeline.manifest.at({}), { limit: 10 });
+      const feedTailBeforeBootstrap = (yield* changes.head({})).nextOffset;
+
       const writer = yield* Effect.forEach(
-        Array.from({ length: 80 }, (_, n) => n),
-        (n) =>
-          store.write("burst", `file-${n % 20}.md`, metadata(`burst-${n}`), bytes(`value-${n}`)),
+        Array.from({ length: 40 }, (_, n) => n + 40),
+        write,
       ).pipe(Effect.forkScoped);
 
       const snapshot = yield* index.snapshot();
+      expect(snapshot.files).toHaveLength(10);
+      expect(snapshot.cursor < feedTailBeforeBootstrap).toBe(true);
       yield* Fiber.join(writer);
-      yield* until(changes.collect({}), (feed) => feed.items.length === 80);
+      yield* Projection.run(pipeline.folderChanges.at({ folderId: "burst" }));
+      expect((yield* changes.collect({})).items).toHaveLength(80);
       const heads = new Map(snapshot.files.map((row) => [row.path, row.version]));
       yield* changes.read({}, { offset: snapshot.cursor }).pipe(
         Stream.runForEach((page) =>
@@ -85,10 +104,9 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
         ),
       );
 
-      const final = yield* until(
-        index.list(),
-        (rows) => rows.length === 20 && rows.every((row) => heads.get(row.path) === row.version),
-      );
+      yield* Projection.run(pipeline.manifest.at({}));
+      const final = yield* index.list();
+      expect(final).toHaveLength(20);
 
       expect(new Map(final.map((row) => [row.path, row.version]))).toEqual(heads);
     }).pipe(
@@ -308,6 +326,7 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
       const index = yield* FileIndex;
       yield* changes.create({});
       yield* state.create({});
+
       yield* store.create("rollback", "Rollback");
       yield* store.write("rollback", "a.md", metadata("rollback"), bytes("rollbackneedle"));
       yield* Projection.run(indexProjections().folderChanges.at({ folderId: "rollback" }));
