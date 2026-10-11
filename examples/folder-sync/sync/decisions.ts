@@ -39,3 +39,17 @@ export const conflictPath = (file: string, origin: string, suffix = 0) => {
 
   return `${file.slice(0, extension)}.conflict-${id}${suffix === 0 ? "" : `-${suffix}`}${file.slice(extension)}`;
 };
+
+/** Common editor scratch files are never mirrored or uploaded. */
+export const ignoredPath = (file: string) =>
+  file
+    .split("/")
+    .some(
+      (name) =>
+        name === ".DS_Store" ||
+        name === "4913" ||
+        /\.sw[px]$/.test(name) ||
+        name.endsWith("~") ||
+        name.startsWith(".#") ||
+        (name.startsWith("#") && name.endsWith("#") && name.length > 1),
+    );

@@ -2,6 +2,7 @@
 import { lstat } from "node:fs/promises";
 import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
 import { FILE_LIMIT } from "../server/domain.ts";
+import { ignoredPath } from "./decisions.ts";
 
 export class LocalFailure extends Schema.TaggedError<LocalFailure>()("LocalFailure", {
   message: Schema.String,
@@ -49,6 +50,7 @@ export const localFiles = Effect.fn("SyncLocal.files")(function* (root: string) 
     LocalFailure | Effect.Error<ReturnType<typeof fs.readDirectory>>,
     FileSystem.FileSystem
   > {
+    if (ignoredPath(relative)) return yield* Effect.void;
     const absolute = path.join(root, relative);
     const kind = yield* pathKind(absolute);
 

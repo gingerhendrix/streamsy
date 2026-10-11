@@ -22,6 +22,7 @@ import {
   feedReset,
   folderDirectory,
   isEcho,
+  ignoredPath,
   conflictPath,
 } from "./decisions.ts";
 import type { SyncOptions } from "./decisions.ts";
@@ -246,6 +247,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   }, skipLocal);
 
   const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
+    if (ignoredPath(file)) return yield* Effect.void;
     const normalized = yield* normalisePath(file);
     const bytes = yield* localBytes(root, filePath(folderId, normalized));
     const hash = yield* hashBytes(bytes);
@@ -292,7 +294,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     for (const [folderId, relative] of roots) {
       const files = new Set(yield* localFiles(path.join(root, relative)));
 
-      for (const head of yield* state.heads()) if (head.folderId === folderId) files.add(head.path);
+      for (const head of yield* state.heads())
+        if (head.folderId === folderId && !ignoredPath(head.path)) files.add(head.path);
 
       for (const file of files)
         yield* observe(folderId, file).pipe(
@@ -315,7 +318,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         const paths = new Map<string, { folderId: string; path: string }>();
 
         for (const row of [...snapshot.files, ...(yield* state.heads())]) {
-          if (selected(row.folderId)) paths.set(`${row.folderId}\0${row.path}`, row);
+          if (selected(row.folderId) && !ignoredPath(row.path))
+            paths.set(`${row.folderId}\0${row.path}`, row);
         }
 
         for (const [folderId, relative] of roots) {
@@ -371,7 +375,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       yield* gate.withPermit(
         Effect.gen(function* () {
           for (const change of page.rows) {
-            if (!selected(change.folderId)) continue;
+            if (!selected(change.folderId) || ignoredPath(change.path)) continue;
             yield* addFolder(change.folderId);
             const known = yield* state.head(change.folderId, change.path);
 
@@ -463,7 +467,9 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   });
 
   const watch = fs.watch(root, { recursive: true }).pipe(
-    Stream.filter((event) => event.path.split(path.sep)[0] !== ".folder-sync"),
+    Stream.filter(
+      (event) => event.path.split(path.sep)[0] !== ".folder-sync" && !ignoredPath(event.path),
+    ),
     Stream.tap(() =>
       Effect.gen(function* () {
         lastEvent = yield* Clock.currentTimeMillis;

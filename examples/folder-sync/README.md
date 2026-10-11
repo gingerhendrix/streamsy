@@ -128,8 +128,8 @@ whose observed version has not settled is finished after restart. The watcher ig
 `.folder-sync`, waits 100 ms for editor bursts to settle, and hashes the resulting
 files. A periodic reconciliation scan also covers coalesced or missing watcher
 events. Pulled bytes with a known hash do not push back. A temp-file-then-rename
-save within the settle interval is observed as the final file. A longer-lived
-temporary file is a regular file and can be synced.
+save within the settle interval is observed as the final file. Other longer-lived
+temporary files can be synced.
 
 Local edits are queued before sending. Offline writes and retryable HTTP failures
 (5xx, including `minVersion` 503, 409, and 429) retry with exponential backoff from
@@ -157,3 +157,7 @@ Read-only edits and new local files are moved before restoration to
 `<dir>/.folder-sync/rejected/<folderId>/<path>` (using the configured folder mapping).
 An existing backup gets a numeric suffix; no earlier backup is replaced. The CLI
 logs the full backup path. These saved bytes stay outside the watched mirror.
+
+The default ignore list covers Vim `.swp` and `.swx` files, `~` backups and `4913`
+probes; Emacs `#file#` and `.#file` files; and `.DS_Store`. Matching names at any
+path depth are ignored by scans, bootstrap, live pulls, and watcher triggers.

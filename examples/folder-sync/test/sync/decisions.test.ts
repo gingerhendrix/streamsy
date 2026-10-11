@@ -6,6 +6,7 @@ import {
   feedReset,
   folderDirectory,
   isEcho,
+  ignoredPath,
 } from "../../sync/decisions.ts";
 import { parseArguments } from "../../sync/arguments.ts";
 
@@ -79,4 +80,29 @@ test("arguments validate required values and writable selection", () => {
       "b",
     ]),
   ).toThrow();
+});
+
+test("default ignores cover editor scratch names without excluding ordinary files", () => {
+  for (const file of [
+    ".a.swp",
+    "a.swx",
+    "a~",
+    "4913",
+    "#a#",
+    ".#a",
+    ".DS_Store",
+    "docs/.a.swp",
+    "docs/#a#/b",
+  ])
+    expect(ignoredPath(file)).toBe(true);
+
+  for (const file of [
+    "a.md",
+    "docs/a.swap",
+    "4913.md",
+    "#heading.md",
+    ".folder-sync/user.md",
+    "a.swp.md",
+  ])
+    expect(ignoredPath(file)).toBe(false);
 });
