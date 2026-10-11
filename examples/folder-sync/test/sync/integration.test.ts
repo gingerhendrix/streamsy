@@ -229,7 +229,10 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const winningBytes = yield* serverShared.text;
         yield* until(read(`${a}/${folder}/shared.md`), (value) => value === winningBytes);
         yield* until(read(`${b}/${folder}/shared.md`), (value) => value === winningBytes);
-        expect(yield* history(restart.url, folder, "shared.md")).toHaveLength(2);
+        const sharedHistory = yield* history(restart.url, folder, "shared.md");
+        expect(sharedHistory).toHaveLength(2);
+        expect(sharedHistory[0]?.operation.overwrote).toBeUndefined();
+        expect(sharedHistory[1]?.operation.overwrote).toBe(sharedHistory[0]?.version);
         expect(yield* history(restart.url, folder, "offline-a.md")).toHaveLength(1);
         expect(yield* history(restart.url, folder, "offline-b.md")).toHaveLength(1);
         yield* Fiber.interrupt(clientA);
@@ -368,7 +371,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const before = yield* state.get("lastScan");
         yield* until(state.get("lastScan"), (value) => value !== before);
         expect(yield* state.pending()).toEqual([]);
-        expect(yield* history(server.url, "docs", "a.md")).toHaveLength(3);
+        const replayHistory = yield* history(server.url, "docs", "a.md");
+        expect(replayHistory).toHaveLength(3);
+        expect(replayHistory[0]?.operation.overwrote).toBeUndefined();
+        expect(replayHistory[1]?.operation.overwrote).toBeUndefined();
+        expect(replayHistory[2]?.operation.overwrote).toBe(replayHistory[1]?.version);
+        expect(replayHistory.filter((row) => row.operation.opId === attempts[0])).toHaveLength(1);
         yield* Fiber.interrupt(daemon);
         yield* server.stop;
       }),
@@ -403,14 +411,32 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const state = yield* SyncState.pipe(Effect.provideContext(context));
         let delivered: string | null = null;
         let external: string | undefined;
+        const fetched = yield* Deferred.make<void>();
 
         const wrapped = SyncRemote.of({
           ...remote,
           push: (op, origin) =>
-            remote.push(op, origin).pipe(
-              Effect.tap((receipt) =>
-                Effect.sync(() => {
-                  delivered = receipt.version;
+            Effect.gen(function* () {
+              const receipt = yield* remote.push(op, origin);
+              delivered = receipt.version;
+              // Ensure A's feed page settles while its outbox entry is still pending.
+              yield* until(remote.snapshot, (snapshot) =>
+                snapshot.files.some((row) => row.version === receipt.version),
+              ).pipe(Effect.orDie);
+              const target = yield* remote.tail;
+              yield* until(
+                state.get("cursor"),
+                (cursor) => cursor !== undefined && cursor >= target,
+              ).pipe(Effect.orDie);
+
+              return receipt;
+            }),
+          page: (cursor, live) =>
+            remote.page(cursor, live).pipe(
+              Effect.tap((page) =>
+                Effect.gen(function* () {
+                  if (page.rows.some((row) => row.version === external))
+                    yield* Deferred.succeed(fetched, undefined);
                 }),
               ),
             ),
@@ -426,8 +452,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
                 );
 
                 external = receipt.version;
-                // Let the feed fetch B while delivery still owns its outbox entry.
-                yield* Effect.yieldNow;
+                // B is fetched while delivery retains A's entry. Under the old lock order
+                // the feed could skip B; with the gate held it must wait for A to settle.
+                yield* Deferred.await(fetched);
+                yield* until(remote.snapshot, (snapshot) =>
+                  snapshot.files.some((row) => row.version === external),
+                ).pipe(Effect.orDie);
               }
 
               return head;
@@ -446,6 +476,10 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         );
 
         yield* until(state.get("ready"), (value) => value === "true");
+        yield* until(
+          fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
+          (value) => value === "seed",
+        );
         yield* fs.writeFileString(`${mirror}/docs/a.md`, "from A");
         yield* until(fs.readFileString(`${mirror}/docs/a.md`), (value) => value === "from B");
         yield* until(state.pending(), (rows) => rows.length === 0);
@@ -557,6 +591,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         );
 
         yield* until(state.get("ready"), (value) => value === "true");
+        yield* until(state.head("docs", "a.md"), (head) => head?.localVersion === seed.version);
         yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 1");
         yield* until(state.pending(), (rows) => rows.length === 1);
         yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 2");
