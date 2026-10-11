@@ -58,6 +58,23 @@
         "vitest": "catalog:",
       },
     },
+    "examples/folder-sync": {
+      "name": "folder-sync",
+      "dependencies": {
+        "@effect/platform-bun": "4.0.1",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.1",
+      },
+      "devDependencies": {
+        "@streamsy/effect-test": "workspace:*",
+        "@streamsy/test-support": "workspace:*",
+        "bun-types": "^1.3.14",
+        "typescript": "catalog:",
+      },
+    },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
       "version": "0.0.2",
@@ -1046,6 +1063,8 @@
     "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
 
     "fold-agent-example": ["fold-agent-example@workspace:examples/fold-agent"],
+
+    "folder-sync": ["folder-sync@workspace:examples/folder-sync"],
 
     "foreground-child": ["foreground-child@3.3.1", "", { "dependencies": { "cross-spawn": "^7.0.6", "signal-exit": "^4.0.1" } }, "sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw=="],
 

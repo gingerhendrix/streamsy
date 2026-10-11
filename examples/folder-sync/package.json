@@ -1,0 +1,27 @@
+{
+  "name": "folder-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot server/index.ts",
+    "start": "bun server/index.ts",
+    "test": "bun run test:unit",
+    "test:unit": "bun test test",
+    "typecheck": "tsc --noEmit",
+    "smoke:http": "bun scripts/http-smoke.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.1",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.1"
+  },
+  "devDependencies": {
+    "@streamsy/effect-test": "workspace:*",
+    "@streamsy/test-support": "workspace:*",
+    "bun-types": "^1.3.14",
+    "typescript": "catalog:"
+  }
+}
