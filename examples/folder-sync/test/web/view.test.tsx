@@ -59,6 +59,7 @@ test("Markdown links cannot navigate away from a draft", () => {
       }
     </ReactMarkdown>,
   );
+
   expect(html.match(/<a /g)).toHaveLength(1);
   expect(html).toContain('href="https://example.com/docs"');
   expect(html).toContain('target="_blank"');

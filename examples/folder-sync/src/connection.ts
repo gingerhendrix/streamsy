@@ -17,39 +17,51 @@ export function trackConnection(
 ): Connection {
   let online = true;
   const listeners = new Set<() => void>();
+
   const set = (next: boolean) => {
     if (next === online) return;
     online = next;
+
     for (const listener of listeners) listener();
   };
 
   const wait = (delay: number, signal?: AbortSignal | null) =>
+    // oxlint-disable-next-line effecttsgo/new-promise -- The native fetch adapter must preserve AbortSignal cancellation while browser events wake its retry.
     new Promise<boolean>((resolve, reject) => {
       const finish = (prompted: boolean) => {
         cleanup();
         resolve(prompted);
       };
+
       const wake = () => finish(true);
+
       const visible = () => {
         if (events?.isVisible()) wake();
       };
+
       const abort = () => {
         cleanup();
         reject(signal?.reason);
       };
+
+      // oxlint-disable-next-line effecttsgo/global-timers -- This browser retry timer is cancelled by abort and connectivity events.
       const timer = setTimeout(() => finish(false), delay);
+
       const cleanup = () => {
         clearTimeout(timer);
         events?.online.removeEventListener("online", wake);
         events?.visibility.removeEventListener("visibilitychange", visible);
         signal?.removeEventListener("abort", abort);
       };
+
       events?.online.addEventListener("online", wake);
       events?.visibility.addEventListener("visibilitychange", visible);
       signal?.addEventListener("abort", abort, { once: true });
+
       if (signal?.aborted) abort();
     });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- DurableStream requires a native fetch function and Response, outside the server Effect runtime.
   const tracked = async (input: RequestInfo | URL, init?: RequestInit) => {
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     let delay = 100;
@@ -59,6 +71,7 @@ export function trackConnection(
         // oxlint-disable-next-line effecttsgo/global-fetch -- The stream client requires native Response and AbortSignal behavior from its fetch adapter.
         const response = await fetcher(input, init);
         set(true);
+
         return response;
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -75,6 +88,7 @@ export function trackConnection(
     isOnline: () => online,
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => listeners.delete(listener);
     },
   };
