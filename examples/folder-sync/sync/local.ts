@@ -10,6 +10,7 @@ export class LocalFailure extends Schema.TaggedError<LocalFailure>()("LocalFailu
 
 export class SkippedLocal extends Schema.TaggedError<SkippedLocal>()("SkippedLocal", {
   message: Schema.String,
+  path: Schema.String,
 }) {}
 
 /** This adapter never follows an existing symlink within the mirror. */
@@ -38,7 +39,11 @@ export const pathKind = Effect.fn("SyncLocal.pathKind")(function* (path: string)
         : "other";
 });
 
-export const localFiles = Effect.fn("SyncLocal.files")(function* (root: string) {
+export const localFiles = Effect.fn("SyncLocal.files")(function* (
+  root: string,
+  warn: (file: string, message: string) => Effect.Effect<void> = (_file, message) =>
+    Effect.logWarning(message),
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const files: string[] = [];
@@ -57,7 +62,7 @@ export const localFiles = Effect.fn("SyncLocal.files")(function* (root: string) 
     if (kind === "missing") return yield* Effect.void;
 
     if (kind === "symlink" || kind === "other")
-      return yield* Effect.logWarning(`Skipping unsupported mirror path: ${absolute}`);
+      return yield* warn(absolute, `Skipping unsupported mirror path: ${absolute}`);
 
     if (kind === "file") {
       files.push(relative);
@@ -95,7 +100,10 @@ export const safePath = Effect.fn("SyncLocal.safePath")(function* (root: string,
     current = path.join(current, part);
 
     if ((yield* pathKind(current)) === "symlink")
-      return yield* new SkippedLocal({ message: `Skipping symlink in mirror path: ${current}` });
+      return yield* new SkippedLocal({
+        path: current,
+        message: `Skipping symlink in mirror path: ${current}`,
+      });
   }
 
   return current;
@@ -112,7 +120,10 @@ export const localBytes = Effect.fn("SyncLocal.read")(
     if (info.type !== "File") return null;
 
     if (info.size > BigInt(FILE_LIMIT))
-      return yield* new SkippedLocal({ message: `Skipping file over 8 MiB: ${absolute}` });
+      return yield* new SkippedLocal({
+        path: absolute,
+        message: `Skipping file over 8 MiB: ${absolute}`,
+      });
 
     return yield* fs.readFile(absolute);
   },
@@ -151,3 +162,23 @@ export const replaceLocal = Effect.fn("SyncLocal.replace")(function* (
   yield* fs.writeFile(temp, bytes);
   yield* fs.rename(temp, absolute);
 }, Effect.scoped);
+
+/** Each daemon keeps its own warning signatures. lstat also fingerprints dangling symlinks. */
+export const skipWarnings = Effect.sync(() => {
+  const warned = new Map<string, string>();
+
+  return (file: string, message: string) =>
+    Effect.gen(function* () {
+      const signature = yield* Effect.tryPromise({
+        try: () =>
+          lstat(file).then(
+            (info) => `${info.ino}/${info.size}/${info.mtimeMs}/${info.ctimeMs}/${info.mode}`,
+          ),
+        catch: () => new LocalFailure({ message: `Cannot inspect ${file}` }),
+      }).pipe(Effect.catchTag("LocalFailure", () => Effect.succeed("missing")));
+
+      if (warned.get(file) === signature) return;
+      warned.set(file, signature);
+      yield* Effect.logWarning(message);
+    });
+});

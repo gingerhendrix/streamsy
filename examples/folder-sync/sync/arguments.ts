@@ -5,7 +5,8 @@ export class ArgumentsError extends Schema.TaggedError<ArgumentsError>()("Argume
   message: Schema.String,
 }) {}
 
-export const usage = "bun run sync --server <url> --dir <path> [--folders a,b] [--write a,b]";
+export const usage =
+  "bun run sync --server <url> --dir <path> [--folders a,b] [--write a,b]\n bun run sync rejected --dir <path>";
 
 /** Argument parsing is pure; the executable edge owns argv and runtime execution. */
 export const parseArguments = (args: ReadonlyArray<string>): SyncOptions => {

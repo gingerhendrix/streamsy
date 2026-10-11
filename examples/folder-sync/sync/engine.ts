@@ -24,6 +24,7 @@ import {
   isEcho,
   ignoredPath,
   conflictPath,
+  backupPath,
 } from "./decisions.ts";
 import type { SyncOptions } from "./decisions.ts";
 import {
@@ -34,12 +35,17 @@ import {
   replaceLocal,
   safePath,
   pathKind,
+  skipWarnings,
 } from "./local.ts";
 import { SyncState, stateLayer } from "./state.ts";
 import type { Known } from "./state.ts";
 
-const skipLocal = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.catchIf(Schema.is(SkippedLocal), (error) => Effect.logWarning(error.message)));
+const skipLocal =
+  (warn: (file: string, message: string) => Effect.Effect<void>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchIf(Schema.is(SkippedLocal), (error) => warn(error.path, error.message)),
+    );
 
 const hashBytes = (bytes: Uint8Array | null) =>
   bytes === null ? Effect.succeed(null) : sha256(bytes);
@@ -67,6 +73,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   const state = yield* SyncState;
   const remote = yield* SyncRemote;
   const gate = yield* Semaphore.make(1);
+  const warn = yield* skipWarnings;
+  const skip = skipLocal(warn);
 
   const selected = (folderId: string) =>
     options.folders === undefined || options.folders.includes(folderId);
@@ -187,7 +195,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
       while (yield* fs.exists(path.join(root, backup))) {
         suffix++;
-        backup = `${relative}-${suffix}`;
+        backup = backupPath(relative, suffix);
       }
 
       const destination = yield* safePath(root, backup);
@@ -242,7 +250,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     yield* replaceLocal(root, filePath(folderId, file), head.bytes);
 
     return yield* state.save({ ...row, localHash: head.hash, localVersion: head.version });
-  }, skipLocal);
+  }, skip);
 
   const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
     if (ignoredPath(file)) return yield* Effect.void;
@@ -286,11 +294,11 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     );
 
     return yield* Effect.void;
-  }, skipLocal);
+  }, skip);
 
   const scan = Effect.fn("Sync.scan")(function* () {
     for (const [folderId, relative] of roots) {
-      const files = new Set(yield* localFiles(path.join(root, relative)));
+      const files = new Set(yield* localFiles(path.join(root, relative), warn));
 
       for (const head of yield* state.heads())
         if (head.folderId === folderId && !ignoredPath(head.path)) files.add(head.path);
@@ -321,7 +329,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         }
 
         for (const [folderId, relative] of roots) {
-          for (const file of yield* localFiles(path.join(root, relative)))
+          for (const file of yield* localFiles(path.join(root, relative), warn))
             paths.set(`${folderId}\0${file}`, { folderId, path: file });
         }
 

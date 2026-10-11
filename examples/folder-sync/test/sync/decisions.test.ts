@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   applyChange,
+  backupPath,
   conflictBase,
   encodeFilePath,
   feedReset,
@@ -105,4 +106,10 @@ test("default ignores cover editor scratch names without excluding ordinary file
     "a.swp.md",
   ])
     expect(ignoredPath(file)).toBe(false);
+});
+
+test("numbered backups keep file extensions", () => {
+  expect(backupPath("docs/r.md", 1)).toBe("docs/r-1.md");
+  expect(backupPath("docs/.hidden", 1)).toBe("docs/.hidden-1");
+  expect(backupPath("r", 0)).toBe("r");
 });

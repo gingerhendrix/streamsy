@@ -53,3 +53,13 @@ export const ignoredPath = (file: string) =>
         name.startsWith(".#") ||
         (name.startsWith("#") && name.endsWith("#") && name.length > 1),
     );
+
+/** Numbered backups retain the extension, including nested paths. */
+export const backupPath = (file: string, suffix: number) => {
+  if (suffix === 0) return file;
+  const slash = file.lastIndexOf("/");
+  const dot = file.lastIndexOf(".");
+  const extension = dot > slash + 1 ? dot : file.length;
+
+  return `${file.slice(0, extension)}-${suffix}${file.slice(extension)}`;
+};

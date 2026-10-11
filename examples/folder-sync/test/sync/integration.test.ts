@@ -181,7 +181,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         );
         yield* fs.writeFileString(`${a}/ro/read.md`, "second restore");
         yield* until(read(`${a}/ro/read.md`), (value) => value === "read only");
-        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read.md-1`)).toBe(
+        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read-1.md`)).toBe(
           "second restore",
         );
         yield* fs.writeFileString(`${a}/ro/extra.md`, "remove local extra");
@@ -655,6 +655,16 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         expect(yield* fs.readFileString(`${directory}/outside.md`)).toBe("outside");
         const scan = yield* state.get("lastScan");
         yield* until(state.get("lastScan"), (value) => value !== scan);
+        expect(yield* state.rejected()).toHaveLength(1);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const listing = yield* spawner.string(
+          ChildProcess.make("bun", ["sync/index.ts", "rejected", "--dir", mirror], {
+            cwd: `${import.meta.dir}/../..`,
+          }),
+        );
+        expect(listing).toContain('"status":404');
+        expect(listing).toContain('"path":"reject.md"');
+        expect(listing).not.toContain("retained rejected bytes");
         expect(yield* state.rejected()).toHaveLength(1);
         yield* Fiber.interrupt(daemon);
         yield* server.stop;
