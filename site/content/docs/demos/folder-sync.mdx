@@ -28,11 +28,11 @@ The seed creates one folder per docs section, plus `docs/root` for files at the 
 Run these in two separate terminals:
 
 ```bash
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-a --write docs/root
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-b --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
 ```
 
-Edit `docs/root/tutorial.mdx` in the browser. Both mirrors update. Edit it under `mirror-a/docs/root/`, and the browser and the other mirror update. Stop the server, edit a writable mirror, and restart with the same database. Its SQLite outbox delivers the saved operations on reconnect.
+Edit `docs/root/tutorial.mdx` in the browser. Both mirrors update. Edit it under `examples/folder-sync/mirror-a/docs/root/`, and the browser and the other mirror update. Stop the server, edit a writable mirror, and restart with the same database. Its SQLite outbox delivers the saved operations on reconnect.
 
 Leave a draft open in the browser, edit the same file from a mirror, then save the browser draft. The history panel shows “replaced a change you did not see”. Its link opens the replaced version. Another browser save uses the previous receipt as its base, so it does not mark that save as unseen. Search opens the version it indexed; **Open current** returns to the head.
 
@@ -178,7 +178,7 @@ export function Snippet({ parts }: { parts: SearchResult["snippet"] }) {
 A local edit in a read-only folder is backed up before restoration. Unsupported local files are skipped; unchanged files produce one warning per daemon run. Non-retryable HTTP writes retain their bodies in a rejected SQLite table so other paths can continue. Inspect its summaries offline:
 
 ```bash
-bun run --cwd examples/folder-sync sync rejected --dir ./mirror-a
+bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-sync/mirror-a"
 ```
 
 ## Limits

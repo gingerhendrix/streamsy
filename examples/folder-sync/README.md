@@ -33,18 +33,19 @@ folder: `docs/streams`, `docs/projections`, `docs/demos`, `docs/hosting`, and
 `docs/http`. Root files live in `docs/root`. The script includes metadata JSON
 and uses a stable operation ID made from folder, path, and content hash. Repeating
 an earlier seed does not undo subsequent user edits. Changed seed content gets a
-new operation ID. `--server <url>` selects another server.
+new operation ID and replaces user edits without an `overwrote` mark, because
+the seed uses the current head as its base. `--server <url>` selects another server.
 
 Start two mirrors in separate terminals. Use fresh directories for this check:
 
 ```sh
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-a --write docs/root
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror-b --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
 ```
 
 Choose `docs/root/tutorial.mdx` in the browser and open **Edit**. Change a paragraph,
 set an author name, and save. Both mirrors update. Edit the same file under
-`mirror-a/docs/root/` and watch the browser and the other mirror update. Search
+`examples/folder-sync/mirror-a/docs/root/` and watch the browser and the other mirror update. Search
 for a distinctive word from the edit. Search results open the exact version they
 indexed. **Open current** returns to the latest file.
 
@@ -56,7 +57,10 @@ not mark that first save as unseen.
 
 Stop the server, edit a writable mirror, and restart the server with the same
 SQLite path. Queued writes deliver and both mirrors converge. The browser shows
-**Offline** while its stream reader cannot connect. Stop both CLIs with Ctrl+C
+**Offline** while its stream reader cannot connect. Returning online or bringing
+the page into view immediately retries a sleeping network read. Without those
+events, network retries back off from 100 ms to a 30 s ceiling; HTTP errors retain
+the stream client's backoff and any server `Retry-After` delay. Stop both CLIs with Ctrl+C
 when finished. Their state stays under `.folder-sync` in each mirror.
 
 ## Browser and development
@@ -68,7 +72,8 @@ open version and shows when a newer head arrives. Historical views are read-only
 The browser editor supports UTF-8 text. Markdown and MDX show Markdown without
 executing HTML or JSX. Other files offer a raw download; blob files download by
 immutable hash. Search snippets are text segments with boolean match flags,
-rendered as escaped React children. An author name is a display label.
+rendered as escaped React children. Empty, unsafe, and relative Markdown links
+are plain text; absolute HTTP, HTTPS, and mail links open a new tab. An author name is a display label.
 
 For browser development, run the server and the Vite client separately:
 
@@ -176,7 +181,7 @@ cursor; keep the same folder selection when tailing.
 With the server running, create folders through the API, then mirror them:
 
 ```sh
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror --folders docs,notes --write notes
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-docs" --folders docs,notes --write notes
 ```
 
 `--folders` selects folders; omit it to discover every folder with files. `--write`
@@ -263,7 +268,7 @@ transaction or explicit filesystem fsync.
 Inspect rejected writes without connecting to the server or running a watcher:
 
 ```sh
-bun run --cwd examples/folder-sync sync rejected --dir ./mirror-a
+bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-sync/mirror-a"
 ```
 
 The command opens existing SQLite state read-only and prints a JSON array of
