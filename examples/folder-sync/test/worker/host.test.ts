@@ -4,9 +4,9 @@ import { Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
-import { ManifestFile, Change } from "../../server/streams.ts";
+import { ManifestFile, Change, Folder } from "../../server/streams.ts";
 import { SearchResult } from "../../server/search-result.ts";
-import { Version } from "../../server/domain.ts";
+import { CreateFolder, Version } from "../../server/domain.ts";
 
 const token = "worker-test-token";
 
@@ -34,6 +34,118 @@ const worker = Effect.gen(function* () {
 
 layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
   (it) => {
+    it.effect(
+      "workerd validates folder limits and content type before registry changes",
+      () =>
+        Effect.gen(function* () {
+          const host = yield* worker;
+
+          for (const folderId of ["a".repeat(101), "雪".repeat(84)]) {
+            const response = yield* HttpClient.post(`${host.url}/api/folders`, {
+              headers,
+              body: yield* HttpBody.json({ folderId, title: "Rejected" }),
+            });
+
+            expect(response.status).toBe(400);
+            expect(yield* response.text).toContain(
+              "100 decoded UTF-16 code units and 249 UTF-8 bytes",
+            );
+          }
+
+          const unsupported = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: HttpBody.text(
+              Schema.encodeSync(Schema.fromJsonString(CreateFolder))({
+                folderId: "ghost",
+                title: "Ghost",
+              }),
+            ),
+          });
+
+          expect(unsupported.status).toBe(415);
+          yield* unsupported.text;
+
+          const malformed = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers: { ...headers, "content-type": "application/json" },
+            body: HttpBody.text("{", "application/json"),
+          });
+
+          expect(malformed.status).toBe(400);
+          yield* malformed.text;
+
+          const invalidTitle = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: yield* HttpBody.json({ folderId: "invalid-title", title: "" }),
+          });
+
+          expect(invalidTitle.status).toBe(400);
+          yield* invalidTitle.text;
+          const namespace = yield* Effect.promise(() => host.mf.getDurableObjectNamespace("INDEX"));
+
+          const registry = yield* Effect.promise(() =>
+            namespace.get(namespace.idFromName("index")).fetch("https://internal/__registry"),
+          );
+
+          expect(
+            yield* Schema.decodeUnknownEffect(Schema.Array(Folder))(
+              yield* Effect.promise(() => registry.json()),
+            ),
+          ).toEqual([]);
+
+          for (const folderId of [
+            "a".repeat(100),
+            "/".repeat(100),
+            "%".repeat(100),
+            "雪".repeat(83),
+            "😀".repeat(50),
+          ]) {
+            const created = yield* HttpClient.post(`${host.url}/api/folders`, {
+              headers,
+              body: yield* HttpBody.json({ folderId, title: "Boundary" }),
+            });
+
+            expect(created.status).toBe(200);
+            yield* created.text;
+            const url = `${host.url}/api/folders/${encodeURIComponent(folderId)}/files/a`;
+
+            const put = yield* HttpClient.put(url, {
+              headers: {
+                ...headers,
+                "x-file-op-id": "boundary",
+                "x-file-author": "test",
+                "x-file-origin": "test",
+              },
+              body: HttpBody.text(folderId),
+            });
+
+            expect(put.status).toBe(200);
+            yield* put.text;
+            const read = yield* HttpClient.get(url);
+            expect(read.status).toBe(200);
+            expect(yield* read.text).toBe(folderId);
+
+            const history = yield* HttpClient.get(
+              `${host.url}/api/folders/${encodeURIComponent(folderId)}/history/a`,
+            );
+
+            expect(history.status).toBe(200);
+            yield* history.text;
+
+            const deletion = yield* HttpClient.del(url, {
+              headers: {
+                ...headers,
+                "x-file-op-id": "delete",
+                "x-file-author": "test",
+                "x-file-origin": "test",
+              },
+            });
+
+            expect(deletion.status).toBe(200);
+            yield* deletion.text;
+          }
+        }),
+      { timeout: 15000 },
+    );
     it.effect(
       "workerd recovers durable notices through the actual scheduled handler exactly once",
       () =>

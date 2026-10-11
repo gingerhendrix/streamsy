@@ -9,7 +9,16 @@ import {
   HttpApiSchema,
 } from "effect/http-api";
 import { BlobStore } from "./blob-store.ts";
-import { FILE_LIMIT, FileOp, FileTooLarge, Hash, Identifier, Version } from "./domain.ts";
+import {
+  FILE_LIMIT,
+  CreateFolder,
+  FolderId,
+  FileOp,
+  FileTooLarge,
+  Hash,
+  Identifier,
+  Version,
+} from "./domain.ts";
 import { FolderStore } from "./folder-store.ts";
 import { Folder } from "./streams.ts";
 
@@ -55,7 +64,7 @@ class RequestErrors extends HttpApiMiddleware.Service<RequestErrors>()("FolderSy
 
 const errors = [BadRequest, NotFound, TooLarge, Conflict, Unavailable, InternalError];
 
-const fileParams = { folderId: Identifier, "*": Schema.String };
+const fileParams = { folderId: FolderId, "*": Schema.String };
 
 /** HttpApi decodes these URI components before passing metadata to a handler. */
 const HeaderIdentifier = Schema.String.check(Schema.isPattern(/^[!-~]+$/)).pipe(
@@ -76,7 +85,7 @@ const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp
 
 class FilesApi extends HttpApiGroup.make("files").add(
   HttpApiEndpoint.post("create", "/folders", {
-    payload: Schema.Struct({ folderId: Identifier, title: Identifier }),
+    payload: CreateFolder,
     success: Folder,
     error: errors,
   }),

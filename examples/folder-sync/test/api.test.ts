@@ -41,6 +41,49 @@ const create = (folderId: string) =>
     }),
   );
 
+it.live("folder ID boundaries work after URL decoding and invalid creates answer 400", () =>
+  Effect.gen(function* () {
+    for (const folderId of [
+      "a".repeat(100),
+      "/".repeat(100),
+      "%".repeat(100),
+      "雪".repeat(83),
+      "😀".repeat(50),
+    ]) {
+      expect((yield* create(folderId)).status).toBe(200);
+      const url = `http://localhost/api/folders/${encodeURIComponent(folderId)}/files/a`;
+      expect(
+        (yield* send(new Request(url, { method: "PUT", headers: metadata, body: folderId })))
+          .status,
+      ).toBe(200);
+      const read = yield* send(new Request(url));
+      expect(read.status).toBe(200);
+      expect(yield* Effect.promise(() => read.text())).toBe(folderId);
+      expect(
+        (yield* send(
+          new Request(`http://localhost/api/folders/${encodeURIComponent(folderId)}/history/a`),
+        )).status,
+      ).toBe(200);
+      expect(
+        (yield* send(
+          new Request(url, {
+            method: "DELETE",
+            headers: { ...metadata, "x-file-op-id": "delete" },
+          }),
+        )).status,
+      ).toBe(200);
+    }
+
+    for (const folderId of ["a".repeat(101), "雪".repeat(84)]) {
+      const rejected = yield* create(folderId);
+      expect(rejected.status).toBe(400);
+      expect(yield* Effect.promise(() => rejected.text())).toContain(
+        "100 decoded UTF-16 code units and 249 UTF-8 bytes",
+      );
+    }
+  }),
+);
+
 it.live("metadata headers round trip Unicode and literal percent signs on PUT and DELETE", () =>
   Effect.gen(function* () {
     yield* create("metadata");

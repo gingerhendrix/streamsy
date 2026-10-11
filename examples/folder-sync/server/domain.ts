@@ -15,6 +15,17 @@ export const Identifier = Schema.String.check(
   Schema.makeFilter((value) => value.isWellFormed()),
 );
 
+/** Router limits decoded UTF-16 units; the 512-character hex stream id allows 249 UTF-8 bytes. */
+export const FolderId = Identifier.check(
+  Schema.makeFilter((value) =>
+    value.length <= 100 && new TextEncoder().encode(value).length <= 249
+      ? undefined
+      : "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
+  ),
+);
+
+export const CreateFolder = Schema.Struct({ folderId: FolderId, title: Identifier });
+
 export class InvalidFile extends Schema.TaggedError<InvalidFile>()("InvalidFile", {
   message: Schema.String,
 }) {}

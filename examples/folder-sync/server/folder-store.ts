@@ -5,6 +5,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import { BlobStore } from "./blob-store.ts";
 import {
   FileOp,
+  FolderId,
   Identifier,
   InvalidFile,
   MissingFile,
@@ -41,8 +42,13 @@ export class WriteHook extends Context.Service<
 export const NoWriteHook = Layer.succeed(WriteHook, { committed: () => Effect.void });
 
 const validId = (folderId: string) =>
-  Schema.decodeEffect(Identifier)(folderId).pipe(
-    Effect.mapError(() => new InvalidFile({ message: "Invalid folder id" })),
+  Schema.decodeEffect(FolderId)(folderId).pipe(
+    Effect.mapError(
+      () =>
+        new InvalidFile({
+          message: "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
+        }),
+    ),
   );
 
 const requireFolder = Effect.fn("Folder.require")(function* (folderId: string) {

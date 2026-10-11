@@ -103,7 +103,10 @@ has a MemoryStorage test host; the indexed server requires SQL transactions.
 Tests use a scoped directory under `.scratch/`; `FOLDER_SYNC_SCRATCH` overrides it.
 
 Create a folder with `POST /api/folders` and JSON `{ "folderId": "docs", "title": "Docs" }`.
-Folder IDs are opaque strings. URL-encode the whole ID as one segment, including any slashes.
+Folder IDs are opaque strings limited to 100 decoded UTF-16 code units and
+249 UTF-8 bytes. The router counts decoded units, so percent encoding slashes
+or Unicode does not reduce the 100-unit bound. The byte bound keeps the hex
+stream ID within 512 characters. Invalid creates answer 400 before registration. URL-encode the whole ID as one segment, including any slashes.
 File paths are relative POSIX paths; encode each segment separately.
 
 - `PUT /api/folders/:folderId/files/*path` sends raw bytes. Supply `x-file-op-id`,

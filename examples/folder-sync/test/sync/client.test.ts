@@ -1,5 +1,5 @@
 import { expect, layer } from "@streamsy/effect-test";
-import { Effect, Layer, Result } from "effect";
+import { Effect, Layer, Match, Result, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
 
@@ -25,14 +25,28 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
 
             return HttpClientResponse.fromWeb(
               request,
-              new Response(status === 200 ? `{"version":"${version}"}` : null, {
-                status,
-                headers: {
-                  "stream-next-offset": version,
-                  "stream-epoch": "test-epoch",
-                  "stream-up-to-date": "true",
+              new Response(
+                Match.value(status).pipe(
+                  Match.when(200, () => `{"version":"${version}"}`),
+                  Match.when(400, () =>
+                    Schema.encodeSync(
+                      Schema.fromJsonString(Schema.Struct({ error: Schema.String })),
+                    )({
+                      error:
+                        "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
+                    }),
+                  ),
+                  Match.orElse(() => null),
+                ),
+                {
+                  status,
+                  headers: {
+                    "stream-next-offset": version,
+                    "stream-epoch": "test-epoch",
+                    "stream-up-to-date": "true",
+                  },
                 },
-              }),
+              ),
             );
           }),
         );
@@ -110,7 +124,11 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
           .pipe(Effect.result);
 
         if (Result.isFailure(invalid))
-          expect(invalid.failure).toMatchObject({ retryable: false, status: 400 });
+          expect(invalid.failure).toMatchObject({
+            retryable: false,
+            status: 400,
+            message: "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
+          });
         else throw new Error("Expected a rejected write");
       }),
   );

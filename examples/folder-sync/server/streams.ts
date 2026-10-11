@@ -1,13 +1,22 @@
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Schema } from "effect";
-import { FileOp, FolderState, Identifier, Hash, Path, Version, foldHead } from "./domain.ts";
+import {
+  FileOp,
+  FolderId,
+  FolderState,
+  Identifier,
+  Hash,
+  Path,
+  Version,
+  foldHead,
+} from "./domain.ts";
 
 /** Hex UTF-8 is an injective, canonical stream-id segment for opaque folder ids. */
-export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(Identifier)));
+export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(FolderId)));
 
 export const Folder = Schema.Struct({
-  folderId: Identifier,
+  folderId: FolderId,
   title: Identifier,
   created: Schema.String,
 });

@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Native Workers fetch/scheduled transport boundary. */
 import { Placement, rule } from "@streamsy/serve/cloudflare";
 import { DateTime, Schema } from "effect";
-import { Identifier } from "../server/domain.ts";
+import { CreateFolder } from "../server/domain.ts";
 import { Files, Folder } from "../server/streams.ts";
 import type { ScheduledController } from "@cloudflare/workers-types";
 import type { Env } from "./env.ts";
@@ -88,14 +88,17 @@ export default {
       return folder(env, url.searchParams.get("folder") ?? "").fetch("https://internal/__pending");
 
     if (url.pathname === "/api/folders" && request.method === "POST") {
+      if (
+        request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+        "application/json"
+      )
+        return json("Expected application/json", 415);
       let payload: { folderId: string; title: string };
 
       try {
-        payload = Schema.decodeUnknownSync(
-          Schema.Struct({ folderId: Identifier, title: Identifier }),
-        )(await request.json());
-      } catch {
-        return json("Invalid folder", 400);
+        payload = Schema.decodeUnknownSync(CreateFolder)(await request.json());
+      } catch (error) {
+        return json(String(error), 400);
       }
 
       if (!payload.folderId) return json("Invalid folder", 400);

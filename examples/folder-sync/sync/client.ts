@@ -69,6 +69,16 @@ export const remoteLayer = (server: string, token?: string) =>
             status: response.status,
           });
 
+        if (response.status === 400) {
+          const message = yield* response.json.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ error: Schema.String }))),
+            Effect.map((body) => body.error),
+            Effect.orElseSucceed(() => "Server answered 400"),
+          );
+
+          return yield* new RemoteFailure({ message, retryable: false, status: 400 });
+        }
+
         return response;
       });
 

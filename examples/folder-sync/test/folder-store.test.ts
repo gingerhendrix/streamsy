@@ -32,6 +32,25 @@ for (const [name, storage] of [
   );
 
   layer(host)(name, (it) => {
+    it.effect("invalid folder creates leave the registry unchanged", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const folders = yield* Folders;
+        const before = yield* folders.collect({});
+
+        for (const [folderId, title] of [
+          ["x".repeat(101), "Long"],
+          ["雪".repeat(84), "Long bytes"],
+          ["bad-title", ""],
+        ]) {
+          expect(yield* Effect.flip(store.create(folderId ?? "", title ?? ""))).toBeInstanceOf(
+            InvalidFile,
+          );
+        }
+
+        expect(yield* folders.collect({})).toEqual(before);
+      }),
+    );
     it.effect("opaque folder ids round trip and folder creation is idempotent", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
