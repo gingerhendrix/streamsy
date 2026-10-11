@@ -1,5 +1,9 @@
 {
   "extends": "../../tsconfig.json",
-  "compilerOptions": { "lib": ["ESNext", "DOM"], "types": ["bun-types"] },
-  "include": ["server", "test", "scripts", "sync"]
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun-types"],
+    "jsx": "react-jsx"
+  },
+  "include": ["server", "test", "scripts", "sync", "src", "vite.config.ts"]
 }

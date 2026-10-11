@@ -269,7 +269,7 @@ export const ApiLive = HttpApiBuilder.layer(FolderSyncApi).pipe(
   Layer.provide(RequestErrorsLive),
 );
 
-export const HealthLive = HttpRouter.add("GET", "/", HttpServerResponse.text("Folder sync"));
+export const HealthLive = HttpRouter.add("GET", "/health", HttpServerResponse.text("Folder sync"));
 
 export const NotFoundLive = HttpRouter.add(
   "*",

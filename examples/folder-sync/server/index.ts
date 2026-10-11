@@ -1,6 +1,7 @@
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
+import index from "../public/web/index.html";
 import { ApiLive, HealthLive, NotFoundLive } from "./api.ts";
 import { ServerConfig } from "./config.ts";
 import { FolderStoreLive, Initialise, NoWriteHook } from "./folder-store.ts";
@@ -14,7 +15,16 @@ const Listener = Layer.unwrap(
     BunHttpServer.layer({
       port,
       idleTimeout: 60,
+      development: false,
       disablePreemptiveShutdown: true,
+      routes: {
+        "/api": false,
+        "/api/*": false,
+        "/streams": false,
+        "/streams/*": false,
+        "/health": false,
+        "/*": index,
+      },
     }),
   ),
 );
