@@ -1,7 +1,8 @@
+import { testDirectory } from "../../scripts/test-directory.ts";
 import { Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
-import { FileSystem, Layer, Schema } from "effect";
+import { Layer, Schema } from "effect";
 
 export class Files extends Streamsy.json<Files>()("Assumptions/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -36,8 +37,4 @@ export const host = (filename: string) =>
     ),
   );
 
-export const scratch = "/home/gareth/Documents/Personal/scratch/2026-10-11-folder-sync/a";
-
-export const temp = FileSystem.FileSystem.use((fs) =>
-  fs.makeTempDirectoryScoped({ directory: scratch, prefix: "assumptions-" }),
-);
+export const temp = testDirectory("assumptions-");

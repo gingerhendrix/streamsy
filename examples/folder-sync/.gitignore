@@ -1,0 +1,4 @@
+.scratch/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
