@@ -236,7 +236,14 @@ const read = Effect.fn("Folder.read")(function* (
   }
 
   if (selected === undefined || selected.operation.type === "delete")
-    return yield* new MissingFile({ message: "File not found at the requested version" });
+    return yield* new MissingFile({
+      message:
+        options.at !== undefined
+          ? "File not found at the requested version"
+          : selected?.operation.type === "delete"
+            ? "File was deleted"
+            : "File not found",
+    });
   const operation = selected.operation;
 
   if ("inline" in operation)

@@ -54,6 +54,23 @@ for (const [name, storage] of [
         expect(yield* Effect.flip(store.read(folderId, "__proto__"))).toBeInstanceOf(MissingFile);
       }),
     );
+    it.effect("head reads distinguish deleted files from missing and historical versions", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        yield* store.create("read-errors", "Read errors");
+        expect(yield* Effect.flip(store.read("read-errors", "a"))).toMatchObject({
+          message: "File not found",
+        });
+        const put = yield* store.write("read-errors", "a", metadata("put"), bytes("one"));
+        const removed = yield* store.write("read-errors", "a", metadata("delete", put.version));
+        expect(yield* Effect.flip(store.read("read-errors", "a"))).toMatchObject({
+          message: "File was deleted",
+        });
+        expect(
+          yield* Effect.flip(store.read("read-errors", "a", { at: removed.version })),
+        ).toMatchObject({ message: "File not found at the requested version" });
+      }),
+    );
     it.effect("stale writes mark the exact unseen head and opId replay appends nothing", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
