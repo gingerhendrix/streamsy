@@ -56,6 +56,25 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 );
 
 layer(Layer.empty, { excludeTestServices: true })((it) => {
+  it.effect("portable globs preserve Bun's POSIX negated character classes", () =>
+    Effect.gen(function* () {
+      yield* Layer.build(IndexLive);
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      yield* store.create("glob", "Glob");
+      const paths = ["ab.md", "b.md"];
+
+      for (const path of paths) yield* store.write("glob", path, metadata(path), bytes(path));
+      yield* until(index.list({ folder: "glob" }), (rows) => rows.length === 2);
+      const actual = yield* index.list({ folder: "glob", glob: "[!a]*.md" });
+      const expected = paths.filter((path) => new Bun.Glob("[!a]*.md").match(path));
+      expect(expected).toEqual(["b.md"]);
+      expect(actual.map((row) => row.path)).toEqual(expected);
+    }).pipe(
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Isolated scoped SQL runtime exercises the list API against the previous Bun matcher.
+      Effect.provide(graph),
+    ),
+  );
   it.effect("a failed search follower logs and resumes its checkpoint", () =>
     Effect.gen(function* () {
       const blobs = yield* BlobStore;

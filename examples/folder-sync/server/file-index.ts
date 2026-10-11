@@ -56,7 +56,8 @@ const make = Effect.gen(function* () {
       options.glob === undefined
         ? undefined
         : yield* Effect.try({
-            try: () => picomatch(options.glob ?? "", { dot: true, strictBrackets: true }),
+            try: () =>
+              picomatch(options.glob ?? "", { dot: true, strictBrackets: true, posix: true }),
             catch: () => new InvalidFile({ message: "Invalid glob pattern" }),
           });
 
