@@ -163,6 +163,8 @@ const IndexInternal = Layer.mergeAll(
       if (flags[0]?.fail === 1) return unavailable();
       const notice = yield* Schema.decodeUnknownEffect(Notice)(yield* request.json);
       yield* receiveNotice(notice);
+
+      if (flags[0]?.fail === 2) return unavailable();
       // Persist intake before projecting. A failed response can safely replay the same notice.
       const pass = yield* IndexPass;
       yield* pass.run.pipe(
@@ -209,10 +211,15 @@ const IndexInternal = Layer.mergeAll(
       const sql = yield* SqlClient.SqlClient;
 
       const payload = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({ fail: Schema.Boolean, projection: Schema.optionalKey(Schema.Boolean) }),
+        Schema.Struct({
+          fail: Schema.Boolean,
+          projection: Schema.optionalKey(Schema.Boolean),
+          afterPersist: Schema.optionalKey(Schema.Boolean),
+        }),
       )(yield* request.json);
 
-      yield* sql`UPDATE folder_sync_test SET fail = ${payload.fail ? 1 : 0}, failProjection = ${payload.projection ? 1 : 0} WHERE id = 1`;
+      const fail = payload.afterPersist ? 2 : Number(payload.fail);
+      yield* sql`UPDATE folder_sync_test SET fail = ${fail}, failProjection = ${payload.projection ? 1 : 0} WHERE id = 1`;
 
       return HttpServerResponse.text("configured");
     }).pipe(Effect.orDie),

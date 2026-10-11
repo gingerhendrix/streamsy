@@ -35,6 +35,80 @@ const worker = Effect.gen(function* () {
 layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
   (it) => {
     it.effect(
+      "workerd deduplicates an outbox replay after intake persisted but its response failed",
+      () =>
+        Effect.gen(function* () {
+          const host = yield* worker;
+
+          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: yield* HttpBody.json({ folderId: "lost-response", title: "Replay" }),
+          });
+
+          yield* create.text;
+
+          const configured = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
+            headers,
+            body: yield* HttpBody.json({ fail: false, afterPersist: true }),
+          });
+
+          yield* configured.text;
+
+          const put = yield* HttpClient.put(`${host.url}/api/folders/lost-response/files/a.md`, {
+            headers: {
+              ...headers,
+              "x-file-op-id": "lost",
+              "x-file-author": "test",
+              "x-file-origin": "test",
+            },
+            body: HttpBody.text("dedupneedle"),
+          });
+
+          expect(put.status).toBe(200);
+          yield* put.text;
+
+          const pending = yield* HttpClient.get(
+            `${host.url}/api/admin/pending?folder=lost-response`,
+            { headers },
+          );
+
+          expect(yield* pending.json).toEqual([expect.objectContaining({ state: "pending" })]);
+          const feed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
+          const before = yield* feed.json;
+          expect(before).toHaveLength(1);
+
+          const restored = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
+            headers,
+            body: yield* HttpBody.json({ fail: false }),
+          });
+
+          yield* restored.text;
+          yield* until(
+            Effect.gen(function* () {
+              const runtime = yield* Effect.promise(() => host.mf.getWorker());
+              yield* Effect.promise(() => runtime.scheduled({ cron: "* * * * *" }));
+
+              const response = yield* HttpClient.get(
+                `${host.url}/api/admin/pending?folder=lost-response`,
+                { headers },
+              );
+
+              return yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ state: Schema.String })),
+              )(yield* response.json);
+            }),
+            (entries) => entries.every((row) => row.state !== "pending"),
+          );
+          const replayed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
+          expect(yield* replayed.json).toEqual(before);
+          expect(replayed.headers["stream-up-to-date"]).toBe("true");
+          expect(replayed.headers["stream-next-offset"]).toBe(feed.headers["stream-next-offset"]);
+          const hits = yield* HttpClient.get(`${host.url}/api/search?q=dedupneedle`);
+          expect(yield* hits.json).toHaveLength(1);
+        }),
+      { timeout: 15000 },
+    );
+    it.effect(
       "workerd persists notices and runs cron while projection reads fail",
       () =>
         Effect.gen(function* () {
