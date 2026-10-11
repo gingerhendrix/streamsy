@@ -1,11 +1,12 @@
 import { BunHttpServer } from "@effect/platform-bun";
+import { OffsetMismatch, StorageFault, StreamId } from "@streamsy/core";
 import { afterAll, expect, it } from "@streamsy/effect-test";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive } from "../server/api.ts";
 import { FileOp, Version } from "../server/domain.ts";
-import { FolderStoreLive, Initialise, NoWriteHook } from "../server/folder-store.ts";
-import { memoryHost } from "../server/storage.ts";
+import { FolderStoreLive, Initialise, NoWriteHook, WriteHook } from "../server/folder-store.ts";
+import { memoryHost, sqliteHost } from "../server/storage.ts";
 
 const web = HttpRouter.toWebHandler(
   ApiLive.pipe(
@@ -56,9 +57,11 @@ it.live("metadata headers round trip Unicode and literal percent signs on PUT an
 
     expect(deletion.status).toBe(200);
     const response = yield* send(new Request("http://localhost/api/folders/metadata/history/a"));
+
     const history = yield* Schema.decodeUnknownEffect(History)(
       yield* Effect.promise(() => response.json()),
     );
+
     expect(
       history.map(({ operation }) => ({
         author: operation.author,
@@ -91,8 +94,89 @@ it.live(
       const response = yield* send(
         new Request("http://localhost/api/folders/invalid-metadata/history/a"),
       );
+
       expect(
         yield* Schema.decodeUnknownEffect(History)(yield* Effect.promise(() => response.json())),
       ).toEqual([]);
     }),
 );
+
+for (const [host, storage] of [
+  ["memory", memoryHost],
+  ["sqlite", sqliteHost(":memory:")],
+] as const) {
+  it.live(
+    `${host}: hook storage and append failures answer 500 and preserve the previous head`,
+    () =>
+      Effect.gen(function* () {
+        for (const fault of [
+          new StorageFault({
+            operation: "hook.append",
+            message: "disk unavailable",
+            retryable: true,
+          }),
+          new OffsetMismatch({ id: StreamId.make("hook-events"), expected: "a", actual: "b" }),
+        ]) {
+          const edge = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              HttpRouter.toWebHandler(
+                ApiLive.pipe(
+                  Layer.provide(Initialise),
+                  Layer.provide(FolderStoreLive),
+                  Layer.provide(
+                    Layer.succeed(WriteHook, {
+                      committed: (_folderId, operation) =>
+                        operation.opId === "failing" ? Effect.fail(fault) : Effect.void,
+                    }),
+                  ),
+                  Layer.provide([storage, BunHttpServer.layerHttpServices]),
+                ),
+                { disableLogger: true },
+              ),
+            ),
+            (server) => Effect.promise(() => server.dispose()),
+          );
+
+          const call = (request: Request) => Effect.promise(() => edge.handler(request));
+
+          const folder = yield* call(
+            new Request("http://localhost/api/folders", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: '{"folderId":"hook","title":"Hook"}',
+            }),
+          );
+
+          expect(folder.status).toBe(200);
+          const url = "http://localhost/api/folders/hook/files/a";
+
+          const initial = yield* call(
+            new Request(url, { method: "PUT", headers: metadata, body: "initial" }),
+          );
+
+          expect(initial.status).toBe(200);
+
+          const failed = yield* call(
+            new Request(url, {
+              method: "PUT",
+              headers: { ...metadata, "x-file-op-id": "failing" },
+              body: "must roll back",
+            }),
+          );
+
+          expect(failed.status).toBe(500);
+          expect(yield* Effect.promise(() => failed.json())).toMatchObject({
+            error: "Storage failure",
+          });
+          const head = yield* call(new Request(url));
+          expect(yield* Effect.promise(() => head.text())).toBe("initial");
+          const response = yield* call(new Request("http://localhost/api/folders/hook/history/a"));
+          expect(
+            yield* Schema.decodeUnknownEffect(History)(
+              yield* Effect.promise(() => response.json()),
+            ),
+          ).toHaveLength(1);
+        }
+      }),
+  );
+}

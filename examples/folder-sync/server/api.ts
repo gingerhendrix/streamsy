@@ -139,6 +139,11 @@ const apiErrors = <A, R>(self: Effect.Effect<A, StoreError, R>) =>
             new Unavailable({ error: "Folder did not reach minVersion within 10 seconds" }),
           ),
         ),
+        Match.tag("WriteHookFailure", ({ cause }) =>
+          Effect.logError(cause).pipe(
+            Effect.andThen(Effect.fail(new InternalError({ error: "Storage failure" }))),
+          ),
+        ),
         Match.orElse((cause) =>
           Effect.logError(cause).pipe(
             Effect.andThen(Effect.fail(new InternalError({ error: "Storage failure" }))),

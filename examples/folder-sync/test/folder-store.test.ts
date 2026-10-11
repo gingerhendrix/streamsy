@@ -1,5 +1,5 @@
 import { expect, layer } from "@streamsy/effect-test";
-import { ZERO_OFFSET } from "@streamsy/core";
+import { ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { Deferred, Effect, Fiber, Layer } from "effect";
 import { InvalidFile, MissingFile } from "../server/domain.ts";
 import {
@@ -8,6 +8,7 @@ import {
   Initialise,
   NoWriteHook,
   WriteHook,
+  WriteHookFailure,
 } from "../server/folder-store.ts";
 import { Files, Folders } from "../server/streams.ts";
 import { memoryHost, sqliteHost } from "../server/storage.ts";
@@ -255,6 +256,50 @@ for (const [name, storage] of [
         expect((yield* Fiber.join(reader)).version).toBe(first.version);
       }),
     );
+    it.effect(
+      "hook storage failures retain their cause and roll back both same-owner appends",
+      () =>
+        Effect.gen(function* () {
+          const store = yield* FolderStore;
+          const files = yield* Files;
+          const folders = yield* Folders;
+          yield* store.create("storage-hook", "Hook storage failure");
+          const before = (yield* folders.collect({})).items.length;
+
+          const fault = new StorageFault({
+            operation: "hook.append",
+            message: "disk unavailable",
+            retryable: true,
+          });
+
+          const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
+            Effect.provideService(WriteHook, {
+              committed: () =>
+                folders
+                  .append({}, [
+                    { folderId: "rolled-back-storage-hook", title: "rollback", created: "test" },
+                  ])
+                  .pipe(Effect.andThen(Effect.fail(fault))),
+            }),
+          );
+
+          const failure = yield* Effect.gen(function* () {
+            const service = yield* FolderStore;
+
+            return yield* Effect.flip(
+              service.write("storage-hook", "a", metadata("hook"), bytes("bad")),
+            );
+          }).pipe(Effect.provideContext(context));
+
+          expect(failure).toBeInstanceOf(WriteHookFailure);
+          expect(failure).toMatchObject({ cause: fault });
+          expect((yield* files.head({ folderId: "storage-hook" })).nextOffset).toBe(ZERO_OFFSET);
+          expect((yield* folders.collect({})).items).toHaveLength(before);
+          const retried = yield* store.write("storage-hook", "a", metadata("hook"), bytes("good"));
+          expect((yield* store.read("storage-hook", "a")).version).toBe(retried.version);
+          expect(yield* store.history("storage-hook", "a")).toHaveLength(1);
+        }),
+    );
     it.effect("a failing same-commit hook rolls back the file append and its checkpoint", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
@@ -268,10 +313,7 @@ for (const [name, storage] of [
             committed: () =>
               folders
                 .append({}, [{ folderId: "hook-side-effect", title: "rollback", created: "test" }])
-                .pipe(
-                  Effect.mapError(() => new InvalidFile({ message: "Hook append failed" })),
-                  Effect.andThen(Effect.fail(new InvalidFile({ message: "Hook rejected" }))),
-                ),
+                .pipe(Effect.andThen(Effect.fail(new InvalidFile({ message: "Hook rejected" })))),
           }),
         );
 

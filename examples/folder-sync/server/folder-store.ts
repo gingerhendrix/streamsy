@@ -1,6 +1,7 @@
-import { CommitBoundary, ZERO_OFFSET, type Decision } from "@streamsy/core";
+import { CommitBoundary, ZERO_OFFSET, type Decision, type AppendFailure } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, Crypto, DateTime, Effect, Layer, Schema, Stream } from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Match, Schema, Stream } from "effect";
+import type { SqlError } from "effect/sql/SqlError";
 import { BlobStore } from "./blob-store.ts";
 import {
   FileOp,
@@ -19,6 +20,12 @@ import {
 } from "./domain.ts";
 import { Files, Folders, folderHead } from "./streams.ts";
 
+export type WriteHookError = InvalidFile | AppendFailure | SqlError;
+
+export class WriteHookFailure extends Schema.TaggedError<WriteHookFailure>()("WriteHookFailure", {
+  cause: Schema.Defect(),
+}) {}
+
 /** Runs after the append, on its owner fiber in the same transaction. A host can capture another stream here. */
 export class WriteHook extends Context.Service<
   WriteHook,
@@ -27,7 +34,7 @@ export class WriteHook extends Context.Service<
       folderId: string,
       operation: FileOp,
       version: string,
-    ) => Effect.Effect<void, InvalidFile>;
+    ) => Effect.Effect<void, WriteHookError>;
   }
 >()("FolderSync/WriteHook") {}
 
@@ -142,7 +149,15 @@ const write = Effect.fn("Folder.write")(function* (
           ...overwriteMarkFromOp(result.value.replay),
         };
 
-      if (result.appended) yield* hook.committed(folderId, result.value.operation, result.offset);
+      if (result.appended)
+        yield* hook.committed(folderId, result.value.operation, result.offset).pipe(
+          Effect.mapError((error) =>
+            Match.value(error).pipe(
+              Match.tag("InvalidFile", (invalid) => invalid),
+              Match.orElse((cause) => new WriteHookFailure({ cause })),
+            ),
+          ),
+        );
 
       return { version: result.offset, ...overwriteMarkFromOp(result.value.operation) };
     }),
