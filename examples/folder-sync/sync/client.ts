@@ -127,6 +127,8 @@ export const remoteLayer = (server: string) =>
         const historyUrl = `${root}/api/folders/${encodeURIComponent(folderId)}/history/${encodeFilePath(path)}`;
         const history = yield* request(HttpClientRequest.get(historyUrl));
 
+        if (history.status === 404) return { version: null, hash: null, bytes: null };
+
         if (history.status !== 200) return yield* reject(history.status);
         const last = (yield* Schema.decodeUnknownEffect(History)(yield* history.json)).at(-1);
 

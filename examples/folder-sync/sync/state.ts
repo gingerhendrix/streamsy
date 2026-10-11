@@ -26,6 +26,8 @@ const Pending = Schema.Struct({
 
 export type Pending = typeof Pending.Type;
 
+const Rejected = Schema.Struct({ ...Pending.fields, status: Schema.Int, reason: Schema.String });
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS known (
@@ -38,6 +40,29 @@ const make = Effect.gen(function* () {
     "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
   );
   yield* sql.unsafe("CREATE TABLE IF NOT EXISTS folders (folderId TEXT PRIMARY KEY)");
+
+  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS rejected (
+    seq INTEGER PRIMARY KEY, folderId TEXT NOT NULL, path TEXT NOT NULL, opId TEXT NOT NULL,
+    base TEXT, hash TEXT, bytes BLOB, status INTEGER NOT NULL, reason TEXT NOT NULL)`);
+
+  const reject = Effect.fn("SyncState.reject")(function* (
+    seq: number,
+    status: number,
+    reason: string,
+  ) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO rejected SELECT *, ${status}, ${reason} FROM outbox WHERE seq = ${seq}`;
+        yield* sql`DELETE FROM outbox WHERE seq = ${seq}`;
+      }),
+    );
+  });
+
+  const rejected = Effect.fn("SyncState.rejected")(function* () {
+    return yield* Schema.decodeUnknownEffect(Schema.Array(Rejected))(
+      yield* sql`SELECT * FROM rejected ORDER BY seq`,
+    );
+  });
 
   const heads = Effect.fn("SyncState.heads")(function* () {
     return yield* Schema.decodeUnknownEffect(Schema.Array(Known))(yield* sql`SELECT * FROM known`);
@@ -112,7 +137,20 @@ const make = Effect.gen(function* () {
     yield* sql`INSERT INTO folders (folderId) VALUES (${folderId}) ON CONFLICT DO NOTHING`;
   });
 
-  return { heads, head, save, pending, enqueue, dropAndRebase, get, set, folders, addFolder };
+  return {
+    reject,
+    rejected,
+    heads,
+    head,
+    save,
+    pending,
+    enqueue,
+    dropAndRebase,
+    get,
+    set,
+    folders,
+    addFolder,
+  };
 });
 
 export class SyncState extends Context.Service<SyncState, Effect.Success<typeof make>>()(

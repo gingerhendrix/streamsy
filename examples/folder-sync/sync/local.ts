@@ -7,11 +7,13 @@ export class LocalFailure extends Schema.TaggedError<LocalFailure>()("LocalFailu
   message: Schema.String,
 }) {}
 
+export class SkippedLocal extends Schema.TaggedError<SkippedLocal>()("SkippedLocal", {
+  message: Schema.String,
+}) {}
+
 /** This adapter never follows an existing symlink within the mirror. */
 export const pathKind = Effect.fn("SyncLocal.pathKind")(function* (path: string) {
   const fs = yield* FileSystem.FileSystem;
-
-  if (!(yield* fs.exists(path))) return "missing";
 
   const info = yield* Effect.tryPromise({
     try: () => lstat(path),
@@ -53,7 +55,7 @@ export const localFiles = Effect.fn("SyncLocal.files")(function* (root: string) 
     if (kind === "missing") return yield* Effect.void;
 
     if (kind === "symlink" || kind === "other")
-      return yield* new LocalFailure({ message: `Unsupported mirror path: ${absolute}` });
+      return yield* Effect.logWarning(`Skipping unsupported mirror path: ${absolute}`);
 
     if (kind === "file") {
       files.push(relative);
@@ -91,7 +93,7 @@ export const safePath = Effect.fn("SyncLocal.safePath")(function* (root: string,
     current = path.join(current, part);
 
     if ((yield* pathKind(current)) === "symlink")
-      return yield* new LocalFailure({ message: `Symlink in mirror path: ${current}` });
+      return yield* new SkippedLocal({ message: `Skipping symlink in mirror path: ${current}` });
   }
 
   return current;
@@ -108,7 +110,7 @@ export const localBytes = Effect.fn("SyncLocal.read")(
     if (info.type !== "File") return null;
 
     if (info.size > BigInt(FILE_LIMIT))
-      return yield* new LocalFailure({ message: `File exceeds 8 MiB: ${absolute}` });
+      return yield* new SkippedLocal({ message: `Skipping file over 8 MiB: ${absolute}` });
 
     return yield* fs.readFile(absolute);
   },

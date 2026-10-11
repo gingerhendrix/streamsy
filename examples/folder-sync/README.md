@@ -111,7 +111,7 @@ function returning a relative directory, so another host can choose its layout.
 Mappings must stay inside the mirror and use disjoint roots. Absolute IDs,
 traversal-like IDs, overlapping roots such as `docs` and `docs/api`, and the
 reserved `.folder-sync` directory require a different mapping or selection.
-Symlinks and special files are rejected. Run one daemon per mirror directory.
+Symlinks, special files, and files over 8 MiB are skipped and logged. Run one daemon per mirror directory.
 
 The CLI bootstraps from `/api/ls` and its consumed cursor, fetches current heads,
 and tails every change page using long-poll. It keeps folder versions separate
@@ -138,7 +138,9 @@ edits stay on disk while remote changes arrive. After acceptance the CLI refresh
 the authoritative head, so a lost-response replay cannot restore stale content
 over another writer. An unseen overwrite is logged. A delete pulled from the
 server retains its tombstone version for a later local recreation's base.
-Non-retryable HTTP errors and local I/O failures stop the CLI with an error; the
+Non-retryable HTTP write errors move the entry and its bytes to the SQLite
+`rejected` table, log the reason, and allow later writes to continue. Other local
+I/O failures stop the CLI with an error; the
 outbox remains on disk for inspection or a corrected restart.
 
 This remains a demo: every scan hashes selected files, history and manifest reads

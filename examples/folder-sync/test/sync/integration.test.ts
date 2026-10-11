@@ -5,7 +5,7 @@ import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema } from "ef
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
-import { FileOp, Version } from "../../server/domain.ts";
+import { FILE_LIMIT, FileOp, Version } from "../../server/domain.ts";
 import { encodeFilePath } from "../../sync/decisions.ts";
 import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
@@ -502,10 +502,12 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const directory = yield* testDirectory("sync-own-saves-");
         const mirror = `${directory}/mirror`;
         const fs = yield* FileSystem.FileSystem;
+
         const server = yield* spawnServer({
           cwd: `${import.meta.dir}/../..`,
           entry: "server/index.ts",
         });
+
         yield* create(server.url, "docs");
         const seed = yield* put(server.url, "docs", "a.md", "seed", "seed");
         yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
@@ -558,6 +560,52 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         expect(rows[2]?.operation.base).toBe(rows[1]?.version);
         expect(rows.every((row) => row.operation.overwrote === undefined)).toBe(true);
         expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("save 2");
+        yield* Fiber.interrupt(daemon);
+        yield* server.stop;
+      }),
+    { timeout: 20000 },
+  );
+  it.effect(
+    "oversize files, symlinks and rejected writes leave other files syncing",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-skips-");
+        const mirror = `${directory}/mirror`;
+        const fs = yield* FileSystem.FileSystem;
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+        yield* create(server.url, "docs");
+        const daemon = yield* sync({
+          server: server.url,
+          directory: mirror,
+          folders: ["docs", "missing"],
+          writable: ["docs", "missing"],
+        }).pipe(Effect.forkScoped);
+        yield* until(fs.exists(`${mirror}/.folder-sync/state.sqlite`), Boolean);
+        const state = yield* inspect(mirror);
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* fs.writeFile(`${mirror}/docs/large.bin`, new Uint8Array(FILE_LIMIT + 1));
+        yield* fs.writeFileString(`${directory}/outside.md`, "outside");
+        yield* fs.symlink(`${directory}/outside.md`, `${mirror}/docs/link.md`);
+        yield* fs.symlink(`${directory}/absent.md`, `${mirror}/docs/broken.md`);
+        yield* fs.writeFileString(`${mirror}/missing/reject.md`, "retained rejected bytes");
+        const rejected = yield* until(state.rejected(), (rows) => rows.length === 1);
+        expect(rejected[0]?.status).toBe(404);
+        expect(new TextDecoder().decode(rejected[0]?.bytes ?? new Uint8Array())).toBe(
+          "retained rejected bytes",
+        );
+        yield* fs.writeFileString(`${mirror}/docs/good.md`, "still syncing");
+        yield* until(history(server.url, "docs", "good.md"), (rows) => rows.length === 1);
+        yield* until(state.pending(), (rows) => rows.length === 0);
+
+        for (const file of ["large.bin", "link.md", "broken.md"])
+          expect(yield* history(server.url, "docs", file)).toHaveLength(0);
+        expect(yield* fs.readFileString(`${directory}/outside.md`)).toBe("outside");
+        const scan = yield* state.get("lastScan");
+        yield* until(state.get("lastScan"), (value) => value !== scan);
+        expect(yield* state.rejected()).toHaveLength(1);
         yield* Fiber.interrupt(daemon);
         yield* server.stop;
       }),

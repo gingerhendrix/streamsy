@@ -25,7 +25,15 @@ import {
   conflictPath,
 } from "./decisions.ts";
 import type { SyncOptions } from "./decisions.ts";
-import { LocalFailure, localBytes, localFiles, replaceLocal, safePath, pathKind } from "./local.ts";
+import {
+  LocalFailure,
+  SkippedLocal,
+  localBytes,
+  localFiles,
+  replaceLocal,
+  safePath,
+  pathKind,
+} from "./local.ts";
 import { SyncState, stateLayer } from "./state.ts";
 import type { Known } from "./state.ts";
 
@@ -146,6 +154,11 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     );
   });
 
+  const skipLocal = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchIf(Schema.is(SkippedLocal), (error) => Effect.logWarning(error.message)),
+    );
+
   const install = Effect.fn("Sync.install")(function* (
     folderId: string,
     file: string,
@@ -209,7 +222,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     yield* replaceLocal(root, filePath(folderId, file), head.bytes);
 
     return yield* state.save({ ...row, localHash: head.hash, localVersion: head.version });
-  });
+  }, skipLocal);
 
   const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
     const normalized = yield* normalisePath(file);
@@ -252,7 +265,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     );
 
     return yield* Effect.void;
-  });
+  }, skipLocal);
 
   const scan = Effect.fn("Sync.scan")(function* () {
     for (const [folderId, relative] of roots) {
@@ -368,7 +381,22 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const operation = (yield* state.pending())[0];
 
     if (operation === undefined) return yield* Effect.void;
-    const receipt = yield* remote.push(operation, clientId);
+
+    const receipt = yield* remote.push(operation, clientId).pipe(
+      Effect.catchTag("RemoteFailure", (error) =>
+        Effect.gen(function* () {
+          if (error.retryable || error.status < 400 || error.status >= 500) return yield* error;
+          yield* gate.withPermit(state.reject(operation.seq, error.status, error.message));
+          yield* Effect.logWarning(
+            `Rejected write saved in SQLite: ${operation.folderId}/${operation.path} (${error.status})`,
+          );
+
+          return undefined;
+        }),
+      ),
+    );
+
+    if (receipt === undefined) return yield* Effect.void;
 
     if (receipt.overwrote !== undefined)
       yield* Effect.logWarning(
