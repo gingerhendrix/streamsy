@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Schema } from "effect";
-import { FileOp, Heads, Identifier, foldHead } from "./domain.ts";
+import { FileOp, FolderState, Identifier, foldHead } from "./domain.ts";
 
 /** Hex UTF-8 is an injective, canonical stream-id segment for opaque folder ids. */
 export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(Identifier)));
@@ -29,14 +29,15 @@ export const streams = Streamsy.group(Folders, Files);
 /** Hosts use readLimit: 1 so this range's end is the exact version of this entry. */
 export const folderHead = Projection.fold({
   id: "folder-head",
+  generation: 2,
   params: { folderId: FolderKey },
   inputs: { input: Files },
-  state: { schema: Heads, initial: {} },
-  fold: (heads, { item }, unit) => {
+  state: { schema: FolderState, initial: { heads: {}, ops: {} } },
+  fold: (state, { item }, unit) => {
     const range = unit.ranges.input;
 
     if (range === undefined) throw new Error("Missing folder log range");
 
-    return foldHead(heads, item, range.nextOffset);
+    return foldHead(state, item, range.nextOffset);
   },
 });

@@ -7,11 +7,14 @@ import {
   Identifier,
   InvalidFile,
   MissingFile,
+  OperationReceipt,
   VersionUnavailable,
   WriteMetadata,
   headAt,
   normalisePath,
+  operationAt,
   overwriteMark,
+  overwriteMarkFromOp,
   prepareContent,
 } from "./domain.ts";
 import { Files, Folders, folderHead } from "./streams.ts";
@@ -70,6 +73,8 @@ const create = Effect.fn("Folder.create")(function* (folderId: string, title: st
   );
 });
 
+type WriteDecision = { readonly replay: OperationReceipt } | { readonly operation: FileOp };
+
 const write = Effect.fn("Folder.write")(function* (
   folderId: string,
   path: string,
@@ -101,17 +106,17 @@ const write = Effect.fn("Folder.write")(function* (
         decide: ({
           state,
           offsets,
-        }): Effect.Effect<
-          Decision<{ version: string | null; operation: FileOp }, FileOp>,
-          InvalidFile
-        > => {
-          const head = headAt(state, normalized);
+        }): Effect.Effect<Decision<WriteDecision, FileOp>, InvalidFile> => {
+          const replay = operationAt(state.ops, meta.opId);
 
-          if (head?.opId === meta.opId)
-            return Effect.succeed({
-              value: { version: head.version, operation: head.operation },
-              items: [],
-            });
+          if (replay !== undefined) {
+            if (replay.path !== normalized)
+              return Effect.fail(new InvalidFile({ message: "opId already used" }));
+
+            return Effect.succeed({ value: { replay }, items: [] });
+          }
+
+          const head = headAt(state.heads, normalized);
 
           if (meta.base !== null && meta.base > (offsets.input ?? ZERO_OFFSET))
             return Effect.fail(
@@ -124,21 +129,22 @@ const write = Effect.fn("Folder.write")(function* (
               ? { ...common, type: "delete" }
               : { ...common, type: "put", ...content };
 
-          return Effect.succeed({ value: { version: null, operation }, items: [operation] });
+          return Effect.succeed({ value: { operation }, items: [operation] });
         },
       });
 
-      const version = result.value.version ?? result.offset;
+      if ("replay" in result.value)
+        return {
+          version: result.value.replay.version,
+          ...overwriteMarkFromOp(result.value.replay),
+        };
 
-      if (result.appended) yield* hook.committed(folderId, result.value.operation, version);
+      if (result.appended) yield* hook.committed(folderId, result.value.operation, result.offset);
 
-      return { version, ...overwriteMarkFromOp(result.value.operation) };
+      return { version: result.offset, ...overwriteMarkFromOp(result.value.operation) };
     }),
   );
 });
-
-const overwriteMarkFromOp = (operation: FileOp) =>
-  operation.overwrote === undefined ? {} : { overwrote: operation.overwrote };
 
 const history = Effect.fn("Folder.history")(function* (folderId: string, path: string) {
   const normalized = yield* normalisePath(path);
@@ -199,7 +205,7 @@ const read = Effect.fn("Folder.read")(function* (
         const projection = folderHead.at({ folderId });
         yield* Projection.run(projection);
 
-        return headAt((yield* Projection.read(projection)).state, normalized);
+        return headAt((yield* Projection.read(projection)).state.heads, normalized);
       }),
     );
   }

@@ -10,6 +10,7 @@ import {
   foldHead,
   headAt,
   normalisePath,
+  operationAt,
   overwriteMark,
   prepareContent,
   sha256,
@@ -35,7 +36,7 @@ baseIt.effect(
   "head fold retains tombstones and follows commit order without mutating prior heads",
   () =>
     Effect.sync(() => {
-      const before = foldHead({}, first, v1);
+      const before = foldHead({ heads: {}, ops: {} }, first, v1);
 
       const deletion: FileOp = {
         type: "delete",
@@ -47,27 +48,33 @@ baseIt.effect(
       };
 
       const after = foldHead(before, deletion, v2);
-      expect(before[first.path]).toMatchObject({
+      expect(before.heads[first.path]).toMatchObject({
         version: v1,
         hash: first.hash,
         size: 1,
         deleted: false,
       });
-      expect(after[first.path]).toMatchObject({
+      expect(after.heads[first.path]).toMatchObject({
         version: v2,
         size: 0,
         deleted: true,
         opId: "delete",
       });
-      expect(after[first.path]?.hash).toBeUndefined();
-      expect(overwriteMark(before[first.path], v1)).toEqual({});
-      expect(overwriteMark(after[first.path], v1)).toEqual({ overwrote: v2 });
-      expect(overwriteMark(after[first.path], null)).toEqual({ overwrote: v2 });
+      expect(after.heads[first.path]?.hash).toBeUndefined();
+      expect(overwriteMark(before.heads[first.path], v1)).toEqual({});
+      expect(overwriteMark(after.heads[first.path], v1)).toEqual({ overwrote: v2 });
+      expect(overwriteMark(after.heads[first.path], null)).toEqual({ overwrote: v2 });
       expect(overwriteMark(undefined, null)).toEqual({});
+      expect(operationAt(after.ops, "first")).toEqual({ path: first.path, version: v1 });
+      expect(operationAt(after.ops, "delete")).toEqual({ path: first.path, version: v2 });
+      expect(operationAt({}, "constructor")).toBeUndefined();
       expect(headAt({}, "constructor")).toBeUndefined();
-      expect(headAt(foldHead({}, { ...first, path: "__proto__" }, v1), "__proto__")?.opId).toBe(
-        "first",
-      );
+      expect(
+        headAt(
+          foldHead({ heads: {}, ops: {} }, { ...first, path: "__proto__" }, v1).heads,
+          "__proto__",
+        )?.opId,
+      ).toBe("first");
     }),
 );
 

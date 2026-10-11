@@ -128,11 +128,30 @@ export const Heads = Schema.Record(Schema.String, Head);
 
 export type Heads = typeof Heads.Type;
 
-/** The caller supplies the exact log offset of the entry. Deletes retain tombstones. */
+export const OperationReceipt = Schema.Struct({
+  path: Path,
+  version: Version,
+  overwrote: Schema.optionalKey(Version),
+});
+
+export type OperationReceipt = typeof OperationReceipt.Type;
+
+export const Operations = Schema.Record(Schema.String, OperationReceipt);
+
+export type Operations = typeof Operations.Type;
+
+export const FolderState = Schema.Struct({ heads: Heads, ops: Operations });
+
+export type FolderState = typeof FolderState.Type;
+
 export const headAt = (heads: Heads, path: string): Head | undefined =>
   Object.hasOwn(heads, path) ? heads[path] : undefined;
 
-export const foldHead = (heads: Heads, operation: FileOp, version: string): Heads => {
+export const operationAt = (ops: Operations, opId: string): OperationReceipt | undefined =>
+  Object.hasOwn(ops, opId) ? ops[opId] : undefined;
+
+/** The caller supplies the exact log offset. Keep the first receipt when rebuilding older duplicate entries. */
+export const foldHead = (state: FolderState, operation: FileOp, version: string): FolderState => {
   const common = { version, opId: operation.opId, operation };
 
   const head: Head =
@@ -140,8 +159,18 @@ export const foldHead = (heads: Heads, operation: FileOp, version: string): Head
       ? { ...common, hash: operation.hash, size: operation.size, deleted: false }
       : { ...common, size: 0, deleted: true };
 
-  return { ...heads, [operation.path]: head };
+  const receipt = { path: operation.path, version, ...overwriteMarkFromOp(operation) };
+
+  const ops =
+    operationAt(state.ops, operation.opId) === undefined
+      ? { ...state.ops, [operation.opId]: receipt }
+      : state.ops;
+
+  return { heads: { ...state.heads, [operation.path]: head }, ops };
 };
+
+export const overwriteMarkFromOp = (operation: FileOp | OperationReceipt) =>
+  operation.overwrote === undefined ? {} : { overwrote: operation.overwrote };
 
 /** A null base means the author had no head. Comparing fixed-width offsets follows commit order. */
 export const overwriteMark = (head: Head | undefined, base: string | null) =>

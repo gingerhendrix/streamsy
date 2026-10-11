@@ -20,7 +20,7 @@ const graph = (filename: string) =>
 
 layer(BunServices.layer)((it) => {
   it.effect(
-    "SQLite recovers folder registry, head, blobs and current-head opId after restart",
+    "SQLite recovers folder registry, head, blobs and operation receipts after restart",
     () =>
       Effect.gen(function* () {
         const directory = yield* testDirectory("restart-");
@@ -35,7 +35,15 @@ layer(BunServices.layer)((it) => {
               const store = yield* FolderStore;
               yield* store.create("daily/demo", "Persisted");
 
-              return (yield* store.write("daily/demo", "binary", metadata, bytes)).version;
+              const first = yield* store.write("daily/demo", "binary", metadata, bytes);
+              yield* store.write(
+                "daily/demo",
+                "binary",
+                { ...metadata, opId: "later", base: first.version },
+                new Uint8Array([1, 2, 3]),
+              );
+
+              return first.version;
             }).pipe(Effect.provideContext(context));
           }),
         );
@@ -47,12 +55,18 @@ layer(BunServices.layer)((it) => {
               const store = yield* FolderStore;
               expect((yield* store.create("daily/demo", "New title")).title).toBe("Persisted");
               const head = yield* store.read("daily/demo", "binary");
-              expect(head.version).toBe(version);
-              expect(head.bytes).toEqual(bytes);
+              expect(head.version > version).toBe(true);
+              expect(head.bytes).toEqual(new Uint8Array([1, 2, 3]));
               expect((yield* store.write("daily/demo", "binary", metadata, bytes)).version).toBe(
                 version,
               );
-              expect(yield* store.history("daily/demo", "binary")).toHaveLength(1);
+              expect((yield* store.read("daily/demo", "binary")).bytes).toEqual(
+                new Uint8Array([1, 2, 3]),
+              );
+              expect(yield* store.history("daily/demo", "binary")).toHaveLength(2);
+              expect((yield* store.read("daily/demo", "binary", { at: version })).bytes).toEqual(
+                bytes,
+              );
             }).pipe(Effect.provideContext(context));
           }),
         );

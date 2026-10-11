@@ -78,6 +78,33 @@ const smoke = Effect.gen(function* () {
     const history = yield* Schema.decodeUnknownEffect(History)(yield* historyResponse.json);
     yield* check(history.length === 3, "history contains exactly three writes");
     yield* check(history[2]?.operation.overwrote === second.version, "history overwrite mark");
+    // A1 succeeds, B1 moves the head, then a lost-response outbox replays A1.
+    const replayUrl = `${folderUrl}/files/replay.md`;
+    const a1 = yield* written(replayUrl, "A1", text("from A"));
+    const b1 = yield* written(replayUrl, "B1", text("from B"), a1.version);
+    const a1Replay = yield* written(replayUrl, "A1", text("from A"));
+    yield* check(
+      a1Replay.version === a1.version && a1Replay.overwrote === a1.overwrote,
+      "intervening-write replay returns the original receipt",
+    );
+    const replayHead = yield* HttpClient.get(replayUrl);
+    yield* check(
+      (yield* replayHead.text) === "from B" && replayHead.headers["x-file-version"] === b1.version,
+      "replay preserves B's head",
+    );
+    const replayHistory = yield* HttpClient.get(`${folderUrl}/history/replay.md`);
+    yield* check(
+      (yield* Schema.decodeUnknownEffect(History)(yield* replayHistory.json)).length === 2,
+      "replay after B appends nothing",
+    );
+    const reused = yield* HttpClient.put(`${folderUrl}/files/other.md`, {
+      headers: metadata("A1"),
+      body: HttpBody.uint8Array(text("bad")),
+    });
+    yield* check(
+      reused.status === 400 && (yield* reused.text).includes("opId already used"),
+      "opId cannot move to another path",
+    );
     const binary = new Uint8Array([0, 255, 1, 2]);
     const blobUrl = `${folderUrl}/files/binary.bin`;
     yield* written(blobUrl, "binary", binary);

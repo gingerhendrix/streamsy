@@ -96,6 +96,38 @@ for (const [name, storage] of [
         ).toBeInstanceOf(InvalidFile);
       }),
     );
+    it.effect(
+      "replay after another writer moves the head returns its original receipt without reverting",
+      () =>
+        Effect.gen(function* () {
+          const store = yield* FolderStore;
+          const files = yield* Files;
+          yield* store.create("replay", "Replay");
+          const initial = yield* store.write("replay", "a", metadata("initial"), bytes("initial"));
+          const a1 = yield* store.write("replay", "a", metadata("__proto__"), bytes("A1"));
+          expect(a1.overwrote).toBe(initial.version);
+          const b1 = yield* store.write(
+            "replay",
+            "a",
+            metadata("constructor", a1.version),
+            bytes("B1"),
+          );
+          const tail = (yield* files.head({ folderId: "replay" })).nextOffset;
+          expect(yield* store.write("replay", "./a", metadata("__proto__"), bytes("A1"))).toEqual(
+            a1,
+          );
+          expect((yield* files.head({ folderId: "replay" })).nextOffset).toBe(tail);
+          expect((yield* store.read("replay", "a")).bytes).toEqual(bytes("B1"));
+          expect((yield* store.read("replay", "a")).version).toBe(b1.version);
+          expect(yield* store.history("replay", "a")).toHaveLength(3);
+          const reused = yield* Effect.flip(
+            store.write("replay", "other", metadata("__proto__"), bytes("bad")),
+          );
+          expect(reused).toMatchObject({ message: "opId already used" });
+          expect((yield* files.head({ folderId: "replay" })).nextOffset).toBe(tail);
+          expect(yield* store.history("replay", "other")).toEqual([]);
+        }),
+    );
     it.effect("history has exact per-entry offsets across paths, deletes and recreation", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
