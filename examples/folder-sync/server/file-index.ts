@@ -1,0 +1,143 @@
+import { CommitBoundary } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { Context, Effect, Layer, Schema, Scope, Stream } from "effect";
+import { SqlClient } from "effect/sql";
+import { InvalidFile } from "./domain.ts";
+import { Changes, Files, Folders, Manifest, ManifestFile, folderHead } from "./streams.ts";
+import {
+  folderChanges,
+  folderTriggers,
+  initialiseSearch,
+  manifest,
+  search,
+} from "./projections.ts";
+
+export const SearchResult = Schema.Struct({
+  folderId: Schema.String,
+  path: Schema.String,
+  version: Schema.String,
+  snippet: Schema.String,
+});
+
+/** Replays Durable State events into their current live rows. No SQL shadow manifest. */
+export const manifestRows = Effect.gen(function* () {
+  const stream = yield* Manifest;
+
+  const rows = yield* stream.fold(
+    {},
+    () => new Map<string, ManifestFile>(),
+    (state, event) => {
+      if ("value" in event) state.set(event.key, event.value);
+      else state.delete(event.key);
+
+      return state;
+    },
+  );
+
+  return [...rows.state.values()].toSorted(
+    (a, b) => a.folderId.localeCompare(b.folderId) || a.path.localeCompare(b.path),
+  );
+});
+
+const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const stream = yield* Manifest;
+
+  const list = Effect.fn("FileIndex.list")(function* (
+    options: {
+      folder?: string;
+      prefix?: string;
+      glob?: string;
+    } = {},
+  ) {
+    const glob =
+      options.glob === undefined
+        ? undefined
+        : yield* Effect.try({
+            try: () => new Bun.Glob(options.glob ?? ""),
+            catch: () => new InvalidFile({ message: "Invalid glob pattern" }),
+          });
+
+    const rows = yield* manifestRows.pipe(Effect.provideService(Manifest, stream));
+
+    return rows.filter(
+      (row) =>
+        (options.folder === undefined || row.folderId === options.folder) &&
+        (options.prefix === undefined || row.path.startsWith(options.prefix)) &&
+        (glob === undefined || glob.match(row.path)),
+    );
+  });
+
+  const find = Effect.fn("FileIndex.search")(function* (q: string, folder?: string) {
+    if (q.trim() === "") return [];
+
+    const rows = yield* sql
+      .unsafe(
+        `SELECT folderId, path, version, snippet(folder_sync_search, 3, '<mark>', '</mark>', '…', 24) AS snippet
+       FROM folder_sync_search WHERE folder_sync_search MATCH ?
+       ${folder === undefined ? "" : "AND folderId = ?"} ORDER BY folderId, path LIMIT 100`,
+        folder === undefined ? [q] : [q, folder],
+      )
+      .pipe(
+        Effect.catchIf(
+          (error) =>
+            /fts5:|unterminated string|no such column|syntax error/i.test(
+              String(error.reason.cause),
+            ),
+          () => Effect.fail(new InvalidFile({ message: "Invalid FTS5 query" })),
+        ),
+      );
+
+    return yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(rows);
+  });
+
+  return { list, search: find };
+});
+
+export class FileIndex extends Context.Service<FileIndex, Effect.Success<typeof make>>()(
+  "FolderSync/FileIndex",
+) {}
+
+export const FileIndexLive = Layer.effect(FileIndex, make);
+
+/** Each runtime restores all known bindings before tailing the persisted registry checkpoint. */
+export const IndexLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* initialiseSearch;
+    const changes = yield* Changes;
+    const state = yield* Manifest;
+    const registry = yield* Folders;
+    const files = yield* Files;
+    const boundary = yield* CommitBoundary;
+    yield* changes.create({});
+    yield* state.create({});
+    const scope = yield* Effect.scope;
+    const started = new Set<string>();
+
+    const start = Effect.fn("FolderTriggers.start")(function* (folderId: string) {
+      if (started.has(folderId)) return;
+      const head = folderHead.at({ folderId });
+      // Decide owns the SQL boundary before the projection permit. Use that same lock order.
+      const progress = yield* boundary.withTransaction(Projection.run(head));
+      yield* files.follow({ folderId }, { offset: progress.offsets.input }).pipe(
+        Stream.runForEach(() => boundary.withTransaction(Projection.run(head))),
+        Effect.tapError((error) => Effect.logError("Folder head follower failed", error)),
+        Effect.forkIn(scope),
+      );
+      const bound = folderChanges.at({ folderId });
+      yield* Projection.run(bound);
+      yield* Projection.follow(bound).pipe(Effect.provideService(Scope.Scope, scope));
+      started.add(folderId);
+    });
+
+    for (const folder of (yield* registry.collect({})).items) yield* start(folder.folderId);
+
+    const triggers = folderTriggers(start).at({});
+    yield* Projection.run(triggers);
+    yield* Projection.follow(triggers);
+    yield* Projection.run(manifest.at({}));
+    yield* Projection.run(search.at({}));
+    yield* Projection.follow(manifest.at({}));
+    yield* Projection.follow(search.at({}));
+  }),
+);

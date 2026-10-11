@@ -1,8 +1,11 @@
+import { StreamAddress } from "@streamsy/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Console, Effect, Layer, Schema } from "effect";
+import { Console, Effect, Fiber, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { testDirectory } from "./test-directory.ts";
+import { Change, ManifestFile } from "../server/streams.ts";
+import { SearchResult } from "../server/file-index.ts";
 import { FILE_LIMIT, FileOp, Version } from "../server/domain.ts";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
@@ -40,10 +43,94 @@ const written = (url: string, opId: string, body: Uint8Array, base?: string) =>
     return yield* Schema.decodeUnknownEffect(Written)(yield* response.json);
   });
 
+class NotIndexed extends Schema.TaggedError<NotIndexed>()("NotIndexed", {}) {}
+
+const searchUntil = (url: string, q: string, version: string) =>
+  Effect.gen(function* () {
+    const response = yield* HttpClient.get(`${url}/api/search?q=${encodeURIComponent(q)}`);
+    yield* check(response.status === 200, `search status ${response.status}`);
+
+    const rows = yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(
+      yield* response.json,
+    );
+
+    if (!rows.some((row) => row.version === version)) return yield* new NotIndexed();
+
+    return rows;
+  }).pipe(
+    Effect.retry({
+      while: Schema.is(NotIndexed),
+      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 150 })),
+    }),
+  );
+
+const listUntil = (url: string, query: string, version: string) =>
+  Effect.gen(function* () {
+    const response = yield* HttpClient.get(`${url}/api/ls?${query}`);
+    yield* check(response.status === 200, `list status ${response.status}`);
+
+    const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
+      yield* response.json,
+    );
+
+    if (!rows.some((row) => row.version === version)) return yield* new NotIndexed();
+
+    return rows;
+  }).pipe(
+    Effect.retry({
+      while: Schema.is(NotIndexed),
+      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 150 })),
+    }),
+  );
+
+const readChanges = Effect.fn("Smoke.readChanges")(function* (url: string) {
+  let offset = "-1";
+  const rows: Change[] = [];
+
+  while (true) {
+    const response = yield* HttpClient.get(`${url}/streams/changes?offset=${offset}`);
+    yield* check(response.status === 200, `changes status ${response.status}`);
+    rows.push(...(yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* response.json)));
+    const next = response.headers["stream-next-offset"];
+
+    if (next === undefined) return yield* new SmokeFailure({ message: "missing changes cursor" });
+    offset = next;
+
+    if (response.headers["stream-up-to-date"] === "true") return { rows, offset };
+  }
+});
+
+const readManifest = Effect.fn("Smoke.readManifest")(function* (url: string) {
+  const rows = new Map<string, ManifestFile>();
+  const Events = Schema.Array(StreamAddress.stateChange({ type: "file", schema: ManifestFile }));
+  let offset = "-1";
+
+  while (true) {
+    const response = yield* HttpClient.get(`${url}/streams/manifest?offset=${offset}`);
+    yield* check(
+      response.status === 200 && response.headers["x-streamsy-state-version"] === "1",
+      "manifest serves Durable State contract",
+    );
+    const events = yield* Schema.decodeUnknownEffect(Events)(yield* response.json);
+
+    for (const event of events) {
+      if ("value" in event) rows.set(event.key, event.value);
+      else rows.delete(event.key);
+    }
+
+    const next = response.headers["stream-next-offset"];
+
+    if (next === undefined) return yield* new SmokeFailure({ message: "missing manifest cursor" });
+    offset = next;
+
+    if (response.headers["stream-up-to-date"] === "true") return [...rows.values()];
+  }
+});
+
 const smoke = Effect.gen(function* () {
   const directory = yield* testDirectory("http-smoke-");
 
-  for (const mode of ["memory", "sqlite"] as const) {
+  for (const mode of ["transient", "sqlite"] as const) {
     const options = {
       cwd: `${import.meta.dir}/..`,
       entry: "server/index.ts",
@@ -188,6 +275,61 @@ const smoke = Effect.gen(function* () {
     yield* check(deletedHead.status === 404, "deleted head status");
     const retained = yield* HttpClient.get(`${url}?at=${third.version}`);
     yield* check((yield* retained.text) === "stale edit", "delete retains history");
+
+    const indexed = yield* written(
+      `${folderUrl}/files/docs/index.md`,
+      "index",
+      text("durable search corpus"),
+    );
+
+    yield* searchUntil(server.url, "durable", indexed.version);
+
+    const listed = yield* listUntil(
+      server.url,
+      `folder=${encodeURIComponent(folderId)}&prefix=docs%2F&glob=**%2F*.md`,
+      indexed.version,
+    );
+
+    yield* check(
+      listed.length === 1 && listed[0]?.path === "docs/index.md",
+      "ls prefix and glob exclude deleted files",
+    );
+    const invalidSearch = yield* HttpClient.get(`${server.url}/api/search?q=%22unterminated`);
+    yield* check(invalidSearch.status === 400, "invalid FTS query answers 400");
+    const feed = yield* readChanges(server.url);
+    yield* check(
+      feed.rows.some((row) => row.version === third.version && row.overwrote === second.version),
+      "feed preserves overwrite marks",
+    );
+    yield* check(
+      feed.rows.some((row) => row.deleted && row.version === deletion.version),
+      "feed contains tombstones",
+    );
+    yield* check(
+      feed.rows.every((row) => row.folderId === folderId),
+      "feed preserves opaque slash folder id",
+    );
+
+    const tail = yield* HttpClient.get(
+      `${server.url}/streams/changes?offset=${feed.offset}&live=long-poll`,
+    ).pipe(Effect.forkScoped);
+
+    const tailed = yield* written(`${folderUrl}/files/tail.md`, "tail", text("tailneedle"));
+    const reply = yield* Fiber.join(tail);
+    yield* check(reply.status === 200, "change long-poll wakes on a commit");
+    const tailRows = yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* reply.json);
+    yield* check(
+      tailRows.length === 1 && tailRows[0]?.version === tailed.version,
+      "tail resumes after cursor without duplicates",
+    );
+    const current = yield* listUntil(server.url, "", tailed.version);
+    const manifest = yield* readManifest(server.url);
+    const ordered = (rows: readonly ManifestFile[]) =>
+      rows.toSorted((a, b) => a.id.localeCompare(b.id));
+    yield* check(
+      JSON.stringify(ordered(manifest)) === JSON.stringify(ordered(current)),
+      "Durable State replay equals ls after updates and deletes",
+    );
     yield* server.stop;
 
     if (mode === "sqlite") {
@@ -205,6 +347,27 @@ const smoke = Effect.gen(function* () {
       yield* check(
         (yield* Schema.decodeUnknownEffect(History)(yield* persistedHistory.json)).length === 4,
         "log survives restart",
+      );
+      const restartedUrl = `${restart.url}/api/folders/${encodeURIComponent(folderId)}`;
+
+      const afterRestart = yield* written(
+        `${restartedUrl}/files/restart.md`,
+        "restart-index",
+        text("restartneedle"),
+      );
+
+      yield* searchUntil(restart.url, "restartneedle", afterRestart.version);
+      yield* listUntil(restart.url, `folder=${encodeURIComponent(folderId)}`, afterRestart.version);
+      const restartedFeed = yield* readChanges(restart.url);
+      yield* check(
+        restartedFeed.rows.length === feed.rows.length + 2,
+        "restart restores old folder followers without duplicate changes",
+      );
+      yield* check(
+        restartedFeed.rows.some(
+          (row) => row.path === "restart.md" && row.version === afterRestart.version,
+        ),
+        "old folder feeds changes after restart",
       );
       yield* restart.stop;
     }

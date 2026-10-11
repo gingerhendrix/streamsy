@@ -72,6 +72,7 @@ const fields = {
   author: Identifier,
   origin: Identifier,
   overwrote: Schema.optionalKey(Version),
+  updatedAt: Schema.optionalKey(Schema.String),
 };
 
 const putFields = {

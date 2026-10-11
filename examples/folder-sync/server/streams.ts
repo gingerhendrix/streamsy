@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Schema } from "effect";
-import { FileOp, FolderState, Identifier, foldHead } from "./domain.ts";
+import { FileOp, FolderState, Identifier, Hash, Path, Version, foldHead } from "./domain.ts";
 
 /** Hex UTF-8 is an injective, canonical stream-id segment for opaque folder ids. */
 export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(Identifier)));
@@ -24,7 +24,47 @@ export class Files extends Streamsy.json<Files>()("FolderSync/Files", "folders/:
   schema: FileOp,
 }) {}
 
-export const streams = Streamsy.group(Folders, Files);
+export const Change = Schema.Struct({
+  folderId: Identifier,
+  path: Path,
+  version: Version,
+  hash: Schema.optionalKey(Hash),
+  size: Schema.Int,
+  deleted: Schema.Boolean,
+  overwrote: Schema.optionalKey(Version),
+  author: Identifier,
+  updatedAt: Schema.String,
+});
+
+export type Change = typeof Change.Type;
+
+export class Changes extends Streamsy.json<Changes>()("FolderSync/Changes", "changes", {
+  params: {},
+  schema: Change,
+}) {}
+
+/** JSON tuples prevent collisions between opaque ids and paths. */
+export const fileKey = (folderId: string, path: string) => JSON.stringify([folderId, path]);
+
+export const ManifestFile = Schema.Struct({
+  id: Schema.String,
+  folderId: Identifier,
+  path: Path,
+  version: Version,
+  hash: Hash,
+  size: Schema.Int,
+  updatedAt: Schema.String,
+  author: Identifier,
+});
+
+export type ManifestFile = typeof ManifestFile.Type;
+
+export class Manifest extends Streamsy.state<Manifest>()("FolderSync/Manifest", "manifest", {
+  params: {},
+  collections: { file: { schema: ManifestFile, key: "id" } },
+}) {}
+
+export const streams = Streamsy.group(Folders, Files, Changes, Manifest);
 
 /** Hosts use readLimit: 1 so this range's end is the exact version of this entry. */
 export const folderHead = Projection.fold({

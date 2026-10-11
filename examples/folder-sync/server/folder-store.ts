@@ -105,6 +105,7 @@ const write = Effect.fn("Folder.write")(function* (
 
   const boundary = yield* CommitBoundary;
   const hook = yield* WriteHook;
+  const writtenAt = yield* DateTime.now;
 
   return yield* boundary.withTransaction(
     Effect.gen(function* () {
@@ -132,7 +133,13 @@ const write = Effect.fn("Folder.write")(function* (
             return Effect.fail(
               new InvalidFile({ message: "Base version is ahead of the folder log" }),
             );
-          const common = { ...meta, path: normalized, ...overwriteMark(head, meta.base) };
+
+          const common = {
+            ...meta,
+            path: normalized,
+            ...overwriteMark(head, meta.base),
+            updatedAt: DateTime.formatIso(writtenAt),
+          };
 
           const operation: FileOp =
             content === undefined

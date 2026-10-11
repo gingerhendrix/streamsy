@@ -4,6 +4,9 @@ import { Effect, Layer } from "effect";
 import { ApiLive, HealthLive, NotFoundLive } from "./api.ts";
 import { ServerConfig } from "./config.ts";
 import { FolderStoreLive, Initialise, NoWriteHook } from "./folder-store.ts";
+import { IndexApiLive } from "./index-api.ts";
+import { FileIndexLive, IndexLive } from "./file-index.ts";
+import { Changes, Manifest } from "./streams.ts";
 import { StorageLive } from "./storage.ts";
 
 const Listener = Layer.unwrap(
@@ -16,10 +19,22 @@ const Listener = Layer.unwrap(
   ),
 );
 
-const Server = Serve.layer(Layer.mergeAll(ApiLive, HealthLive, NotFoundLive), {
-  disableLogger: true,
-}).pipe(
+const Server = Serve.layer(
+  Layer.mergeAll(
+    ApiLive,
+    IndexApiLive,
+    HealthLive,
+    NotFoundLive,
+    Serve.mount(Manifest, "/streams/manifest"),
+    Serve.mount(Changes, "/streams/changes"),
+  ),
+  {
+    disableLogger: true,
+  },
+).pipe(
   Layer.provide(Listener),
+  Layer.provide(FileIndexLive),
+  Layer.provide(IndexLive),
   Layer.provide(Initialise),
   Layer.provide(FolderStoreLive),
   Layer.provide(NoWriteHook),
