@@ -239,11 +239,13 @@ This remains a demo: every scan hashes selected files, history and manifest read
 grow with retained events, and outbox bodies are stored in SQLite without a disk
 quota. Folder logs and outbox entries retain the server's 8 MiB file limit.
 
-On the first bootstrap, identical existing files adopt the server version without
-writing it again. Different local bytes are preserved as
-`name.conflict-<origin>[-n].ext` siblings while the server head keeps the original
-path. In writable folders those siblings sync as new files. Existing files with
-no server head become new writes.
+On the first bootstrap and after a feed epoch changes, identical existing files
+adopt the server version without writing it again. In writable folders, different
+local bytes are preserved as `name.conflict-<origin>[-n].ext` siblings while the
+server head keeps the original path. Those siblings sync as new files. Existing
+writable files with no server head become new writes with an absent base. In read-only folders,
+different files and files missing from the server move to the rejected backup
+directory below before any server bytes are installed.
 
 Read-only edits and new local files are moved before restoration to
 `<dir>/.folder-sync/rejected/<folderId>/<path>` (using the configured folder mapping).
@@ -261,9 +263,12 @@ mirror decisions for up to the server's ten-second wait.
 Both hosts return a persisted `stream-epoch` on `/api/ls` and all changes responses,
 including HEAD and long-poll. The CLI checks the epoch before tailing and on every
 page. A changed epoch triggers a fresh bootstrap even when the feed cursor still
-fits. Stored folder versions and unsent bases are cleared; pending bytes and opIds
-stay queued. A pending write in a replacement database uses an absent base and may
-carry an overwrite mark. Rebuild tools must rotate the epoch with
+fits. The replacement server is treated as unknown: old echo hashes cannot justify
+removing a local file. Each unqueued local file follows the fresh-bootstrap rules
+above, so an empty or older database preserves local bytes. Stored folder versions
+and unsent bases are cleared; pending bytes and opIds stay queued. A pending write
+in a replacement database uses an absent base and may carry an overwrite mark.
+Rebuild tools must rotate the epoch with
 `rotateFeedEpoch` in the same owner transaction that resets outputs. There is no
 public rebuild endpoint. A live read already parked during a reset can take the
 long-poll timeout to observe it; restart checks immediately.
