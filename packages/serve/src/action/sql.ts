@@ -71,6 +71,8 @@ const CREATE_TABLE = {
 const INDEXES = [
   { name: `${TABLE}_identity`, unique: true, columns: "(sink, idempotency_key)" },
   { name: `${TABLE}_due`, unique: false, columns: "(sink, state, next_attempt_at_ms, id)" },
+  // The due index sorts by retry time; ordered passes need the oldest pending id without a sort.
+  { name: `${TABLE}_order`, unique: false, columns: "(sink, state, id)" },
 ] as const;
 
 type Index = (typeof INDEXES)[number];

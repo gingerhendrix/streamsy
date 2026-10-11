@@ -52,6 +52,7 @@ export interface OutboxBacking {
     drafts: readonly OutboxDraft[],
   ) => Effect.Effect<OutboxEnqueueReport, OutboxUnavailable>;
   /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
+  /** Pending deadline in one lane or the whole sink. Settled entries are excluded. */
   readonly nextDue: (
     sink: string,
     partitionId: string | undefined,
@@ -63,6 +64,7 @@ export interface OutboxBacking {
     partitionId: string | undefined,
     nowMs: number,
     limit: number,
+    /** Include the future head so an ordered pass cannot skip a retry. */
     ordered?: boolean,
   ) => Effect.Effect<readonly OutboxEntry[], OutboxUnavailable>;
   readonly markDelivered: (
@@ -172,13 +174,15 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
             entry.state === "pending" &&
             (partitionId === undefined || entry.partitionId === partitionId),
         );
+
         const first = pending[0];
+
         return first === undefined
           ? Option.none()
           : Option.some(
               inOrder
                 ? first.nextAttemptAtMs
-                : Math.min(...pending.map((entry) => entry.nextAttemptAtMs)),
+                : pending.reduce((at, entry) => Math.min(at, entry.nextAttemptAtMs), Infinity),
             );
       }),
     claimDue: (sink, partitionId, nowMs, limit, inOrder = false) =>
