@@ -1,5 +1,5 @@
 import { expect, it } from "@streamsy/effect-test";
-import { Deferred, Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber, Logger } from "effect";
 import { TestClock } from "effect/testing";
 import { supervise } from "../server/file-index.ts";
 
@@ -31,5 +31,37 @@ it.effect("index supervision restarts a defective follower and remains scoped", 
     yield* Fiber.interrupt(follower);
     yield* TestClock.adjust("2 seconds");
     expect(attempts).toBe(2);
+  }),
+);
+
+it.effect("a clean follower finish is logged as stopped and restarts with fresh progress", () =>
+  Effect.gen(function* () {
+    const messages: unknown[] = [];
+    const first = yield* Deferred.make<void>();
+    const resumed = yield* Deferred.make<void>();
+    let checkpoint = "startup";
+    const offsets: string[] = [];
+    const work = Effect.gen(function* () {
+      offsets.push(checkpoint);
+      if (offsets.length === 1) {
+        checkpoint = "advanced";
+        yield* Deferred.succeed(first, undefined);
+        return;
+      }
+      yield* Deferred.succeed(resumed, undefined);
+      yield* Effect.never;
+    });
+    const logger = Logger.make(({ message }) => messages.push(message));
+    const follower = yield* supervise("clean", work).pipe(
+      Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(first);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(resumed);
+    expect(offsets).toEqual(["startup", "advanced"]);
+    expect(JSON.stringify(messages)).toContain("clean stopped; restarting");
+    expect(JSON.stringify(messages)).not.toContain("failed");
+    yield* Fiber.interrupt(follower);
   }),
 );
