@@ -176,8 +176,19 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         yield* fs.writeFileString(`${a}/ro/read.md`, "must restore");
         yield* until(read(`${a}/ro/read.md`), (value) => value === "read only");
         expect(yield* history(server.url, "ro", "read.md")).toHaveLength(1);
+        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read.md`)).toBe(
+          "must restore",
+        );
+        yield* fs.writeFileString(`${a}/ro/read.md`, "second restore");
+        yield* until(read(`${a}/ro/read.md`), (value) => value === "read only");
+        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read.md-1`)).toBe(
+          "second restore",
+        );
         yield* fs.writeFileString(`${a}/ro/extra.md`, "remove local extra");
         yield* until(fs.exists(`${a}/ro/extra.md`), (value) => !value);
+        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/extra.md`)).toBe(
+          "remove local extra",
+        );
 
         yield* server.stop;
         yield* fs.writeFileString(`${a}/${folder}/offline-a.md`, "offline A");
@@ -572,17 +583,21 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const directory = yield* testDirectory("sync-skips-");
         const mirror = `${directory}/mirror`;
         const fs = yield* FileSystem.FileSystem;
+
         const server = yield* spawnServer({
           cwd: `${import.meta.dir}/../..`,
           entry: "server/index.ts",
         });
+
         yield* create(server.url, "docs");
+
         const daemon = yield* sync({
           server: server.url,
           directory: mirror,
           folders: ["docs", "missing"],
           writable: ["docs", "missing"],
         }).pipe(Effect.forkScoped);
+
         yield* until(fs.exists(`${mirror}/.folder-sync/state.sqlite`), Boolean);
         const state = yield* inspect(mirror);
         yield* until(state.get("ready"), (value) => value === "true");

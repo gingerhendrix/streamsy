@@ -152,3 +152,8 @@ writing it again. Different local bytes are preserved as
 `name.conflict-<origin>[-n].ext` siblings while the server head keeps the original
 path. In writable folders those siblings sync as new files. Existing files with
 no server head become new writes.
+
+Read-only edits and new local files are moved before restoration to
+`<dir>/.folder-sync/rejected/<folderId>/<path>` (using the configured folder mapping).
+An existing backup gets a numeric suffix; no earlier backup is replaced. The CLI
+logs the full backup path. These saved bytes stay outside the watched mirror.

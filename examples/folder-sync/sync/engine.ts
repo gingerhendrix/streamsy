@@ -176,6 +176,27 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const local = yield* localBytes(root, filePath(folderId, file));
     const localHash = yield* hashBytes(local);
 
+    if (
+      !writable(folderId) &&
+      local !== null &&
+      localHash !== head.hash &&
+      !isEcho(localHash, known)
+    ) {
+      const relative = path.join(".folder-sync", "rejected", mapping(folderId), file);
+      let backup = relative;
+      let suffix = 0;
+
+      while (yield* fs.exists(path.join(root, backup))) {
+        suffix++;
+        backup = `${relative}-${suffix}`;
+      }
+
+      const destination = yield* safePath(root, backup);
+      yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+      yield* fs.rename(path.join(root, filePath(folderId, file)), destination);
+      yield* Effect.logWarning(`Preserved read-only edit: ${destination}`);
+    }
+
     const adopt = known === undefined && head.version !== null;
 
     if (adopt && writable(folderId) && local !== null && localHash !== head.hash) {
