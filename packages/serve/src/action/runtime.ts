@@ -6,7 +6,8 @@
  * order** — never concurrently, because an external effect that must not be
  * duplicated must also not be interleaved with its own retry.
  *
- * Serialized is not the same as blocking. A failing entry is rescheduled into
+ * With `ordered`, a future retry blocks later entries in the drained scope.
+ * By default, serialized is not the same as blocking. A failing entry is rescheduled into
  * the future and the pass moves on to the next one, so a poisoned delivery
  * cannot hold a lane's healthy traffic hostage. That is the difference between
  * an ordered queue and a stuck one.
@@ -16,7 +17,7 @@
  * decodes — is recorded against the entry and the pass keeps going, so a broken
  * handler can never fail the caller that asked for a drain.
  */
-import { Cause, Clock, Effect, Exit } from "effect";
+import { Cause, Clock, Effect, Exit, Semaphore } from "effect";
 import { backoffAfter, type CheckedActionSink, type ActionSinkRelation } from "./contract.ts";
 import {
   ActionSinkDeliveryFailure,
@@ -89,6 +90,8 @@ export interface DrainOptions {
   readonly partitionId?: string;
   /** Upper bound on entries claimed by one pass. */
   readonly limit?: number;
+  /** A future retry blocks every later pending entry in the drained scope. */
+  readonly ordered?: boolean;
 }
 
 export interface DrainReport {
@@ -118,6 +121,23 @@ export function draftsFor<Payload, From extends ActionSinkRelation>(
 }
 
 /** Deliver every due entry in one lane, serially, applying the declared retry policy. */
+const drainPermits = new WeakMap<typeof OutboxStore.Service, Map<string, Semaphore.Semaphore>>();
+
+// All lanes of a sink share a permit, including passes over the whole sink.
+const drainPermit = (store: typeof OutboxStore.Service, sink: string) => {
+  let permits = drainPermits.get(store);
+  if (permits === undefined) {
+    permits = new Map();
+    drainPermits.set(store, permits);
+  }
+  let permit = permits.get(sink);
+  if (permit === undefined) {
+    permit = Semaphore.makeUnsafe(1);
+    permits.set(sink, permit);
+  }
+  return permit;
+};
+
 export const drain = <Payload, From extends ActionSinkRelation, Requirements = never>(
   sink: CheckedActionSink<Payload, From>,
   handler: ActionSinkHandler<Payload, Requirements>,
@@ -125,88 +145,97 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
 ): Effect.Effect<DrainReport, OutboxUnavailable, OutboxStore | Requirements> =>
   Effect.gen(function* () {
     const store = yield* OutboxStore;
-    const startedAtMs = yield* Clock.currentTimeMillis;
+    return yield* drainPermit(store, sink.name).withPermit(
+      Effect.gen(function* () {
+        const startedAtMs = yield* Clock.currentTimeMillis;
 
-    const claimed = yield* store.claimDue(
-      sink.name,
-      options.partitionId,
-      startedAtMs,
-      options.limit ?? DEFAULT_DRAIN_LIMIT,
+        const claimed = yield* store.claimDue(
+          sink.name,
+          options.partitionId,
+          startedAtMs,
+          options.limit ?? DEFAULT_DRAIN_LIMIT,
+          options.ordered,
+        );
+
+        let attempted = 0;
+        let delivered = 0;
+        let retried = 0;
+        let deadLettered = 0;
+
+        for (const entry of claimed) {
+          if (entry.nextAttemptAtMs > (yield* Clock.currentTimeMillis)) break;
+          attempted += 1;
+          const attempt = entry.attempts + 1;
+          const decoded = decodePayload(sink, entry);
+
+          if (decoded.kind === "poison") {
+            yield* settle(entry, attempt, "payload-poison", decoded.detail);
+            deadLettered += 1;
+            continue;
+          }
+
+          const exit = yield* Effect.exit(
+            handler.deliver({
+              entryId: entry.id,
+              sink: entry.sink,
+              partitionId: entry.partitionId,
+              idempotencyKey: entry.idempotencyKey,
+              attempt,
+              payload: decoded.payload,
+            }),
+          );
+
+          if (Exit.isSuccess(exit)) {
+            const at = yield* Clock.currentTimeMillis;
+            yield* store.markDelivered(entry.id, attempt, at);
+            delivered += 1;
+            continue;
+          }
+
+          // An interrupted pass has decided nothing about this entry, so it is left
+          // exactly as it was claimed and the whole drain unwinds.
+          if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt;
+
+          const failure = failureOf(sink, entry, exit.cause);
+          const reason = deadLetterReason(sink, attempt, failure);
+
+          if (reason !== undefined) {
+            yield* settle(entry, attempt, reason, failure.detail);
+            deadLettered += 1;
+            continue;
+          }
+
+          const at = yield* Clock.currentTimeMillis;
+          yield* store.reschedule(
+            entry.id,
+            attempt,
+            at + backoffAfter(sink.delivery, attempt),
+            failure.detail,
+          );
+          retried += 1;
+          if (options.ordered) break;
+        }
+
+        return {
+          sink: sink.name,
+          claimed: attempted,
+          delivered,
+          retried,
+          deadLettered,
+        } satisfies DrainReport;
+
+        function settle(
+          entry: OutboxEntry,
+          attempt: number,
+          reason: DeadLetterReason,
+          detail: string,
+        ): Effect.Effect<void, OutboxUnavailable> {
+          return Clock.currentTimeMillis.pipe(
+            Effect.flatMap((at) => store.deadLetter(entry.id, attempt, reason, detail, at)),
+          );
+        }
+      }),
     );
-
-    let delivered = 0;
-    let retried = 0;
-    let deadLettered = 0;
-
-    for (const entry of claimed) {
-      const attempt = entry.attempts + 1;
-      const decoded = decodePayload(sink, entry);
-
-      if (decoded.kind === "poison") {
-        yield* settle(entry, attempt, "payload-poison", decoded.detail);
-        deadLettered += 1;
-        continue;
-      }
-
-      const exit = yield* Effect.exit(
-        handler.deliver({
-          entryId: entry.id,
-          sink: entry.sink,
-          partitionId: entry.partitionId,
-          idempotencyKey: entry.idempotencyKey,
-          attempt,
-          payload: decoded.payload,
-        }),
-      );
-
-      if (Exit.isSuccess(exit)) {
-        const at = yield* Clock.currentTimeMillis;
-        yield* store.markDelivered(entry.id, attempt, at);
-        delivered += 1;
-        continue;
-      }
-
-      // An interrupted pass has decided nothing about this entry, so it is left
-      // exactly as it was claimed and the whole drain unwinds.
-      if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt;
-
-      const failure = failureOf(sink, entry, exit.cause);
-      const reason = deadLetterReason(sink, attempt, failure);
-
-      if (reason !== undefined) {
-        yield* settle(entry, attempt, reason, failure.detail);
-        deadLettered += 1;
-        continue;
-      }
-
-      const at = yield* Clock.currentTimeMillis;
-      yield* store.reschedule(
-        entry.id,
-        attempt,
-        at + backoffAfter(sink.delivery, attempt),
-        failure.detail,
-      );
-      retried += 1;
-    }
-
-    return {
-      sink: sink.name,
-      claimed: claimed.length,
-      delivered,
-      retried,
-      deadLettered,
-    } satisfies DrainReport;
-
-    function settle(
-      entry: OutboxEntry,
-      attempt: number,
-      reason: DeadLetterReason,
-      detail: string,
-    ): Effect.Effect<void, OutboxUnavailable> {
-      return Clock.currentTimeMillis.pipe(
-        Effect.flatMap((at) => store.deadLetter(entry.id, attempt, reason, detail, at)),
-      );
-    }
   });
 
 type DecodedPayload<Payload> =

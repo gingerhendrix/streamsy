@@ -299,14 +299,14 @@ export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
           Option.fromUndefinedOr(found[0]).pipe(Option.map((row) => Number(row.at))),
         ),
       ),
-    claimDue: (sink, partitionId, nowMs, limit) =>
+    claimDue: (sink, partitionId, nowMs, limit, ordered = false) =>
       rows(
         "claimDue",
         sql<OutboxRow>`SELECT * FROM streamsy_effect_outbox WHERE ${sql.and([
           sql`sink = ${sink}`,
           ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
           sql`state = 'pending'`,
-          sql`next_attempt_at_ms <= ${nowMs}`,
+          ...(ordered ? [] : [sql`next_attempt_at_ms <= ${nowMs}`]),
         ])} ORDER BY id LIMIT ${limit}`,
       ),
     markDelivered: (id, attempts, atMs) =>

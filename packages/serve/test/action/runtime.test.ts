@@ -328,3 +328,26 @@ describe("draining an action sink", () => {
     );
   });
 });
+
+for (const ordered of [true, false]) {
+  test(`ordered=${ordered} controls whether a retry blocks later entries`, () => {
+    const outbox = makeMemoryOutboxBacking();
+    const log = recorder();
+    enqueue(outbox, [note("first"), note("second", "other")]);
+    const handler = handlerFor(log, { refuse: (id) => (id === "first" ? "retryable" : undefined) });
+    return runWithOutbox(
+      outbox,
+      Effect.gen(function* () {
+        const first = yield* drainAt(handler, 0, { ordered });
+        expect(first.retried).toBe(1);
+        expect(first.delivered).toBe(ordered ? 0 : 1);
+        const blocked = yield* drainAt(handler, 50, { ordered });
+        expect(blocked.claimed).toBe(0);
+        if (ordered) {
+          const lane = yield* drainAt(handler, 50, { ordered, partitionId: "other" });
+          expect(lane.delivered).toBe(1);
+        }
+      }),
+    );
+  });
+}

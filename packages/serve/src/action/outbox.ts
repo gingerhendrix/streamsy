@@ -63,6 +63,7 @@ export interface OutboxBacking {
     partitionId: string | undefined,
     nowMs: number,
     limit: number,
+    ordered?: boolean,
   ) => Effect.Effect<readonly OutboxEntry[], OutboxUnavailable>;
   readonly markDelivered: (
     id: number,
@@ -180,14 +181,14 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
                 : Math.min(...pending.map((entry) => entry.nextAttemptAtMs)),
             );
       }),
-    claimDue: (sink, partitionId, nowMs, limit) =>
+    claimDue: (sink, partitionId, nowMs, limit, inOrder = false) =>
       Effect.sync(() =>
         ordered()
           .filter(
             (entry) =>
               entry.sink === sink &&
               entry.state === "pending" &&
-              entry.nextAttemptAtMs <= nowMs &&
+              (inOrder || entry.nextAttemptAtMs <= nowMs) &&
               (partitionId === undefined || entry.partitionId === partitionId),
           )
           .slice(0, limit),
