@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { MarkdownLink } from "./MarkdownLink.tsx";
 import { draftReads } from "./draft-reads.ts";
 import { fileUrl, history, readFile, saveFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
@@ -180,7 +181,9 @@ export function FilePanel({
         </div>
       ) : markdown ? (
         <article className="markdown">
-          <ReactMarkdown skipHtml>{draft}</ReactMarkdown>
+          <ReactMarkdown skipHtml components={{ a: MarkdownLink }}>
+            {draft}
+          </ReactMarkdown>
         </article>
       ) : (
         <pre className="text-view">{draft}</pre>

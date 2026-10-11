@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
+import { MarkdownLink } from "../../src/MarkdownLink.tsx";
 import { Snippet } from "../../src/Snippet.tsx";
 import { fileTree } from "../../src/Tree.tsx";
 import { readableText, fileUrl } from "../../src/client.ts";
@@ -47,4 +49,19 @@ test("text decoding preserves BOM and detects binary; file URLs encode IDs and p
   expect(fileUrl({ folderId: "docs/雪", path: "a/100%.md", at: "v1" })).toBe(
     "/api/folders/docs%2F%E9%9B%AA/files/a/100%25.md?at=v1",
   );
+});
+
+test("Markdown links cannot navigate away from a draft", () => {
+  const html = renderToStaticMarkup(
+    <ReactMarkdown skipHtml components={{ a: MarkdownLink }}>
+      {
+        "[unsafe](javascript:alert) [data](data:text/html,x) [empty]() [relative](/docs/a) [external](https://example.com/docs)"
+      }
+    </ReactMarkdown>,
+  );
+  expect(html.match(/<a /g)).toHaveLength(1);
+  expect(html).toContain('href="https://example.com/docs"');
+  expect(html).toContain('target="_blank"');
+  expect(html).toContain('rel="noopener noreferrer"');
+  expect(html).toContain("unsafe data empty relative");
 });
