@@ -324,8 +324,11 @@ FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync see
 For a writable mirror:
 
 ```sh
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root --token local-demo-token
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
 ```
+
+The CLI reads `FOLDER_SYNC_WRITER_TOKEN` when `--token` is absent. An explicit
+`--token` overrides the environment variable.
 
 Set the browser's **Writer token** field before saving. It stores the token in
 localStorage for that origin and supplies it on saves. Clear the field to remove

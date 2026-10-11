@@ -1,5 +1,5 @@
 import { BunRuntime } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Config, Effect } from "effect";
 import { ArgumentsError, parseArguments, usage } from "./arguments.ts";
 import { listRejected, parseRejectedArguments } from "./rejected.ts";
 import { sync } from "./engine.ts";
@@ -21,6 +21,18 @@ if (args.includes("--help")) {
     Effect.try({
       try: () => parseArguments(args),
       catch: (cause) => new ArgumentsError({ message: String(cause) }),
-    }).pipe(Effect.flatMap(sync)),
+    }).pipe(
+      Effect.flatMap((options) =>
+        Effect.gen(function* () {
+          if (options.token !== undefined) return yield* sync(options);
+
+          const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(
+            Config.withDefault(""),
+          );
+
+          return yield* sync(token === "" ? options : { ...options, token });
+        }),
+      ),
+    ),
   );
 }

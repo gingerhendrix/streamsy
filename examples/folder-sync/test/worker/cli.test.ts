@@ -1,16 +1,27 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, layer } from "@streamsy/effect-test";
-import { Effect, Fiber, FileSystem, Layer, Stream } from "effect";
+import { Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 
+class Waiting extends Schema.TaggedError<Waiting>()("WorkerCliWaiting", {}) {}
+
+const until = <A, E, R>(effect: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
+  effect.pipe(
+    Effect.filterOrFail(ready, () => new Waiting()),
+    Effect.retry({
+      while: Schema.is(Waiting),
+      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 300 })),
+    }),
+  );
+
 layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
   (it) => {
     it.effect(
-      "the real CLI stops on workerd 401 and retains the queued write",
+      "the real CLI overrides the environment on 401 and delivers its retained write after an env-token restart",
       () =>
         Effect.gen(function* () {
           const directory = yield* testDirectory("worker-cli-auth-");
@@ -49,7 +60,10 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
                 "--token",
                 "wrong-token",
               ],
-              { cwd: `${import.meta.dir}/../..` },
+              {
+                cwd: `${import.meta.dir}/../..`,
+                env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
+              },
             ),
           );
 
@@ -75,6 +89,35 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(yield* state.rejected()).toEqual([]);
           const history = yield* HttpClient.get(`${host.url}/api/folders/docs/history/local.md`);
           expect(yield* history.json).toEqual([]);
+
+          const restarted = yield* spawner.spawn(
+            ChildProcess.make(
+              "bun",
+              [
+                "sync/index.ts",
+                "--server",
+                host.url,
+                "--dir",
+                mirror,
+                "--folders",
+                "docs",
+                "--write",
+                "docs",
+              ],
+              {
+                cwd: `${import.meta.dir}/../..`,
+                env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
+              },
+            ),
+          );
+
+          const restartedOutput = yield* restarted.all.pipe(Stream.runDrain, Effect.forkScoped);
+          yield* until(state.pending(), (rows) => rows.length === 0);
+          const accepted = yield* HttpClient.get(`${host.url}/api/folders/docs/history/local.md`);
+          expect(yield* accepted.json).toHaveLength(1);
+          yield* restarted.kill({ killSignal: "SIGTERM" });
+          expect(yield* restarted.exitCode).toBe(ChildProcessSpawner.ExitCode(130));
+          yield* Fiber.join(restartedOutput);
         }),
       { timeout: 15000 },
     );

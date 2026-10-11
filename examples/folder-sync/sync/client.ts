@@ -64,7 +64,7 @@ export const remoteLayer = (server: string, token?: string) =>
         if (response.status === 401 || response.status === 403)
           return yield* new RemoteFailure({
             message:
-              "Writer authorization failed; correct --token and restart. Pending writes remain queued",
+              "Writer authorization failed; correct FOLDER_SYNC_WRITER_TOKEN or --token and restart. Pending writes remain queued",
             retryable: false,
             status: response.status,
           });
