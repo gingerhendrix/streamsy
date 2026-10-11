@@ -38,6 +38,9 @@ import {
 import { SyncState, stateLayer } from "./state.ts";
 import type { Known } from "./state.ts";
 
+const skipLocal = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.catchIf(Schema.is(SkippedLocal), (error) => Effect.logWarning(error.message)));
+
 const hashBytes = (bytes: Uint8Array | null) =>
   bytes === null ? Effect.succeed(null) : sha256(bytes);
 
@@ -154,11 +157,6 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       (op) => op.folderId === folderId && op.path === file && op.seq !== exceptSeq,
     );
   });
-
-  const skipLocal = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.catchIf(Schema.is(SkippedLocal), (error) => Effect.logWarning(error.message)),
-    );
 
   const install = Effect.fn("Sync.install")(function* (
     folderId: string,
