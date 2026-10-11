@@ -167,9 +167,11 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
       const changes = yield* Changes;
       const state = yield* Manifest;
       const sql = yield* SqlClient.SqlClient;
-      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-        Scope.close(scope, Exit.void),
+
+      const scope = yield* Effect.acquireRelease(Scope.make(), (ownedScope) =>
+        Scope.close(ownedScope, Exit.void),
       );
+
       yield* Layer.build(IndexLive).pipe(Effect.provideService(Scope.Scope, scope));
 
       for (const folderId of ["section/one", "section/two"]) {

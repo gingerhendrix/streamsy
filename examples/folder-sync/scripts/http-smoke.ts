@@ -127,6 +127,9 @@ const readManifest = Effect.fn("Smoke.readManifest")(function* (url: string) {
   }
 });
 
+const orderedManifest = (entries: readonly ManifestFile[]) =>
+  entries.toSorted((a, b) => a.id.localeCompare(b.id));
+
 const smoke = Effect.gen(function* () {
   const directory = yield* testDirectory("http-smoke-");
 
@@ -324,10 +327,11 @@ const smoke = Effect.gen(function* () {
     );
     const current = yield* listUntil(server.url, "", tailed.version);
     const manifest = yield* readManifest(server.url);
-    const ordered = (rows: readonly ManifestFile[]) =>
-      rows.toSorted((a, b) => a.id.localeCompare(b.id));
+    const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(ManifestFile)));
+    const fromStream = yield* encodeManifest(orderedManifest(manifest));
+    const fromList = yield* encodeManifest(orderedManifest(current));
     yield* check(
-      JSON.stringify(ordered(manifest)) === JSON.stringify(ordered(current)),
+      fromStream === fromList,
       "Durable State replay equals ls after updates and deletes",
     );
     yield* server.stop;
