@@ -12,12 +12,9 @@ import {
   search,
 } from "./projections.ts";
 
-export const SearchResult = Schema.Struct({
-  folderId: Schema.String,
-  path: Schema.String,
-  version: Schema.String,
-  snippet: Schema.String,
-});
+import { SearchResult, snippetParts } from "./search-result.ts";
+
+export { SearchResult } from "./search-result.ts";
 
 /** Replays Durable State events into their current live rows. No SQL shadow manifest. */
 export const manifestRows = Effect.gen(function* () {
@@ -91,10 +88,10 @@ const make = Effect.gen(function* () {
     if (q.trim() === "") return [];
 
     const rows = yield* sql
-      .unsafe(
-        `SELECT folderId, path, version, snippet(folder_sync_search, 3, '<mark>', '</mark>', '…', 24) AS snippet
+      .unsafe<{ folderId: string; path: string; version: string; snippet: string }>(
+        `SELECT folderId, path, version, snippet(folder_sync_search, 3, char(1), char(2), '…', 24) AS snippet
        FROM folder_sync_search WHERE folder_sync_search MATCH ?
-       ${folder === undefined ? "" : "AND folderId = ?"} ORDER BY folderId, path LIMIT 100`,
+       ${folder === undefined ? "" : "AND folderId = ?"} ORDER BY rank, folderId, path LIMIT 100`,
         folder === undefined ? [q] : [q, folder],
       )
       .pipe(
@@ -107,7 +104,9 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    return yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(rows);
+    return yield* Schema.decodeEffect(Schema.Array(SearchResult))(
+      rows.map((row) => ({ ...row, snippet: snippetParts(row.snippet) })),
+    );
   });
 
   return { list, snapshot, search: find };

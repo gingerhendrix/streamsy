@@ -54,6 +54,27 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 );
 
 layer(Layer.empty, { excludeTestServices: true })((it) => {
+  it.effect(
+    "search ranks relevant text before alphabetic paths and returns safe snippet parts",
+    () =>
+      Effect.gen(function* () {
+        yield* initialiseSearch;
+        const sql = yield* SqlClient.SqlClient;
+        const index = yield* FileIndex;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'a.md', 'v1', ${"needle " + "filler ".repeat(100)})`;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'z.md', 'v2', ${"<img src=x onerror=alert(1)> needle needle needle"})`;
+        const hits = yield* index.search("needle");
+        expect(hits.map((hit) => hit.path)).toEqual(["z.md", "a.md"]);
+        expect(hits[0]?.snippet.some((part) => part.match && part.text.includes("needle"))).toBe(
+          true,
+        );
+        expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
+      }).pipe(
+        // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Isolated scoped SQL test runtime.
+        Effect.provide(graph),
+      ),
+  );
+
   it.effect("a manifest snapshot plus its feed cursor misses no burst writes", () =>
     Effect.gen(function* () {
       const store = yield* FolderStore;
