@@ -31,6 +31,8 @@ export const Change = Schema.Struct({
   hash: Schema.optionalKey(Hash),
   size: Schema.Int,
   deleted: Schema.Boolean,
+  inline: Schema.optionalKey(Schema.String),
+  blob: Schema.optionalKey(Hash),
   overwrote: Schema.optionalKey(Version),
   author: Identifier,
   updatedAt: Schema.String,

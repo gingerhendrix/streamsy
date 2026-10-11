@@ -28,7 +28,7 @@ const reject = (status: number) =>
 const cursor = (headers: Readonly<Record<string, string>>) =>
   Schema.decodeUnknownEffect(Version)(headers["stream-next-offset"]);
 
-export const remoteLayer = (server: string) =>
+export const remoteLayer = (server: string, token?: string) =>
   Layer.effect(
     SyncRemote,
     Effect.gen(function* () {
@@ -42,17 +42,30 @@ export const remoteLayer = (server: string) =>
         req: HttpClientRequest.HttpClientRequest,
       ) {
         const response = yield* client
-          .execute(req)
+          .execute(token === undefined ? req : HttpClientRequest.bearerToken(req, token))
           .pipe(
             Effect.mapError(
               (cause) => new RemoteFailure({ message: String(cause), retryable: true, status: 0 }),
             ),
           );
 
-        if (response.status >= 500 || response.status === 409 || response.status === 429)
+        if (
+          response.status >= 500 ||
+          response.status === 408 ||
+          response.status === 409 ||
+          response.status === 429
+        )
           return yield* new RemoteFailure({
             message: `Server answered ${response.status}`,
             retryable: true,
+            status: response.status,
+          });
+
+        if (response.status === 401 || response.status === 403)
+          return yield* new RemoteFailure({
+            message:
+              "Writer authorization failed; correct --token and restart. Pending writes remain queued",
+            retryable: false,
             status: response.status,
           });
 
@@ -69,6 +82,7 @@ export const remoteLayer = (server: string) =>
             yield* response.json,
           ),
           cursor: yield* cursor(response.headers),
+          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
         };
       });
 
@@ -77,7 +91,10 @@ export const remoteLayer = (server: string) =>
 
         if (response.status !== 200) return yield* reject(response.status);
 
-        return yield* cursor(response.headers);
+        return {
+          cursor: yield* cursor(response.headers),
+          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
+        };
       });
 
       const page = Effect.fn("SyncRemote.page")(function* (offset: string, live: boolean) {
@@ -96,6 +113,7 @@ export const remoteLayer = (server: string) =>
               ? []
               : yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* response.json),
           cursor: yield* cursor(response.headers),
+          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
           upToDate: response.headers["stream-up-to-date"] === "true",
         };
       });
@@ -175,15 +193,18 @@ export class SyncRemote extends Context.Service<
   SyncRemote,
   {
     readonly snapshot: Effect.Effect<
-      { files: ReadonlyArray<ManifestFile>; cursor: string },
+      { files: ReadonlyArray<ManifestFile>; cursor: string; epoch: string },
       RemoteFailure | RemoteDecodeError
     >;
-    readonly tail: Effect.Effect<string, RemoteFailure | RemoteDecodeError>;
+    readonly tail: Effect.Effect<
+      { cursor: string; epoch: string },
+      RemoteFailure | RemoteDecodeError
+    >;
     readonly page: (
       offset: string,
       live: boolean,
     ) => Effect.Effect<
-      { rows: ReadonlyArray<Change>; cursor: string; upToDate: boolean },
+      { rows: ReadonlyArray<Change>; cursor: string; upToDate: boolean; epoch: string },
       RemoteFailure | RemoteDecodeError
     >;
     readonly head: (

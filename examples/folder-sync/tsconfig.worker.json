@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "lib": ["ESNext"], "types": ["@cloudflare/workers-types"] },
+  "include": ["worker", "alchemy.run.ts"]
+}

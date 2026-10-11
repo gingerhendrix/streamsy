@@ -6,7 +6,7 @@ export class ArgumentsError extends Schema.TaggedError<ArgumentsError>()("Argume
 }) {}
 
 export const usage =
-  "bun run sync --server <url> --dir <path> [--folders a,b] [--write a,b]\n bun run sync rejected --dir <path>";
+  "bun run sync --server <url> --dir <path> [--folders a,b] [--write a,b] [--token <writer-token>]\n bun run sync rejected --dir <path>";
 
 /** Argument parsing is pure; the executable edge owns argv and runtime execution. */
 export const parseArguments = (args: ReadonlyArray<string>): SyncOptions => {
@@ -18,7 +18,7 @@ export const parseArguments = (args: ReadonlyArray<string>): SyncOptions => {
 
     if (
       key === undefined ||
-      !["--server", "--dir", "--folders", "--write"].includes(key) ||
+      !["--server", "--dir", "--folders", "--write", "--token"].includes(key) ||
       value === undefined ||
       value.startsWith("--") ||
       values.has(key)
@@ -50,7 +50,9 @@ export const parseArguments = (args: ReadonlyArray<string>): SyncOptions => {
       message: "--write must name selected folders; folder IDs cannot be empty",
     });
 
-  const common = { server: url.href.replace(/\/$/, ""), directory, writable };
+  const token = values.get("--token");
+  const common: SyncOptions = { server: url.href.replace(/\/$/, ""), directory, writable };
+  const authenticated = token === undefined ? common : { ...common, token };
 
-  return folders === undefined ? common : { ...common, folders };
+  return folders === undefined ? authenticated : { ...authenticated, folders };
 };

@@ -8,6 +8,7 @@ import { FolderStoreLive, Initialise, NoWriteHook } from "./folder-store.ts";
 import { IndexApiLive } from "./index-api.ts";
 import { FileIndexLive, IndexLive } from "./file-index.ts";
 import { Changes, Manifest } from "./streams.ts";
+import { EpochHeaders } from "./feed-epoch.ts";
 import { StorageLive } from "./storage.ts";
 
 const Listener = Layer.unwrap(
@@ -32,6 +33,7 @@ const Listener = Layer.unwrap(
 const Server = Serve.layer(
   Layer.mergeAll(
     ApiLive,
+    EpochHeaders,
     IndexApiLive,
     HealthLive,
     NotFoundLive,

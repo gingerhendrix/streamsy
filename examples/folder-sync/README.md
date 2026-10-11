@@ -136,7 +136,7 @@ log versions, so a search hit can be opened with `?at=<version>`.
 
 - `GET /api/ls?folder=docs&prefix=guide/&glob=**/*.md` returns current live
   manifest rows. All filters are optional and combine. Prefix and glob apply to
-  the path within each folder. Globs use Bun's POSIX glob matching. URL-encode
+  the path within each folder. Globs use picomatch with dotfiles enabled. URL-encode
   query values. Each row has `id`, `folderId`, `path`, `version`, `hash`, `size`,
   `updatedAt`, and `author`. The id is the JSON tuple `[folderId, path]`.
 - `GET /api/search?q=durable&folder=docs` searches current UTF-8 text, including
@@ -225,7 +225,9 @@ edits stay on disk while remote changes arrive. After acceptance the CLI refresh
 the authoritative head, so a lost-response replay cannot restore stale content
 over another writer. An unseen overwrite is logged. A delete pulled from the
 server retains its tombstone version for a later local recreation's base.
-Non-retryable HTTP write errors move the entry and its bytes to the SQLite
+401 and 403 stop the daemon with a clear authorization error and keep all pending
+entries queued. Correct the token and restart. HTTP 408, 409, 429, transport errors,
+and 5xx retry with backoff. Other non-retryable HTTP write errors move the entry and its bytes to the SQLite
 `rejected` table, log the reason, and allow later writes to continue. Other local
 I/O failures stop the CLI with an error; the
 outbox remains on disk for inspection or a corrected restart.
@@ -253,11 +255,15 @@ Bootstrap, per-change head reads, and the post-push head read run inside the loc
 sync gate. A slow server or a `minVersion` timeout can delay scans and other
 mirror decisions for up to the server's ten-second wait.
 
-Past-tail and regressing cursors detect some feed resets. Client cursors are not
-safe across a projection rebuild: a different cross-folder replay order may put
-unseen changes before the stored cursor even when the new tail is as long as the
-old one. Replacing the server database can also invalidate known folder versions.
-A feed epoch is deferred to batch E; affected clients need a fresh bootstrap.
+Both hosts return a persisted `stream-epoch` on `/api/ls` and all changes responses,
+including HEAD and long-poll. The CLI checks the epoch before tailing and on every
+page. A changed epoch triggers a fresh bootstrap even when the feed cursor still
+fits. Stored folder versions and unsent bases are cleared; pending bytes and opIds
+stay queued. A pending write in a replacement database uses an absent base and may
+carry an overwrite mark. Rebuild tools must rotate the epoch with
+`rotateFeedEpoch` in the same owner transaction that resets outputs. There is no
+public rebuild endpoint. A live read already parked during a reset can take the
+long-poll timeout to observe it; restart checks immediately.
 
 Atomic replacement still has a final local read-to-rename window in which an
 external editor save can be replaced. SQLite and disk replacement have no shared
@@ -280,12 +286,97 @@ Index followers log terminal failures and restart after one second, resuming
 persisted checkpoints. A permanent failure repeats that log until repaired;
 HTTP head writes can continue while an index catches up.
 
-This demo has no authentication. Anyone who can reach the Bun listener can read
-and write files. It has no hosted deployment or phone cache. One-item stream
+The Bun listener remains open for a trusted local demo. The Worker requires a
+writer token for every write and keeps reads open. There is no deployed instance
+or phone cache. One-item stream
 pages and retained manifest events make browser load time grow with history.
 Head checkpoints keep all paths and operation receipts; history reads and search
 preparation scan folder logs. Browser bundle size and sync scans suit a small
 demo corpus. Rejected records, backups, and blob storage have no retention quota.
 Browser drafts are held in memory; navigating to another file or reloading loses
-an unsaved draft. Search shows at most 100 hits. Use fresh client state after a
-feed rebuild; the feed epoch belongs to the Cloudflare slice.
+an unsaved draft. Search shows at most 100 hits. The CLI bootstraps automatically after a feed epoch changes.
+
+## Local Cloudflare Worker
+
+Run from the repository root:
+
+```sh
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync dev:worker
+```
+
+This command builds the UI and Worker, then starts Miniflare/workerd with local
+SQLite Durable Objects, local R2, and Workers static assets. It creates no remote
+resources and needs no Cloudflare account or login. `PORT` defaults to 1339.
+`FOLDER_SYNC_WORKER_STATE` selects the persistent local state directory; the
+default is `examples/folder-sync/.scratch/worker`. Stop with Ctrl-C.
+
+Use `Authorization: Bearer local-demo-token` on folder creation, PUT, DELETE,
+and administrative writes. The check runs before the object router. A missing
+or wrong token answers 401. Reads remain open. For the seed:
+
+```sh
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync seed
+```
+
+For a writable mirror:
+
+```sh
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root --token local-demo-token
+```
+
+Set the browser's **Writer token** field before saving. It stores the token in
+localStorage for that origin and supplies it on saves. Clear the field to remove
+it. Unsaved drafts still live only in memory.
+
+The `alchemy.run.ts` stack declares two SQLite Durable Object classes, an R2
+bucket, static assets, a redacted writer token, and a cron every minute. This
+batch uses the local workerd runner; the stack is typechecked. No Alchemy apply,
+Cloudflare provisioning, or deployment has been run.
+
+Each opaque folder ID routes through `Placement.byRoute` to one folder object.
+Placement decodes the internal hex stream segment, so the object name uses the
+original ID rather than its doubled hex form. An index object owns the registry,
+notice inbox, change feed, manifest, and FTS5 table.
+
+A folder write and its durable notice enqueue commit in one SQL transaction.
+Notices carry the folder version, overwrite mark, and inline text or R2 hash.
+`folderId/version` deduplicates intake; search needs no remote folder-log read.
+Pending notices drain before and after each folder request with a two-second
+bound per pass. The oldest pending notice blocks later ones until it succeeds,
+so retry backoff cannot reorder folder commits.
+
+A failed drain keeps the notice queued and the write still returns its receipt.
+The Worker scheduled handler lists registered folders and asks each to drain.
+Without traffic, retry latency is bounded by the one-minute cron interval, plus
+processing time. Larger backlogs may take multiple passes. The local runner
+calls the same pass every minute because Miniflare does not fire cron itself.
+`POST /api/admin/drain`, protected by the writer token, triggers it immediately.
+
+Index requests catch up notices, changes, manifest, and search before answering.
+Projection failures are logged and answer 503 with `Retry-After: 1`; later
+requests and cron passes retry from checkpoints. Both hosts read manifest rows,
+the consumed change cursor, and epoch in one SQL transaction.
+
+The stock Streamsy expiry alarm remains untouched. The package follow-up is an
+application alarm hook in `@streamsy/serve`; the stock host currently runs only
+stream expiry in its alarm. This example uses request and cron delivery instead
+of application alarms or long-lived projection followers in objects.
+
+Run the local checks:
+
+```sh
+bun run --cwd examples/folder-sync smoke:worker
+bun run --cwd examples/folder-sync test:worker
+```
+
+`smoke:worker` runs the shared HTTP smoke against a fresh local Worker.
+`test:worker` verifies scheduled recovery, auth, SQLite query behavior, R2 and
+object persistence, then runs the entire sync integration suite against workerd.
+The ordinary `test` command keeps all Bun checks and includes the Worker host
+checks. Set `FOLDER_SYNC_SCRATCH` to place temporary test data in a chosen directory.
+
+Worker change entries include optional inline content or a blob hash. All reads
+are public, including these feed fields. Every stream still uses one-item pages.
+Delivered outbox rows and receiver dedup rows are retained without a quota.
+There is no public index-rebuild command; reset procedures must rotate the epoch
+and clear derived outputs, checkpoints, and index head tables together.

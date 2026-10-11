@@ -16,6 +16,7 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
     q.from({ file: db.collections.files }).orderBy(({ file }) => file.path, "asc"),
   );
 
+  const [token, setToken] = useState(() => localStorage.getItem("folder-sync-writer-token") ?? "");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -57,6 +58,18 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
           ▧ <strong>Folder sync</strong>
           <span>Streamsy</span>
         </a>
+        <label>
+          Writer token{" "}
+          <input
+            type="password"
+            aria-label="Writer token"
+            value={token}
+            onChange={(event) => {
+              setToken(event.target.value);
+              localStorage.setItem("folder-sync-writer-token", event.target.value);
+            }}
+          />
+        </label>
         <span className={online ? "connection" : "connection offline"}>
           {online ? "Live" : "Offline"}
         </span>

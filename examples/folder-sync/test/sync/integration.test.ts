@@ -1,15 +1,24 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, layer } from "@streamsy/effect-test";
-import { spawnServer } from "@streamsy/test-support/server";
+import { spawnServer, token } from "./host.ts";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { FILE_LIMIT, FileOp, Version } from "../../server/domain.ts";
 import { encodeFilePath } from "../../sync/decisions.ts";
-import { runSync, sync } from "../../sync/engine.ts";
+import { runSync, sync as startSync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
+
+const sync = (options: Parameters<typeof startSync>[0]) => startSync({ ...options, token });
+
+const clientLayer = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.map(HttpClient.HttpClient, (client) =>
+    HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)),
+  ),
+).pipe(Layer.provide(FetchHttpClient.layer));
 
 class Waiting extends Schema.TaggedError<Waiting>()("SyncTestWaiting", {}) {}
 
@@ -81,7 +90,7 @@ const inspect = Effect.fn("SyncTest.inspect")(function* (directory: string) {
   return yield* SyncState.pipe(Effect.provideContext(context));
 });
 
-layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer), {
+layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
   excludeTestServices: true,
 })((it) => {
   it.effect(
@@ -261,7 +270,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const context = yield* Layer.build(
           Layer.merge(
             stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
           ),
         );
 
@@ -289,7 +298,9 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
             if (firstTail) {
               firstTail = false;
 
-              return Effect.succeed("0000000000000000_0000000000000000");
+              return remote.tail.pipe(
+                Effect.map((head) => ({ ...head, cursor: "0000000000000000_0000000000000000" })),
+              );
             }
 
             return remote.tail;
@@ -403,7 +414,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const context = yield* Layer.build(
           Layer.merge(
             stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
           ),
         );
 
@@ -426,7 +437,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
               const target = yield* remote.tail;
               yield* until(
                 state.get("cursor"),
-                (cursor) => cursor !== undefined && cursor >= target,
+                (cursor) => cursor !== undefined && cursor >= target.cursor,
               ).pipe(Effect.orDie);
 
               return receipt;
@@ -560,7 +571,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const context = yield* Layer.build(
           Layer.merge(
             stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
           ),
         );
 
@@ -694,6 +705,8 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
             "bun",
             [
               "sync/index.ts",
+              "--token",
+              token,
               "--server",
               server.url,
               "--dir",
@@ -751,7 +764,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         const context = yield* Layer.build(
           Layer.merge(
             stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url).pipe(Layer.provide(FetchHttpClient.layer)),
+            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
           ),
         );
 
@@ -809,5 +822,147 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         yield* server.stop;
       }),
     { timeout: 15000 },
+  );
+  it.effect(
+    "a new feed epoch bootstraps a replacement server even when its cursor and versions equal the old feed",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-epoch-");
+        const mirror = `${directory}/mirror`;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+          env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
+        });
+
+        yield* create(server.url, "docs");
+        const initial = yield* put(server.url, "docs", "a.md", "old index", "old");
+
+        const context = yield* Layer.build(
+          Layer.merge(
+            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
+          ),
+        );
+
+        const state = yield* SyncState.pipe(Effect.provideContext(context));
+        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+
+        yield* until(remote.snapshot, (snapshot) =>
+          snapshot.files.some((row) => row.version === initial.version),
+        );
+
+        const daemon = yield* runSync({
+          server: server.url,
+          directory: mirror,
+          folders: ["docs"],
+          writable: [],
+        }).pipe(
+          Effect.provideService(SyncRemote, {
+            ...remote,
+            page: (cursor) => remote.page(cursor, false).pipe(Effect.delay("20 millis")),
+          }),
+          Effect.provideContext(context),
+          Effect.forkScoped,
+        );
+
+        yield* until(state.get("ready"), (value) => value === "true");
+        const oldEpoch = yield* state.get("epoch");
+        const oldCursor = yield* state.get("cursor");
+        yield* server.stop;
+
+        const replacement = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+          port: server.port,
+          env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
+        });
+
+        yield* create(replacement.url, "docs");
+        const replaced = yield* put(replacement.url, "docs", "a.md", "replacement index", "new");
+        expect(replaced.version).toBe(initial.version);
+        yield* until(state.get("epoch"), (value) => value !== undefined && value !== oldEpoch);
+        yield* until(
+          fs.readFileString(`${mirror}/docs/a.md`),
+          (value) => value === "replacement index",
+        );
+        expect(yield* state.get("cursor")).toBe(oldCursor);
+        expect(yield* state.pending()).toEqual([]);
+        yield* Fiber.interrupt(daemon);
+        yield* replacement.stop;
+      }),
+    { timeout: 20000 },
+  );
+
+  it.effect(
+    "writer authorization failures stop the daemon and leave its write in the outbox",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-auth-");
+        const fs = yield* FileSystem.FileSystem;
+
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+
+        yield* create(server.url, "docs");
+        yield* put(server.url, "docs", "a.md", "initial", "initial");
+
+        for (const status of [401, 403]) {
+          const mirror = `${directory}/mirror-${status}`;
+          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+          const context = yield* Layer.build(
+            Layer.merge(
+              stateLayer(`${mirror}/.folder-sync/state.sqlite`),
+              remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
+            ),
+          );
+
+          const state = yield* SyncState.pipe(Effect.provideContext(context));
+          const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+
+          const daemon = yield* runSync({
+            server: server.url,
+            directory: mirror,
+            folders: ["docs"],
+            writable: ["docs"],
+            settleMillis: 20,
+          }).pipe(
+            Effect.provideService(SyncRemote, {
+              ...remote,
+              push: () =>
+                Effect.fail(
+                  new RemoteFailure({
+                    status,
+                    retryable: false,
+                    message: "Writer authorization failed; pending writes remain queued",
+                  }),
+                ),
+            }),
+            Effect.provideContext(context),
+            Effect.forkScoped,
+          );
+
+          yield* until(state.get("ready"), (value) => value === "true");
+          yield* until(
+            fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
+            (value) => value === "initial",
+          );
+          yield* fs.writeFileString(`${mirror}/docs/a.md`, "pending edit");
+          const failure = yield* Effect.flip(Fiber.join(daemon));
+          expect(failure).toMatchObject({ status });
+          expect(yield* state.pending()).toHaveLength(1);
+          expect(yield* state.rejected()).toEqual([]);
+          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("pending edit");
+        }
+
+        yield* server.stop;
+      }),
+    { timeout: 20000 },
   );
 });

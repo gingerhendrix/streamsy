@@ -53,6 +53,7 @@ const make = Effect.gen(function* () {
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`INSERT INTO rejected SELECT *, ${status}, ${reason} FROM outbox WHERE seq = ${seq}`;
+        yield* sql`UPDATE known SET version = localVersion WHERE (folderId, path) IN (SELECT folderId, path FROM outbox WHERE seq = ${seq})`;
         yield* sql`DELETE FROM outbox WHERE seq = ${seq}`;
       }),
     );
@@ -137,7 +138,15 @@ const make = Effect.gen(function* () {
     yield* sql`INSERT INTO folders (folderId) VALUES (${folderId}) ON CONFLICT DO NOTHING`;
   });
 
+  const resetVersions = sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`UPDATE known SET version = NULL, localVersion = NULL`;
+      yield* sql`UPDATE outbox SET base = NULL`;
+    }),
+  );
+
   return {
+    resetVersions,
     reject,
     rejected,
     heads,

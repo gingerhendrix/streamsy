@@ -320,6 +320,10 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const snapshot = yield* remote.snapshot;
     yield* gate.withPermit(
       Effect.gen(function* () {
+        const oldEpoch = yield* state.get("epoch");
+
+        if (oldEpoch !== undefined && oldEpoch !== snapshot.epoch) yield* state.resetVersions;
+
         for (const row of snapshot.files) yield* addFolder(row.folderId);
         const paths = new Map<string, { folderId: string; path: string }>();
 
@@ -341,6 +345,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         }
 
         yield* scan();
+        yield* state.set("epoch", snapshot.epoch);
         yield* state.set("cursor", snapshot.cursor);
         yield* state.set("ready", "true");
       }),
@@ -359,7 +364,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       return yield* new LocalFailure({ message: "Bootstrap did not save a cursor" });
     const tail = yield* remote.tail;
 
-    if (feedReset(offset, tail)) {
+    if (feedReset(offset, tail.cursor) || tail.epoch !== (yield* state.get("epoch"))) {
       yield* Effect.logWarning("Change feed reset; bootstrapping again");
       yield* bootstrap();
 
@@ -372,7 +377,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     do {
       const page: Effect.Success<ReturnType<typeof remote.page>> = yield* remote.page(cursor, live);
 
-      if (feedReset(cursor, page.cursor)) {
+      if (feedReset(cursor, page.cursor) || page.epoch !== (yield* state.get("epoch"))) {
         yield* bootstrap();
 
         return yield* Effect.void;
@@ -416,7 +421,14 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const receipt = yield* remote.push(operation, clientId).pipe(
       Effect.catchTag("RemoteFailure", (error) =>
         Effect.gen(function* () {
-          if (error.retryable || error.status < 400 || error.status >= 500) return yield* error;
+          if (
+            error.status === 401 ||
+            error.status === 403 ||
+            error.retryable ||
+            error.status < 400 ||
+            error.status >= 500
+          )
+            return yield* error;
           yield* gate.withPermit(state.reject(operation.seq, error.status, error.message));
           yield* Effect.logWarning(
             `Rejected write saved in SQLite: ${operation.folderId}/${operation.path} (${error.status})`,
@@ -518,7 +530,10 @@ export const sync = (options: SyncOptions) => {
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
-  const remote = remoteLayer(options.server).pipe(Layer.provide(FetchHttpClient.layer));
+  const remote = remoteLayer(options.server, options.token).pipe(
+    Layer.provide(FetchHttpClient.layer),
+  );
+
   const runtime = Layer.mergeAll(state, remote, BunServices.layer, BunCrypto.layer);
 
   return runSync(options).pipe(

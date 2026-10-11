@@ -181,79 +181,80 @@ const requestBytes = Effect.gen(function* () {
 });
 
 const HandlersLive = HttpApiBuilder.group(FolderSyncApi, "files", (handlers) =>
-  Effect.gen(function* () {
-    const store = yield* FolderStore;
-    const blobs = yield* BlobStore;
+  handlers
+    .handle("create", ({ payload }) =>
+      Effect.flatMap(FolderStore, (store) => store.create(payload.folderId, payload.title)).pipe(
+        apiErrors,
+      ),
+    )
+    .handleRaw("put", ({ params, headers }) =>
+      Effect.gen(function* () {
+        const bytes = yield* requestBytes.pipe(
+          Effect.catchTag(
+            "FileTooLarge",
+            () => new TooLarge({ error: "Files must be at most 8 MiB" }),
+          ),
+        );
 
-    return handlers
-      .handle("create", ({ payload }) =>
-        store.create(payload.folderId, payload.title).pipe(apiErrors),
-      )
-      .handleRaw("put", ({ params, headers }) =>
-        Effect.gen(function* () {
-          const bytes = yield* requestBytes.pipe(
-            Effect.catchTag(
-              "FileTooLarge",
-              () => new TooLarge({ error: "Files must be at most 8 MiB" }),
-            ),
-          );
+        const store = yield* FolderStore;
 
-          return yield* store
-            .write(
-              params.folderId,
-              params["*"],
-              {
-                base: headers["x-file-base"] ?? null,
-                opId: headers["x-file-op-id"],
-                author: headers["x-file-author"],
-                origin: headers["x-file-origin"],
-              },
-              bytes,
-            )
-            .pipe(apiErrors);
+        return yield* store
+          .write(
+            params.folderId,
+            params["*"],
+            {
+              base: headers["x-file-base"] ?? null,
+              opId: headers["x-file-op-id"],
+              author: headers["x-file-author"],
+              origin: headers["x-file-origin"],
+            },
+            bytes,
+          )
+          .pipe(apiErrors);
+      }),
+    )
+    .handle("delete", ({ params, headers }) =>
+      Effect.flatMap(FolderStore, (store) =>
+        store.write(params.folderId, params["*"], {
+          base: headers["x-file-base"] ?? null,
+          opId: headers["x-file-op-id"],
+          author: headers["x-file-author"],
+          origin: headers["x-file-origin"],
         }),
-      )
-      .handle("delete", ({ params, headers }) =>
-        store
-          .write(params.folderId, params["*"], {
-            base: headers["x-file-base"] ?? null,
-            opId: headers["x-file-op-id"],
-            author: headers["x-file-author"],
-            origin: headers["x-file-origin"],
-          })
-          .pipe(apiErrors),
-      )
-      .handle("read", ({ params, query }) =>
-        store.read(params.folderId, params["*"], query).pipe(
-          apiErrors,
-          Effect.map(({ bytes, version, operation }) =>
-            HttpServerResponse.uint8Array(bytes, {
-              headers: { "x-file-version": version, etag: `"${operation.hash}"` },
-            }),
-          ),
+      ).pipe(apiErrors),
+    )
+    .handle("read", ({ params, query }) =>
+      Effect.flatMap(FolderStore, (store) => store.read(params.folderId, params["*"], query)).pipe(
+        apiErrors,
+        Effect.map(({ bytes, version, operation }) =>
+          HttpServerResponse.uint8Array(bytes, {
+            headers: { "x-file-version": version, etag: `"${operation.hash}"` },
+          }),
         ),
-      )
-      .handle("history", ({ params }) =>
-        store.history(params.folderId, params["*"]).pipe(apiErrors),
-      )
-      .handle("blob", ({ params }) =>
-        blobs.get(params.hash).pipe(
-          apiErrors,
-          Effect.flatMap((bytes) =>
-            bytes === undefined
-              ? Effect.fail(new NotFound({ error: "Blob not found" }))
-              : Effect.succeed(
-                  HttpServerResponse.uint8Array(bytes, {
-                    headers: {
-                      "cache-control": "public, max-age=31536000, immutable",
-                      etag: `"${params.hash}"`,
-                    },
-                  }),
-                ),
-          ),
+      ),
+    )
+    .handle("history", ({ params }) =>
+      Effect.flatMap(FolderStore, (store) => store.history(params.folderId, params["*"])).pipe(
+        apiErrors,
+      ),
+    )
+    .handle("blob", ({ params }) =>
+      Effect.flatMap(BlobStore, (blobs) => blobs.get(params.hash)).pipe(
+        apiErrors,
+        Effect.flatMap((bytes) =>
+          bytes === undefined
+            ? Effect.fail(new NotFound({ error: "Blob not found" }))
+            : Effect.succeed(
+                HttpServerResponse.uint8Array(bytes, {
+                  headers: {
+                    "cache-control": "public, max-age=31536000, immutable",
+                    etag: `"${params.hash}"`,
+                  },
+                }),
+              ),
         ),
-      );
-  }),
+      ),
+    ),
 );
 
 const RequestErrorsLive = HttpApiMiddleware.layerSchemaErrorTransform(RequestErrors, (error) =>
@@ -264,7 +265,7 @@ const RequestErrorsLive = HttpApiMiddleware.layerSchemaErrorTransform(RequestErr
   ),
 );
 
-export const ApiLive = HttpApiBuilder.layer(FolderSyncApi).pipe(
+export const ApiRequestLive = HttpApiBuilder.layer(FolderSyncApi).pipe(
   Layer.provide(HandlersLive),
   Layer.provide(RequestErrorsLive),
 );
@@ -275,4 +276,9 @@ export const NotFoundLive = HttpRouter.add(
   "*",
   "/api/*",
   HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 }),
+);
+
+/** Bun composition captures services during layer acquisition; objects supply them per request. */
+export const ApiLive = ApiRequestLive.pipe(
+  HttpRouter.provideRequest(Layer.effectContext(Effect.context<FolderStore | BlobStore>())),
 );

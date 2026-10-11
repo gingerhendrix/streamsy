@@ -1,4 +1,4 @@
-import { HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { Effect, Layer, Match, Schema } from "effect";
 import {
   HttpApi,
@@ -77,27 +77,31 @@ const indexErrors = <A, R>(self: Effect.Effect<A, IndexError, R>) =>
   );
 
 const HandlersLive = HttpApiBuilder.group(IndexApi, "index", (handlers) =>
-  Effect.gen(function* () {
-    const index = yield* FileIndex;
-
-    return handlers
-      .handle("list", ({ query }) =>
-        index.snapshot(query).pipe(
-          indexErrors,
-          Effect.map(({ files, cursor }) =>
-            HttpServerResponse.jsonUnsafe(files, { headers: { "stream-next-offset": cursor } }),
-          ),
+  handlers
+    .handle("list", ({ query }) =>
+      Effect.flatMap(FileIndex, (index) => index.snapshot(query)).pipe(
+        indexErrors,
+        Effect.map(({ files, cursor, epoch }) =>
+          HttpServerResponse.jsonUnsafe(files, {
+            headers: { "stream-next-offset": cursor, "stream-epoch": epoch },
+          }),
         ),
-      )
-      .handle("search", ({ query }) => index.search(query.q, query.folder).pipe(indexErrors));
-  }),
+      ),
+    )
+    .handle("search", ({ query }) =>
+      Effect.flatMap(FileIndex, (index) => index.search(query.q, query.folder)).pipe(indexErrors),
+    ),
 );
 
-export const IndexApiLive = HttpApiBuilder.layer(IndexApi).pipe(
+export const IndexRequestLive = HttpApiBuilder.layer(IndexApi).pipe(
   Layer.provide(HandlersLive),
   Layer.provide(
     HttpApiMiddleware.layerSchemaErrorTransform(IndexRequestErrors, (error) =>
       Effect.fail(new IndexBadRequest({ error: `Invalid query: ${error.cause.message}` })),
     ),
   ),
+);
+
+export const IndexApiLive = IndexRequestLive.pipe(
+  HttpRouter.provideRequest(Layer.effectContext(Effect.context<FileIndex>())),
 );

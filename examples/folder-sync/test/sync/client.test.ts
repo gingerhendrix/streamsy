@@ -13,11 +13,13 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
         let status = 204;
         let seenUrl = "";
         let seenBase: string | undefined;
+        let seenToken: string | undefined;
         let seenOrigin: string | undefined;
 
         const http = HttpClient.make((request, url) =>
           Effect.sync(() => {
             seenUrl = url.href;
+            seenToken = request.headers.authorization;
             seenBase = request.headers["x-file-base"];
             seenOrigin = request.headers["x-file-origin"];
 
@@ -25,24 +27,28 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
               request,
               new Response(status === 200 ? `{"version":"${version}"}` : null, {
                 status,
-                headers: { "stream-next-offset": version, "stream-up-to-date": "true" },
+                headers: {
+                  "stream-next-offset": version,
+                  "stream-epoch": "test-epoch",
+                  "stream-up-to-date": "true",
+                },
               }),
             );
           }),
         );
 
         const context = yield* Layer.build(
-          remoteLayer("http://sync.test").pipe(
+          remoteLayer("http://sync.test", "writer-token").pipe(
             Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
           ),
         );
 
         const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
         const empty = yield* remote.page(version, true);
-        expect(empty).toEqual({ rows: [], cursor: version, upToDate: true });
+        expect(empty).toEqual({ rows: [], cursor: version, upToDate: true, epoch: "test-epoch" });
         expect(seenUrl).toContain("live=long-poll");
 
-        for (const code of [500, 503]) {
+        for (const code of [408, 409, 429, 500, 503]) {
           status = code;
 
           const result = yield* remote
@@ -77,6 +83,15 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
         expect(seenUrl).toContain("/files/a%252Fb.md");
         expect(seenBase).toBe(version);
         expect(seenOrigin).toBe(encodeURIComponent("client/雪"));
+        expect(seenToken).toBe("Bearer writer-token");
+
+        for (const code of [401, 403]) {
+          status = code;
+          const failure = yield* Effect.flip(remote.page(version, false));
+          expect(failure).toMatchObject({ retryable: false, status: code });
+          expect(String(failure)).toContain("Pending writes remain queued");
+        }
+
         status = 400;
 
         const invalid = yield* remote

@@ -20,6 +20,7 @@ export const encodeFilePath = (path: string) => path.split("/").map(encodeURICom
 
 export interface SyncOptions {
   readonly server: string;
+  readonly token?: string;
   readonly directory: string;
   readonly folders?: ReadonlyArray<string>;
   readonly writable: ReadonlyArray<string>;

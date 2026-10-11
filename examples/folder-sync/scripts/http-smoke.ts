@@ -1,8 +1,8 @@
 import { StreamAddress } from "@streamsy/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Console, Effect, Fiber, Layer, Schedule, Schema } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import { Config, Console, Effect, Fiber, Layer, Schedule, Schema } from "effect";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "./test-directory.ts";
 import { Change, ManifestFile } from "../server/streams.ts";
 import { SearchResult } from "../server/file-index.ts";
@@ -137,7 +137,13 @@ const orderedManifest = (entries: readonly ManifestFile[]) =>
 const smoke = Effect.gen(function* () {
   const directory = yield* testDirectory("http-smoke-");
 
-  for (const mode of ["transient", "sqlite"] as const) {
+  const target = yield* Config.String("FOLDER_SYNC_URL").pipe(Config.withDefault(""));
+
+  const modes: ReadonlyArray<"transient" | "sqlite"> = target
+    ? ["transient"]
+    : ["transient", "sqlite"];
+
+  for (const mode of modes) {
     const options = {
       cwd: `${import.meta.dir}/..`,
       entry: "server/index.ts",
@@ -148,7 +154,10 @@ const smoke = Effect.gen(function* () {
           : { FOLDER_SYNC_DB: "" },
     };
 
-    const server = yield* spawnServer(options);
+    const server = target
+      ? { url: target, port: Number(new URL(target).port), stop: Effect.void }
+      : yield* spawnServer(options);
+
     const folderId = "2026-10-10/demo with spaces";
 
     const create = yield* HttpClient.post(`${server.url}/api/folders`, {
@@ -383,11 +392,22 @@ const smoke = Effect.gen(function* () {
     yield* Console.log(`folder-sync HTTP smoke passed (${mode})`);
   }
 
-  return undefined;
+  return yield* Effect.void;
+});
+
+const authenticatedSmoke = Effect.gen(function* () {
+  const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(Config.withDefault(""));
+  const client = yield* HttpClient.HttpClient;
+
+  const auth = HttpClient.mapRequest(client, (request) =>
+    token ? HttpClientRequest.bearerToken(request, token) : request,
+  );
+
+  return yield* smoke.pipe(Effect.provideService(HttpClient.HttpClient, auth));
 });
 
 BunRuntime.runMain(
-  smoke.pipe(
+  authenticatedSmoke.pipe(
     Effect.scoped,
     // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This smoke script is an executable runtime boundary.
     Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)),

@@ -1,6 +1,6 @@
 import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { sha256, Version } from "../server/domain.ts";
 import { encodeFilePath } from "../sync/decisions.ts";
 
@@ -96,13 +96,25 @@ if (import.meta.main) {
         ? args[1]
         : undefined;
 
+  const clientLayer = Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(Config.withDefault(""));
+      const client = yield* HttpClient.HttpClient;
+
+      return token === ""
+        ? client
+        : HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token));
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
   BunRuntime.runMain(
     (server === undefined
       ? Effect.fail(new SeedFailure({ message: "bun run seed [--server <url>]" }))
       : seedDocs(server)
     ).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The seed executable owns the HTTP and Bun runtime.
-      Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer)),
+      Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer)),
     ),
   );
 }

@@ -80,6 +80,7 @@ export const saveFile = (
   request(fileUrl({ folderId: selection.folderId, path: selection.path }), {
     method: "PUT",
     headers: {
+      ...writerHeaders(),
       "x-file-base": base,
       "x-file-op-id": encodeURIComponent(opId),
       "x-file-author": encodeURIComponent(author.trim() || "anonymous"),
@@ -89,3 +90,10 @@ export const saveFile = (
   })
     .then((response) => response.json())
     .then(Schema.decodeUnknownSync(Receipt));
+
+/** Browser-only writer setting. Reads stay public. */
+export const writerHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem("folder-sync-writer-token");
+
+  return token ? { authorization: `Bearer ${token}` } : {};
+};

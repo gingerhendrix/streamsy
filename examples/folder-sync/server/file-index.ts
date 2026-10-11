@@ -12,6 +12,9 @@ import {
   search,
 } from "./projections.ts";
 
+import picomatch from "picomatch";
+import { feedEpoch } from "./feed-epoch.ts";
+
 import { SearchResult, snippetParts } from "./search-result.ts";
 
 export { SearchResult } from "./search-result.ts";
@@ -53,7 +56,7 @@ const make = Effect.gen(function* () {
       options.glob === undefined
         ? undefined
         : yield* Effect.try({
-            try: () => new Bun.Glob(options.glob ?? ""),
+            try: () => picomatch(options.glob ?? "", { dot: true, strictBrackets: true }),
             catch: () => new InvalidFile({ message: "Invalid glob pattern" }),
           });
 
@@ -63,7 +66,7 @@ const make = Effect.gen(function* () {
       (row) =>
         (options.folder === undefined || row.folderId === options.folder) &&
         (options.prefix === undefined || row.path.startsWith(options.prefix)) &&
-        (glob === undefined || glob.match(row.path)),
+        (glob === undefined || glob(row.path)),
     );
   });
 
@@ -79,7 +82,7 @@ const make = Effect.gen(function* () {
           Effect.provideService(CheckpointStore, checkpoints),
         );
 
-        return { files, cursor: progress.offsets.input ?? ZERO_OFFSET };
+        return { files, cursor: progress.offsets.input ?? ZERO_OFFSET, epoch: yield* feedEpoch };
       }),
     );
   });

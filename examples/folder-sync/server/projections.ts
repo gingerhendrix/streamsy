@@ -79,6 +79,19 @@ export const indexProjections = (generation = 1) => {
       Effect.forEach(batch.input.items, (change) =>
         Effect.gen(function* () {
           if (change.deleted) return { change, text: undefined };
+
+          if (change.inline !== undefined) return { change, text: change.inline };
+
+          if (change.blob !== undefined) {
+            const blobs = yield* BlobStore;
+            const bytes = yield* blobs.get(change.blob);
+
+            if (bytes === undefined)
+              return yield* new MissingFile({ message: "Indexed blob is missing" });
+
+            return { change, text: searchableText(bytes) };
+          }
+
           const files = yield* Files;
 
           const entry = yield* files.read({ folderId: change.folderId }).pipe(
