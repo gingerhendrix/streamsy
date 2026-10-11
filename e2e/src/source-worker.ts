@@ -26,7 +26,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
               client: { storage: state.raw.storage },
               longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
             }),
-            Host.alarmLayer(state.raw.storage),
+            Host.alarmSlotLayer(state.raw.storage),
           ),
         }),
       ),

@@ -6,10 +6,12 @@ import {
   type HttpServerRespondable,
 } from "effect/http";
 import { Http, type Storage, type StorageFault } from "@streamsy/core";
-import { Alarm, reconcileAlarm } from "./alarm.ts";
+import { AlarmSlot } from "./alarm.ts";
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This private composition root acquires the scheduler with the object context before compiling either host.
+import { Wakeups, RequestTouch, makeWakeups, type Wakeup } from "./wakeup.ts";
 import { withMutationReconciliation } from "./host-program.ts";
 
-export type ObjectServices<R = never> = Storage | Alarm | R;
+export type ObjectServices<R = never> = Storage | Wakeups | R;
 
 export type ObjectApp<R = never> = Layer.Layer<
   never,
@@ -26,9 +28,17 @@ function objectApp<R>(app: ObjectApp<R>, context: Context.Context<ObjectServices
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
 
-        const guarded = ["PUT", "POST", "DELETE"].includes(request.method)
-          ? withMutationReconciliation(handler, reconcileAlarm())
-          : handler;
+        const marker = { touched: false };
+        const wakeups = Context.get(context, Wakeups);
+
+        const guarded = withMutationReconciliation(
+          handler,
+          Effect.suspend(() =>
+            ["PUT", "POST", "DELETE"].includes(request.method) || marker.touched
+              ? wakeups.reconcile
+              : Effect.void,
+          ),
+        );
 
         return yield* guarded.pipe(
           Effect.catchDefect(() =>
@@ -39,6 +49,7 @@ function objectApp<R>(app: ObjectApp<R>, context: Context.Context<ObjectServices
               }),
             ),
           ),
+          Effect.provideService(RequestTouch, marker),
         );
       }).pipe(Effect.provide(context)),
     { global: true },
@@ -55,8 +66,12 @@ export const unavailable = () =>
 
 /** One lazy successful acquisition per object owner. Failed attempts close before retry. */
 export function acquireObject<A, R>(
-  layer: Layer.Layer<ObjectServices<R>, StorageFault>,
-  compile: (context: Context.Context<ObjectServices<R>>) => Effect.Effect<A, never, Scope.Scope>,
+  layer: Layer.Layer<Storage | AlarmSlot | R, StorageFault>,
+  compile: (
+    context: Context.Context<ObjectServices<R>>,
+    alarm: Effect.Effect<void>,
+  ) => Effect.Effect<A, never, Scope.Scope>,
+  wakeups?: ReadonlyArray<Wakeup<ObjectServices<R>>>,
 ): Effect.Effect<Effect.Effect<A, StorageFault>, never, Scope.Scope> {
   return Effect.gen(function* () {
     const owner = yield* Scope.Scope;
@@ -67,7 +82,11 @@ export function acquireObject<A, R>(
       return yield* Effect.gen(function* () {
         const context = yield* Layer.buildWithScope(layer, attempt);
 
-        return yield* compile(context).pipe(Effect.provideService(Scope.Scope, attempt));
+        const scheduler = yield* makeWakeups(context, wakeups);
+
+        return yield* compile(scheduler.context, scheduler.alarm).pipe(
+          Effect.provideService(Scope.Scope, attempt),
+        );
       }).pipe(
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(attempt, exit) : Effect.void)),
       );

@@ -6,11 +6,11 @@ import type {
   DurableObjectNamespace,
   DurableObjectState,
 } from "@cloudflare/workers-types";
-import { Context, Effect, Layer, Schema } from "effect";
-import { Storage, StorageFault, type StreamId } from "@streamsy/core";
+import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Serve } from "@streamsy/serve";
-import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { StreamsyObject, Wakeup, router } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { byStreamOptions } from "./fixture-options.ts";
 
@@ -166,6 +166,15 @@ class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter
     ),
   ),
   layer: probeLayer,
+  wakeups: [
+    Wakeup.make<Storage | StreamsWriter>({
+      name: "test/app-work",
+      next: Storage.use((storage) => storage.record(StreamId.make("app-work"))).pipe(
+        Effect.map(Option.map(() => 0)),
+      ),
+      run: StreamsWriter.use((writer) => writer.remove(StreamId.make("app-work"))),
+    }),
+  ],
 }) {
   readonly #state = probeFor(this.ctx);
 

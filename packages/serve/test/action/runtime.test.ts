@@ -335,6 +335,7 @@ for (const ordered of [true, false]) {
     const log = recorder();
     enqueue(outbox, [note("first"), note("second", "other")]);
     const handler = handlerFor(log, { refuse: (id) => (id === "first" ? "retryable" : undefined) });
+
     return runWithOutbox(
       outbox,
       Effect.gen(function* () {
@@ -343,6 +344,7 @@ for (const ordered of [true, false]) {
         expect(first.delivered).toBe(ordered ? 0 : 1);
         const blocked = yield* drainAt(handler, 50, { ordered });
         expect(blocked.claimed).toBe(0);
+
         if (ordered) {
           const lane = yield* drainAt(handler, 50, { ordered, partitionId: "other" });
           expect(lane.delivered).toBe(1);

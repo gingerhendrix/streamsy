@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- This is the real local workerd boundary test. */
 import { afterEach, expect, test } from "bun:test";
+import { Clock, Effect } from "effect";
 import {
   cleanupHarnesses,
   direct,
@@ -110,6 +111,8 @@ test("mutating requests reconcile the minimum alarm and clearing the last TTL cl
 
 test("a reconcile failure preserves the committed response and standard headers", async () => {
   const harness = await makeHarness();
+  // Acquire before injecting the mutation-finalizer failure. Acquire itself now reconciles.
+  await dispatch(harness, "/streams/reconcile-failure", { method: "HEAD" });
   await direct(harness, "reconcile-failure", "/__probe?fail-next-expiry=1");
   const response = await create(harness, "/streams/reconcile-failure", 3);
   expect(response.status).toBe(201);
@@ -163,7 +166,7 @@ test("an append renews the deadline and the stream survives the original alarm",
   await waitUntil(async () => (await probe(harness, "renewed")).rows.length === 0, 4_000);
 });
 
-test("a failed alarm turn retries without rebuilding the object scope", async () => {
+test("a failed alarm turn recovers without rebuilding the object scope", async () => {
   const harness = await makeHarness();
   await direct(harness, "failing-alarm", "/__probe?long-poll-timeout=25000");
   expect((await create(harness, "/streams/failing-alarm", 1)).status).toBe(201);
@@ -189,7 +192,7 @@ test("a failed alarm turn retries without rebuilding the object scope", async ()
   expect(failed.activeReads).toBe(1);
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length >= 2, 8_000);
   const retried = await probe(harness, "failing-alarm");
-  expect(retried.alarmInfo.some((info) => info.isRetry && info.retryCount > 0)).toBe(true);
+  expect(retried.alarmInfo.every((info) => !info.isRetry && info.retryCount === 0)).toBe(true);
   expect(retried.rows).toHaveLength(0);
   expect(retried.alarm).toBeNull();
   expect(retried.layerAcquisitions).toBe(1);
@@ -255,4 +258,23 @@ test("a Durable Object app serves value handlers and respondable parameter error
   const denied = await direct(harness, "serve", "/serve-value/7", { method: "POST" });
   expect(denied.status).toBe(405);
   expect(denied.headers.get("allow")).toBe("GET, HEAD");
+});
+
+test("due app work dispatches promptly in a native alarm after the write", async () => {
+  const harness = await makeHarness();
+  const startedAt = Effect.runSync(Clock.currentTimeMillis);
+  expect((await create(harness, "/streams/app-work")).status).toBe(201);
+  await waitUntil(async () => (await probe(harness, "app-work")).alarmInvocations > 0, 5_000);
+  const observation = await probe(harness, "app-work");
+  expect(observation.rows).toHaveLength(0);
+  expect(observation.alarm).toBeNull();
+  expect(observation.layerAcquisitions).toBe(1);
+  const dispatchedAt = observation.alarmInfo[0]?.observedAt;
+
+  if (dispatchedAt === undefined) throw new Error("App wakeup did not dispatch");
+  await Effect.runPromise(
+    Effect.logInfo(
+      `Native app wakeup dispatched ${dispatchedAt - startedAt} ms after request start`,
+    ),
+  );
 });

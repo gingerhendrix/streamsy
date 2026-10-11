@@ -1,9 +1,11 @@
 import { expect, it as baseIt, layer } from "@streamsy/effect-test";
-import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
-import { Alarm } from "../../src/cloudflare/alarm.ts";
+import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
 import { withMutationReconciliation } from "../../src/cloudflare/host-program.ts";
-import { alarm } from "../../src/cloudflare/host-program.ts";
+import { makeWakeups } from "../../src/cloudflare/wakeup.ts";
+
+let failDeadline = false;
 
 const failingStorage = Storage.of({
   capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
@@ -12,12 +14,16 @@ const failingStorage = Storage.of({
   producer: () => Effect.succeedNone,
   mutate: () => Effect.die("unused"),
   changes: () => Stream.empty,
-  nextExpiry: Effect.fail(
-    new StorageFault({
-      operation: "test.nextExpiry",
-      message: "test failure",
-      retryable: true,
-    }),
+  nextExpiry: Effect.suspend(() =>
+    failDeadline
+      ? Effect.fail(
+          new StorageFault({
+            operation: "test.nextExpiry",
+            message: "test failure",
+            retryable: true,
+          }),
+        )
+      : Effect.succeedNone,
   ),
 });
 
@@ -66,22 +72,21 @@ baseIt.effect("a reconciliation defect cannot replace a committed mutation resul
 layer(
   Layer.mergeAll(
     Layer.succeed(Storage, failingStorage),
-    Layer.succeed(Alarm, {
+    Layer.succeed(AlarmSlot, {
       current: Effect.succeedNone,
       arm: () => Effect.void,
       clear: Effect.void,
     }),
   ),
 )((it) => {
-  it.effect("an alarm exposes StorageFault for platform retry without an HTTP request", () =>
+  it.effect("an alarm isolates a deadline failure without platform retry", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.exit(alarm);
-      expect(Exit.isFailure(result)).toBe(true);
-
-      if (Exit.isFailure(result))
-        expect(result.cause.reasons).toMatchObject([
-          { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },
-        ]);
+      failDeadline = false;
+      const context = yield* Effect.context<Storage | AlarmSlot>();
+      const scheduler = yield* makeWakeups(context);
+      failDeadline = true;
+      yield* scheduler.alarm;
+      failDeadline = false;
     }),
   );
 });

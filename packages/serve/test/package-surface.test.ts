@@ -22,3 +22,24 @@ test("the Deno SQLite helper leaves node:sqlite able to open a database", async 
   const prototype: { enableLoadExtension?: unknown } = DatabaseSync.prototype;
   expect(prototype.enableLoadExtension).toBeFunction();
 });
+
+test("Cloudflare entries expose wakeups and the slot layer without the raw slot tag", async () => {
+  const alchemy = await import("@streamsy/serve/alchemy");
+  expect(Object.keys(alchemy)).toContain("Wakeup");
+  expect(Object.keys(alchemy)).toContain("Wakeups");
+  expect(Object.keys(alchemy)).toContain("alarmSlotLayer");
+
+  for (const name of ["Alarm", "AlarmSlot", "alarmLayer", "alarm", "reconcileAlarm"])
+    expect(Object.keys(alchemy)).not.toContain(name);
+
+  for (const host of ["alchemy", "cloudflare"])
+    expect(
+      matching(entryImports(dist(`${host}.js`)), [
+        "action/runtime",
+        "action/contract",
+        "action/outbox",
+      ]),
+    ).toEqual([]);
+  const runtime = await import("@streamsy/serve/action/runtime");
+  expect(runtime.Wakeup.outbox).toBeFunction();
+});

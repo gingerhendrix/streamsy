@@ -24,6 +24,8 @@ import {
   type DeadLetterReason,
   type OutboxUnavailable,
 } from "./errors.ts";
+import { StorageFault } from "@streamsy/core";
+import { Wakeup as CoreWakeup } from "../cloudflare/wakeup.ts";
 import { OutboxStore, type OutboxDraft, type OutboxEntry } from "./outbox.ts";
 
 /** One attempt at one delivery, as the handler sees it. */
@@ -120,24 +122,28 @@ export function draftsFor<Payload, From extends ActionSinkRelation>(
   }));
 }
 
-/** Deliver every due entry in one lane, serially, applying the declared retry policy. */
 const drainPermits = new WeakMap<typeof OutboxStore.Service, Map<string, Semaphore.Semaphore>>();
 
 // All lanes of a sink share a permit, including passes over the whole sink.
 const drainPermit = (store: typeof OutboxStore.Service, sink: string) => {
   let permits = drainPermits.get(store);
+
   if (permits === undefined) {
     permits = new Map();
     drainPermits.set(store, permits);
   }
+
   let permit = permits.get(sink);
+
   if (permit === undefined) {
     permit = Semaphore.makeUnsafe(1);
     permits.set(sink, permit);
   }
+
   return permit;
 };
 
+/** Deliver due entries serially, applying the declared retry policy and optional strict order. */
 export const drain = <Payload, From extends ActionSinkRelation, Requirements = never>(
   sink: CheckedActionSink<Payload, From>,
   handler: ActionSinkHandler<Payload, Requirements>,
@@ -145,6 +151,7 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
 ): Effect.Effect<DrainReport, OutboxUnavailable, OutboxStore | Requirements> =>
   Effect.gen(function* () {
     const store = yield* OutboxStore;
+
     return yield* drainPermit(store, sink.name).withPermit(
       Effect.gen(function* () {
         const startedAtMs = yield* Clock.currentTimeMillis;
@@ -213,6 +220,7 @@ export const drain = <Payload, From extends ActionSinkRelation, Requirements = n
             failure.detail,
           );
           retried += 1;
+
           if (options.ordered) break;
         }
 
@@ -291,3 +299,29 @@ function deadLetterReason<Payload, From extends ActionSinkRelation>(
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
+
+/** Wakeup constructors for action delivery; the host entry does not load action code. */
+export const Wakeup = {
+  make: CoreWakeup.make,
+  outbox: <Payload, From extends ActionSinkRelation, R = never>(
+    sink: CheckedActionSink<Payload, From>,
+    handler: ActionSinkHandler<Payload, R>,
+    options: DrainOptions = {},
+  ): import("../cloudflare/wakeup.ts").Wakeup<OutboxStore | R> =>
+    CoreWakeup.make({
+      name: `streamsy/outbox/${sink.name}${options.partitionId === undefined ? "" : `/${options.partitionId}`}`,
+      next: OutboxStore.use((store) =>
+        store.nextDue(sink.name, options.partitionId, options.ordered),
+      ).pipe(
+        Effect.mapError(
+          (fault) =>
+            new StorageFault({
+              operation: fault.operation,
+              message: fault.detail,
+              retryable: true,
+            }),
+        ),
+      ),
+      run: drain(sink, handler, options).pipe(Effect.asVoid),
+    }),
+};

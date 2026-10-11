@@ -1,4 +1,4 @@
-import type { StorageFault } from "@streamsy/core";
+import type { Storage, StorageFault } from "@streamsy/core";
 import {
   acquireObject,
   providedApp,
@@ -6,7 +6,8 @@ import {
   type ObjectApp,
   type ObjectServices,
 } from "./cloudflare/object-runtime.ts";
-import { alarm } from "./cloudflare/host-program.ts";
+import type { AlarmSlot } from "./cloudflare/alarm.ts";
+import type { Wakeup } from "./cloudflare/wakeup.ts";
 import type { DurableObject } from "alchemy/Cloudflare";
 import { Effect, Option, type Layer, type Scope } from "effect";
 import {
@@ -20,9 +21,9 @@ import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http
 import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
 import { resolvePlacement } from "./cloudflare/router.ts";
 
-export { alarm } from "./cloudflare/host-program.ts";
+export { Wakeup, Wakeups } from "./cloudflare/wakeup.ts";
 
-export { Alarm, alarmLayer } from "./cloudflare/alarm.ts";
+export { alarmSlotLayer } from "./cloudflare/alarm.ts";
 
 export { Placement };
 
@@ -74,18 +75,22 @@ export type ObjectHandlers = {
 
 export function objectHandlers<R = never>(options: {
   readonly app: ObjectApp<R>;
-  readonly layer: Layer.Layer<ObjectServices<R>, StorageFault>;
+  readonly layer: Layer.Layer<Storage | AlarmSlot | R, StorageFault>;
+  readonly wakeups?: ReadonlyArray<Wakeup<ObjectServices<R>>>;
 }): Effect.Effect<ObjectHandlers, never, Scope.Scope> {
   return Effect.gen(function* () {
-    const get = yield* acquireObject(options.layer, (context) =>
-      Effect.gen(function* () {
-        const fetch = yield* HttpRouter.toHttpEffect(providedApp(options.app, context));
+    const get = yield* acquireObject(
+      options.layer,
+      (context, alarm) =>
+        Effect.gen(function* () {
+          const fetch = yield* HttpRouter.toHttpEffect(providedApp(options.app, context));
 
-        return {
-          fetch: fetch.pipe(Effect.scoped, Effect.catch(HttpServerRespondable.toResponse)),
-          alarm: alarm.pipe(Effect.provide(context)),
-        };
-      }),
+          return {
+            fetch: fetch.pipe(Effect.scoped, Effect.catch(HttpServerRespondable.toResponse)),
+            alarm: alarm.pipe(Effect.provide(context)),
+          };
+        }),
+      options.wakeups,
     );
 
     return {
@@ -98,7 +103,10 @@ export function objectHandlers<R = never>(options: {
         (compiled) =>
           Option.isSome(compiled) ? compiled.value.fetch : Effect.succeed(unavailable()),
       ),
-      alarm: () => Effect.flatMap(get, (compiled) => compiled.alarm).pipe(Effect.orDie),
+      alarm: () =>
+        Effect.flatMap(get, (compiled) => compiled.alarm).pipe(
+          Effect.catchCause((cause) => Effect.logError("Wakeup acquisition failed", cause)),
+        ),
     };
   });
 }

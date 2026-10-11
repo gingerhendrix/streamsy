@@ -1,6 +1,4 @@
 import { Effect } from "effect";
-import { Protocol } from "@streamsy/core/protocol";
-import { reconcileAlarm } from "./alarm.ts";
 
 /**
  * Reconciliation belongs to the mutation's finalizer. A request interruption
@@ -12,6 +10,3 @@ export const withMutationReconciliation = <A, E, R, E2, R2>(
   reconcile: Effect.Effect<void, E2, R2>,
 ): Effect.Effect<A, E, R | R2> =>
   effect.pipe(Effect.ensuring(reconcile.pipe(Effect.uninterruptible, Effect.ignoreCause)));
-
-/** A platform alarm runs the sweep directly and leaves failures to platform retry. */
-export const alarm = Protocol.expireDue().pipe(Effect.andThen(reconcileAlarm()), Effect.asVoid);

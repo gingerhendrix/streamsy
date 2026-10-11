@@ -3,12 +3,19 @@ import { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import type { Storage, StorageFault } from "@streamsy/core";
-import { alarmLayer } from "./alarm.ts";
-import { alarm } from "./host-program.ts";
-import { acquireObject, providedApp, unavailable, type ObjectApp } from "./object-runtime.ts";
+import { alarmSlotLayer } from "./alarm.ts";
+import type { Wakeup } from "./wakeup.ts";
+import {
+  acquireObject,
+  providedApp,
+  unavailable,
+  type ObjectApp,
+  type ObjectServices,
+} from "./object-runtime.ts";
 
 export interface ObjectConfiguration<Env, R = never> {
   readonly app: ObjectApp<R>;
+  readonly wakeups?: ReadonlyArray<Wakeup<ObjectServices<R>>>;
   readonly layer: (state: DurableObjectState, env: Env) => Layer.Layer<Storage | R, StorageFault>;
 }
 
@@ -19,7 +26,7 @@ export interface ObjectInstance {
 
 interface Compiled {
   readonly handler: (request: Request) => Promise<Response>;
-  readonly alarm: Effect.Effect<void, StorageFault>;
+  readonly alarm: Effect.Effect<void>;
 }
 
 class ObjectOwner extends Context.Service<
@@ -37,9 +44,9 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
         Effect.map(
           acquireObject(
             Layer.suspend(() =>
-              Layer.merge(configuration.layer(state, env), alarmLayer(state.storage)),
+              Layer.merge(configuration.layer(state, env), alarmSlotLayer(state.storage)),
             ),
-            (context) =>
+            (context, alarm) =>
               Effect.gen(function* () {
                 const web = HttpRouter.toWebHandler(providedApp(configuration.app, context), {
                   disableLogger: true,
@@ -49,6 +56,7 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
 
                 return { handler: web.handler, alarm: alarm.pipe(Effect.provide(context)) };
               }),
+            configuration.wakeups,
           ),
           (get) => ({ get }),
         ),
@@ -78,7 +86,7 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
         const owner = yield* ObjectOwner;
         const compiled = yield* owner.get;
         yield* compiled.alarm;
-      }),
+      }).pipe(Effect.catchCause((cause) => Effect.logError("Wakeup acquisition failed", cause))),
     );
   }
 }

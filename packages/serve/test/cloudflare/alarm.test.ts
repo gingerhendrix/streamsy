@@ -1,7 +1,9 @@
 import { expect, layer } from "@streamsy/effect-test";
 import { Effect, Layer, Option, Stream } from "effect";
 import { Storage, StreamId } from "@streamsy/core";
-import { Alarm, reconcileAlarm } from "../../src/cloudflare/alarm.ts";
+import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
+
+import { makeWakeups } from "../../src/cloudflare/wakeup.ts";
 
 const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamId: string }>) =>
   Storage.of({
@@ -33,7 +35,7 @@ for (const [index, [next, current, expected]] of cases.entries()) {
   layer(
     Layer.mergeAll(
       Layer.succeed(Storage, fakeStorage(next)),
-      Layer.succeed(Alarm, {
+      Layer.succeed(AlarmSlot, {
         current: Effect.succeed(current),
         arm: (at) => Effect.sync(() => actions.push(at)),
         clear: Effect.sync(() => actions.push("clear")),
@@ -41,7 +43,10 @@ for (const [index, [next, current, expected]] of cases.entries()) {
     ),
   )((it) => {
     it.effect(`reconcileAlarm follows the indexed deadline table (row ${index})`, () =>
-      reconcileAlarm().pipe(
+      Effect.gen(function* () {
+        const context = yield* Effect.context<Storage | AlarmSlot>();
+        yield* makeWakeups(context);
+      }).pipe(
         Effect.andThen(() =>
           Effect.sync(() => {
             expect(actions).toEqual([...expected]);

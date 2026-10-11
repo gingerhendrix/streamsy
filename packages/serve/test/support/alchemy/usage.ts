@@ -15,7 +15,7 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
         app: protocolRoutes({ prefix: "/streams" }),
         layer: Layer.mergeAll(
           DurableObjectStorage.layerProtocol({ client: { storage: state.raw.storage } }),
-          Host.alarmLayer(state.raw.storage),
+          Host.alarmSlotLayer(state.raw.storage),
         ),
       }),
     ),
