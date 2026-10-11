@@ -5,7 +5,7 @@
  * migrates first, as a placement does at start.
  */
 import { describe, expect, test } from "bun:test";
-import { Context, Effect, Exit, Layer, Schema, type Scope } from "effect";
+import { Context, Effect, Exit, Layer, Option, Schema, type Scope } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import type { OutboxBacking, OutboxDraft } from "@streamsy/serve/action/outbox";
@@ -62,6 +62,27 @@ const withOutbox = <A, E>(
 for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`the ${dialect.name} outbox`, () => {
+    test(
+      "reads pending deadlines, including ordered and partition scopes",
+      async () => {
+        if (url === undefined) return;
+        await withOutbox(dialect, url, (outbox) =>
+          Effect.gen(function* () {
+            expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.none());
+            yield* outbox.enqueue([draft("a"), draft("b", "other", 2_000)]);
+            yield* outbox.reschedule(1, 1, 5_000, "retry");
+            expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.some(2_000));
+            expect(yield* outbox.nextDue("test.sink", "main")).toEqual(Option.some(5_000));
+            expect(yield* outbox.nextDue("test.sink", undefined, true)).toEqual(Option.some(5_000));
+            yield* outbox.markDelivered(1, 2, 5_000);
+            yield* outbox.deadLetter(2, 1, "permanent", "gone", 5_000);
+            expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.none());
+          }),
+        );
+      },
+      TIMEOUT_MS,
+    );
+
     test(
       "absorbs a repeated idempotency key instead of enqueuing twice",
       async () => {

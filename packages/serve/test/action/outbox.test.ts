@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Exit, ManagedRuntime } from "effect";
+import { Effect, Exit, ManagedRuntime, Option } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import {
@@ -63,6 +63,21 @@ const cases: readonly (readonly [string, Runner])[] = [
 
 for (const [name, run] of cases) {
   describe(`the ${name} outbox`, () => {
+    test("reads pending deadlines across lanes and in enqueue order", () =>
+      run((outbox) =>
+        Effect.gen(function* () {
+          expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.none());
+          yield* outbox.enqueue([draft("a", "left"), draft("b", "right", 2_000)]);
+          yield* outbox.reschedule(1, 1, 5_000, "retry");
+          expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.some(2_000));
+          expect(yield* outbox.nextDue("test.sink", "left")).toEqual(Option.some(5_000));
+          expect(yield* outbox.nextDue("test.sink", undefined, true)).toEqual(Option.some(5_000));
+          yield* outbox.markDelivered(1, 2, 5_000);
+          yield* outbox.deadLetter(2, 1, "permanent", "gone", 5_000);
+          expect(yield* outbox.nextDue("test.sink", undefined)).toEqual(Option.none());
+        }),
+      ));
+
     test("absorbs a repeated idempotency key instead of enqueuing twice", () =>
       run((outbox) =>
         Effect.gen(function* () {

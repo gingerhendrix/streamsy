@@ -7,7 +7,7 @@
  * fact that caused it, and delivery is a separate, resumable pass over what was
  * written.
  */
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { OutboxUnavailable, type DeadLetterReason } from "./errors.ts";
 
 export type OutboxEntryState = "pending" | "delivered" | "dead";
@@ -52,6 +52,12 @@ export interface OutboxBacking {
     drafts: readonly OutboxDraft[],
   ) => Effect.Effect<OutboxEnqueueReport, OutboxUnavailable>;
   /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
+  readonly nextDue: (
+    sink: string,
+    partitionId: string | undefined,
+    /** Read the oldest pending entry's deadline for strict enqueue order. */
+    ordered?: boolean,
+  ) => Effect.Effect<Option.Option<number>, OutboxUnavailable>;
   readonly claimDue: (
     sink: string,
     partitionId: string | undefined,
@@ -156,6 +162,23 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
         }
 
         return { enqueued, absorbed };
+      }),
+    nextDue: (sink, partitionId, inOrder = false) =>
+      Effect.sync(() => {
+        const pending = ordered().filter(
+          (entry) =>
+            entry.sink === sink &&
+            entry.state === "pending" &&
+            (partitionId === undefined || entry.partitionId === partitionId),
+        );
+        const first = pending[0];
+        return first === undefined
+          ? Option.none()
+          : Option.some(
+              inOrder
+                ? first.nextAttemptAtMs
+                : Math.min(...pending.map((entry) => entry.nextAttemptAtMs)),
+            );
       }),
     claimDue: (sink, partitionId, nowMs, limit) =>
       Effect.sync(() =>

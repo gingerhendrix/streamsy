@@ -285,6 +285,20 @@ export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
           return { enqueued, absorbed: drafts.length - enqueued };
         }),
       ),
+    nextDue: (sink, partitionId, ordered = false) =>
+      run(
+        "nextDue",
+        sql<{ readonly at: number | bigint }>`SELECT next_attempt_at_ms AS at
+ FROM streamsy_effect_outbox WHERE ${sql.and([
+   sql`sink = ${sink}`,
+   sql`state = 'pending'`,
+   ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
+ ])} ORDER BY ${ordered ? sql`id` : sql`next_attempt_at_ms, id`} LIMIT 1`,
+      ).pipe(
+        Effect.map((found) =>
+          Option.fromUndefinedOr(found[0]).pipe(Option.map((row) => Number(row.at))),
+        ),
+      ),
     claimDue: (sink, partitionId, nowMs, limit) =>
       rows(
         "claimDue",
