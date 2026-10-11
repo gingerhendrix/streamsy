@@ -144,3 +144,9 @@ outbox remains on disk for inspection or a corrected restart.
 This remains a demo: every scan hashes selected files, history and manifest reads
 grow with retained events, and outbox bodies are stored in SQLite without a disk
 quota. Folder logs and outbox entries retain the server's 8 MiB file limit.
+
+On the first bootstrap, identical existing files adopt the server version without
+writing it again. Different local bytes are preserved as
+`name.conflict-<origin>[-n].ext` siblings while the server head keeps the original
+path. In writable folders those siblings sync as new files. Existing files with
+no server head become new writes.

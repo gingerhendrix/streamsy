@@ -445,6 +445,53 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
     { timeout: 20000 },
   );
   it.effect(
+    "fresh bootstrap adopts identical files and preserves stale bytes as conflict siblings",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-existing-");
+        const mirror = `${directory}/mirror`;
+        const fs = yield* FileSystem.FileSystem;
+        const server = yield* spawnServer({
+          cwd: `${import.meta.dir}/../..`,
+          entry: "server/index.ts",
+        });
+        yield* create(server.url, "docs");
+        const same = yield* put(server.url, "docs", "same.md", "identical", "same");
+        const stale = yield* put(server.url, "docs", "stale.md", "new on server", "stale");
+        yield* fs.makeDirectory(`${mirror}/docs`, { recursive: true });
+        yield* fs.writeFileString(`${mirror}/docs/same.md`, "identical");
+        yield* fs.writeFileString(`${mirror}/docs/stale.md`, "old local copy");
+        yield* fs.writeFileString(`${mirror}/docs/new.md`, "local new file");
+        const daemon = yield* sync({
+          server: server.url,
+          directory: mirror,
+          folders: ["docs"],
+          writable: ["docs"],
+        }).pipe(Effect.forkScoped);
+        yield* until(
+          fs.readFileString(`${mirror}/docs/stale.md`),
+          (value) => value === "new on server",
+        );
+        const state = yield* inspect(mirror);
+        const origin = yield* state.get("origin");
+        const copy = `stale.conflict-${origin}.md`;
+        yield* until(history(server.url, "docs", copy), (rows) => rows.length === 1);
+        yield* until(history(server.url, "docs", "new.md"), (rows) => rows.length === 1);
+        expect(yield* fs.readFileString(`${mirror}/docs/${copy}`)).toBe("old local copy");
+        expect((yield* state.head("docs", "same.md"))?.version).toBe(same.version);
+        expect(yield* history(server.url, "docs", "same.md")).toHaveLength(1);
+        expect(yield* history(server.url, "docs", "stale.md")).toEqual([
+          expect.objectContaining({
+            version: stale.version,
+            operation: expect.objectContaining({ inline: "new on server" }),
+          }),
+        ]);
+        yield* Fiber.interrupt(daemon);
+        yield* server.stop;
+      }),
+    { timeout: 20000 },
+  );
+  it.effect(
     "the CLI executable accepts flags and the runner supports custom folder mappings",
     () =>
       Effect.gen(function* () {

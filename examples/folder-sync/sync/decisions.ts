@@ -29,3 +29,13 @@ export interface SyncOptions {
 }
 
 export const folderDirectory = (folderId: string) => folderId;
+
+/** Keep the extension and use a stable, path-safe origin in sibling conflict names. */
+export const conflictPath = (file: string, origin: string, suffix = 0) => {
+  const slash = file.lastIndexOf("/");
+  const dot = file.lastIndexOf(".");
+  const extension = dot > slash + 1 ? dot : file.length;
+  const id = origin.replace(/[^a-zA-Z0-9-]/g, "_");
+
+  return `${file.slice(0, extension)}.conflict-${id}${suffix === 0 ? "" : `-${suffix}`}${file.slice(extension)}`;
+};

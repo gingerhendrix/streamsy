@@ -16,7 +16,14 @@ import {
 import { FetchHttpClient } from "effect/http";
 import { normalisePath, sha256 } from "../server/domain.ts";
 import { SyncRemote, remoteLayer } from "./client.ts";
-import { applyChange, conflictBase, feedReset, folderDirectory, isEcho } from "./decisions.ts";
+import {
+  applyChange,
+  conflictBase,
+  feedReset,
+  folderDirectory,
+  isEcho,
+  conflictPath,
+} from "./decisions.ts";
 import type { SyncOptions } from "./decisions.ts";
 import { LocalFailure, localBytes, localFiles, replaceLocal, safePath, pathKind } from "./local.ts";
 import { SyncState, stateLayer } from "./state.ts";
@@ -156,7 +163,22 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const local = yield* localBytes(root, filePath(folderId, file));
     const localHash = yield* hashBytes(local);
 
-    if (writable(folderId) && !isEcho(localHash, known, exceptSeq !== undefined)) {
+    const adopt = known === undefined && head.version !== null;
+
+    if (adopt && writable(folderId) && local !== null && localHash !== head.hash) {
+      let suffix = 0;
+      let copy = conflictPath(file, clientId);
+
+      while (yield* fs.exists(path.join(root, filePath(folderId, copy)))) {
+        suffix++;
+        copy = conflictPath(file, clientId, suffix);
+      }
+
+      yield* replaceLocal(root, filePath(folderId, copy), local);
+      yield* Effect.logWarning(`Preserved bootstrap conflict: ${folderId}/${copy}`);
+    }
+
+    if (!adopt && writable(folderId) && !isEcho(localHash, known, exceptSeq !== undefined)) {
       const opId = yield* crypto.randomUUIDv4;
       yield* state.enqueue(
         { folderId, path: file, opId, base: conflictBase(known), hash: localHash, bytes: local },
@@ -256,12 +278,15 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     yield* gate.withPermit(
       Effect.gen(function* () {
         for (const row of snapshot.files) yield* addFolder(row.folderId);
-        // Existing writable bytes become durable pending edits before a bootstrap can replace them.
-        yield* scan();
         const paths = new Map<string, { folderId: string; path: string }>();
 
         for (const row of [...snapshot.files, ...(yield* state.heads())]) {
           if (selected(row.folderId)) paths.set(`${row.folderId}\0${row.path}`, row);
+        }
+
+        for (const [folderId, relative] of roots) {
+          for (const file of yield* localFiles(path.join(root, relative)))
+            paths.set(`${folderId}\0${file}`, { folderId, path: file });
         }
 
         for (const row of paths.values()) {
@@ -271,6 +296,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
           yield* install(row.folderId, row.path, head, undefined, true);
         }
 
+        yield* scan();
         yield* state.set("cursor", snapshot.cursor);
         yield* state.set("ready", "true");
       }),
@@ -316,7 +342,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
             const known = yield* state.head(change.folderId, change.path);
 
             if (!applyChange(known, change.version)) continue;
-            yield* observe(change.folderId, change.path);
+
+            if (known !== undefined) yield* observe(change.folderId, change.path);
 
             if (yield* hasPending(change.folderId, change.path)) continue;
 
@@ -377,7 +404,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   const scanSafely = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
 
-    if (now - lastEvent < settle) return;
+    if (now - lastEvent < settle || (yield* state.get("cursor")) === undefined) return;
     yield* gate.withPermit(scan());
   });
 
