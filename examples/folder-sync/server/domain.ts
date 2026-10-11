@@ -4,7 +4,14 @@ export const INLINE_LIMIT = 64 * 1024;
 
 export const FILE_LIMIT = 8 * 1024 * 1024;
 
-export const Version = Schema.String.check(Schema.isPattern(/^\d{16}_\d{16}$/));
+/** Folder sequence carried in the log entry. Stream offsets are only cursors. */
+export const Version = Schema.Int.check(Schema.isGreaterThan(0));
+
+/** Decimal representation at HTTP header and query boundaries. */
+export const VersionFromString = Schema.String.check(Schema.isPattern(/^[1-9]\d*$/)).pipe(
+  Schema.decodeTo(Schema.FiniteFromString),
+  Schema.decodeTo(Version),
+);
 
 export const Hash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 
@@ -77,6 +84,7 @@ export const normalisePath = (path: string) => {
 };
 
 const fields = {
+  version: Version,
   path: Path,
   base: Schema.NullOr(Version),
   opId: Identifier,
@@ -152,7 +160,11 @@ export const Operations = Schema.Record(Schema.String, OperationReceipt);
 
 export type Operations = typeof Operations.Type;
 
-export const FolderState = Schema.Struct({ heads: Heads, ops: Operations });
+export const FolderState = Schema.Struct({
+  seq: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  heads: Heads,
+  ops: Operations,
+});
 
 export type FolderState = typeof FolderState.Type;
 
@@ -162,8 +174,9 @@ export const headAt = (heads: Heads, path: string): Head | undefined =>
 export const operationAt = (ops: Operations, opId: string): OperationReceipt | undefined =>
   Object.hasOwn(ops, opId) ? ops[opId] : undefined;
 
-/** The caller supplies the exact log offset. Keep the first receipt when rebuilding older duplicate entries. */
-export const foldHead = (state: FolderState, operation: FileOp, version: string): FolderState => {
+/** Keep the first receipt when rebuilding duplicate entries. Versions come from the entry. */
+export const foldHead = (state: FolderState, operation: FileOp): FolderState => {
+  const { version } = operation;
   const common = { version, opId: operation.opId, operation };
 
   const head: Head =
@@ -178,14 +191,14 @@ export const foldHead = (state: FolderState, operation: FileOp, version: string)
       ? { ...state.ops, [operation.opId]: receipt }
       : state.ops;
 
-  return { heads: { ...state.heads, [operation.path]: head }, ops };
+  return { seq: version, heads: { ...state.heads, [operation.path]: head }, ops };
 };
 
 export const overwriteMarkFromOp = (operation: FileOp | OperationReceipt) =>
   operation.overwrote === undefined ? {} : { overwrote: operation.overwrote };
 
-/** A null base means the author had no head. Comparing fixed-width offsets follows commit order. */
-export const overwriteMark = (head: Head | undefined, base: string | null) =>
+/** A null base means the author had no head. Folder sequences follow commit order. */
+export const overwriteMark = (head: Head | undefined, base: number | null) =>
   head !== undefined && (base === null || head.version > base) ? { overwrote: head.version } : {};
 
 export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {

@@ -3,7 +3,9 @@ import { Effect, Layer, Match, Result, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
 
-const version = "0000000000000001_0000000000000000";
+const version = 1;
+
+const cursor = "0000000000000001_0000000000000000";
 
 layer(Layer.empty, { excludeTestServices: true })((it) => {
   it.effect(
@@ -27,7 +29,7 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
               request,
               new Response(
                 Match.value(status).pipe(
-                  Match.when(200, () => `{"version":"${version}"}`),
+                  Match.when(200, () => `{"version":${version}}`),
                   Match.when(400, () =>
                     Schema.encodeSync(
                       Schema.fromJsonString(Schema.Struct({ error: Schema.String })),
@@ -41,7 +43,7 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
                 {
                   status,
                   headers: {
-                    "stream-next-offset": version,
+                    "stream-next-offset": cursor,
                     "stream-epoch": "test-epoch",
                     "stream-up-to-date": "true",
                   },
@@ -58,8 +60,8 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
         );
 
         const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-        const empty = yield* remote.page(version, true);
-        expect(empty).toEqual({ rows: [], cursor: version, upToDate: true, epoch: "test-epoch" });
+        const empty = yield* remote.page(cursor, true);
+        expect(empty).toEqual({ rows: [], cursor, upToDate: true, epoch: "test-epoch" });
         expect(seenUrl).toContain("live=long-poll");
 
         for (const code of [408, 409, 429, 500, 503]) {
@@ -95,13 +97,13 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
           "client/雪",
         );
         expect(seenUrl).toContain("/files/a%252Fb.md");
-        expect(seenBase).toBe(version);
+        expect(seenBase).toBe(String(version));
         expect(seenOrigin).toBe(encodeURIComponent("client/雪"));
         expect(seenToken).toBe("Bearer writer-token");
 
         for (const code of [401, 403]) {
           status = code;
-          const failure = yield* Effect.flip(remote.page(version, false));
+          const failure = yield* Effect.flip(remote.page(cursor, false));
           expect(failure).toMatchObject({ retryable: false, status: code });
           expect(String(failure)).toContain("Pending writes remain queued");
         }

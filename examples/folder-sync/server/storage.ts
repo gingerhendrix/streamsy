@@ -9,7 +9,7 @@ import { streams } from "./streams.ts";
 
 export const memoryHost = Layer.unwrap(
   Effect.sync(() => {
-    const storage = MemoryStorage.layer(streams, { readLimit: 1 });
+    const storage = MemoryStorage.layer(streams);
 
     return Layer.merge(CheckpointStore.layer, memoryBlobs).pipe(
       Layer.provideMerge(storage),
@@ -19,7 +19,7 @@ export const memoryHost = Layer.unwrap(
 );
 
 export const sqliteHost = (filename: string) => {
-  const storage = BunStorage.layer(streams, { client: { filename }, readLimit: 1 });
+  const storage = BunStorage.layer(streams, { client: { filename } });
 
   return Layer.mergeAll(CheckpointStore.layer, Transaction.layer, sqliteBlobs).pipe(
     Layer.provideMerge(storage),

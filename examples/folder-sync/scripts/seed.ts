@@ -27,7 +27,7 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
   const path = yield* Path.Path;
   const root = server.replace(/\/$/, "");
   const created = new Set<string>();
-  const versions = new Map<string, string>();
+  const versions = new Map<string, number>();
   const files = (yield* fs.readDirectory(directory, { recursive: true })).toSorted();
 
   for (const relative of files) {

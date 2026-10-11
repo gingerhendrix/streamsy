@@ -12,10 +12,10 @@ import {
 import { parseArguments } from "../../sync/arguments.ts";
 
 const head = {
-  version: "0000000000000001_0000000000000002",
+  version: 2,
   hash: "a",
   localHash: "b",
-  localVersion: "0000000000000001_0000000000000002",
+  localVersion: 2,
 };
 
 test("echo checks distinguish a pending edit reverted to the server's bytes", () => {
@@ -28,15 +28,15 @@ test("echo checks distinguish a pending edit reverted to the server's bytes", ()
 
 test("apply decisions ignore duplicate and older per-folder versions", () => {
   expect(applyChange(head, head.version)).toBe(false);
-  expect(applyChange(head, "0000000000000001_0000000000000001")).toBe(false);
-  expect(applyChange(head, "0000000000000001_0000000000000003")).toBe(true);
+  expect(applyChange(head, 1)).toBe(false);
+  expect(applyChange(head, 3)).toBe(true);
   expect(applyChange(undefined, head.version)).toBe(true);
+  expect(applyChange({ ...head, version: 9 }, 10)).toBe(true);
+  expect(applyChange({ ...head, version: 12 }, 9)).toBe(false);
   expect(conflictBase(head)).toBe(head.version);
   expect(conflictBase({ ...head, hash: null, localHash: null })).toBe(head.version);
   expect(conflictBase(undefined)).toBeNull();
-  expect(conflictBase({ ...head, localVersion: "0000000000000001_0000000000000001" })).toBe(
-    "0000000000000001_0000000000000001",
-  );
+  expect(conflictBase({ ...head, localVersion: 1 })).toBe(1);
 });
 
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {

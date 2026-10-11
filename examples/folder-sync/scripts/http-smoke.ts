@@ -1,4 +1,4 @@
-import { StreamAddress } from "@streamsy/core";
+import { Offset, StreamAddress } from "@streamsy/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
 import { Config, Console, Effect, Fiber, Layer, Schedule, Schema } from "effect";
@@ -19,19 +19,19 @@ const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(
 
 const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
 
-const metadata = (opId: string, base?: string) => {
+const metadata = (opId: string, base?: number) => {
   const common = {
     "x-file-op-id": encodeURIComponent(opId),
     "x-file-author": encodeURIComponent("Zoë"),
     "x-file-origin": encodeURIComponent("smoke/雪"),
   };
 
-  return base === undefined ? common : { ...common, "x-file-base": base };
+  return base === undefined ? common : { ...common, "x-file-base": String(base) };
 };
 
 const text = (value: string) => new TextEncoder().encode(value);
 
-const written = (url: string, opId: string, body: Uint8Array, base?: string) =>
+const written = (url: string, opId: string, body: Uint8Array, base?: number) =>
   Effect.gen(function* () {
     const response = yield* HttpClient.put(url, {
       headers: metadata(opId, base),
@@ -45,7 +45,7 @@ const written = (url: string, opId: string, body: Uint8Array, base?: string) =>
 
 class NotIndexed extends Schema.TaggedError<NotIndexed>()("NotIndexed", {}) {}
 
-const searchUntil = (url: string, q: string, version: string) =>
+const searchUntil = (url: string, q: string, version: number) =>
   Effect.gen(function* () {
     const response = yield* HttpClient.get(`${url}/api/search?q=${encodeURIComponent(q)}`);
     yield* check(response.status === 200, `search status ${response.status}`);
@@ -64,12 +64,12 @@ const searchUntil = (url: string, q: string, version: string) =>
     }),
   );
 
-const listUntil = (url: string, query: string, version: string) =>
+const listUntil = (url: string, query: string, version: number) =>
   Effect.gen(function* () {
     const response = yield* HttpClient.get(`${url}/api/ls?${query}`);
     yield* check(response.status === 200, `list status ${response.status}`);
     yield* check(
-      Schema.is(Version)(response.headers["stream-next-offset"]),
+      Schema.is(Offset)(response.headers["stream-next-offset"]),
       "ls includes its consumed feed cursor",
     );
 
@@ -95,6 +95,7 @@ const readChanges = Effect.fn("Smoke.readChanges")(function* (url: string) {
     const response = yield* HttpClient.get(`${url}/streams/changes?offset=${offset}`);
     yield* check(response.status === 200, `changes status ${response.status}`);
     rows.push(...(yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* response.json)));
+    yield* check(rows.length > 1 || offset !== "-1", "changes catch-up batches multiple entries");
     const next = response.headers["stream-next-offset"];
 
     if (next === undefined) return yield* new SmokeFailure({ message: "missing changes cursor" });
@@ -116,6 +117,10 @@ const readManifest = Effect.fn("Smoke.readManifest")(function* (url: string) {
       "manifest serves Durable State contract",
     );
     const events = yield* Schema.decodeUnknownEffect(Events)(yield* response.json);
+    yield* check(
+      events.length > 1 || offset !== "-1",
+      "manifest catch-up batches multiple entries",
+    );
 
     for (const event of events) {
       if ("value" in event) rows.set(event.key, event.value);
@@ -178,7 +183,7 @@ const smoke = Effect.gen(function* () {
     yield* check(replay.version === third.version, "replay must reuse the version");
     const head = yield* HttpClient.get(`${url}?minVersion=${third.version}`);
     yield* check((yield* head.text) === "stale edit", "head bytes");
-    yield* check(head.headers["x-file-version"] === third.version, "head version");
+    yield* check(head.headers["x-file-version"] === String(third.version), "head version");
     const old = yield* HttpClient.get(`${url}?at=${first.version}`);
     yield* check((yield* old.text) === "first version", "historical bytes");
     const historyResponse = yield* HttpClient.get(`${folderUrl}/history/docs/hello%20world.md`);
@@ -209,7 +214,8 @@ const smoke = Effect.gen(function* () {
     );
     const replayHead = yield* HttpClient.get(replayUrl);
     yield* check(
-      (yield* replayHead.text) === "from B" && replayHead.headers["x-file-version"] === b1.version,
+      (yield* replayHead.text) === "from B" &&
+        replayHead.headers["x-file-version"] === String(b1.version),
       "replay preserves B's head",
     );
     const replayHistory = yield* HttpClient.get(`${folderUrl}/history/replay.md`);

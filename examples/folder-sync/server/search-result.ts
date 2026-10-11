@@ -1,11 +1,12 @@
 import { Schema } from "effect";
+import { Version } from "./domain.ts";
 
 export const SnippetPart = Schema.Struct({ text: Schema.String, match: Schema.Boolean });
 
 export const SearchResult = Schema.Struct({
   folderId: Schema.String,
   path: Schema.String,
-  version: Schema.String,
+  version: Version,
   snippet: Schema.Array(SnippetPart),
 });
 

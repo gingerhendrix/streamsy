@@ -77,18 +77,11 @@ export class Manifest extends Streamsy.state<Manifest>()("FolderSync/Manifest", 
 
 export const streams = Streamsy.group(Folders, Files, Changes, Manifest);
 
-/** Hosts use readLimit: 1 so this range's end is the exact version of this entry. */
 export const folderHead = Projection.fold({
   id: "folder-head",
   generation: 2,
   params: { folderId: FolderKey },
   inputs: { input: Files },
-  state: { schema: FolderState, initial: { heads: {}, ops: {} } },
-  fold: (state, { item }, unit) => {
-    const range = unit.ranges.input;
-
-    if (range === undefined) throw new Error("Missing folder log range");
-
-    return foldHead(state, item, range.nextOffset);
-  },
+  state: { schema: FolderState, initial: { seq: 0, heads: {}, ops: {} } },
+  fold: (state, { item }) => foldHead(state, item),
 });

@@ -11,7 +11,7 @@ export function FilePanel({
   open,
 }: {
   selection: Selection;
-  headVersion: string | undefined;
+  headVersion: number | undefined;
   open: (selection: Selection) => void;
 }) {
   const [file, setFile] = useState<OpenFile | null>(null);
@@ -24,7 +24,7 @@ export function FilePanel({
   const [readError, setReadError] = useState("");
   const dirty = file !== null && file.text !== null && file.text !== draft;
   const reads = useRef(draftReads());
-  const retry = useRef<{ text: string; base: string; author: string; opId: string } | null>(null);
+  const retry = useRef<{ text: string; base: number; author: string; opId: string } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();

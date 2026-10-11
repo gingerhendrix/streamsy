@@ -16,12 +16,13 @@ import {
   sha256,
 } from "../server/domain.ts";
 
-const v1 = "0000000000000001_0000000000000000";
+const v1 = 1;
 
-const v2 = "0000000000000002_0000000000000000";
+const v2 = 2;
 
 const first: FileOp = {
   type: "put",
+  version: v1,
   path: "docs/a.md",
   hash: "a".repeat(64),
   size: 1,
@@ -36,10 +37,11 @@ baseIt.effect(
   "head fold retains tombstones and follows commit order without mutating prior heads",
   () =>
     Effect.sync(() => {
-      const before = foldHead({ heads: {}, ops: {} }, first, v1);
+      const before = foldHead({ seq: 0, heads: {}, ops: {} }, first);
 
       const deletion: FileOp = {
         type: "delete",
+        version: v2,
         path: first.path,
         base: v1,
         opId: "delete",
@@ -47,7 +49,7 @@ baseIt.effect(
         origin: "test",
       };
 
-      const after = foldHead(before, deletion, v2);
+      const after = foldHead(before, deletion);
       expect(before.heads[first.path]).toMatchObject({
         version: v1,
         hash: first.hash,
@@ -71,7 +73,7 @@ baseIt.effect(
       expect(headAt({}, "constructor")).toBeUndefined();
       expect(
         headAt(
-          foldHead({ heads: {}, ops: {} }, { ...first, path: "__proto__" }, v1).heads,
+          foldHead({ seq: 0, heads: {}, ops: {} }, { ...first, path: "__proto__" }).heads,
           "__proto__",
         )?.opId,
       ).toBe("first");
@@ -98,6 +100,12 @@ baseIt.effect("FileOp schema rejects missing content, invalid hashes and malform
       { ...first, inline: undefined },
       { ...first, hash: "not a hash" },
       { ...first, base: "1" },
+      { ...first, version: undefined },
+      { ...first, version: "1" },
+      { ...first, version: 0 },
+      { ...first, version: -1 },
+      { ...first, version: 1.5 },
+      { ...first, version: Number.MAX_SAFE_INTEGER + 1 },
       { ...first, size: -1 },
       { ...first, opId: "" },
       { ...first, path: "a/../b" },

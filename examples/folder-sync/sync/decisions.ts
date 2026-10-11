@@ -1,12 +1,12 @@
-/** Server versions and feed cursors are separate, fixed-width lexical offsets. */
+/** Server versions are folder sequences. Feed cursors are stream offsets. */
 export interface KnownHead {
-  readonly version: string | null;
+  readonly version: number | null;
   readonly hash: string | null;
   readonly localHash: string | null;
-  readonly localVersion: string | null;
+  readonly localVersion: number | null;
 }
 
-export const applyChange = (known: KnownHead | undefined, version: string) =>
+export const applyChange = (known: KnownHead | undefined, version: number) =>
   known?.version == null || version > known.version;
 
 export const conflictBase = (known: KnownHead | undefined) => known?.localVersion ?? null;

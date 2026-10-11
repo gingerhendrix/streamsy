@@ -1,6 +1,6 @@
 import { DurableState } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
 import { MissingFile, overwriteMarkFromOp } from "./domain.ts";
@@ -16,17 +16,19 @@ export const indexProjections = (generation = 1) => {
     outputs: { output: Changes },
     commit: Commit.producer,
     emit: ({ item }, unit) => {
-      const range = unit.ranges.input;
-
-      if (range === undefined) throw new Error("Missing folder log range");
-
       return {
         output: [
           {
             folderId: unit.params.folderId,
             path: item.path,
-            version: range.nextOffset,
-            ...(item.type === "put" ? { hash: item.hash, size: item.size } : { size: 0 }),
+            version: item.version,
+            ...(item.type === "put"
+              ? {
+                  hash: item.hash,
+                  size: item.size,
+                  ...("inline" in item ? { inline: item.inline } : { blob: item.blob }),
+                }
+              : { size: 0 }),
             deleted: item.type === "delete",
             ...overwriteMarkFromOp(item),
             author: item.author,
@@ -92,27 +94,7 @@ export const indexProjections = (generation = 1) => {
             return { change, text: searchableText(bytes) };
           }
 
-          const files = yield* Files;
-
-          const entry = yield* files.read({ folderId: change.folderId }).pipe(
-            Stream.filter((page) => page.nextOffset === change.version),
-            Stream.take(1),
-            Stream.runCollect,
-          );
-
-          const operation = entry[0]?.items[0];
-
-          if (operation === undefined || operation.type !== "put" || operation.path !== change.path)
-            return yield* new MissingFile({ message: "Change has no matching folder log entry" });
-
-          if ("inline" in operation) return { change, text: operation.inline };
-          const blobs = yield* BlobStore;
-          const bytes = yield* blobs.get(operation.blob);
-
-          if (bytes === undefined)
-            return yield* new MissingFile({ message: "Indexed blob is missing" });
-
-          return { change, text: searchableText(bytes) };
+          return yield* new MissingFile({ message: "Live change has no content reference" });
         }),
       ),
     process: (_batch, _unit, prepared) =>

@@ -18,6 +18,7 @@ import {
   Hash,
   Identifier,
   Version,
+  VersionFromString,
 } from "./domain.ts";
 import { FolderStore } from "./folder-store.ts";
 import { Folder } from "./streams.ts";
@@ -73,7 +74,7 @@ const HeaderIdentifier = Schema.String.check(Schema.isPattern(/^[!-~]+$/)).pipe(
 );
 
 const metadataHeaders = {
-  "x-file-base": Schema.optionalKey(Version),
+  "x-file-base": Schema.optionalKey(VersionFromString),
   "x-file-op-id": HeaderIdentifier,
   "x-file-author": HeaderIdentifier,
   "x-file-origin": HeaderIdentifier,
@@ -103,7 +104,10 @@ class FilesApi extends HttpApiGroup.make("files").add(
   }),
   HttpApiEndpoint.get("read", "/folders/:folderId/files/*", {
     params: fileParams,
-    query: { at: Schema.optionalKey(Version), minVersion: Schema.optionalKey(Version) },
+    query: {
+      at: Schema.optionalKey(VersionFromString),
+      minVersion: Schema.optionalKey(VersionFromString),
+    },
     success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
     error: errors,
   }),
@@ -237,7 +241,7 @@ const HandlersLive = HttpApiBuilder.group(FolderSyncApi, "files", (handlers) =>
         apiErrors,
         Effect.map(({ bytes, version, operation }) =>
           HttpServerResponse.uint8Array(bytes, {
-            headers: { "x-file-version": version, etag: `"${operation.hash}"` },
+            headers: { "x-file-version": String(version), etag: `"${operation.hash}"` },
           }),
         ),
       ),

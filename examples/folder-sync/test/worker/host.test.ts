@@ -543,7 +543,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           const head = yield* HttpClient.get(`${restarted.url}${file}`);
           expect(new Uint8Array(yield* head.arrayBuffer)).toEqual(bytes);
-          expect(head.headers["x-file-version"]).toBe(receipt.version);
+          expect(head.headers["x-file-version"]).toBe(String(receipt.version));
 
           const replay = yield* HttpClient.put(`${restarted.url}${file}`, {
             headers: metadata,

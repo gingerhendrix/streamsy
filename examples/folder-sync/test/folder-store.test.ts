@@ -1,6 +1,6 @@
 import { expect, layer } from "@streamsy/effect-test";
 import { ZERO_OFFSET, StorageFault } from "@streamsy/core";
-import { Deferred, Effect, Fiber, Layer } from "effect";
+import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 import { InvalidFile, MissingFile } from "../server/domain.ts";
 import {
   FolderStore,
@@ -10,10 +10,11 @@ import {
   WriteHook,
   WriteHookFailure,
 } from "../server/folder-store.ts";
-import { Files, Folders } from "../server/streams.ts";
+import { Projection } from "@streamsy/projection";
+import { Files, Folders, folderHead } from "../server/streams.ts";
 import { memoryHost, sqliteHost } from "../server/storage.ts";
 
-const metadata = (opId: string, base: string | null = null) => ({
+const metadata = (opId: string, base: number | null = null) => ({
   opId,
   base,
   author: "test",
@@ -123,12 +124,7 @@ for (const [name, storage] of [
         ).toBe("one");
         expect(
           yield* Effect.flip(
-            store.write(
-              "lww",
-              "a.md",
-              metadata("future", "9999999999999999_0000000000000000"),
-              bytes("bad"),
-            ),
+            store.write("lww", "a.md", metadata("future", 9007199254740991), bytes("bad")),
           ),
         ).toBeInstanceOf(InvalidFile);
       }),
@@ -169,7 +165,7 @@ for (const [name, storage] of [
           expect(yield* store.history("replay", "other")).toEqual([]);
         }),
     );
-    it.effect("history has exact per-entry offsets across paths, deletes and recreation", () =>
+    it.effect("history has exact per-entry versions across paths, deletes and recreation", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
         yield* store.create("history", "History");
@@ -204,6 +200,62 @@ for (const [name, storage] of [
         );
       }),
     );
+    it.effect(
+      "batched history and a copied log rebuild retain folder sequences and first receipts",
+      () =>
+        Effect.gen(function* () {
+          const store = yield* FolderStore;
+          const files = yield* Files;
+          yield* store.create("sequence", "Sequence");
+
+          for (let version = 1; version <= 12; version++) {
+            const receipt = yield* store.write(
+              "sequence",
+              version % 2 ? "a" : "b",
+              metadata(`seq-${version}`),
+              bytes(`text-${version}`),
+            );
+
+            expect(receipt.version).toBe(version);
+          }
+
+          const pages = yield* files.read({ folderId: "sequence" }).pipe(Stream.runCollect);
+          expect(pages).toHaveLength(1);
+          expect(pages[0]?.items).toHaveLength(12);
+          expect((yield* store.history("sequence", "a")).map((row) => row.version)).toEqual([
+            1, 3, 5, 7, 9, 11,
+          ]);
+
+          for (const version of [1, 5, 9, 11]) {
+            const row = yield* store.read("sequence", "a", { at: version });
+            expect(row.version).toBe(version);
+            expect(row.operation.version).toBe(version);
+            expect(row.bytes).toEqual(bytes(`text-${version}`));
+          }
+
+          yield* Projection.run(folderHead.at({ folderId: "sequence" }));
+          const live = (yield* Projection.read(folderHead.at({ folderId: "sequence" }))).state;
+          const rebuilt = { ...folderHead.at({ folderId: "sequence" }), generation: 3 };
+          yield* Projection.run(rebuilt);
+          expect((yield* Projection.read(rebuilt)).state).toEqual(live);
+
+          // One append assigns different storage offsets while retaining every entry's version.
+          yield* store.create("copy", "Copied log");
+          const operations = (yield* files.collect({ folderId: "sequence" })).items;
+          const [first, ...remaining] = operations;
+
+          if (first === undefined) throw new Error("Expected source operations");
+          yield* files.append({ folderId: "copy" }, [first, ...remaining]);
+          yield* Projection.run(folderHead.at({ folderId: "copy" }));
+          expect((yield* Projection.read(folderHead.at({ folderId: "copy" }))).state).toEqual(live);
+          expect(
+            (yield* store.write("copy", "a", metadata("seq-1"), bytes("ignored replay"))).version,
+          ).toBe(1);
+          expect((yield* files.collect({ folderId: "copy" })).items).toHaveLength(12);
+          const next = yield* store.write("copy", "b", metadata("seq-13", 9), bytes("next"));
+          expect(next).toEqual({ version: 13, overwrote: 12 });
+        }),
+    );
     it.effect("delete requires a live head, while known delete replays never append again", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
@@ -219,7 +271,9 @@ for (const [name, storage] of [
         expect(
           yield* Effect.flip(store.write("delete", "a", metadata("delete-again", deleted.version))),
         ).toBeInstanceOf(MissingFile);
-        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(deleted.version);
+        expect((yield* files.collect({ folderId: "delete" })).items.at(-1)?.version).toBe(
+          deleted.version,
+        );
         expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
 
         const restored = yield* store.write(
@@ -230,7 +284,9 @@ for (const [name, storage] of [
         );
 
         expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
-        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(restored.version);
+        expect((yield* files.collect({ folderId: "delete" })).items.at(-1)?.version).toBe(
+          restored.version,
+        );
         expect((yield* store.read("delete", "a")).bytes).toEqual(bytes("restored"));
         expect(yield* store.history("delete", "a")).toHaveLength(3);
       }),
@@ -249,7 +305,7 @@ for (const [name, storage] of [
           { concurrency: 2 },
         );
 
-        const sorted = results.toSorted((a, b) => a.version.localeCompare(b.version));
+        const sorted = results.toSorted((a, b) => a.version - b.version);
         expect(sorted[0]?.overwrote).toBeUndefined();
         expect(sorted[1]?.overwrote).toBe(sorted[0]?.version);
         const latest = sorted[1];
@@ -258,12 +314,12 @@ for (const [name, storage] of [
         expect((yield* store.read("race", "a")).version).toBe(latest.version);
       }),
     );
-    it.effect("minVersion waits for the folder log while allowing writes to proceed", () =>
+    it.effect("minVersion waits for the head fold while allowing writes to proceed", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
         yield* store.create("wait", "Wait");
         const first = yield* store.write("wait", "a", metadata("first"), bytes("a"));
-        const expected = "0000000000000002_0000000000000000";
+        const expected = 2;
         const files = yield* Files;
         const parked = yield* Deferred.make<void>();
 

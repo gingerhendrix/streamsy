@@ -8,7 +8,7 @@ layer(stateLayer(":memory:"))((it) => {
     () =>
       Effect.gen(function* () {
         const state = yield* SyncState;
-        const version = "0000000000000001_0000000000000000";
+        const version = 1;
         const hash = "a".repeat(64);
 
         const known = {
@@ -45,7 +45,7 @@ layer(stateLayer(":memory:"))((it) => {
         const first = (yield* state.pending())[0];
 
         if (first === undefined) return yield* Effect.die("Missing first save");
-        const receipt = "0000000000000002_0000000000000000";
+        const receipt = 2;
         yield* state.dropAndRebase(first.seq, known, version, receipt);
         const second = (yield* state.pending())[0];
 

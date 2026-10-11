@@ -40,7 +40,7 @@ const until = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boole
     }),
   );
 
-const metadata = (opId: string, base: string | null = null) => ({
+const metadata = (opId: string, base: number | null = null) => ({
   opId,
   base,
   author: "Zoë",
@@ -115,8 +115,8 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
         yield* initialiseSearch;
         const sql = yield* SqlClient.SqlClient;
         const index = yield* FileIndex;
-        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'a.md', 'v1', ${"needle " + "filler ".repeat(100)})`;
-        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'z.md', 'v2', ${"<img src=x onerror=alert(1)> needle needle needle"})`;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'a.md', 1, ${"needle " + "filler ".repeat(100)})`;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('docs', 'z.md', 2, ${"<img src=x onerror=alert(1)> needle needle needle"})`;
         const hits = yield* index.search("needle");
         expect(hits.map((hit) => hit.path)).toEqual(["z.md", "a.md"]);
         expect(hits[0]?.snippet.some((part) => part.match && part.text.includes("needle"))).toBe(
@@ -143,15 +143,19 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
       const write = (n: number) =>
         store.write("burst", `file-${n % 20}.md`, metadata(`burst-${n}`), bytes(`value-${n}`));
 
+      const pipeline = indexProjections();
       yield* Effect.forEach(
-        Array.from({ length: 40 }, (_, n) => n),
+        Array.from({ length: 10 }, (_, n) => n),
         write,
       );
-      const pipeline = indexProjections();
-
       yield* Projection.run(pipeline.folderChanges.at({ folderId: "burst" }));
-      // Force a lagging manifest. A feed-tail cursor here would skip 30 committed changes.
-      yield* Projection.run(pipeline.manifest.at({}), { limit: 10 });
+      yield* Projection.run(pipeline.manifest.at({}));
+      // Persist ten heads, then let only Changes catch up with the remaining burst.
+      yield* Effect.forEach(
+        Array.from({ length: 30 }, (_, n) => n + 10),
+        write,
+      );
+      yield* Projection.run(pipeline.folderChanges.at({ folderId: "burst" }));
       const feedTailBeforeBootstrap = (yield* changes.head({})).nextOffset;
 
       const writer = yield* Effect.forEach(
@@ -206,6 +210,7 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
           {
             type: "put",
             path: "same-one.md",
+            version: 1,
             hash: "a".repeat(64),
             size: 12,
             inline: "same instant",
@@ -217,6 +222,7 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
           {
             type: "put",
             path: "same-two.md",
+            version: 2,
             hash: "b".repeat(64),
             size: 12,
             inline: "same instant",
@@ -372,16 +378,14 @@ layer(Layer.empty, { excludeTestServices: true })((it) => {
       yield* Projection.run(rebuilt.search.at({}));
       const elapsed = (yield* Clock.currentTimeMillis) - start;
       yield* Console.log(
-        `folder-sync rebuild: 44 commits, 32 original files, ~213 KiB text, ${elapsed} ms, readLimit=1`,
+        `folder-sync rebuild: 44 commits, 32 original files, ~213 KiB text, ${elapsed} ms, readLimit=1000`,
       );
       expect(yield* manifestRows).toEqual(live);
       expect(yield* index.search("durable")).toEqual(liveSearch);
       const rebuiltFeed = (yield* changes.collect({})).items;
 
       const order = (rows: typeof rebuiltFeed) =>
-        rows.toSorted(
-          (a, b) => a.folderId.localeCompare(b.folderId) || a.version.localeCompare(b.version),
-        );
+        rows.toSorted((a, b) => a.folderId.localeCompare(b.folderId) || a.version - b.version);
 
       expect(order(rebuiltFeed)).toEqual(order(originalFeed));
     }).pipe(

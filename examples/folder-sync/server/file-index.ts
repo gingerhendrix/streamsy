@@ -92,7 +92,7 @@ const make = Effect.gen(function* () {
     if (q.trim() === "") return [];
 
     const rows = yield* sql
-      .unsafe<{ folderId: string; path: string; version: string; snippet: string }>(
+      .unsafe<{ folderId: string; path: string; version: number; snippet: string }>(
         `SELECT folderId, path, version, snippet(folder_sync_search, 3, char(1), char(2), '…', 24) AS snippet
        FROM folder_sync_search WHERE folder_sync_search MATCH ?
        ${folder === undefined ? "" : "AND folderId = ?"} ORDER BY rank, folderId, path LIMIT 100`,

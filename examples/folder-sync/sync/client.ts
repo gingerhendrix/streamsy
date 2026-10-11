@@ -1,7 +1,8 @@
+import { Offset } from "@streamsy/core";
 import type { HttpClientError } from "effect/http/HttpClientError";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { FileOp, Hash, Version } from "../server/domain.ts";
+import { FileOp, Hash, Version, VersionFromString } from "../server/domain.ts";
 import { Change, ManifestFile } from "../server/streams.ts";
 import { encodeFilePath } from "./decisions.ts";
 import type { Pending } from "./state.ts";
@@ -17,7 +18,7 @@ const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(
 const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
 
 export interface RemoteHead {
-  readonly version: string | null;
+  readonly version: number | null;
   readonly hash: string | null;
   readonly bytes: Uint8Array | null;
 }
@@ -26,7 +27,7 @@ const reject = (status: number) =>
   new RemoteFailure({ message: `Server answered ${status}`, retryable: false, status });
 
 const cursor = (headers: Readonly<Record<string, string>>) =>
-  Schema.decodeUnknownEffect(Version)(headers["stream-next-offset"]);
+  Schema.decodeUnknownEffect(Offset)(headers["stream-next-offset"]);
 
 export const remoteLayer = (server: string, token?: string) =>
   Layer.effect(
@@ -131,7 +132,7 @@ export const remoteLayer = (server: string, token?: string) =>
       const head = Effect.fn("SyncRemote.head")(function* (
         folderId: string,
         path: string,
-        minVersion?: string,
+        minVersion?: number,
       ): Effect.fn.Return<RemoteHead, RemoteFailure | RemoteDecodeError> {
         const response = yield* request(
           HttpClientRequest.get(
@@ -140,7 +141,7 @@ export const remoteLayer = (server: string, token?: string) =>
         );
 
         if (response.status === 200) {
-          const version = yield* Schema.decodeUnknownEffect(Version)(
+          const version = yield* Schema.decodeUnknownEffect(VersionFromString)(
             response.headers["x-file-version"],
           );
 
@@ -174,7 +175,7 @@ export const remoteLayer = (server: string, token?: string) =>
         };
 
         const headers =
-          operation.base === null ? common : { ...common, "x-file-base": operation.base };
+          operation.base === null ? common : { ...common, "x-file-base": String(operation.base) };
 
         const url = fileUrl(operation.folderId, operation.path);
 
@@ -220,13 +221,13 @@ export class SyncRemote extends Context.Service<
     readonly head: (
       folderId: string,
       path: string,
-      minVersion?: string,
+      minVersion?: number,
     ) => Effect.Effect<RemoteHead, RemoteFailure | RemoteDecodeError>;
     readonly push: (
       operation: Pending,
       origin: string,
     ) => Effect.Effect<
-      { version: string | null; overwrote?: string },
+      { version: number | null; overwrote?: number },
       RemoteFailure | RemoteDecodeError
     >;
   }

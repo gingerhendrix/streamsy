@@ -169,7 +169,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   const install = Effect.fn("Sync.install")(function* (
     folderId: string,
     file: string,
-    head: { version: string | null; hash: string | null; bytes: Uint8Array | null },
+    head: { version: number | null; hash: string | null; bytes: Uint8Array | null },
     exceptSeq?: number,
     force = false,
     unknownServer = false,

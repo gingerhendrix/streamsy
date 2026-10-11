@@ -62,8 +62,6 @@ export const objectStorage = (
   group: Streamsy.Group = streams,
 ) =>
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer, r2Blobs(env)).pipe(
-    Layer.provideMerge(
-      DurableObjectStorage.layer(group, { client: { storage: state.storage }, readLimit: 1 }),
-    ),
+    Layer.provideMerge(DurableObjectStorage.layer(group, { client: { storage: state.storage } })),
     Layer.provideMerge(webCrypto),
   );

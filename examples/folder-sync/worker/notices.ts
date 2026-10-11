@@ -130,8 +130,8 @@ export const deliveryLayer = (env: Env) =>
 
 export const noticeTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_notices (folderId TEXT NOT NULL, version TEXT NOT NULL, PRIMARY KEY (folderId, version))`;
-  yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_index_heads (folderId TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, PRIMARY KEY (folderId, path))`;
+  yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_notices (folderId TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (folderId, version))`;
+  yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_index_heads (folderId TEXT NOT NULL, path TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (folderId, path))`;
 });
 
 /** Receiver dedup and authoritative inbox append share the index owner's transaction. */
@@ -163,7 +163,7 @@ export const noticeChanges = Projection.process({
       const { folderId, version, operation } = item;
 
       const rows = yield* sql<{
-        version: string;
+        version: number;
       }>`SELECT version FROM folder_sync_index_heads WHERE folderId = ${folderId} AND path = ${operation.path}`;
 
       if (rows[0] !== undefined && rows[0].version >= version) return;

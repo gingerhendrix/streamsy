@@ -5,6 +5,7 @@ import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema } from "ef
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
+import { Offset } from "@streamsy/core";
 import { FILE_LIMIT, FileOp, Version } from "../../server/domain.ts";
 import { conflictPath, encodeFilePath } from "../../sync/decisions.ts";
 import { runSync, sync as startSync } from "../../sync/engine.ts";
@@ -420,8 +421,8 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
 
         const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
         const state = yield* SyncState.pipe(Effect.provideContext(context));
-        let delivered: string | null = null;
-        let external: string | undefined;
+        let delivered: number | null = null;
+        let external: number | undefined;
         const fetched = yield* Deferred.make<void>();
 
         const wrapped = SyncRemote.of({
@@ -893,7 +894,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           yield* state.get("epoch"),
         );
 
-        const oldCursor = yield* Schema.decodeUnknownEffect(Version)(yield* state.get("cursor"));
+        const oldCursor = yield* Schema.decodeUnknownEffect(Offset)(yield* state.get("cursor"));
         expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("old index");
         expect(bootstraps).toBe(1);
 

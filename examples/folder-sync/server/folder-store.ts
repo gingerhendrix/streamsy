@@ -34,7 +34,7 @@ export class WriteHook extends Context.Service<
     readonly committed: (
       folderId: string,
       operation: FileOp,
-      version: string,
+      version: number,
     ) => Effect.Effect<void, WriteHookError>;
   }
 >()("FolderSync/WriteHook") {}
@@ -119,7 +119,6 @@ const write = Effect.fn("Folder.write")(function* (
         input: "input",
         decide: ({
           state,
-          offsets,
         }): Effect.Effect<Decision<WriteDecision, FileOp>, InvalidFile | MissingFile> => {
           const replay = operationAt(state.ops, meta.opId);
 
@@ -135,13 +134,15 @@ const write = Effect.fn("Folder.write")(function* (
           if (content === undefined && (head === undefined || head.deleted))
             return Effect.fail(new MissingFile({ message: "File not found" }));
 
-          if (meta.base !== null && meta.base > (offsets.input ?? ZERO_OFFSET))
+          if (meta.base !== null && meta.base > state.seq)
             return Effect.fail(
               new InvalidFile({ message: "Base version is ahead of the folder log" }),
             );
 
           const common = {
             ...meta,
+            // Projection.decide appends with expectedOffset, so competing writers cannot reuse seq + 1.
+            version: state.seq + 1,
             path: normalized,
             ...overwriteMark(head, meta.base),
             updatedAt: DateTime.formatIso(writtenAt),
@@ -163,16 +164,21 @@ const write = Effect.fn("Folder.write")(function* (
         };
 
       if (result.appended)
-        yield* hook.committed(folderId, result.value.operation, result.offset).pipe(
-          Effect.mapError((error) =>
-            Match.value(error).pipe(
-              Match.tag("InvalidFile", (invalid) => invalid),
-              Match.orElse((cause) => new WriteHookFailure({ cause })),
+        yield* hook
+          .committed(folderId, result.value.operation, result.value.operation.version)
+          .pipe(
+            Effect.mapError((error) =>
+              Match.value(error).pipe(
+                Match.tag("InvalidFile", (invalid) => invalid),
+                Match.orElse((cause) => new WriteHookFailure({ cause })),
+              ),
             ),
-          ),
-        );
+          );
 
-      return { version: result.offset, ...overwriteMarkFromOp(result.value.operation) };
+      return {
+        version: result.value.operation.version,
+        ...overwriteMarkFromOp(result.value.operation),
+      };
     }),
   );
 });
@@ -184,11 +190,10 @@ const history = Effect.fn("Folder.history")(function* (folderId: string, path: s
 
   return yield* files.read({ folderId }).pipe(
     Stream.runFold(
-      () => new Array<{ version: string; operation: FileOp }>(),
+      () => new Array<{ version: number; operation: FileOp }>(),
       (rows, batch) => {
-        // Storage readLimit: 1 preserves the exact offset of every entry.
         for (const operation of batch.items) {
-          if (operation.path === normalized) rows.push({ version: batch.nextOffset, operation });
+          if (operation.path === normalized) rows.push({ version: operation.version, operation });
         }
 
         return rows;
@@ -199,33 +204,44 @@ const history = Effect.fn("Folder.history")(function* (folderId: string, path: s
 
 const waitForVersion = Effect.fn("Folder.waitForVersion")(function* (
   folderId: string,
-  version: string,
+  version: number,
 ) {
   const files = yield* Files;
-  let tail = (yield* requireFolder(folderId)).nextOffset;
+  yield* requireFolder(folderId);
+  const boundary = yield* CommitBoundary;
+  const projection = folderHead.at({ folderId });
 
-  while (tail < version) {
-    const page = yield* files.wire.readNext(Files.at({ folderId }).id, { offset: tail });
-    tail = page.nextOffset;
+  while (true) {
+    const progress = yield* boundary.withTransaction(
+      Projection.run(projection).pipe(Effect.andThen(Projection.read(projection))),
+    );
+
+    if (progress.state.seq >= version) return;
+    // Wait outside the transaction. This offset is only a wake-up cursor; the fold decides readiness.
+    yield* files.wire.readNext(Files.at({ folderId }).id, {
+      offset: progress.offsets.input ?? ZERO_OFFSET,
+    });
   }
 });
 
 const read = Effect.fn("Folder.read")(function* (
   folderId: string,
   path: string,
-  options: { at?: string; minVersion?: string } = {},
+  options: { at?: number; minVersion?: number } = {},
 ) {
   const normalized = yield* normalisePath(path);
   yield* requireFolder(folderId);
 
-  if (options.minVersion !== undefined)
-    yield* waitForVersion(folderId, options.minVersion).pipe(
+  const minVersion = options.minVersion;
+
+  if (minVersion !== undefined)
+    yield* waitForVersion(folderId, minVersion).pipe(
       Effect.timeoutOrElse({
         duration: "10 seconds",
-        orElse: () => new VersionUnavailable({ version: options.minVersion ?? ZERO_OFFSET }),
+        orElse: () => new VersionUnavailable({ version: minVersion }),
       }),
     );
-  let selected: { version: string; operation: FileOp } | undefined;
+  let selected: { version: number; operation: FileOp } | undefined;
 
   if (options.at !== undefined) {
     selected = (yield* history(folderId, normalized)).find((row) => row.version === options.at);

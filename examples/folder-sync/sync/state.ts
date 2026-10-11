@@ -31,11 +31,11 @@ const Rejected = Schema.Struct({ ...Pending.fields, status: Schema.Int, reason: 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS known (
-    folderId TEXT NOT NULL, path TEXT NOT NULL, version TEXT, hash TEXT, localHash TEXT, localVersion TEXT,
+    folderId TEXT NOT NULL, path TEXT NOT NULL, version INTEGER, hash TEXT, localHash TEXT, localVersion INTEGER,
     PRIMARY KEY (folderId, path))`);
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, folderId TEXT NOT NULL, path TEXT NOT NULL,
-    opId TEXT NOT NULL UNIQUE, base TEXT, hash TEXT, bytes BLOB)`);
+    opId TEXT NOT NULL UNIQUE, base INTEGER, hash TEXT, bytes BLOB)`);
   yield* sql.unsafe(
     "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
   );
@@ -43,7 +43,7 @@ const make = Effect.gen(function* () {
 
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS rejected (
     seq INTEGER PRIMARY KEY, folderId TEXT NOT NULL, path TEXT NOT NULL, opId TEXT NOT NULL,
-    base TEXT, hash TEXT, bytes BLOB, status INTEGER NOT NULL, reason TEXT NOT NULL)`);
+    base INTEGER, hash TEXT, bytes BLOB, status INTEGER NOT NULL, reason TEXT NOT NULL)`);
 
   const reject = Effect.fn("SyncState.reject")(function* (
     seq: number,
@@ -101,8 +101,8 @@ const make = Effect.gen(function* () {
   const dropAndRebase = Effect.fn("SyncState.dropAndRebase")(function* (
     seq: number,
     path: { folderId: string; path: string },
-    oldBase: string | null,
-    newBase: string | null,
+    oldBase: number | null,
+    newBase: number | null,
   ) {
     yield* sql.withTransaction(
       Effect.gen(function* () {

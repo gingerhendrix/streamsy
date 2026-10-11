@@ -1,12 +1,12 @@
 import { Schema } from "effect";
-import { FileOp, Version } from "../server/domain.ts";
+import { FileOp, Version, VersionFromString } from "../server/domain.ts";
 import { SearchResult } from "../server/search-result.ts";
 import { encodeFilePath } from "../sync/decisions.ts";
 
 export interface Selection {
   folderId: string;
   path: string;
-  at?: string;
+  at?: number;
 }
 
 export const fileUrl = ({ folderId, path, at }: Selection) =>
@@ -47,7 +47,9 @@ export const readableText = (bytes: Uint8Array): string | null => {
 
 export const readFile = (selection: Selection, signal: AbortSignal) =>
   request(fileUrl(selection), { signal }).then((response) => {
-    const version = Schema.decodeUnknownSync(Version)(response.headers.get("x-file-version"));
+    const version = Schema.decodeUnknownSync(VersionFromString)(
+      response.headers.get("x-file-version"),
+    );
 
     return response.arrayBuffer().then((buffer) => ({
       version,
@@ -73,7 +75,7 @@ export const search = (q: string, signal: AbortSignal) =>
 export const saveFile = (
   selection: Selection,
   text: string,
-  base: string,
+  base: number,
   author: string,
   opId: string,
 ) =>
@@ -81,7 +83,7 @@ export const saveFile = (
     method: "PUT",
     headers: {
       ...writerHeaders(),
-      "x-file-base": base,
+      "x-file-base": String(base),
       "x-file-op-id": encodeURIComponent(opId),
       "x-file-author": encodeURIComponent(author.trim() || "anonymous"),
       "x-file-origin": encodeURIComponent("browser"),

@@ -25,7 +25,7 @@ test("file tree keeps opaque folder ids and handles file-directory name collisio
   const row = {
     id: "a",
     folderId: "docs/雪",
-    version: "v1",
+    version: 1,
     hash: "a",
     size: 1,
     updatedAt: "now",
@@ -46,8 +46,8 @@ test("text decoding preserves BOM and detects binary; file URLs encode IDs and p
   expect(readableText(new Uint8Array([239, 187, 191, 97]))).toBe("\ufeffa");
   expect(readableText(new Uint8Array([255]))).toBeNull();
   expect(readableText(new Uint8Array([0]))).toBeNull();
-  expect(fileUrl({ folderId: "docs/雪", path: "a/100%.md", at: "v1" })).toBe(
-    "/api/folders/docs%2F%E9%9B%AA/files/a/100%25.md?at=v1",
+  expect(fileUrl({ folderId: "docs/雪", path: "a/100%.md", at: 1 })).toBe(
+    "/api/folders/docs%2F%E9%9B%AA/files/a/100%25.md?at=1",
   );
 });
 
