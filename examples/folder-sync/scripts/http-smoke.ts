@@ -17,7 +17,11 @@ const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(
 const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
 
 const metadata = (opId: string, base?: string) => {
-  const common = { "x-file-op-id": opId, "x-file-author": "smoke", "x-file-origin": "smoke" };
+  const common = {
+    "x-file-op-id": encodeURIComponent(opId),
+    "x-file-author": encodeURIComponent("Zoë"),
+    "x-file-origin": encodeURIComponent("smoke/雪"),
+  };
 
   return base === undefined ? common : { ...common, "x-file-base": base };
 };
@@ -77,6 +81,19 @@ const smoke = Effect.gen(function* () {
     const historyResponse = yield* HttpClient.get(`${folderUrl}/history/docs/hello%20world.md`);
     const history = yield* Schema.decodeUnknownEffect(History)(yield* historyResponse.json);
     yield* check(history.length === 3, "history contains exactly three writes");
+    yield* check(
+      history.every(
+        ({ operation }) => operation.author === "Zoë" && operation.origin === "smoke/雪",
+      ),
+      "Unicode metadata survives the HTTP headers",
+    );
+
+    const invalidMetadata = yield* HttpClient.put(`${folderUrl}/files/invalid-metadata`, {
+      headers: { ...metadata("invalid"), "x-file-author": "%GG" },
+      body: HttpBody.uint8Array(text("invalid")),
+    });
+
+    yield* check(invalidMetadata.status === 400, "invalid percent-encoding answers 400");
     yield* check(history[2]?.operation.overwrote === second.version, "history overwrite mark");
     // A1 succeeds, B1 moves the head, then a lost-response outbox replays A1.
     const replayUrl = `${folderUrl}/files/replay.md`;
@@ -97,10 +114,12 @@ const smoke = Effect.gen(function* () {
       (yield* Schema.decodeUnknownEffect(History)(yield* replayHistory.json)).length === 2,
       "replay after B appends nothing",
     );
+
     const reused = yield* HttpClient.put(`${folderUrl}/files/other.md`, {
       headers: metadata("A1"),
       body: HttpBody.uint8Array(text("bad")),
     });
+
     yield* check(
       reused.status === 400 && (yield* reused.text).includes("opId already used"),
       "opId cannot move to another path",

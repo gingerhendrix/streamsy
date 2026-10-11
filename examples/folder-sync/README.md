@@ -19,7 +19,8 @@ Folder IDs are opaque strings. URL-encode the whole ID as one segment, including
 File paths are relative POSIX paths; encode each segment separately.
 
 - `PUT /api/folders/:folderId/files/*path` sends raw bytes. Supply `x-file-op-id`,
-  `x-file-author`, and `x-file-origin`. Supply `x-file-base` with the version last
+  `x-file-author`, and `x-file-origin`, percent-encoding each value with
+  `encodeURIComponent`. Invalid encoding answers 400. Supply `x-file-base` with the version last
   seen, or omit it for a file you have not seen. Text up to 64 KiB is inline;
   other files use immutable blobs. Files above 8 MiB answer 413.
 - `DELETE` on that path uses the same headers. Writes return `{ version, overwrote? }`.

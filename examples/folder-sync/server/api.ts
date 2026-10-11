@@ -57,11 +57,17 @@ const errors = [BadRequest, NotFound, TooLarge, Conflict, Unavailable, InternalE
 
 const fileParams = { folderId: Identifier, "*": Schema.String };
 
+/** HttpApi decodes these URI components before passing metadata to a handler. */
+const HeaderIdentifier = Schema.String.check(Schema.isPattern(/^[!-~]+$/)).pipe(
+  Schema.decodeTo(Schema.StringFromUriComponent),
+  Schema.decodeTo(Identifier),
+);
+
 const metadataHeaders = {
   "x-file-base": Schema.optionalKey(Version),
-  "x-file-op-id": Identifier,
-  "x-file-author": Identifier,
-  "x-file-origin": Identifier,
+  "x-file-op-id": HeaderIdentifier,
+  "x-file-author": HeaderIdentifier,
+  "x-file-origin": HeaderIdentifier,
 };
 
 const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
