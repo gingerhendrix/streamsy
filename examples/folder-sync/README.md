@@ -122,13 +122,17 @@ File paths are relative POSIX paths; encode each segment separately.
   path in the same folder answers 400.
 - `GET` returns raw bytes with `x-file-version` and a hash ETag. `?at=<version>`
   reads that exact entry for the path. `?minVersion=<version>` waits for the
-  folder log to reach that offset, then reads the current file head. It answers
-  503 if the log has not reached it after 10 seconds.
+  head fold to reach that folder sequence, then reads the current file head. It answers
+  503 if the fold has not reached it after 10 seconds.
 - `GET /api/folders/:folderId/history/*path` returns `{ version, operation }`
   entries, including tombstones and `overwrote` marks.
 - `GET /api/blobs/:hash` returns immutable bytes with long cache headers.
 
-Versions are Streamsy offsets, compared lexically. Directories are implicit.
+Versions are positive integers: a folder sequence starting at 1, carried in each
+`FileOp`. `Projection.decide` assigns `seq + 1` and appends with the expected log
+offset, so concurrent writers cannot commit the same sequence. JSON versions,
+`base`, and `overwrote` are numbers; headers and query parameters use decimal
+integers. Offsets remain stream cursors. Directories are implicit.
 Deletes keep history. A stale write wins in commit order and records the unseen
 head in `overwrote`. There is no rename operation.
 
@@ -161,8 +165,8 @@ log versions, so a search hit can be opened with `?at=<version>`.
   `?offset=<cursor>&live=long-poll`. A 204 response means no change before the
   long-poll timeout; continue with the returned cursor.
 
-The storage-wide page limit stays at one item for exact entry versions. Clients
-must follow pagination for both streams. New log entries carry a server timestamp;
+All hosts use the default page limit of 1000 entries. Clients must follow
+pagination for both streams. New log entries carry a server timestamp;
 older entries without one use the epoch timestamp during projection rebuilds.
 The timestamps never choose the winning write.
 
@@ -392,8 +396,9 @@ object persistence, then runs the entire sync integration suite against workerd.
 The ordinary `test` command keeps all Bun checks and includes the Worker host
 checks. Set `FOLDER_SYNC_SCRATCH` to place temporary test data in a chosen directory.
 
-Worker change entries include optional inline content or a blob hash. All reads
-are public, including these feed fields. Every stream still uses one-item pages.
+Change entries on both hosts include optional inline content or a blob hash.
+Search uses these fields without scanning the file log. All reads are public,
+including these feed fields. Streams use the default limit of 1000 entries.
 Delivered outbox rows and receiver dedup rows are retained without a quota.
 There is no public index-rebuild command; reset procedures must rotate the epoch
 and clear derived outputs, checkpoints, and index head tables together.

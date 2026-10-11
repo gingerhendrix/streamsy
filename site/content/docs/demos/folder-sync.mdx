@@ -38,12 +38,12 @@ Leave a draft open in the browser, edit the same file from a mirror, then save t
 
 ## Streams and versions
 
-| Stream                    | Role                                                          |
-| ------------------------- | ------------------------------------------------------------- |
-| `folders`                 | Registry that starts per-folder projection bindings           |
-| `folders/:folderId/files` | Authoritative file operations; its offset is the file version |
-| `changes`                 | Shared projected feed; its offset is the sync cursor          |
-| `manifest`                | Durable State events for current live file rows               |
+| Stream                    | Role                                                        |
+| ------------------------- | ----------------------------------------------------------- |
+| `folders`                 | Registry that starts per-folder projection bindings         |
+| `folders/:folderId/files` | Authoritative operations carrying a folder sequence version |
+| `changes`                 | Shared projected feed; its offset is the sync cursor        |
+| `manifest`                | Durable State events for current live file rows             |
 
 Folder IDs are opaque strings, including slashes. HTTP clients encode the whole ID as one URL segment. Internal stream IDs use a hex UTF-8 codec to keep each ID within one route segment. File paths encode each segment separately. There is no rename operation; directories are implicit.
 
@@ -65,7 +65,7 @@ export class Manifest extends Streamsy.state<Manifest>()("FolderSync/Manifest", 
 
 ## Decide at the folder head
 
-`Projection.decide` catches the folder fold up before deciding. A retained operation receipt makes a replay return its earlier version without appending. New writes use the input offset as the append condition. The write records an unseen head in `overwrote`; the server time never chooses the winner. The domain has no HTTP or host imports.
+`Projection.decide` catches the folder fold up before deciding. A retained operation receipt makes a replay return its earlier version without appending. New writes assign `seq + 1` as the version carried in each entry and use the input offset as the append condition. This prevents concurrent writers from committing the same folder sequence. Versions in JSON are positive integers; HTTP headers and queries use decimal integers. `minVersion` waits for the head fold to reach the sequence. Feed cursors remain stream offsets. The write records an unseen head in `overwrote`; the server time never chooses the winner. The domain has no HTTP or host imports.
 
 ```ts title="server/folder-store.ts"
 const replay = operationAt(state.ops, meta.opId);
@@ -83,6 +83,8 @@ const head = headAt(state.heads, normalized);
 ```ts title="server/folder-store.ts"
 const common = {
   ...meta,
+  // Projection.decide appends with expectedOffset, so competing writers cannot reuse seq + 1.
+  version: state.seq + 1,
   path: normalized,
   ...overwriteMark(head, meta.base),
   updatedAt: DateTime.formatIso(writtenAt),
@@ -91,7 +93,7 @@ const common = {
 
 ## Project into shared outputs
 
-A parameterized `emit` binding reads each folder log and writes into the shared changes stream with `Commit.producer`. The producer key keeps retries from duplicating output. One-item storage pages let the range end identify the exact folder version. This costs one checkpoint and one HTTP page per entry.
+A parameterized `emit` binding reads each folder log and writes into the shared changes stream with `Commit.producer`. The producer key keeps retries from duplicating output. Versions come from the entry. Storage uses the default limit of 1000 entries per page, so catch-up can process many commits in one batch. Change entries carry inline text or a blob hash for search preparation.
 
 ```ts title="server/projections.ts"
   const folderChanges = Projection.emit({
@@ -119,7 +121,7 @@ const snapshot = Effect.fn("FileIndex.snapshot")(function* (
         Effect.provideService(CheckpointStore, checkpoints),
       );
 
-      return { files, cursor: progress.offsets.input ?? ZERO_OFFSET };
+      return { files, cursor: progress.offsets.input ?? ZERO_OFFSET, epoch: yield* feedEpoch };
     }),
   );
 });
@@ -184,8 +186,8 @@ bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-syn
 ## Limits
 
 - The listener has no authentication. Anyone who can reach it can read and write files.
-- A browser load replays all retained manifest events, one entry per page. Load time grows with history.
-- Head checkpoints keep all paths and operation receipts. History reads and search preparation scan folder logs. The example suits a small corpus.
+- A browser load replays all retained manifest events, up to 1000 entries per page. Load time grows with history.
+- Head checkpoints keep all paths and operation receipts. History reads scan folder logs. Search preparation uses content references in the change feed. The example suits a small corpus.
 - Sync scans hash every selected file. Its local outbox and backup files have no quota.
 - The CLI preserves pending local edits, but an external editor can still save during the final local read-to-rename window.
 - Feed cursors are unsafe across an index rebuild. Use a fresh mirror after rebuilding; a feed epoch belongs to the Cloudflare slice.
