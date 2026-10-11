@@ -153,13 +153,14 @@ export const IndexLive = Layer.effectDiscard(
       const head = folderHead.at({ folderId });
       // Decide owns the SQL boundary before the projection permit. Use that same lock order.
       const progress = yield* boundary.withTransaction(Projection.run(head));
+      const bound = folderChanges.at({ folderId });
+      // Finish both catch-up runs before forking, so a failed registry attempt leaves no partial bindings.
+      yield* Projection.run(bound);
       yield* files.follow({ folderId }, { offset: progress.offsets.input }).pipe(
         Stream.runForEach(() => boundary.withTransaction(Projection.run(head))),
         (work) => supervise(`head:${folderId}`, work),
         Effect.forkIn(scope),
       );
-      const bound = folderChanges.at({ folderId });
-      yield* Projection.run(bound);
       yield* supervise(
         `changes:${folderId}`,
         Projection.follow(bound).pipe(Effect.flatMap(Fiber.join)),

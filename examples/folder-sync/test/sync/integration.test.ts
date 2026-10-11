@@ -657,11 +657,13 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
         yield* until(state.get("lastScan"), (value) => value !== scan);
         expect(yield* state.rejected()).toHaveLength(1);
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
         const listing = yield* spawner.string(
           ChildProcess.make("bun", ["sync/index.ts", "rejected", "--dir", mirror], {
             cwd: `${import.meta.dir}/../..`,
           }),
         );
+
         expect(listing).toContain('"status":404');
         expect(listing).toContain('"path":"reject.md"');
         expect(listing).not.toContain("retained rejected bytes");

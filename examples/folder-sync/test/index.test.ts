@@ -8,6 +8,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
   Result,
   Schedule,
   Schema,
@@ -24,6 +25,7 @@ import {
   manifest,
   search,
 } from "../server/projections.ts";
+import { BlobStore } from "../server/blob-store.ts";
 import { Changes, Files, Manifest, folderHead } from "../server/streams.ts";
 import { sqliteHost } from "../server/storage.ts";
 
@@ -54,6 +56,39 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 );
 
 layer(Layer.empty, { excludeTestServices: true })((it) => {
+  it.effect("a failed search follower logs and resumes its checkpoint", () =>
+    Effect.gen(function* () {
+      const blobs = yield* BlobStore;
+      let reads = 0;
+      const messages: unknown[] = [];
+      const logger = Logger.make(({ message }) => messages.push(message));
+      yield* Layer.build(IndexLive).pipe(
+        Effect.provideService(BlobStore, {
+          ...blobs,
+          get: (hash) => blobs.get(++reads === 1 ? "0".repeat(64) : hash),
+        }),
+        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+      );
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      yield* store.create("supervised", "Supervised");
+      yield* store.write(
+        "supervised",
+        "large.md",
+        metadata("supervised"),
+        bytes("text ".repeat(14000) + "recoveryneedle"),
+      );
+      yield* until(index.search("recoveryneedle"), (hits) => hits.length === 1);
+      expect(reads).toBeGreaterThanOrEqual(2);
+      expect(
+        messages.some((message) => String(message).includes("search failed; restarting")),
+      ).toBe(true);
+    }).pipe(
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Isolated scoped SQL runtime with an injected missing blob.
+      Effect.provide(graph),
+    ),
+  );
+
   it.effect(
     "search ranks relevant text before alphabetic paths and returns safe snippet parts",
     () =>
