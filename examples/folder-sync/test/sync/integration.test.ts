@@ -855,6 +855,21 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           snapshot.files.some((row) => row.version === initial.version),
         );
 
+        const blocked = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        let pauseReads = false;
+        let bootstraps = 0;
+
+        const read = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.gen(function* () {
+            if (pauseReads) {
+              yield* Deferred.succeed(blocked, undefined);
+              yield* Deferred.await(resume);
+            }
+
+            return yield* effect;
+          });
+
         const daemon = yield* runSync({
           server: server.url,
           directory: mirror,
@@ -863,15 +878,29 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         }).pipe(
           Effect.provideService(SyncRemote, {
             ...remote,
-            page: (cursor) => remote.page(cursor, false).pipe(Effect.delay("20 millis")),
+            snapshot: read(remote.snapshot).pipe(Effect.tap(() => Effect.sync(() => bootstraps++))),
+            tail: read(remote.tail),
+            head: (...args) => read(remote.head(...args)),
+            page: (cursor) => read(remote.page(cursor, false)),
           }),
           Effect.provideContext(context),
           Effect.forkScoped,
         );
 
         yield* until(state.get("ready"), (value) => value === "true");
-        const oldEpoch = yield* state.get("epoch");
-        const oldCursor = yield* state.get("cursor");
+
+        const oldEpoch = yield* Schema.decodeUnknownEffect(Schema.String)(
+          yield* state.get("epoch"),
+        );
+
+        const oldCursor = yield* Schema.decodeUnknownEffect(Version)(yield* state.get("cursor"));
+        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("old index");
+        expect(bootstraps).toBe(1);
+
+        // Stop at a read boundary before switching servers. The replacement must expose
+        // equal cursors and versions before the daemon can observe its different epoch.
+        pauseReads = true;
+        yield* Deferred.await(blocked);
         yield* server.stop;
 
         const replacement = yield* spawnServer({
@@ -884,11 +913,23 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         yield* create(replacement.url, "docs");
         const replaced = yield* put(replacement.url, "docs", "a.md", "replacement index", "new");
         expect(replaced.version).toBe(initial.version);
-        yield* until(state.get("epoch"), (value) => value !== undefined && value !== oldEpoch);
-        yield* until(
-          fs.readFileString(`${mirror}/docs/a.md`),
-          (value) => value === "replacement index",
+
+        const snapshot = yield* until(remote.snapshot, (value) =>
+          value.files.some((row) => row.version === replaced.version),
         );
+
+        expect(snapshot.cursor).toBe(oldCursor);
+        expect(snapshot.epoch).not.toBe(oldEpoch);
+        pauseReads = false;
+        yield* Deferred.succeed(resume, undefined);
+        yield* until(
+          Effect.gen(function* () {
+            return { epoch: yield* state.get("epoch"), ready: yield* state.get("ready") };
+          }),
+          (value) => value.epoch === snapshot.epoch && value.ready === "true",
+        );
+        expect(bootstraps).toBe(2);
+        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("replacement index");
         expect(yield* state.get("cursor")).toBe(oldCursor);
         expect(yield* state.pending()).toEqual([]);
         yield* Fiber.interrupt(daemon);
