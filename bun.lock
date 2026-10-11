@@ -62,6 +62,7 @@
       "name": "folder-sync",
       "dependencies": {
         "@effect/platform-bun": "4.0.1",
+        "@effect/sql-sqlite-bun": "4.0.1",
         "@streamsy/core": "workspace:*",
         "@streamsy/projection": "workspace:*",
         "@streamsy/serve": "workspace:*",

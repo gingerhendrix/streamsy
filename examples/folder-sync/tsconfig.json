@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "lib": ["ESNext", "DOM"], "types": ["bun-types"] },
-  "include": ["server", "test", "scripts"]
+  "include": ["server", "test", "scripts", "sync"]
 }

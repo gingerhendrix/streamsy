@@ -8,10 +8,12 @@
     "test": "bun run test:unit",
     "test:unit": "bun test test",
     "typecheck": "tsc --noEmit",
-    "smoke:http": "bun scripts/http-smoke.ts"
+    "smoke:http": "bun scripts/http-smoke.ts",
+    "sync": "bun sync/index.ts"
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.1",
+    "@effect/sql-sqlite-bun": "4.0.1",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",

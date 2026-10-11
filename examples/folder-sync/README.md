@@ -89,3 +89,57 @@ these manifest rows, read in the same SQL transaction. Bootstrap files from the
 rows, then tail `/streams/changes` from this header. A lagging manifest is safe:
 changes newer than its cursor are replayed. Filtered lists still return the global
 cursor; keep the same folder selection when tailing.
+
+## Sync CLI
+
+With the server running, create folders through the API, then mirror them:
+
+```sh
+bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir ./mirror --folders docs,notes --write notes
+```
+
+`--folders` selects folders; omit it to discover every folder with files. `--write`
+accepts a comma-separated list of writable folders and defaults to none. An edit
+in a read-only folder is restored from the server and logged. Writable folders
+must already exist on the server. Folder IDs and file names may contain Unicode.
+The comma syntax cannot select an ID containing a comma; the exported runner
+accepts arrays for that case.
+
+Files appear at `<dir>/<folderId>/<path>`. A slash in a folder ID stays a nested
+directory. `sync(options)` in `sync/engine.ts` accepts a `folderDirectory(id)`
+function returning a relative directory, so another host can choose its layout.
+Mappings must stay inside the mirror and use disjoint roots. Absolute IDs,
+traversal-like IDs, overlapping roots such as `docs` and `docs/api`, and the
+reserved `.folder-sync` directory require a different mapping or selection.
+Symlinks and special files are rejected. Run one daemon per mirror directory.
+
+The CLI bootstraps from `/api/ls` and its consumed cursor, fetches current heads,
+and tails every change page using long-poll. It keeps folder versions separate
+from the feed cursor and ignores older or duplicate versions. A cursor beyond
+the server's tail, or a regressing response cursor, triggers bootstrap again.
+The selection and server URL are bound to the state directory; use another
+`--dir` when changing them. Restarting with the same options resumes the cursor
+and any pending writes. `Ctrl+C` or `SIGTERM` closes watchers, requests, and SQLite;
+the Effect runtime uses exit code 130 for interruption.
+
+`.folder-sync/state.sqlite` stores known heads, observed hashes, tombstone
+versions, the feed cursor, and an immutable write outbox. The watcher ignores
+`.folder-sync`, waits 100 ms for editor bursts to settle, and hashes the resulting
+files. A periodic reconciliation scan also covers coalesced or missing watcher
+events. Pulled bytes with a known hash do not push back. A temp-file-then-rename
+save within the settle interval is observed as the final file. A longer-lived
+temporary file is a regular file and can be synced.
+
+Local edits are queued before sending. Offline writes and retryable HTTP failures
+(5xx, including `minVersion` 503, 409, and 429) retry with exponential backoff from
+100 ms to a 3 s ceiling. Replays reuse the original opId, base, and bytes. Pending
+edits stay on disk while remote changes arrive. After acceptance the CLI refreshes
+the authoritative head, so a lost-response replay cannot restore stale content
+over another writer. An unseen overwrite is logged. A delete pulled from the
+server retains its tombstone version for a later local recreation's base.
+Non-retryable HTTP errors and local I/O failures stop the CLI with an error; the
+outbox remains on disk for inspection or a corrected restart.
+
+This remains a demo: every scan hashes selected files, history and manifest reads
+grow with retained events, and outbox bodies are stored in SQLite without a disk
+quota. Folder logs and outbox entries retain the server's 8 MiB file limit.
