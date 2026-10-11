@@ -1,6 +1,6 @@
 import { CommitBoundary, ZERO_OFFSET } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, Effect, Layer, Schema, Scope, Stream } from "effect";
+import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { InvalidFile } from "./domain.ts";
 import { Changes, Files, Folders, Manifest, ManifestFile, folderHead } from "./streams.ts";
@@ -119,6 +119,22 @@ export class FileIndex extends Context.Service<FileIndex, Effect.Success<typeof 
 
 export const FileIndexLive = Layer.effect(FileIndex, make);
 
+class FollowerFailed extends Schema.TaggedError<FollowerFailed>()("FollowerFailed", {}) {}
+
+/** A stopped binding is logged and restarted, including defects from its handler. */
+export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =>
+  work.pipe(
+    Effect.andThen(Effect.fail(new FollowerFailed())),
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) =>
+        Effect.logError(`Index follower ${name} failed; restarting in one second`, cause).pipe(
+          Effect.andThen(Effect.fail(new FollowerFailed())),
+        ),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("1 second") }),
+  );
+
 /** Each runtime restores all known bindings before tailing the persisted registry checkpoint. */
 export const IndexLive = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -140,12 +156,15 @@ export const IndexLive = Layer.effectDiscard(
       const progress = yield* boundary.withTransaction(Projection.run(head));
       yield* files.follow({ folderId }, { offset: progress.offsets.input }).pipe(
         Stream.runForEach(() => boundary.withTransaction(Projection.run(head))),
-        Effect.tapError((error) => Effect.logError("Folder head follower failed", error)),
+        (work) => supervise(`head:${folderId}`, work),
         Effect.forkIn(scope),
       );
       const bound = folderChanges.at({ folderId });
       yield* Projection.run(bound);
-      yield* Projection.follow(bound).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* supervise(
+        `changes:${folderId}`,
+        Projection.follow(bound).pipe(Effect.flatMap(Fiber.join)),
+      ).pipe(Effect.forkIn(scope));
       started.add(folderId);
     });
 
@@ -153,10 +172,18 @@ export const IndexLive = Layer.effectDiscard(
 
     const triggers = folderTriggers(start).at({});
     yield* Projection.run(triggers);
-    yield* Projection.follow(triggers);
+    yield* supervise("registry", Projection.follow(triggers).pipe(Effect.flatMap(Fiber.join))).pipe(
+      Effect.forkIn(scope),
+    );
     yield* Projection.run(manifest.at({}));
     yield* Projection.run(search.at({}));
-    yield* Projection.follow(manifest.at({}));
-    yield* Projection.follow(search.at({}));
+    yield* supervise(
+      "manifest",
+      Projection.follow(manifest.at({})).pipe(Effect.flatMap(Fiber.join)),
+    ).pipe(Effect.forkIn(scope));
+    yield* supervise(
+      "search",
+      Projection.follow(search.at({})).pipe(Effect.flatMap(Fiber.join)),
+    ).pipe(Effect.forkIn(scope));
   }),
 );
