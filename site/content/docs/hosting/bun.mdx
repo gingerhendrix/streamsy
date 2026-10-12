@@ -63,7 +63,7 @@ On `SIGINT` or `SIGTERM`, `Serve.layer` answers live reads before the routes clo
 
 The Layer creates the file and its parent folder if they do not exist. A read-only open, or `create: false`, creates nothing. The file uses WAL mode. The driver busy timeout is zero. Streamsy retries a busy transaction itself, so the event loop does not block.
 
-The Layer gives `SqlClient`, `CommitBoundary`, `Storage`, the stream services, and a `Streamsy.ChangeFeed` key for each stream. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
+The Layer gives `SqlClient`, `CommitBoundary`, `Storage`, and the stream services. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
 
 A new file uses the 0.4 format. A file in another format is refused and not changed.
 

@@ -50,7 +50,7 @@
 
   <rect class="node" x="480" y="250" width="180" height="90" rx="14"/>
   <text class="node-title" x="570" y="290" text-anchor="middle">Triggers</text>
-  <text class="node-subtitle" x="570" y="310" text-anchor="middle">run, then watch</text>
+  <text class="node-subtitle" x="570" y="310" text-anchor="middle">run, then follow</text>
 
   <rect class="node" x="700" y="250" width="180" height="90" rx="14"/>
   <text class="node-title" x="790" y="290" text-anchor="middle">tracker</text>
@@ -100,6 +100,6 @@
   <text class="legend" x="318" y="640">2. Append a command with expectedOffset</text>
   <text class="legend" x="612" y="640">3. Write SQL rows with issueRows</text>
   <text class="legend" x="24" y="662">4. Write output streams with tracker</text>
-  <text class="legend" x="318" y="662">5. Run once, then watch changes</text>
+  <text class="legend" x="318" y="662">5. Run once, then follow changes</text>
   <text class="legend" x="612" y="662">6. Serve the results read-only</text>
 </svg>

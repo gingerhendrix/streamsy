@@ -197,7 +197,6 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 | `Projection.pass`   | Runs one unit                                               |
 | `Projection.run`    | Runs units until caught up, closed, or at the limit         |
 | `Projection.follow` | Runs to caught up, then waits for a change. Returns a fiber |
-| `Projection.watch`  | Runs from the storage change feed. Returns a fiber          |
 
 `run` and `pass` give a `Progress` with `status`, `units`, `items`, and `offsets`.
 
@@ -221,14 +220,14 @@ import { orderTotalsProjection } from "./order-totals.ts";
 const serve = Effect.scoped(
   Effect.gen(function* () {
     const fiber = yield* Projection.follow(orderTotalsProjection, {
-      repairIntervalMs: 1000,
+      repairIntervalMs: 30000,
     });
     return yield* Fiber.join(fiber);
   }),
 );
 ```
 
-`follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults end the fiber. Close the scope to stop it. Each wait is bounded by `repairIntervalMs`.
+`follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults end the fiber. Close the scope to stop it. Each wait is bounded by `repairIntervalMs`, which defaults to 30 000 ms. Create every input before starting the follower.
 
 ## Triggers
 
@@ -266,7 +265,7 @@ Effect.gen(function* () {
 });
 ```
 
-The storage change feed. Wakes during a run join into one more run:
+Follow input changes. Changes during a run join into one more run:
 
 ```ts
 // @include: define-order-totals
@@ -295,8 +294,8 @@ const ordersByWorkspace = Projection.emit({
 });
 // ---cut---
 Effect.gen(function* () {
-  const projectionFiber = yield* Projection.watch(orderTotalsProjection, { limit: 5 });
-  const workspaceFiber = yield* Projection.watch(ordersByWorkspace.at({ workspaceId: "ws-42" }), {
+  const projectionFiber = yield* Projection.follow(orderTotalsProjection, { limit: 5 });
+  const workspaceFiber = yield* Projection.follow(ordersByWorkspace.at({ workspaceId: "ws-42" }), {
     limit: 5,
   });
 });
@@ -337,13 +336,12 @@ const hand = Effect.gen(function* () {
 await Effect.runPromise(hand.pipe(Effect.provide(host)));
 ```
 
-| Trigger  | Needs                                                                                            |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| `watch`  | The `Streamsy.ChangeFeed` key of each input. Storage Layers give them. The remote Layer does not |
-| `follow` | Any stream Layer, including remote                                                               |
-| `run`    | Any stream Layer                                                                                 |
+| Trigger  | Needs                              |
+| -------- | ---------------------------------- |
+| `follow` | Any stream Layer, including remote |
+| `run`    | Any stream Layer                   |
 
-Use one writer for each projection key: one `follow` or `watch`, or one `run` at a time. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
+Use one writer for each projection key: one `follow`, or one `run` at a time. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
 
 The [Bugsy demo](/docs/demos/bugsy) uses request and change triggers on one key.
 
@@ -381,9 +379,9 @@ const ordersByWorkspace = Projection.emit({
 
 const bound = ordersByWorkspace.at({ workspaceId: "ws-42" });
 const params = ordersByWorkspace.parse("facts/ws-42");
-const watch = Effect.gen(function* () {
+const follow = Effect.gen(function* () {
   const fibers = yield* Effect.forEach([{ workspaceId: "ws-42" }], (params) =>
-    Projection.watch(ordersByWorkspace.at(params)),
+    Projection.follow(ordersByWorkspace.at(params)),
   );
 });
 ```

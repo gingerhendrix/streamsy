@@ -56,7 +56,7 @@ import { shop } from "./streams.ts";
 export const shopStorage = Protocol.bind(Protocol.layer().pipe(Layer.provideMerge(layer)), shop);
 ```
 
-`shopStorage` works like `MemoryStorage.layer`. It also gives a `Streamsy.ChangeFeed` key for each stream.
+`shopStorage` works like `MemoryStorage.layer`.
 
 ## Capabilities
 

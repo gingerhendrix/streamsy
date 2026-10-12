@@ -67,7 +67,7 @@ See [Create and fork](/docs/streams/create) and [Write](/docs/streams/write).
 import { Effect, Stream } from "effect";
 import { Orders } from "./streams.ts";
 
-const watch = Effect.flatMap(Orders, (orders) =>
+const follow = Effect.flatMap(Orders, (orders) =>
   orders.follow({}).pipe(
     Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
     Stream.runForEach((event) => Effect.log(`${event.orderId}: ${event.amount}`)),
@@ -204,6 +204,6 @@ export const remote = RemoteStreams.layer(shop, {
 }).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-`remote` gives the same stream services, so `watch` runs over it with no change.
+`remote` gives the same stream services, so `follow` runs over it with no change.
 
 See [Remote client](/docs/http/remote).

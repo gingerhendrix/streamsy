@@ -139,10 +139,10 @@ Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/chec
 
 `declaration.at(params)` binds a projection. `pass` runs one unit; `run` continues
 until caught up, closed, or its optional unit limit. `follow` returns a scoped
-fiber and waits for changes; `watch` needs storage change feeds. Remote inputs
+fiber and waits for changes, with a default repair interval of 30 seconds. Remote inputs
 work with `follow` and `run`.
 
-Use one writer per projection key: one `follow` or `watch`, or one `run` at a
+Use one writer per projection key: one `follow`, or one `run` at a
 time. Schedules must not overlap. A second writer is a deployment fault; a
 moved checkpoint token fails with `token-conflict`. External handlers may have
 already run. Any number of `current` and `decide` calls can run beside the

@@ -31,7 +31,7 @@ Each number in the diagram is also a section number below.
 | 2    | A command becomes one fact, appended only if the stream did not move | `Projection.decide`                                           | `server/state.ts`                  |
 | 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
 | 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `DurableState` | `server/outputs.ts`                |
-| 5    | Startup runs both projections, then watchers are the writers         | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
+| 5    | Startup runs both projections, then watchers are the writers         | `Projection.run`, `Projection.follow`                         | `server/app.ts`, `server/host.ts`  |
 | 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`, `Serve.route`    | `server/app.ts`, `server/index.ts` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
@@ -251,8 +251,8 @@ At startup the server runs each projection once for each workspace, then watches
         // Startup and background failures are isolated to their address.
         yield* Projection.run(rows).pipe(Effect.catchCause(startupFailed(Projection.key(rows))));
         // ...
-        yield* Projection.watch(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
-        yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
+        yield* Projection.follow(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
+        yield* Projection.follow(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
 ```
 
 Each key has one writer. Startup `run` finishes before its watcher starts. The command path never runs a writer. A second writer is a deployment fault detected by a moved checkpoint token. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.

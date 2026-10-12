@@ -45,7 +45,7 @@ try {
 | `DurableObjectStorage.layer(group, options)` | Durable Object SQLite | `@streamsy/storage/durable-object` | [Cloudflare](/docs/hosting/cloudflare) |
 | `RemoteStreams.layer(group, options)`        | Remote                | `@streamsy/core/remote`            | [Remote client](/docs/http/remote)     |
 
-A storage Layer also gives a `Streamsy.ChangeFeed` key for each stream. `Projection.watch` needs these keys. `Streamsy.Host<typeof group>` names both the stream services and their feeds, so one type fits any storage Layer. Each host module names its options `Options`, for example `BunStorage.Options`.
+`Streamsy.Host<typeof group>` names the stream services, so one type fits any host Layer. Each host module names its options `Options`, for example `BunStorage.Options`.
 
 ## Memory
 

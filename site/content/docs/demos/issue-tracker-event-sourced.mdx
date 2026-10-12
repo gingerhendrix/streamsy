@@ -180,7 +180,7 @@ const boot = Effect.gen(function* () {
 }).pipe(Effect.withSpan("IssueTracker.boot"));
 ```
 
-A runner catches up from the checkpoint, then follows the storage change feed with `Projection.watch`. A `FiberMap` keeps one runner for each workspace. The layer scope owns the map, so every runner stops before the storage closes. A failure is logged, and the runner starts again on the `ProjectionRetry` schedule.
+A runner catches up from the checkpoint, then follows input changes with `Projection.follow`. A `FiberMap` keeps one runner for each workspace. The layer scope owns the map, so every runner stops before the storage closes. A failure is logged, and the runner starts again on the `ProjectionRetry` schedule.
 
 ```ts title="server/watchers.ts"
     const runner = (workspaceId: string) => {
@@ -190,7 +190,7 @@ A runner catches up from the checkpoint, then follows the storage change feed wi
         Effect.gen(function* () {
           yield* Projection.run(rows);
 
-          return yield* Fiber.join(yield* Projection.watch(rows));
+          return yield* Fiber.join(yield* Projection.follow(rows));
         }),
       ).pipe(
 ```
