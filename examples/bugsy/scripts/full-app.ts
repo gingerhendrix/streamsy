@@ -12,7 +12,7 @@ import { Projects, Users, Labels, Events, LabelEvents } from "../server/streams.
 import {
   check,
   getJson,
-  post,
+  postCommand,
   readBoard,
   scratchDatabase,
   SmokeFailure,
@@ -121,7 +121,7 @@ const app = Effect.gen(function* () {
   yield* check(changes.length === 4, `expected 4 accepted changes, got ${changes.length}`);
   yield* check(drafts.rows.length === 1, `expected one draft, got ${drafts.rows.length}`);
 
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "create",
     commandId: "live-1",
     issueId: "live-issue",
@@ -129,7 +129,7 @@ const app = Effect.gen(function* () {
     title: "Live issue",
     status: "todo",
   });
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "status",
     commandId: "live-2",
     issueId: "live-issue",

@@ -4,7 +4,7 @@ import { FetchHttpClient } from "effect/http";
 import {
   check,
   getJson,
-  post,
+  postCommand,
   readBoard,
   scratchDatabase,
   serverDatabase,
@@ -19,7 +19,7 @@ const smoke = Effect.gen(function* () {
   const database = yield* scratchDatabase("streamsy-issue-smoke");
   const server = yield* startServer(database);
   const baseUrl = server.url;
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "create",
     commandId: "smoke-1",
     issueId: "smoke",
@@ -34,7 +34,7 @@ const smoke = Effect.gen(function* () {
   yield* startServer(database, server.port);
   const resumed = yield* getJson(`${baseUrl}/api/workspaces/live/status`, Status);
   yield* check(Schema.toEquivalence(Status)(before, resumed), "checkpoint changed on restart");
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "status",
     commandId: "smoke-2",
     issueId: "smoke",

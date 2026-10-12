@@ -11,7 +11,7 @@ import { Labels, LabelEvents } from "../server/streams.ts";
 import {
   check,
   getJson,
-  post,
+  postCommand,
   readBoard,
   scratchDatabase,
   SmokeFailure,
@@ -74,7 +74,7 @@ const smoke = Effect.gen(function* () {
   yield* produce.pipe(Effect.provide(applicationLayer(sqliteStorage(database))));
   const server = yield* startServer(database);
   const baseUrl = server.url;
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "create",
     commandId: "serve-1",
     issueId: "smoke",
@@ -82,7 +82,7 @@ const smoke = Effect.gen(function* () {
     title: "Served",
     status: "todo",
   });
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "status",
     commandId: "serve-2",
     issueId: "smoke",
@@ -157,7 +157,7 @@ const smoke = Effect.gen(function* () {
   yield* server.stop;
   yield* startServer(database, server.port);
   yield* check((yield* verify()) === etag, "summary changed on restart");
-  yield* post(`${baseUrl}/api/workspaces/live/commands`, {
+  yield* postCommand(baseUrl, "live", {
     type: "status",
     commandId: "serve-3",
     issueId: "smoke",

@@ -6,7 +6,7 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { CommandRequest } from "../shared/api.ts";
-import { issueRows, storedIssue } from "./projection.ts";
+import { issueRows } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
 import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { routes } from "./streams.ts";
@@ -70,30 +70,6 @@ const api = <E, R>(
     ),
   );
 
-/** The issue row and its attached label ids, as the command answer shows them. */
-const issueRow = (workspaceId: string, issueId: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const issue = yield* storedIssue(sql, workspaceId, issueId);
-
-    if (issue === undefined) return undefined;
-
-    const labels = yield* sql<{
-      readonly label_id: string;
-    }>`SELECT label_id FROM issue_labels WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId} AND attached = 1`;
-
-    return {
-      issueId: issue.issueId,
-      projectId: issue.projectId,
-      title: issue.title,
-      status: issue.status,
-      sequence: issue.sequence,
-      updatedAt: issue.updatedAt,
-      assigneeId: issue.assigneeId,
-      labelIds: labels.map((row) => row.label_id).toSorted(),
-    };
-  });
-
 const commands = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const workspaceId = yield* workspace(workspaces);
@@ -104,12 +80,9 @@ const commands = (workspaces: ReadonlyArray<string>) =>
       Effect.mapError(() => new InvalidCommand()),
     );
 
-    const { event } = yield* transact(workspaceId, command);
-    yield* Projection.run(issueRows.at({ workspaceId }));
-    yield* Projection.run(tracker.at({ workspaceId }));
-    const row = yield* issueRow(workspaceId, command.issueId);
+    const { event, offset } = yield* transact(workspaceId, command);
 
-    return json({ commandId: command.commandId, event, row });
+    return json({ commandId: command.commandId, event, offset });
   }).pipe(
     Effect.catchTags({
       InvalidCommand: () => Effect.succeed(json({ error: "Invalid command" }, { status: 400 })),
@@ -136,7 +109,9 @@ const status = (workspaces: ReadonlyArray<string>) =>
     const workspaceId = yield* workspace(workspaces);
     const { offsets } = yield* Projection.read(issueRows.at({ workspaceId }));
 
-    return json({ workspaceId, offsets });
+    const { offsets: outputOffsets } = yield* Projection.read(tracker.at({ workspaceId }));
+
+    return json({ workspaceId, offsets, outputOffsets });
   }).pipe(api);
 
 export const app = (workspaces: ReadonlyArray<string>) =>

@@ -1,33 +1,21 @@
 import { Projection } from "@streamsy/projection";
 import { DateTime, Effect, Match, Schema } from "effect";
-import { SqlClient } from "effect/sql";
 import type { CommandRequest } from "../shared/api.ts";
 import type { IssueEvent } from "../domain/issue.ts";
-import { issueRows, storedIssue } from "./projection.ts";
+import { commandView } from "./command-view.ts";
 
 /** A command names an issue that the workspace does not have. */
 export class UnknownIssue extends Schema.TaggedError<UnknownIssue>()("UnknownIssue", {}) {}
 
 export const transact = (workspaceId: string, command: CommandRequest) =>
-  Projection.decide(issueRows.at({ workspaceId }), {
+  Projection.decide(commandView.at({ workspaceId }), {
     input: "events",
-    decide: () =>
+    decide: ({ state }) =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-
-        const previous =
-          command.type === "create"
-            ? undefined
-            : yield* storedIssue(sql, workspaceId, command.issueId);
+        const previous = state.issues[command.issueId];
 
         if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
-
-        // Postgres and MySQL may return an aggregate as a `bigint` or a string.
-        const [last] = yield* sql<{
-          readonly sequence: number | bigint | string | null;
-        }>`SELECT MAX(sequence) AS sequence FROM issues WHERE workspace_id = ${workspaceId}`;
-
-        const sequence = (last?.sequence == null ? -1 : Number(last.sequence)) + 1;
+        const sequence = state.nextSequence;
         const occurredAt = DateTime.formatIso(yield* DateTime.now);
 
         const common = {
@@ -55,7 +43,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
             assign: (assign): IssueEvent => ({
               type: "IssueAssigned",
               ...common,
-              status: previous!.status,
+              status: previous.status,
               assigneeId: assign.assigneeId,
             }),
           }),

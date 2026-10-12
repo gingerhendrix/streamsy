@@ -60,7 +60,7 @@ export function makeNewestStoriesPoller(
           stories: yield* api.fetchStoriesById(newestIds),
         };
 
-        // A retry runs, reads and decides again, so the diff uses the new rows.
+        // A retry folds and decides again, so the diff uses the new rows.
         const { rows, changes, offset } = yield* reconcileNewest(fetched, conflictRetries);
         yield* patchCounters({
           lastOffset: offset,
