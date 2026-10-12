@@ -79,24 +79,38 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
             });
             expect(assigned.offset).toBe((yield* events.head({ workspaceId: "live" })).nextOffset);
 
-            const unknown = yield* Effect.flip(
-              transact("live", {
-                type: "status",
-                commandId: "c3",
-                issueId: "nope",
-                status: "done",
-              }),
-            );
+            for (const issueId of ["nope", "constructor", "toString"]) {
+              const unknown = yield* Effect.flip(
+                transact("live", { type: "status", commandId: "c3", issueId, status: "done" }),
+              );
 
-            expect(unknown).toBeInstanceOf(UnknownIssue);
+              expect(unknown).toBeInstanceOf(UnknownIssue);
+            }
+
             expect(
               (yield* (yield* CheckpointStore).load(commandView.at({ workspaceId: "live" })))
                 .record,
             ).toEqual(Option.none());
             const sql = yield* SqlClient.SqlClient;
             expect(yield* sql`SELECT * FROM issues`).toEqual([]);
+            yield* transact("live", {
+              type: "create",
+              commandId: "c4",
+              issueId: "constructor",
+              projectId: "p1",
+              title: "Named issue",
+            });
+
+            const named = yield* transact("live", {
+              type: "status",
+              commandId: "c5",
+              issueId: "constructor",
+              status: "done",
+            });
+
+            expect(named.event).toMatchObject({ status: "done", sequence: 7 });
             const { items } = yield* events.collect({ workspaceId: "live" });
-            expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2"]);
+            expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2", "c4", "c5"]);
           }).pipe(Effect.provideContext(runtime));
         }),
     );

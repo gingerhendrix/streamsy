@@ -17,7 +17,9 @@ export const commandView = Projection.fold({
   inputs: { events: Events },
   state: { schema: CommandView, initial: { issues: {}, nextSequence: 0 } },
   fold: (view, { item: event }) => {
-    const previous = view.issues[event.issueId];
+    const previous = Object.hasOwn(view.issues, event.issueId)
+      ? view.issues[event.issueId]
+      : undefined;
 
     const changesIssue =
       (event.type === "IssueCreated" || previous !== undefined) &&

@@ -12,7 +12,9 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
     input: "events",
     decide: ({ state }) =>
       Effect.gen(function* () {
-        const previous = state.issues[command.issueId];
+        const previous = Object.hasOwn(state.issues, command.issueId)
+          ? state.issues[command.issueId]
+          : undefined;
 
         if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
         const sequence = state.nextSequence;
@@ -43,7 +45,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
             assign: (assign): IssueEvent => ({
               type: "IssueAssigned",
               ...common,
-              status: previous.status,
+              status: previous!.status,
               assigneeId: assign.assigneeId,
             }),
           }),
