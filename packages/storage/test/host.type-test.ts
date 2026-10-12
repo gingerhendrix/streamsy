@@ -15,7 +15,7 @@ type Assignability<To> = <From>(value: From) => From extends To ? 1 : 2;
 
 type Equal<A, B> = Assignability<A> extends Assignability<B> ? true : false;
 
-const services: Equal<Streamsy.Host<typeof group>, Notes | Streamsy.ChangeFeed<Notes>> = true;
+const services: Equal<Streamsy.Host<typeof group>, Notes> = true;
 
 /** One annotation covers a memory host and a SQLite host for the same group. */
 const host = (
@@ -31,7 +31,7 @@ const bunOptions: BunStorage.Options = { client: { filename: ":memory:" }, longP
 // @ts-expect-error BunStorage.Options requires a client.
 const missingClient: BunStorage.Options = {};
 
-// @ts-expect-error A remote host has no change feed, so it is not a Host.
+/** A remote layer provides the same stream services. */
 const remote: Layer.Layer<
   Streamsy.Host<typeof group>,
   TransportFault,

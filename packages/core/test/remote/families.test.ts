@@ -56,7 +56,6 @@ baseIt.live("one application program runs unchanged on memory and remote streams
         const context = yield* Effect.context<Notes>();
         expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
         expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
-        expect(Option.isNone(Context.getOption(context, Streamsy.ChangeFeed(Notes)))).toBe(true);
 
         return yield* program;
       });

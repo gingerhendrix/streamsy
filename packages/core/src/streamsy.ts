@@ -5,7 +5,6 @@ export {
   custom,
   group,
   Wildcard,
-  ChangeFeed,
   type Api,
   type Address,
   type Class,
@@ -17,5 +16,4 @@ export {
   type Group,
   type Services,
   type Host,
-  type ChangeFeedApi,
 } from "./toolkit/streamsy.ts";

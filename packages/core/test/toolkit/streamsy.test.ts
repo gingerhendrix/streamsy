@@ -186,29 +186,6 @@ baseIt("Streamsy.Wildcard ordering follows stable identity across class aliases"
   ).toThrow("Wildcard must be last");
 });
 
-layer(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes)))((it) => {
-  it.effect("provides a scoped feed with the stream's owner", () =>
-    Effect.gen(function* () {
-      const notes = yield* Notes;
-      const feed = yield* Streamsy.ChangeFeed(Notes);
-      expect(feed.owner).toBe(notes.owner);
-      yield* notes.create({ user: "ann" });
-
-      const snapshots = yield* feed
-        .changes(Notes.at({ user: "ann" }).id)
-        .pipe(Stream.take(1), Stream.runCollect);
-
-      expect(snapshots[0]?.present).toBe(true);
-
-      const foreign = yield* feed
-        .changes(StreamId.make("foreign/id"))
-        .pipe(Stream.runDrain, Effect.exit);
-
-      expect(Exit.isFailure(foreign)).toBe(true);
-    }),
-  );
-});
-
 const protocol = Layer.effectContext(
   Effect.context<
     | import("../../src/protocol/index.ts").StreamsReader
@@ -217,9 +194,8 @@ const protocol = Layer.effectContext(
 ).pipe(Layer.provide(MemoryStorage.layerProtocol()));
 
 layer(Protocol.bind(protocol, Streamsy.group(Notes)))((it) => {
-  it.effect("does not expose a feed when the graph hides Storage", () =>
+  it.effect("binds streams when the graph hides Storage", () =>
     Effect.gen(function* () {
-      expect(Option.isNone(yield* Effect.serviceOption(Streamsy.ChangeFeed(Notes)))).toBe(true);
       yield* (yield* Notes).create({ user: "ann" });
     }),
   );

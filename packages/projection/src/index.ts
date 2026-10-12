@@ -10,8 +10,6 @@ export type { FollowOptions } from "./follow.ts";
 
 export type { RunOptions } from "./read.ts";
 
-export type { WatchOptions } from "./watch.ts";
-
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 
 export type { Progress } from "./run.ts";

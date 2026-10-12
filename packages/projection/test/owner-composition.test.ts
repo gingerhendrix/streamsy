@@ -2,7 +2,7 @@ import { it as baseIt, layer } from "@streamsy/effect-test";
 import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect } from "bun:test";
-import { Array, Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import { Array, Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
@@ -66,54 +66,41 @@ layer(host)((it) => {
 });
 
 layer(host)((it) => {
-  it.effect("watch watches the input's feed even when checkpoints have a different owner", () =>
+  it.effect("follow wakes from an input with a different checkpoint owner", () =>
     Effect.gen(function* () {
       const source = yield* Source;
-      const params = { name: "watch" };
+      const params = { name: "follow" };
       yield* source.create(params);
-      yield* source.append(params, [1], { close: true });
 
       const projection = Projection.process({
         commit: Commit.transaction,
-        id: "mixed-watch",
+        id: "mixed-follow",
         params: {},
         inputs: { input: Source.at(params) },
         process: () => Effect.void,
       }).at({});
 
-      const fiber = yield* Projection.watch(projection);
+      const parked = yield* Deferred.make<void>();
+
+      const fiber = yield* Projection.follow(projection).pipe(
+        Effect.provideService(Source, {
+          ...source,
+          wire: {
+            ...source.wire,
+            readNext: (id, options) =>
+              Deferred.succeed(parked, undefined).pipe(
+                Effect.andThen(source.wire.readNext(id, options)),
+              ),
+          },
+        }),
+      );
+
+      yield* Deferred.await(parked);
+      yield* source.append(params, [1], { close: true });
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
     }),
   );
 });
-
-baseIt.effect("watch rejects a stream rebound without its matching feed", () =>
-  Effect.gen(function* () {
-    const alternate = Protocol.bind(memoryHost(), Streamsy.group(Source)).pipe(
-      Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
-    );
-
-    yield* Effect.gen(function* () {
-      const projection = Projection.process({
-        commit: Commit.transaction,
-        id: "rebound-feed",
-        params: {},
-        inputs: { input: Source.at({ name: "watch" }) },
-        process: () => Effect.void,
-      }).at({});
-
-      const fiber = yield* Projection.watch(projection).pipe(
-        Effect.provideContext(yield* Layer.build(alternate)),
-      );
-
-      const result = yield* Fiber.join(fiber).pipe(Effect.result);
-      expect(result._tag).toBe("Failure");
-
-      if (result._tag === "Failure")
-        expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
-    }).pipe(Effect.provideContext(yield* Layer.build(host)), Effect.scoped);
-  }),
-);
 
 const memoryGraph = memoryHost();
 

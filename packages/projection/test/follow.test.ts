@@ -1,3 +1,5 @@
+import { layer } from "@streamsy/effect-test";
+import { Streamsy } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { ProjectionRetry } from "@streamsy/projection";
@@ -9,6 +11,8 @@ import {
   Deferred,
   Effect,
   Fiber,
+  Exit,
+  Option,
   Layer,
   Schema,
   Schedule,
@@ -108,6 +112,24 @@ test("follow cancellation releases parked waits", () =>
       );
       yield* Deferred.await(hint.released);
       expect((yield* (yield* CheckpointStore).load(Projection.key(positives))).token).toBe("0");
+    }),
+  ));
+
+test("follow defaults to a 30 second repair interval", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.create(output);
+      const hint = yield* parkedHint;
+      const fiber = yield* withReader(Projection.follow(positives), hint.patch);
+
+      yield* Deferred.await(hint.parked);
+      yield* Streams.append(input, [7], { close: true });
+      yield* TestClock.adjust(29_999);
+      expect(yield* readAll(output)).toEqual([]);
+      yield* TestClock.adjust(1);
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+      expect(yield* readAll(output)).toEqual([7]);
     }),
   ));
 
@@ -575,3 +597,215 @@ for (const cause of [
       }),
     ));
 }
+
+class FollowRoute2 extends Streamsy.json<FollowRoute2>()(
+  "on-change.test/FollowRoute2",
+  "change-stream-scope/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    schema: Schema.Finite,
+  },
+) {}
+
+class FollowRoute1 extends Streamsy.json<FollowRoute1>()(
+  "on-change.test/FollowRoute1",
+  "change-stream/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    schema: Schema.Finite,
+  },
+) {}
+
+/** Wait for the follower checkpoint without starting another writer. */
+const awaitCheckpoint = (projection: Parameters<typeof Projection.key>[0], offset: string) =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+
+    while (true) {
+      const loaded = yield* store.load(Projection.key(projection));
+
+      if (Option.isSome(loaded.record) && loaded.record.value.inputs.input === offset) return;
+      yield* Effect.yieldNow;
+    }
+  });
+
+layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it) => {
+  it.effect("changes during an in-flight run coalesce to one follow-up run", () =>
+    Effect.gen(function* () {
+      const source = FamilyFixture.json("change-coalesce-input", {
+        schema: Schema.Finite,
+      });
+
+      const target = FamilyFixture.json("change-coalesce-output", {
+        schema: Schema.Finite,
+      });
+
+      yield* Streams.create(source);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const second = yield* Deferred.make<void>();
+      let calls = 0;
+
+      const projection = Projection.mapAccumBatch({
+        commit: Commit.producer,
+        id: "change-coalesce",
+        params: {},
+        inputs: { input: source },
+        outputs: { output: target },
+        state: { schema: Schema.Null, initial: null },
+        mapAccumBatch: (_state, batch) =>
+          Effect.gen(function* () {
+            calls += 1;
+
+            if (calls === 1) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            } else yield* Deferred.succeed(second, undefined);
+
+            return [null, { output: batch.input.items }] as const;
+          }),
+      }).at({});
+
+      const fiber = yield* Projection.follow(projection);
+      yield* Streams.append(source, [1]);
+      yield* Deferred.await(entered);
+      yield* Streams.append(source, [2]);
+      yield* Streams.append(source, [3]);
+      yield* Streams.append(source, [4]);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(second);
+      yield* awaitCheckpoint(projection, (yield* Streams.head(source)).nextOffset);
+      expect(calls).toBe(2);
+      expect(yield* readAll(target)).toEqual([1, 2, 3, 4]);
+      const tail = yield* Streams.head(source);
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
+      expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1 })))((it) => {
+  it.effect("a limited wake drains the backlog before waiting for another change", () =>
+    Effect.gen(function* () {
+      const source = FamilyFixture.json("change-limit-input", {
+        schema: Schema.Finite,
+      });
+
+      yield* Streams.create(source);
+      yield* Streams.append(source, [1, 2, 3]);
+      const seen: number[] = [];
+      const drained = yield* Deferred.make<void>();
+
+      const projection = Projection.process({
+        commit: Commit.atLeastOnce,
+        id: "change-limit",
+        params: {},
+        inputs: { input: source },
+        process: (batch) =>
+          Effect.gen(function* () {
+            seen.push(...batch.input.items);
+
+            if (seen.length === 3) yield* Deferred.succeed(drained, undefined);
+          }),
+      }).at({});
+
+      const fiber = yield* Projection.follow(projection, { limit: 1 });
+      yield* Deferred.await(drained);
+      yield* awaitCheckpoint(projection, (yield* Streams.head(source)).nextOffset);
+      expect(seen).toEqual([1, 2, 3]);
+      const tail = yield* Streams.head(source);
+      const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
+      expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it) => {
+  it.effect("a stream follows its fixed address set independently", () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const a = yield* Deferred.make<void>();
+      const b = yield* Deferred.make<void>();
+
+      const declared = Projection.process({
+        commit: Commit.atLeastOnce,
+        id: "change-stream",
+        params: { workspaceId: Schema.String },
+        inputs: { facts: FollowRoute1 },
+        process: (_batch, unit) =>
+          Effect.gen(function* () {
+            const workspaceId = unit.params.workspaceId;
+            seen.push(workspaceId);
+            yield* Deferred.succeed(workspaceId === "a" ? a : b, undefined);
+          }),
+      });
+
+      const aRef = FollowRoute1.at({ workspaceId: "a" });
+      const bRef = FollowRoute1.at({ workspaceId: "b" });
+      yield* Streams.create(aRef);
+      yield* Streams.create(bRef);
+
+      const fibers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
+        Projection.follow(declared.at({ workspaceId })),
+      );
+
+      yield* Streams.append(aRef, [1]);
+      yield* Deferred.await(a);
+      expect(seen).toEqual(["a"]);
+      yield* Streams.append(bRef, [2]);
+      yield* Deferred.await(b);
+      expect(seen).toEqual(["a", "b"]);
+      yield* Effect.forEach(fibers, Fiber.interrupt);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it) => {
+  it.effect("closing the caller scope interrupts every stream address fiber", () =>
+    Effect.gen(function* () {
+      const declared = Projection.process({
+        commit: Commit.atLeastOnce,
+        id: "change-stream-scope",
+        params: { workspaceId: Schema.String },
+        inputs: { facts: FollowRoute2 },
+        process: () => Effect.void,
+      });
+
+      for (const workspaceId of ["a", "b"]) yield* Streams.create(FollowRoute2.at({ workspaceId }));
+      const parked = yield* Deferred.make<void>();
+      let hints = 0;
+      const route = yield* FollowRoute2;
+
+      const fibers = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const followers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
+            Projection.follow(declared.at({ workspaceId })).pipe(
+              Effect.provideService(FollowRoute2, {
+                ...route,
+                wire: {
+                  ...route.wire,
+                  readNext: (id, options) =>
+                    Effect.gen(function* () {
+                      hints += 1;
+
+                      if (hints === 2) yield* Deferred.succeed(parked, undefined);
+
+                      return yield* route.wire.readNext(id, options);
+                    }),
+                },
+              }),
+            ),
+          );
+
+          yield* Deferred.await(parked);
+
+          return followers;
+        }),
+      );
+
+      for (const fiber of fibers) expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+    }),
+  );
+});

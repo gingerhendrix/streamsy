@@ -1,6 +1,5 @@
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import { RemoteStreams } from "@streamsy/core/remote";
 import { Layer, Effect, Schema, type Scope } from "effect";
 import { Streamsy, StreamAddress, MemoryStorage } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
@@ -48,8 +47,6 @@ const named = declared.at({ id: "a" });
 const processRun = Projection.run(transactional);
 
 const namedRun = Projection.run(named);
-
-const namedWatch = Projection.watch(named);
 
 const namedFollow = Projection.follow(named);
 
@@ -102,12 +99,6 @@ export type Checks = [
   Assert<Same<Extract<keyof typeof statefulOutputs, "state">, never>>,
   Assert<Same<Effect.Services<typeof processRun>, Input | Transaction | CheckpointStore>>,
   Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | CheckpointStore>>,
-  Assert<
-    Same<
-      Effect.Services<typeof namedWatch>,
-      Input | Other | Streamsy.ChangeFeed<Input | Other> | Result | CheckpointStore | Scope.Scope
-    >
-  >,
   Assert<
     Same<
       Effect.Services<typeof namedFollow>,
@@ -185,63 +176,6 @@ void cannotRunWidened;
 
 void cannotRunWidenedOutput;
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context
-
-// oxlint-disable effecttsgo/missing-effect-context -- Negative tests deliberately omit Streamsy.ChangeFeed<Input>.
-// The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
-const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
-  MemoryStorage.layerProtocol();
-
-const withoutFeed = Effect.gen(function* () {
-  return yield* Projection.watch(transactional).pipe(
-    Effect.provideContext(yield* Layer.build(Protocol.bind(protocolOnly, Streamsy.group(Input)))),
-  );
-});
-
-// @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
-const missingFeed: Effect.Effect<unknown, ProjectionFault, CheckpointStore | Scope.Scope> =
-  withoutFeed;
-
-void missingFeed;
-
-const fetchWatch = Effect.gen(function* () {
-  return yield* Projection.watch(transactional).pipe(
-    Effect.provideContext(
-      yield* Layer.build(
-        RemoteStreams.layer(Streamsy.group(Input), { baseUrl: "https://example.test" }),
-      ),
-    ),
-  );
-});
-
-// @ts-expect-error RemoteStreams supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
-const missingFetchFeed: Effect.Effect<
-  unknown,
-  ProjectionFault | import("@streamsy/core").TransportFault,
-  CheckpointStore | Scope.Scope | import("effect/http/HttpClient").HttpClient
-> = fetchWatch;
-
-void missingFetchFeed;
-
-// oxlint-enable effecttsgo/missing-effect-context
-
-export type FeedChecks = [
-  Assert<
-    Same<
-      Effect.Services<typeof withoutFeed>,
-      Streamsy.ChangeFeed<Input> | Transaction | CheckpointStore | Scope.Scope
-    >
-  >,
-  Assert<
-    Same<
-      Effect.Services<typeof fetchWatch>,
-      | Streamsy.ChangeFeed<Input>
-      | Transaction
-      | CheckpointStore
-      | Scope.Scope
-      | import("effect/http/HttpClient").HttpClient
-    >
-  >,
-];
 
 Projection.process({
   commit: Commit.transaction,

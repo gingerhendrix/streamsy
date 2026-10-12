@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Option, Predicate, Stream } from "effect";
 import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
-import { ChangeFeed } from "./changes.ts";
 import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { DecodeFault, StreamsFault } from "../fault.ts";
@@ -397,18 +396,11 @@ export function checkStreams(keys: ReadonlyArray<Any>): void {
   checkNoOverlap(keys.map((key) => declaration(key).route));
 }
 
-/**
- * Bind streams to their owning protocol graph.
- * Graphs exposing Storage also provide ChangeFeed.
- */
+/** Bind streams to their owning protocol graph. */
 export function bind<A, E, R, const Keys extends ReadonlyArray<Any>>(
   graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
   streams: Group<Keys>,
-): Layer.Layer<
-  Identifiers<Keys> | (Storage extends A ? ChangeFeed<Identifiers<Keys>> : never),
-  E,
-  R
->;
+): Layer.Layer<Identifiers<Keys>, E, R>;
 export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
   source: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
   streams: Group<Keys>,
@@ -426,18 +418,9 @@ export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
 
     for (const key of keys) {
       context = Context.add(context, key, declaration(key).make(wires));
-
-      if (storage !== undefined)
-        context = Context.add(context, ChangeFeed(key), {
-          owner: ownerOf(storage),
-          changes: (id) =>
-            key.match(id)
-              ? storage.changes(id)
-              : Stream.die(new RangeError(`${id} is outside stream ${key.template}`)),
-        });
     }
 
-    // SAFETY: each stream comes from its factory; feed keys are added only for an exposed Storage.
+    // SAFETY: each stream comes from its factory.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the loop installs every key in Keys; Context.empty cannot infer a dynamic tuple.
     return context as Context.Context<Identifiers<Keys>>;
   };
@@ -463,13 +446,11 @@ export interface Group<Keys extends ReadonlyArray<Any> = ReadonlyArray<Any>> {
 
 export type Services<G extends Group> = G["streams"][number]["Identifier"];
 
-/** What every host Layer gives for a group: its stream services and their change feeds. */
-export type Host<G extends Group> = Services<G> | ChangeFeed<Services<G>>;
+/** What every host Layer gives for a group: its stream services. */
+export type Host<G extends Group> = Services<G>;
 
 export function group<const Keys extends ReadonlyArray<Any>>(...keys: Keys): Group<Keys> {
   checkStreams(keys);
 
   return Object.freeze({ streams: Object.freeze(keys) });
 }
-
-export { ChangeFeed, type ChangeFeedApi } from "./changes.ts";

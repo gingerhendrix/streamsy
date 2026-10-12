@@ -40,7 +40,7 @@ it("groups freeze their ordered declarations and reject duplicates and misplaced
   expect(Streamsy.group(Notes, Streamsy.Wildcard).streams).toHaveLength(2);
 });
 
-it("memory streams expose feeds and storage but no generic protocol keys", async () => {
+it("memory streams expose storage but no generic protocol keys", async () => {
   for (const host of [
     MemoryStorage.layer(group),
     MemoryStorage.layer(Streamsy.group(Notes, Counts)),
@@ -52,8 +52,6 @@ it("memory streams expose feeds and storage but no generic protocol keys", async
           expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
           expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
           const notes = Context.get(context, Notes);
-          const feed = Context.get(context, Streamsy.ChangeFeed(Notes));
-          expect(feed.owner).toBe(notes.owner);
           expect(Context.get(context, Counts).owner).toBe(notes.owner);
           yield* notes.create({ user: "ann" });
           const record = yield* Context.get(context, Storage).record(Notes.at({ user: "ann" }).id);

@@ -16,8 +16,6 @@ export { pass, run } from "./run.ts";
 
 export { follow } from "./follow.ts";
 
-export { watch } from "./watch.ts";
-
 export { items };
 
 export const key = (projection: Identity): ProjectionKey => ({

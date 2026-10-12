@@ -8,7 +8,7 @@ import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 
 export interface FollowOptions extends RunOptions {
-  /** Upper bound on one wake wait; default 1000. */
+  /** Upper bound on one wake wait; default 30000. */
   readonly repairIntervalMs?: number;
   /** Override the forever, capped exponential retry for retryable storage failures. */
   readonly retry?: Schedule.Schedule<unknown>;
@@ -104,7 +104,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
   Exclude<R, P> | Q | OR | InputServices<Inputs> | Scope.Scope
 > {
   yield* validateOptions(options);
-  const interval = options.repairIntervalMs ?? 1000;
+  const interval = options.repairIntervalMs ?? 30_000;
 
   if (!Number.isSafeInteger(interval) || interval <= 0)
     return yield* new ProjectionFault({

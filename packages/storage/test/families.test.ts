@@ -35,23 +35,16 @@ for (const [index, host] of [
 ].entries()) {
   layer(host)((it) => {
     it.effect(
-      `Bun and SQL stream layers share storage and feeds without exporting the generic pair (${index})`,
+      `Bun and SQL stream layers share storage without exporting the generic pair (${index})`,
       () =>
         Effect.gen(function* () {
-          const context = yield* Effect.context<Storage | Notes | Streamsy.ChangeFeed<Notes>>();
+          const context = yield* Effect.context<Storage | Notes>();
           expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
           expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
           const notes = yield* Notes;
-          const feed = yield* Streamsy.ChangeFeed(Notes);
-          expect(feed.owner).toBe(notes.owner);
           yield* notes.create({});
           yield* notes.append({}, ["hello"]);
 
-          const snapshot = yield* Stream.runCollect(
-            feed.changes(Notes.at({}).id).pipe(Stream.take(1)),
-          );
-
-          expect(snapshot).toHaveLength(1);
           expect(Option.isSome(yield* (yield* Storage).record(Notes.at({}).id))).toBe(true);
           expect((yield* Stream.runCollect(notes.read({})))[0]?.items).toEqual(["hello"]);
         }),
@@ -69,10 +62,7 @@ type ClientServices = SqlClient.SqlClient | Reactivity.Reactivity;
 
 type HostOutputs = SqlOutputs | ClientServices;
 
-const bunExact: Equal<
-  Layer.Success<typeof bun>,
-  HostOutputs | Notes | Streamsy.ChangeFeed<Notes>
-> = true;
+const bunExact: Equal<Layer.Success<typeof bun>, HostOutputs | Notes> = true;
 
 const bunRequirements: Equal<Layer.Services<typeof bun>, never> = true;
 
@@ -80,26 +70,16 @@ const bunErrors: Equal<Layer.Error<typeof bun>, StorageFault> = true;
 
 const rawSql = SqlStorage.layer(group);
 
-const sqlExact: Equal<
-  Layer.Success<typeof rawSql>,
-  SqlOutputs | Notes | Streamsy.ChangeFeed<Notes>
-> = true;
+const sqlExact: Equal<Layer.Success<typeof rawSql>, SqlOutputs | Notes> = true;
 
 const sqlRequirements: Equal<Layer.Services<typeof rawSql>, ClientServices> = true;
 
 const sqlErrors: Equal<Layer.Error<typeof rawSql>, StorageFault> = true;
 
-const hasFeed: Effect.Effect<void, never, Streamsy.ChangeFeed<Notes>> = Effect.asVoid(
-  Streamsy.ChangeFeed(Notes),
-);
-
 function exactDurable(durableOptions: DurableObjectStorage.Options) {
   const host = DurableObjectStorage.layer(group, durableOptions);
 
-  const outputs: Equal<
-    Layer.Success<typeof host>,
-    HostOutputs | Notes | Streamsy.ChangeFeed<Notes>
-  > = true;
+  const outputs: Equal<Layer.Success<typeof host>, HostOutputs | Notes> = true;
 
   const requirements: Equal<Layer.Services<typeof host>, never> = true;
   const errors: Equal<Layer.Error<typeof host>, StorageFault> = true;
@@ -107,13 +87,4 @@ function exactDurable(durableOptions: DurableObjectStorage.Options) {
   return [outputs, requirements, errors];
 }
 
-void [
-  bunExact,
-  bunRequirements,
-  bunErrors,
-  sqlExact,
-  sqlRequirements,
-  sqlErrors,
-  hasFeed,
-  exactDurable,
-];
+void [bunExact, bunRequirements, bunErrors, sqlExact, sqlRequirements, sqlErrors, exactDurable];

@@ -1,13 +1,6 @@
 import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpRouter } from "effect/http";
-import {
-  type CommitBoundary,
-  type TransportFault,
-  Http,
-  MemoryStorage,
-  Storage,
-  Streamsy,
-} from "../../src/index.ts";
+import { type CommitBoundary, Http, MemoryStorage, Storage, Streamsy } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import type { OwnerRecords } from "../../src/internal/index.ts";
 import { RemoteStreams } from "../../src/remote/index.ts";
@@ -39,31 +32,12 @@ const remoteList: Equal<Layer.Success<typeof list>, A | B> = true;
 
 const client: Equal<Layer.Services<typeof remoteStreams>, HttpClient.HttpClient> = true;
 
-const feeds: Equal<
-  Extract<Layer.Success<typeof memory>, Streamsy.ChangeFeed<A | B>>,
-  Streamsy.ChangeFeed<A | B>
-> = true;
-
 const hidden: Equal<
   Extract<Layer.Success<typeof memory>, StreamsReader | StreamsWriter>,
   never
 > = true;
 
-const noFeed: Equal<
-  Extract<Layer.Success<typeof remoteStreams>, Streamsy.ChangeFeed<A | B>>,
-  never
-> = true;
-
-const needsFeed = Effect.asVoid(Streamsy.ChangeFeed(A));
-
-// oxlint-disable effecttsgo/missing-layer-context -- This negative type test deliberately omits the Streamsy.ChangeFeed capability.
-// @ts-expect-error Remote streams cannot supply a Streamsy.ChangeFeed capability.
-const missingFeed: Layer.Layer<never, TransportFault, HttpClient.HttpClient> = Layer.effectDiscard(
-  needsFeed,
-).pipe(Layer.provide(remoteStreams));
-
-// oxlint-enable effecttsgo/missing-layer-context
-void [union, remote, remoteList, client, feeds, hidden, noFeed, missingFeed];
+void [union, remote, remoteList, client, hidden];
 
 const routes = Http.routes(group, { access: "full" });
 
@@ -79,7 +53,7 @@ void routeRequirements;
 
 const memoryExact: Equal<
   Layer.Success<typeof memory>,
-  Storage | CommitBoundary | OwnerRecords | A | B | Streamsy.ChangeFeed<A | B>
+  Storage | CommitBoundary | OwnerRecords | A | B
 > = true;
 
 const memoryRequirements: Equal<Layer.Services<typeof memory>, never> = true;
@@ -101,8 +75,6 @@ const pointFreeRemote: Equal<
   StreamsReader | StreamsWriter
 > = true;
 
-const hasFeed: Layer.Layer<never> = Layer.effectDiscard(needsFeed).pipe(Layer.provide(memory));
-
 const emptyGroup = MemoryStorage.layer(Streamsy.group());
 
 const emptyExact: Equal<
@@ -110,15 +82,7 @@ const emptyExact: Equal<
   Storage | CommitBoundary | OwnerRecords
 > = true;
 
-void [
-  memoryExact,
-  memoryRequirements,
-  memoryErrors,
-  protocolRemote,
-  pointFreeRemote,
-  hasFeed,
-  emptyExact,
-];
+void [memoryExact, memoryRequirements, memoryErrors, protocolRemote, pointFreeRemote, emptyExact];
 
 // @ts-expect-error Application RemoteStreams always requires streams.
 RemoteStreams.layer({ baseUrl: "http://localhost" });
