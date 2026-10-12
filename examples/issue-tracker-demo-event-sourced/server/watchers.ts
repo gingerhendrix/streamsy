@@ -1,4 +1,3 @@
-import type { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionRetry } from "@streamsy/projection";
 import { Cause, Context, Effect, Fiber, FiberMap, Layer } from "effect";
 import { readModel } from "./read-model.ts";
@@ -19,9 +18,7 @@ export const ProjectionWatchersLive = Layer.effect(
     // The layer scope owns every runner, so they stop before storage closes.
     const runners = yield* FiberMap.make<string>();
 
-    const context = yield* Effect.context<
-      CheckpointStore | WorkspaceEvents | Workspaces | Streamsy.ChangeFeed<WorkspaceEvents>
-    >();
+    const context = yield* Effect.context<CheckpointStore | WorkspaceEvents | Workspaces>();
 
     const retry = yield* ProjectionRetry;
 
@@ -37,7 +34,7 @@ export const ProjectionWatchersLive = Layer.effect(
         Effect.gen(function* () {
           yield* Projection.run(rows);
 
-          return yield* Fiber.join(yield* Projection.watch(rows));
+          return yield* Fiber.join(yield* Projection.follow(rows));
         }),
       ).pipe(
         Effect.tapCause((cause) =>

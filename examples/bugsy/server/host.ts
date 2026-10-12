@@ -31,22 +31,10 @@ export const hostLayer = <E>(storage: Layer.Layer<HostStorage, E>) => {
 
   return Layer.effectContext(
     Effect.context<
-      | CheckpointStore
-      | Transaction
-      | SqlClient.SqlClient
-      | Streamsy.Services<typeof streams>
-      | Streamsy.ChangeFeed<Streamsy.Services<typeof streams>>
+      CheckpointStore | Transaction | SqlClient.SqlClient | Streamsy.Services<typeof streams>
     >().pipe(
       Effect.map(
-        Context.pick(
-          CheckpointStore,
-          Transaction,
-          SqlClient.SqlClient,
-          ...streams.streams,
-          ...streams.streams.map((stream) =>
-            Streamsy.ChangeFeed<Streamsy.Services<typeof streams>>(stream),
-          ),
-        ),
+        Context.pick(CheckpointStore, Transaction, SqlClient.SqlClient, ...streams.streams),
       ),
     ),
   ).pipe(Layer.provide(host));
@@ -92,8 +80,8 @@ export const applicationLayer = <E>(
         yield* Projection.run(outputs).pipe(
           Effect.catchCause(startupFailed(Projection.key(outputs))),
         );
-        yield* Projection.watch(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
-        yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
+        yield* Projection.follow(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
+        yield* Projection.follow(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
       }
     }),
   ).pipe(Layer.provideMerge(hostLayer(storage)));
