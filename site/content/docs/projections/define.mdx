@@ -343,7 +343,7 @@ await Effect.runPromise(hand.pipe(Effect.provide(host)));
 | `follow` | Any stream Layer, including remote                                                               |
 | `run`    | Any stream Layer                                                                                 |
 
-One process runs one runner for each projection key at a time. A second process is detected by the checkpoint token.
+Use one writer for each projection key: one `follow` or `watch`, or one `run` at a time. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
 
 The [Bugsy demo](/docs/demos/bugsy) uses request and change triggers on one key.
 

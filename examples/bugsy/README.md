@@ -1,9 +1,11 @@
 # Bugsy
 
 This example combines five workspace inputs in two checkpointed projections.
-Commands append canonical issue facts through `transact`, run both workspace addresses
-under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
-addresses. Startup attempts to catch up each configured address before accepting requests.
+Commands use an in-memory fold command view to check known issues, status and the
+next sequence, then append canonical facts through `transact`. Responses contain
+`commandId`, `event` and the event `offset`. The host watches the SQL rows and
+outputs with one writer per key. Clients wait for the outputs to catch up before
+reading their rows. Startup attempts to catch up each configured address before accepting requests.
 Startup and watcher failures are logged with the projection key and do not stop other
 addresses or the server. A failed address can serve stale rows and a stale summary until
 repaired; a terminated watcher does not automatically restart.

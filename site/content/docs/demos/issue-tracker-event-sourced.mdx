@@ -63,7 +63,7 @@ export class WorkspaceEvents extends Streamsy.json<WorkspaceEvents>()(
 
 ## 2. Decide against a projection
 
-In the base app, each request folds the whole workspace stream. Here a fold projection keeps the command view: the project ids and the issue rows. `Projection.fold` saves the view and the event offset in one checkpoint record.
+In the base app, each request folds the whole workspace stream. Here a fold projection keeps the command view: the project ids and the issue rows. `Projection.current` folds the view in memory for each command. There is no command view follower, so commands replay from the start. A `run` or follower can save a checkpoint to bound that replay.
 
 ```ts title="server/command-view.ts"
 export const commandView = Projection.fold({
@@ -75,7 +75,7 @@ export const commandView = Projection.fold({
 });
 ```
 
-`Projection.decide` replaces `Workspaces.decide`. It runs the projection to the tail, reads the view and its offset, and calls the decision. Then it appends the events with that offset as `expectedOffset`. A lost race runs, reads and decides again, three times at most.
+`Projection.decide` replaces `Workspaces.decide`. It folds the checkpoint and input tail in memory, reads the view and its offset, and calls the decision. Then it appends the events with that offset as `expectedOffset`. A lost race folds and decides again, three times at most.
 
 ```ts title="server/issue-tracker.ts"
 const decideAt = <A, E>(
@@ -106,7 +106,7 @@ The base app has the same shape in `IssueTracker.mutate`:
           })),
 ```
 
-The rules are the base app's rules. The work-in-progress race works in the same way: two requests read a view with two issues in progress, one append lands, and the other runs the projection again, sees three and fails with 422. The difference is in what a decision returns. An issue patch returns one event for each field that it changes:
+The rules are the base app's rules. The work-in-progress race works in the same way: two requests read a view with two issues in progress, one append lands, and the other folds the projection in memory again, sees three and fails with 422. The difference is in what a decision returns. An issue patch returns one event for each field that it changes:
 
 ```ts title="server/decide.ts"
 const edit = { issueId, ...writer(input.updatedBy), at: stamp.now, txid: stamp.txid };
@@ -223,7 +223,7 @@ The success body keeps `awaitOffset`, because the contract is shared. In this va
 ## Limits
 
 - The read model lags the event append by one projection run. The txid wait hides the lag from the writer. Another tab sees the change when the row lands.
-- Both projections keep their state in one checkpoint record, and each unit saves the whole value. This suits a demo workspace of a few hundred rows.
+- The read model keeps its state in one checkpoint record, and each unit saves the whole value. This suits a demo workspace of a few hundred rows.
 - A runner that fails on every attempt logs the failure and tries again, up to every 30 seconds. The State stream of that workspace stops until the cause is fixed.
 - A crash between the stream creation and the registry record leaves a workspace with no runner. The request that made it failed, so no user has its link.
 - The event stream has no route. A later variant can serve it read-only, for example for an issue activity list.
