@@ -1,5 +1,5 @@
 import { spawnServer } from "@streamsy/test-support/server";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
 import { ServerConfig, storageChoice, type StorageChoice } from "../server/config.ts";
@@ -119,3 +119,31 @@ export const readBoard = (baseUrl: string, workspaceId: string) =>
       offset = next;
     }
   });
+
+/** Wait until both workspace writers have committed the command event offset. */
+export const awaitCommand = (baseUrl: string, workspaceId: string, offset: string) =>
+  getJson(
+    `${baseUrl}/api/workspaces/${workspaceId}/status`,
+    Schema.Struct({
+      offsets: Schema.Record(Schema.String, Schema.String),
+      outputOffsets: Schema.Record(Schema.String, Schema.String),
+    }),
+  ).pipe(
+    Effect.flatMap(({ offsets, outputOffsets }) =>
+      (offsets.events ?? "") >= offset && (outputOffsets.events ?? "") >= offset
+        ? Effect.void
+        : Effect.fail(new SmokeFailure({ message: "watchers have not reached the command" })),
+    ),
+    Effect.retry(Schedule.spaced("10 millis")),
+    Effect.timeout("5 seconds"),
+  );
+
+/** Append a command, then wait for its rows and outputs before reading them. */
+export const postCommand = (baseUrl: string, workspaceId: string, body: JsonValue) =>
+  HttpClient.post(`${baseUrl}/api/workspaces/${workspaceId}/commands`, {
+    body: HttpBody.jsonUnsafe(body),
+  }).pipe(
+    Effect.flatMap(ok("POST", "commands")),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ offset: Schema.String }))),
+    Effect.flatMap(({ offset }) => awaitCommand(baseUrl, workspaceId, offset)),
+  );

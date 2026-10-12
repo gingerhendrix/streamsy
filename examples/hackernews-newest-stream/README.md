@@ -2,8 +2,8 @@
 
 A Bun server polls Hacker News and writes one Durable State stream,
 `hackernews/newest`. A checkpointed fold, `newestRows`, folds the stream into
-the current story rows. The poller calls `Projection.decide`: it runs the
-projection, reads the rows and the offset they are at, diffs them against the
+the current story rows. The poller calls `Projection.decide`: it folds the
+checkpoint and input tail in memory, reads their matching state and offsets, diffs them against the
 fetch, and appends the changes with `expectedOffset: offsets.input`. `Serve.mount`
 publishes the stream at `/state/newest`. The React browser replays from `-1`
 into TanStack DB through `createStreamDB`, then follows live changes.
@@ -14,8 +14,8 @@ The poller is the working example of the "Read, decide, append" recipe in the
 ```text
 HN API --fetch--> poller --diff--> append(expectedOffset: offsets.input) --> hackernews/newest
                   ^                                                           |     |
-                  | Projection.read: state + offsets                          |     +--> Serve.mount /state/newest --> browser
-                  +---- Projection.run(newestRows) <-- fold -------------------+
+                  | Projection.current: state + offsets                          |     +--> Serve.mount /state/newest --> browser
+                  +---- Projection.current(newestRows) <-- fold -------------------+
 ```
 
 The collection is `hn-story`, keyed by `id`. The projection declares its state
@@ -31,10 +31,10 @@ export const newestRows = Projection.fold({
 }).at({});
 ```
 
-SQLite keeps the stream, the projection checkpoint and the state row in one
-file. The state row and the checkpoint commit in one transaction. About 50 rows
-live in one state value because this set is small and bounded; the projections
-docs advise application tables for large row sets.
+SQLite keeps the stream in one file. This demo has no projection follower, so
+`current` folds the retained history from the start and writes no checkpoint.
+The value holds about 50 rows because this set is small and bounded; the
+retained history still grows. A follower could save checkpoints to bound replay.
 
 One call of the recipe is `reconcileNewest` in `src/server/poller/reconcile.ts`:
 
@@ -64,7 +64,7 @@ export const reconcileNewest = (
 Each pass fetches the newest ids and all their stories once. Unchanged stories
 produce no writes. Departed ids produce deletes, including ids that left during
 server downtime. An `OffsetMismatch` triggers up to three retries of the whole
-pass. `Projection.decide` runs each retry: it runs the projection, reads again
+pass. `Projection.decide` folds each retry: it reads the checkpoint and input tail again
 and rebuilds the diff from durable rows without refetching HN. After the retry limit, status records the
 error and the next poll tries again. There is no background projection watcher
 or in-memory story cache.
@@ -121,7 +121,7 @@ failure; check `lastPollError` for the result.
 - `src/server/poller/poller.ts`: fetch, retry on `OffsetMismatch`, status counters and coalescing gate.
 - `src/server/hnews.ts`: the `HackerNewsApi` layer over the Effect `HttpClient`.
 - `src/server/newest-rows.ts`: `Projection.fold` with `state:` and `fold:`, and pure `applyChange`.
-- `src/server/poller/reconcile.ts`: `reconcileNewest` (run, read, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
+- `src/server/poller/reconcile.ts`: `reconcileNewest` (current, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
 - `src/server/static.ts`: the browser build through `HttpStaticServer`, with the SPA fallback.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.
@@ -164,13 +164,12 @@ is still newest. A later successful fetch can update it; departure from the
 newest id set deletes it. HN's id list and item responses are separate requests,
 so a poll is not an atomic HN snapshot.
 
-`Projection.read` gives the rows and their offset from one transaction. If
+`Projection.current` gives the rows and their offset from one transaction. If
 another process appends after the read, `expectedOffset` refuses the stale
 append and the poller retries. A no-change pass appends nothing and does not
 check the tail; later polls reconcile later writes. `expectedOffset` prevents
 stale writes, but does not order the HN fetches of different processes by
-freshness. Steady contention can use up the three retries. Projection
-checkpoint conflicts and other operational errors are recorded for the next
+freshness. Steady contention can use up the three retries. Other operational errors are recorded for the next
 scheduled pass, not retried as append conflicts.
 
 `HN_DB=memory` starts fresh on every process restart.

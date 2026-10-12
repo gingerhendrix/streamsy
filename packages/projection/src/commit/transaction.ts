@@ -42,7 +42,7 @@ export const transaction = withPrepare(
               return yield* new ProjectionFault({
                 phase: "checkpoint",
                 reason: "token-conflict",
-                message: `Record of ${pending.key.id} changed while the unit was read`,
+                message: `Record of ${pending.key.id} changed while the unit was read. A second writer on the same key is the likely cause. Use one writer per key: the follower or one run at a time.`,
               });
 
             const result = yield* pending.run.pipe(

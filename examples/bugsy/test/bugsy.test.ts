@@ -5,12 +5,12 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import { Layer } from "effect";
 
 import { expect, test } from "bun:test";
-import { Projection } from "@streamsy/projection";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
+import { CheckpointStore } from "@streamsy/projection";
+import { commandView } from "../server/command-view.ts";
 import { SqlClient } from "effect/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
-import { issueRows } from "../server/projection.ts";
 import { Events } from "../server/streams.ts";
 import { transact, UnknownIssue } from "../server/state.ts";
 import { scratchDirectory, startServer, stopServer, waitForServer } from "./support.ts";
@@ -45,46 +45,77 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
       expect(foldIssue(first, older)).toBe(first);
     });
 
-    it.effect("transact decides from the issueRows tables and appends at the events offset", () =>
-      Effect.gen(function* () {
-        const runtime = yield* Layer.build(applicationLayer(sqliteStorage(":memory:")));
+    it.effect(
+      "transact decides from the in-memory command view and appends at the events offset",
+      () =>
+        Effect.gen(function* () {
+          const runtime = yield* Layer.build(applicationLayer(sqliteStorage(":memory:")));
 
-        yield* Effect.gen(function* () {
-          yield* createInputs("live");
-          const events = yield* Events;
-          // A fact appended outside `transact`: the next command must see it.
-          yield* events.append({ workspaceId: "live" }, [created]);
+          yield* Effect.gen(function* () {
+            yield* createInputs("live");
+            const events = yield* Events;
+            // A fact appended outside `transact`: the next command must see it.
+            yield* events.append({ workspaceId: "live" }, [created]);
 
-          const first = yield* transact("live", {
-            type: "status",
-            commandId: "c1",
-            issueId: "i1",
-            status: "done",
-          });
+            const first = yield* transact("live", {
+              type: "status",
+              commandId: "c1",
+              issueId: "i1",
+              status: "done",
+            });
 
-          const assigned = yield* transact("live", {
-            type: "assign",
-            commandId: "c2",
-            issueId: "i1",
-            assigneeId: "ada",
-          });
+            const assigned = yield* transact("live", {
+              type: "assign",
+              commandId: "c2",
+              issueId: "i1",
+              assigneeId: "ada",
+            });
 
-          expect(first.event).toMatchObject({ type: "IssueStatusChanged", sequence: 4 });
-          expect(assigned.event).toMatchObject({ status: "done", assigneeId: "ada", sequence: 5 });
-          expect(assigned.offset).toBe((yield* events.head({ workspaceId: "live" })).nextOffset);
+            expect(first.event).toMatchObject({ type: "IssueStatusChanged", sequence: 4 });
+            expect(assigned.event).toMatchObject({
+              status: "done",
+              assigneeId: "ada",
+              sequence: 5,
+            });
+            expect(assigned.offset).toBe((yield* events.head({ workspaceId: "live" })).nextOffset);
 
-          const unknown = yield* Effect.flip(
-            transact("live", { type: "status", commandId: "c3", issueId: "nope", status: "done" }),
-          );
+            for (const issueId of ["nope", "constructor", "toString"]) {
+              const unknown = yield* Effect.flip(
+                transact("live", { type: "status", commandId: "c3", issueId, status: "done" }),
+              );
 
-          expect(unknown).toBeInstanceOf(UnknownIssue);
-          const { items } = yield* events.collect({ workspaceId: "live" });
-          expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2"]);
-        }).pipe(Effect.provideContext(runtime));
-      }),
+              expect(unknown).toBeInstanceOf(UnknownIssue);
+            }
+
+            expect(
+              (yield* (yield* CheckpointStore).load(commandView.at({ workspaceId: "live" })))
+                .record,
+            ).toEqual(Option.none());
+            const sql = yield* SqlClient.SqlClient;
+            expect(yield* sql`SELECT * FROM issues`).toEqual([]);
+            yield* transact("live", {
+              type: "create",
+              commandId: "c4",
+              issueId: "constructor",
+              projectId: "p1",
+              title: "Named issue",
+            });
+
+            const named = yield* transact("live", {
+              type: "status",
+              commandId: "c5",
+              issueId: "constructor",
+              status: "done",
+            });
+
+            expect(named.event).toMatchObject({ status: "done", sequence: 7 });
+            const { items } = yield* events.collect({ workspaceId: "live" });
+            expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2", "c4", "c5"]);
+          }).pipe(Effect.provideContext(runtime));
+        }),
     );
 
-    it.effect("the change trigger stays alive beside the request trigger on one key", () =>
+    it.effect("the watcher writes rows after commands and external appends", () =>
       Effect.gen(function* () {
         const runtime = yield* Layer.build(applicationLayer(sqliteStorage(":memory:"), ["live"]));
 
@@ -97,7 +128,6 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
             title: "Both",
             status: "todo",
           });
-          yield* Projection.run(issueRows.at({ workspaceId: "live" }), { limit: 5 });
           const sql = yield* SqlClient.SqlClient;
           yield* (yield* Events).append({ workspaceId: "live" }, [
             { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },

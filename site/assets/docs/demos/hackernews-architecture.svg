@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 680" width="980" height="680" role="img" aria-labelledby="title desc">
   <title id="title">Hacker News newest demo architecture</title>
-  <desc id="desc">One Durable State stream, hackernews/newest, holds the story changes. A checkpointed fold, newestRows, folds the stream into rows. The poller fetches Hacker News, runs and reads the projection, diffs the rows against the fetch and appends the changes with expectedOffset. On OffsetMismatch it retries the pass up to three times. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.</desc>
+  <desc id="desc">One Durable State stream, hackernews/newest, holds the story changes. A checkpointed fold, newestRows, folds the stream into rows. The poller fetches Hacker News, folds the projection in memory, diffs the rows against the fetch and appends the changes with expectedOffset. On OffsetMismatch it retries the pass up to three times. Serve.state publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. SQLite stores the stream. This demo has no follower and folds the retained history in memory without saving checkpoints.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -63,7 +63,7 @@
 
   <path class="flow" d="M 568 236 V 272"/>
   <path class="flow" d="M 466 318 H 298 V 238"/>
-  <text class="edge-label" x="382" y="308" text-anchor="middle">run, read rows + offset</text>
+  <text class="edge-label" x="382" y="308" text-anchor="middle">current: rows + offset</text>
 
   <rect class="host" x="208" y="380" width="460" height="42" rx="12"/>
   <text class="node-subtitle" x="438" y="406" text-anchor="middle">One Bun SQLite file: stream · checkpoint with state</text>

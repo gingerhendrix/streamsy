@@ -21,7 +21,7 @@ Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`
 
 ## Architecture
 
-![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Triggers run both projections after each command and when an input changes. Serve routes publish the results read-only.](/docs/demos/bugsy-architecture.svg)
+![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Watchers run both projections when an input changes. Commands fold a value view in memory. Serve routes publish the results read-only.](/docs/demos/bugsy-architecture.svg)
 
 Each number in the diagram is also a section number below.
 
@@ -31,7 +31,7 @@ Each number in the diagram is also a section number below.
 | 2    | A command becomes one fact, appended only if the stream did not move | `Projection.decide`                                           | `server/state.ts`                  |
 | 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
 | 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `DurableState` | `server/outputs.ts`                |
-| 5    | The command path and the watchers run both projections               | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
+| 5    | Startup runs both projections, then watchers are the writers         | `Projection.run`, `Projection.watch`                          | `server/app.ts`, `server/host.ts`  |
 | 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`, `Serve.route`    | `server/app.ts`, `server/index.ts` |
 
 The code below is from the demo. Lines marked `// ...` are left out.
@@ -75,21 +75,53 @@ See [Declare streams](/docs/streams/declare) for templates and parameters.
 
 ## 2. Append a command
 
-`transact` checks the command against the rows that `issueRows` wrote, and appends one fact. `Projection.decide` runs `issueRows` to the tail, then calls `decide`. `decide` reads the SQL tables. The append to `events` sets `expectedOffset` to the offset that the projection read. If another command appended first, the append fails with `OffsetMismatch`, and `Projection.decide` runs, reads and decides again, up to three times.
+`transact` checks the command against `commandView`, a fold of known issues, their status and the next sequence. `Projection.decide` calls `current` to fold the event tail in memory, then calls the decision. It writes no checkpoint. The append to `events` uses the view's offset as `expectedOffset`. A lost race folds and decides again, up to three retries.
 
 ```ts title="server/state.ts"
 export const transact = (workspaceId: string, command: CommandRequest) =>
-  Projection.decide(issueRows.at({ workspaceId }), {
+  Projection.decide(commandView.at({ workspaceId }), {
     input: "events",
-    decide: () =>
+    decide: ({ state }) =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const previous =
-          command.type === "create"
-            ? undefined
-            : yield* storedIssue(sql, workspaceId, command.issueId);
+        const previous = Object.hasOwn(state.issues, command.issueId)
+          ? state.issues[command.issueId]
+          : undefined;
+
         if (command.type !== "create" && previous === undefined) return yield* new UnknownIssue();
-        // ...
+        const sequence = state.nextSequence;
+        const occurredAt = DateTime.formatIso(yield* DateTime.now);
+
+        const common = {
+          eventId: command.commandId,
+          workspaceId,
+          issueId: command.issueId,
+          sequence,
+          occurredAt,
+        };
+
+        const event: IssueEvent = Match.value(command).pipe(
+          Match.discriminatorsExhaustive("type")({
+            create: (create): IssueEvent => ({
+              type: "IssueCreated",
+              ...common,
+              projectId: create.projectId,
+              title: create.title,
+              status: create.status ?? "backlog",
+            }),
+            status: (status): IssueEvent => ({
+              type: "IssueStatusChanged",
+              ...common,
+              status: status.status,
+            }),
+            assign: (assign): IssueEvent => ({
+              type: "IssueAssigned",
+              ...common,
+              status: previous!.status,
+              assigneeId: assign.assigneeId,
+            }),
+          }),
+        );
+
         return { value: event, items: [event] };
       }),
   }).pipe(Effect.map(({ value: event, offset }) => ({ event, offset })));
@@ -183,17 +215,31 @@ See [Output projections](/docs/projections/define#output-projections) and [State
 
 ## 5. Run both projections
 
-A command runs both projections for its workspace to the end of their inputs before the route reads SQL. This is how the response can include the new row.
+A command returns the event and its input offset. Watchers write the rows and outputs. A client waits on the output before reading its new row. The smoke scripts wait until the status endpoint reports both writers at the event offset.
 
 ```ts title="server/app.ts"
 const commands = (workspaces: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    // ...
-    const { event } = yield* transact(workspaceId, command);
-    yield* Projection.run(issueRows.at({ workspaceId }));
-    yield* Projection.run(tracker.at({ workspaceId }));
-    const row = yield* issueRow(workspaceId, command.issueId);
-    return json({ commandId: command.commandId, event, row });
+    const workspaceId = yield* workspace(workspaces);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+
+    const command = yield* request.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(CommandRequest)),
+      Effect.mapError(() => new InvalidCommand()),
+    );
+
+    const { event, offset } = yield* transact(workspaceId, command);
+
+    return json({ commandId: command.commandId, event, offset });
+  }).pipe(
+    Effect.catchTags({
+      InvalidCommand: () => Effect.succeed(json({ error: "Invalid command" }, { status: 400 })),
+      UnknownIssue: () => Effect.succeed(json({ error: "Unknown issue" }, { status: 400 })),
+      OffsetMismatch: () =>
+        Effect.succeed(json({ error: "Concurrent command conflict" }, { status: 409 })),
+    }),
+    api,
+  );
 ```
 
 At startup the server runs each projection once for each workspace, then watches the inputs. An append to an input on this host runs the projection again.
@@ -209,7 +255,7 @@ At startup the server runs each projection once for each workspace, then watches
         yield* Projection.watch(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
 ```
 
-`Projection.run` allows one runner for each projection key in the process. The command path and the watcher share that permit, so they do not run the same projection at the same time. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
+Each key has one writer. Startup `run` finishes before its watcher starts. The command path never runs a writer. A second writer is a deployment fault detected by a moved checkpoint token. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
 
 See [Running](/docs/projections/define#running) and [Triggers](/docs/projections/define#triggers).
 
@@ -220,6 +266,7 @@ See [Running](/docs/projections/define#running) and [Triggers](/docs/projections
 ```ts title="server/app.ts"
 export const workspaceSummary = Effect.gen(function* () {
   const params = yield* Serve.params(Board);
+
   return yield* Serve.value(
     WorkspaceSummary,
     Projection.read(tracker.at(params)).pipe(
@@ -234,24 +281,6 @@ export const workspaceSummary = Effect.gen(function* () {
     { contract: "compact-summary-v1" },
   );
 });
-
-export const outputRoutes = Layer.mergeAll(
-  Serve.mount(Board, "/state/workspaces/:workspaceId/issues"),
-  Serve.mount(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.mount(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
-);
-// ...
-export const app = (workspaces: ReadonlyArray<string>) =>
-  Layer.mergeAll(
-    Http.routes(Streamsy.group(...Object.values(routes), ...outputStreams), {
-      prefix: "/streams",
-      access: "read",
-    }),
-    outputRoutes,
-    HttpRouter.add("POST", "/api/workspaces/:workspaceId/commands", commands(workspaces)),
-    Serve.route("/api/workspaces/:workspaceId/status", status(workspaces)),
-    Serve.route("/api/workspaces/:workspaceId/drafts", drafts(workspaces)),
 ```
 
 | Route                                                       | Result                                                   |

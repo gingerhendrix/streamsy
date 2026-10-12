@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { HttpClient } from "effect/http";
 
-export { post as postUrl, readBoard } from "../scripts/support.ts";
+export { post as postUrl, postCommand, readBoard } from "../scripts/support.ts";
 
 import { post as postUrl } from "../scripts/support.ts";
 

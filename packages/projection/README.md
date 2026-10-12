@@ -90,8 +90,12 @@ the actual writes. See the [bucket example](https://streamsy.dev/docs/projection
 `initial` can depend on decoded parameters. State and offsets share one record.
 `Projection.read(bound)` reads through the Commit's `load` and returns
 `{ state, offsets }`, using `initial` before the first unit.
-`Projection.decide(bound, { input, decide })` runs to the tail, reads, decides,
-and appends to one input with that input's offset as `expectedOffset`. It
+`Projection.current(bound)` folds the checkpoint and input tail in memory. It
+takes no lock and writes no checkpoint or outputs. It requires `state:` and
+returns matching state and offsets, including entries appended before the call.
+`mapAccum` and `mapAccumBatch` compute state and discard emitted items.
+`Projection.decide(bound, { input, decide })` requires `state:`, calls `current`,
+decides, and appends to one input with that input's offset as `expectedOffset`. It
 retries on `OffsetMismatch`. See [Read, decide, append](https://streamsy.dev/docs/projections/state#read-decide-append).
 
 `Serve.value(schema, effect)` serves values computed with `Projection.read`.
@@ -138,6 +142,13 @@ until caught up, closed, or its optional unit limit. `follow` returns a scoped
 fiber and waits for changes; `watch` needs storage change feeds. Remote inputs
 work with `follow` and `run`.
 
+Use one writer per projection key: one `follow` or `watch`, or one `run` at a
+time. Schedules must not overlap. A second writer is a deployment fault; a
+moved checkpoint token fails with `token-conflict`. External handlers may have
+already run. Any number of `current` and `decide` calls can run beside the
+follower, including inside a caller transaction. Table and stateless output
+projections are follow-only; wait on their output to see a command.
+
 `follow` retries only `storage-failure`: `options.retry` overrides the
 `ProjectionRetry` context reference, whose default is jittered exponential
 backoff from 200 ms, capped at 30 s. `run` does not retry. Handler errors retain
@@ -145,9 +156,13 @@ their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.
 
 Records are keyed by `id`, `version`, `generation`, and canonical parameters.
 Use a new generation for changed input identity or state schema. Retain input
-history after the checkpoint, including pinned ranges. Stop runners before
+history after the checkpoint, including pinned ranges. Stop the follower first, or use a new generation before
 `Projection.forget(bound)`, which calls the Commit's `remove`. For producer
 outputs, delete output streams first or use a new generation.
+
+Without a follower, each `current` replays from the last checkpoint or from
+the start. A continuously growing input can delay it. Fold handlers must be
+replayable and give the same result for any page split.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
 

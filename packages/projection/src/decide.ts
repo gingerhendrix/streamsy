@@ -3,18 +3,14 @@ import { isReadonlyArrayNonEmpty } from "effect/Array";
 import type { Decided, Decision, OffsetMismatch, Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import type { InputMap, ItemOf } from "./batch.ts";
-import type { Executable } from "./executable.ts";
-import { run } from "./run.ts";
-import { read, type Snapshot, type StateValue } from "./snapshot.ts";
+import { current, type CurrentProjection } from "./current.ts";
+import type { Snapshot } from "./snapshot.ts";
 
 export interface DecideSpec<Inputs extends InputMap, K extends keyof Inputs, S, B, E, R> {
   /** The input to append to. Its offset in the snapshot is the CAS token. */
   readonly input: K;
   /**
-   * Decide what to append from the snapshot. This step must not write. A
-   * projection with no `state:` has `snapshot.state` undefined; read its own tables
-   * here instead. They can only be newer than the offsets, and then the append fails
-   * and the call runs again.
+   * Decide what to append from the current value snapshot. This step must not write.
    */
   readonly decide: (
     snapshot: Snapshot<S, Inputs>,
@@ -27,11 +23,8 @@ export interface DecideSpec<Inputs extends InputMap, K extends keyof Inputs, S, 
 const defaultDecideRetry = Schedule.recurs(3);
 
 /**
- * Read, decide, append over a projection. Run the projection to its tail, read
- * its state and offsets from one record, decide, and append to `input` with
- * `expectedOffset` set to that input's offset. After an `OffsetMismatch`, run,
- * read and decide again while `retry` allows; then fail with the last
- * `OffsetMismatch`. Transport faults are not retried.
+ * Fold in memory, decide, and append with the snapshot input offset.
+ * Retry only this append's OffsetMismatch while the retry schedule allows.
  */
 export const decide = Effect.fn("Projection.decide")(function* <
   Inputs extends InputMap,
@@ -42,14 +35,8 @@ export const decide = Effect.fn("Projection.decide")(function* <
   PE,
   PR,
   Q,
-  Out,
-  P,
-  S = never,
-  OR = never,
->(
-  projection: Executable<Inputs, PE, PR, Q, Out, P, S, OR>,
-  spec: DecideSpec<Inputs, K, StateValue<S>, B, E, R>,
-) {
+  S,
+>(projection: CurrentProjection<Inputs, S, PE, PR, Q>, spec: DecideSpec<Inputs, K, S, B, E, R>) {
   // SAFETY: `Inputs[K]` is this input's address; its items are `ItemOf<Inputs[K]>`.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the selected address and ItemOf share Inputs[K]; TS cannot reduce this conditional generic type.
   const address = projection.inputs[spec.input] as Streamsy.Address<
@@ -58,9 +45,7 @@ export const decide = Effect.fn("Projection.decide")(function* <
   >;
 
   const attempt = Effect.gen(function* () {
-    // Run with no limit, so the offsets are at the tail.
-    yield* run(projection);
-    const snapshot = yield* read(projection);
+    const snapshot = yield* current(projection);
     const offset = snapshot.offsets[spec.input];
     const { value, items } = yield* spec.decide(snapshot);
 

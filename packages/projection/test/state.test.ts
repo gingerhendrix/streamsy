@@ -1,7 +1,6 @@
 import { Commit, Transaction } from "@streamsy/projection";
 import { BunServices } from "@effect/platform-bun";
 import { restore } from "../src/checkpoint-store.ts";
-import { run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { expect, layer } from "@streamsy/effect-test";
@@ -12,9 +11,7 @@ import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
 import { BunStorage } from "@streamsy/storage/bun";
-import { hasLock } from "../src/serialize.ts";
 import { forget } from "../src/forget.ts";
-import { recordKey } from "@streamsy/projection/checkpoint";
 
 class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:name", {
   params: { name: Schema.String },
@@ -125,14 +122,11 @@ for (const [name, host] of hosts) {
   });
 
   layer(host)((it) => {
-    it.effect(`${name}: forget deletes one record, prunes the lock, and is idempotent`, () =>
+    it.effect(`${name}: forget deletes one record and is idempotent`, () =>
       Effect.gen(function* () {
         yield* seed;
-        yield* runWithPermit(total);
-        expect(hasLock(recordKey(total))).toBe(true);
-        // Source imports share the internal lock map, which is intentionally absent from dist's public surface.
+        yield* Projection.run(total);
         yield* forget(total);
-        expect(hasLock(recordKey(total))).toBe(false);
         const checkpoints = yield* CheckpointStore;
         expect(yield* checkpoints.load(total)).toEqual({ record: Option.none(), token: "0" });
         expect(
@@ -152,10 +146,10 @@ for (const [name, host] of hosts) {
   });
 
   layer(host)((it) => {
-    it.effect(`${name}: failed record delete rolls back state and retains the lock`, () =>
+    it.effect(`${name}: failed record delete retains state`, () =>
       Effect.gen(function* () {
         yield* seed;
-        yield* runWithPermit(total);
+        yield* Projection.run(total);
         const checkpoints = yield* CheckpointStore;
         const before = yield* checkpoints.load(total);
 
@@ -168,7 +162,6 @@ for (const [name, host] of hosts) {
         );
 
         expect(result._tag).toBe("Failure");
-        expect(hasLock(recordKey(total))).toBe(true);
         expect(yield* checkpoints.load(total)).toEqual(before);
         expect((yield* Projection.read(total)).state).toBe(5);
         yield* forget(total);

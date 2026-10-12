@@ -42,8 +42,8 @@ function withIssue(view: CommandView, event: IssueEvent): CommandView {
 
 /**
  * The command view of each workspace, folded from its event stream. The default
- * Commit saves the value and the event offset in one checkpoint record, so the
- * view always matches the offset that a decision appends at.
+ * Commit can save the value and event offset in one checkpoint record. This app
+ * uses current through decide, so commands fold in memory without a writer.
  */
 export const commandView = Projection.fold({
   id: "issue-tracker-commands",

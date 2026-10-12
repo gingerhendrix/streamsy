@@ -8,7 +8,13 @@ import {
   type OffsetMismatch,
   type StreamsFault,
 } from "@streamsy/core";
-import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Commit,
+  Projection,
+  type ProjectionFault,
+  type Snapshot,
+} from "@streamsy/projection";
 
 type Equal<A, B> =
   // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- SAFETY: quantified conditional functions are required for this exact type-equality proof.
@@ -65,3 +71,42 @@ export const wrong = [
     decide: () => Effect.succeed({ value: 0, items: [1] }),
   }),
 ];
+
+const stateless = Projection.process({
+  id: "stateless-decide",
+  params: {},
+  inputs: { numbers: Numbers },
+  commit: Commit.atLeastOnce,
+  process: () => Effect.void,
+}).at({});
+
+// @ts-expect-error decide requires declared value state
+export const noStateDecision = Projection.decide(stateless, {
+  input: "numbers",
+  decide: () => Effect.succeed({ value: 0, items: [] }),
+});
+
+// @ts-expect-error current requires declared value state
+export const noStateCurrent = Projection.current(stateless);
+
+const accumulating = Projection.mapAccum({
+  id: "current-output-types",
+  params: {},
+  inputs: { numbers: Numbers },
+  outputs: { words: Words },
+  state: { schema: Schema.Finite, initial: 0 },
+  commit: Commit.producer,
+  mapAccum: (sum, { item }) => [sum + item, { words: [String(item)] }] as const,
+}).at({});
+
+const currentAccumulating = Projection.current(accumulating);
+
+// Reading accumulated state requires the input and checkpoint services, not output services.
+export const currentAccumulatingType: Equal<
+  typeof currentAccumulating,
+  Effect.Effect<
+    Snapshot<number, typeof accumulating.inputs>,
+    ProjectionFault,
+    Numbers | CheckpointStore
+  >
+> = true;

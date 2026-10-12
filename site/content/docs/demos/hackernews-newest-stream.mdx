@@ -30,11 +30,11 @@ Open http://localhost:1339. The server keeps its data in
 
 ## Architecture
 
-![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller runs and reads the projection before each append, and retries on OffsetMismatch. Serve.mount publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
+![Architecture diagram. In the Bun server, the poller fetches the HN API and appends to the stream hackernews/newest. The newestRows projection folds the stream into rows. The poller folds the projection in memory before each append, and retries on OffsetMismatch. Serve.mount publishes the stream at /state/newest. In the browser, createStreamDB replays the stream into TanStack DB and React renders it with useLiveQuery. The stream and the checkpoint record containing state share one Bun SQLite file.](/docs/demos/hackernews-architecture.svg)
 
 The server polls Hacker News and writes one Durable State stream,
 `hackernews/newest`. A checkpointed fold folds that stream into the current
-story rows. Before each append, the poller runs the projection, reads the rows
+story rows. Before each append, the poller folds the projection in memory and reads the rows
 and the offset they are at, compares them with the fetched stories, and appends
 the changes with `expectedOffset`. `Serve.mount` publishes the stream at
 `/state/newest`. The React browser reads from `-1` into TanStack DB through
@@ -71,9 +71,9 @@ export class HackerNewsStories extends Streamsy.state<HackerNewsStories>()(
 export const storiesAddress = HackerNewsStories.at({});
 ```
 
-One SQLite file holds the stream, the projection record with its state.
-`BunStorage.layer` stores the stream. `CheckpointStore.layer` adds the
-checkpoint record to the same database. The app creates the stream at
+One SQLite file holds the stream. `BunStorage.layer` stores it, and
+`CheckpointStore.layer` can store projection checkpoints on the same owner.
+This demo folds in memory and saves no checkpoints. The app creates the stream at
 boot, so the first `GET /state/newest?offset=-1` returns 200 with an empty
 array before the first poll.
 
@@ -122,7 +122,7 @@ export const newestRows = Projection.fold({
 ```
 
 `applyChange` is a pure function. An upsert sets the row at its key, and a
-delete removes it. The value and offsets are saved in one checkpoint record.
+delete removes it. `current` returns the value and matching offsets without saving a checkpoint.
 The newest set holds about 50 rows, so one state value is small enough. See
 [State and checkpoints](/docs/projections/state) for when to use application tables
 in its place.
@@ -133,8 +133,7 @@ browser follows.
 ## 3. Read, decide, append
 
 Each pass fetches the newest ids and their stories once. `reconcileNewest` then
-does the recipe with one `Projection.decide` call. It runs the projection to the
-tail, reads the rows and the offset of `input`, and appends the events with that
+does the recipe with one `Projection.decide` call. It folds the checkpoint and input tail in memory, reads the rows and the offset of `input`, and appends the events with that
 offset as `expectedOffset`. No change gives no events, so nothing is appended
 and the tail is not checked:
 
@@ -169,14 +168,14 @@ See [Read, decide, append](/docs/projections/state#read-decide-append).
 
 ## 4. Retry on a conflict
 
-After an `OffsetMismatch`, `Projection.decide` runs, reads and decides again,
+After an `OffsetMismatch`, `Projection.decide` folds and decides again,
 up to three times. The poller passes the schedule as `retry`. It does not fetch
 from Hacker News again:
 
 ```ts title="src/server/poller/poller.ts"
 const pass = Effect.gen(function* () {
   // ... fetch the newest ids and their stories once, into `fetched` ...
-  // A retry runs, reads and decides again, so the diff uses the new rows.
+  // A retry folds and decides again, so the diff uses the new rows.
   const { rows, changes, offset } = yield* reconcileNewest(fetched, conflictRetries);
   // ... record the counters ...
 });
@@ -219,8 +218,7 @@ export const app = Layer.mergeAll(
 `Serve.layer` hosts the page, the State route and the status and poll API
 on one scoped Bun listener. They share an origin and need no CORS middleware.
 There are no raw `/streams` routes; only the server appends. The poller has a
-scoped lifetime. There is no background watcher: the projection runs only when
-the poller asks for it.
+scoped lifetime. There is no background watcher: the poller folds the projection in memory when it needs a current view.
 
 `listener` keeps a parked long poll open. On shutdown, `Serve.layer` answers
 each live read before the router closes. `Serve.teardown` then exits 0:
@@ -308,3 +306,5 @@ function HnApp({ db }: { db: HnDb }) {
 - `HN_DB=memory` starts fresh after every restart.
 - The demo has no hosted deployment. See [Cloudflare](/docs/hosting/cloudflare)
   for the host path.
+
+The poller has no projection follower. Each `decide` folds from the start when no checkpoint exists and writes no checkpoint. Retained history must remain available.

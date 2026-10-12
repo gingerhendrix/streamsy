@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { Layer, Effect, Schedule, Schema } from "effect";
 import { OffsetMismatch, StreamId, Streamsy, MemoryStorage } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection } from "@streamsy/projection";
 
 class Numbers extends Streamsy.json<Numbers>()("decide/Numbers", "decide/numbers", {
   params: {},
@@ -99,7 +99,7 @@ layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
 });
 
 layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
-  it.effect("decide runs, reads and decides again after a lost race", () =>
+  it.effect("decide folds and decides again after a lost race", () =>
     Effect.gen(function* () {
       yield* seed;
       const numbers = yield* Numbers;
@@ -121,7 +121,8 @@ layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
       expect(seen).toEqual([5, 15]);
       expect(decided.value).toBe(15);
       expect((yield* numbers.collect({})).items).toEqual([2, 3, 10, -15]);
-      expect((yield* Projection.read(totals)).state.sum).toBe(15);
+      expect((yield* Projection.current(totals)).state.sum).toBe(0);
+      expect((yield* Projection.read(totals)).state.sum).toBe(0);
     }),
   );
 });
@@ -149,49 +150,6 @@ layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
 
       expect(decisions).toBe(2);
       expect(failure).toBeInstanceOf(OffsetMismatch);
-    }),
-  );
-});
-
-layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
-  it.effect("decide works for a projection with no state", () =>
-    Effect.gen(function* () {
-      yield* seed;
-      const words = yield* Words;
-      // The handler's own table stands in for SQL rows.
-      const table: Array<string> = [];
-
-      const indexed = Projection.process({
-        id: "decide-words-table",
-        params: {},
-        inputs: { words: Words },
-        commit: Commit.atLeastOnce,
-        process: (batch) =>
-          Effect.sync(() => {
-            table.push(...batch.words.items);
-          }),
-      }).at({});
-
-      const decided = yield* Projection.decide(indexed, {
-        input: "words",
-        decide: (snapshot) =>
-          Effect.succeed({
-            value: snapshot.state,
-            items: table.includes("b") ? [] : ["b"],
-          }),
-      });
-
-      expect(decided.value).toBeUndefined();
-      expect(decided.appended).toBe(true);
-      expect((yield* words.collect({})).items).toEqual(["a", "b"]);
-
-      const again = yield* Projection.decide(indexed, {
-        input: "words",
-        decide: () =>
-          Effect.succeed({ value: [...table], items: table.includes("b") ? [] : ["b"] }),
-      });
-
-      expect(again).toMatchObject({ value: ["a", "b"], appended: false });
     }),
   );
 });

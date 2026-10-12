@@ -96,7 +96,9 @@ Before you call it:
 
 ## Read, decide, append
 
-A command can use a projection as its view. `Projection.decide` runs the projection, reads the state and offsets, decides, then appends to one input with `expectedOffset`.
+A command can use a value projection as its view. `Projection.current` restores one checkpoint and folds the input tail in memory. It returns matching state and offsets, including every entry appended before the call. It takes no lock and writes no checkpoint or outputs. `mapAccum` and `mapAccumBatch` compute state and discard emitted items. A pinned pending range is folded from the committed offsets too.
+
+`Projection.decide` requires `state:`. It calls `current`, decides, then appends to one input with `expectedOffset`. Both calls work inside or outside a caller transaction, alongside the follower.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -130,15 +132,17 @@ const reserve = (seat: string) =>
 
 What `Projection.decide` does:
 
-- It runs the projection to the tail, with no `limit`.
-- It reads the state and the offsets from one checkpoint record, and passes them to `decide`. `decide` must not write.
+- It calls `current` to fold the checkpoint and input tail without writing.
+- It passes that snapshot to `decide`. `decide` must not write.
 - Empty `items` writes nothing and does not check the tail. A rejection is an answer at the offsets that were read.
 - Otherwise it appends to the input that `input` names, with that input's offset as `expectedOffset`. `input` must be a key of `inputs`, and `items` must have that input's item type.
-- When its own append fails with `OffsetMismatch`, it runs, reads and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures, and it does not retry an `OffsetMismatch` that `decide` raises.
+- When its own append fails with `OffsetMismatch`, it folds and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`. It does not retry other failures, and it does not retry an `OffsetMismatch` that `decide` raises.
 
 It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the offset that was read.
 
-A projection with no `state:` works too. `snapshot.state` is `undefined`, and `decide` reads the projection's own tables. Those tables can only be newer than the offsets. Then the tail has moved, so the append fails and the call runs again.
+A projection without `state:` cannot use `current` or `decide`. Use a fold command view for checks. SQL table and stateless output projections have one follower; a request waits on their outputs to see its own write.
+
+Without a follower, `current` replays from the start when no checkpoint exists. A growing input can delay completion. Fold handlers must be replayable and give the same result for any page split.
 
 The [Hacker News newest demo](/docs/demos/hackernews-newest-stream) uses this pattern.
 
@@ -197,7 +201,7 @@ A record key is `id`, `version`, `generation`, and the canonical `params`. The r
 
 There is no reset. Declare a new `generation`. It starts from zero offsets and, for an output projection, a new producer epoch. An older generation then fails with `stale-epoch`.
 
-The record is compare-and-set. An overlapping runner with old progress stops with `token-conflict`. External effects may already have run.
+The record is compare-and-set. Use one writer for each key, the follower or one `run` at a time. A second writer with old progress stops with `token-conflict`. This is a deployment fault. External effects may already have run. Stop the follower first, or use a new generation before forgetting.
 
 ## Faults
 

@@ -12,7 +12,7 @@ import {
   startServer,
   stopServer,
   waitForServer,
-  post,
+  postCommand,
   readBoard,
 } from "./support.ts";
 
@@ -58,7 +58,7 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
         yield* waitForServer(baseUrl);
         expect((yield* HttpClient.get(`${baseUrl}/workspaces/acme/summary`)).status).toBe(200);
         expect((yield* HttpClient.get(`${baseUrl}/api/workspaces/acme/status`)).status).toBe(200);
-        yield* post(baseUrl, "/api/workspaces/live/commands", {
+        yield* postCommand(baseUrl, "live", {
           type: "create",
           commandId: "healthy-1",
           issueId: "healthy",

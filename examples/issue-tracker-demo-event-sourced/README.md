@@ -82,6 +82,10 @@ for each txid on the State stream before it reads the rows.
 
 ## Limits
 
+`Projection.decide` folds the command view in memory with `Projection.current`
+and writes no checkpoint. It requires `state:`. With no command view follower,
+each command replays the events from the start.
+
 The read model trails the event append. The txid wait hides this from the
-writer. Each projection saves its whole state at each unit, which suits a demo
+writer. The read model saves its whole state at each unit, which suits a demo
 workspace. The event stream has no route yet.
