@@ -129,8 +129,10 @@ File paths are relative POSIX paths; encode each segment separately.
 - `GET /api/blobs/:hash` returns immutable bytes with long cache headers.
 
 Versions are positive integers: a folder sequence starting at 1, carried in each
-`FileOp`. `Projection.decide` assigns `seq + 1` and appends with the expected log
-offset, so concurrent writers cannot commit the same sequence. JSON versions,
+`FileOp`. `Projection.decide` folds the head in memory, assigns `seq + 1` and
+appends with the expected log offset, so concurrent writers cannot commit the same
+sequence. Head reads and `minVersion` waits use `Projection.current`. Neither writes
+the head checkpoint; one `Projection.follow` per folder is its only writer. JSON versions,
 `base`, and `overwrote` are numbers; headers and query parameters use decimal
 integers. Offsets remain stream cursors. Directories are implicit.
 Deletes keep history. A stale write wins in commit order and records the unseen

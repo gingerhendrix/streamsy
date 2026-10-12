@@ -65,7 +65,7 @@ export class Manifest extends Streamsy.state<Manifest>()("FolderSync/Manifest", 
 
 ## Decide at the folder head
 
-`Projection.decide` catches the folder fold up before deciding. A retained operation receipt makes a replay return its earlier version without appending. New writes assign `seq + 1` as the version carried in each entry and use the input offset as the append condition. This prevents concurrent writers from committing the same folder sequence. Versions in JSON are positive integers; HTTP headers and queries use decimal integers. `minVersion` waits for the head fold to reach the sequence. Feed cursors remain stream offsets. The write records an unseen head in `overwrote`; the server time never chooses the winner. The domain has no HTTP or host imports.
+`Projection.decide` folds the folder head in memory from its last checkpoint before deciding, and writes no checkpoint. One follower is the only writer of that checkpoint. Head reads and `minVersion` waits use `Projection.current`, which also folds in memory. A retained operation receipt makes a replay return its earlier version without appending. New writes assign `seq + 1` as the version carried in each entry and use the input offset as the append condition. This prevents concurrent writers from committing the same folder sequence. Versions in JSON are positive integers; HTTP headers and queries use decimal integers. `minVersion` waits for the head fold to reach the sequence. Feed cursors remain stream offsets. The write records an unseen head in `overwrote`; the server time never chooses the winner. The domain has no HTTP or host imports.
 
 ```ts title="server/folder-store.ts"
 const replay = operationAt(state.ops, meta.opId);
