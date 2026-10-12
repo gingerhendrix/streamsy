@@ -9,7 +9,7 @@ import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
 import type { ProjectionFault } from "./fault.ts";
 import type { InputMap, Slices } from "./batch.ts";
-import { bindState, type StateDefinition } from "./state.ts";
+import { bindState, type StateDefinition, type BoundState } from "./state.ts";
 import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
 
@@ -177,8 +177,9 @@ export type RunningDeclaration<
   C,
   Omit<
     Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
-    "process" | "prepare"
+    "process" | "prepare" | "state"
   > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
     readonly process: (
       batch: Slices<Addresses<I>>,
       unit: Unit,

@@ -15,7 +15,6 @@ import type { Executable } from "./executable.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import { offsetsOf, type Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
-import { withPermit } from "./serialize.ts";
 
 export interface Progress<Inputs extends InputMap = InputMap> {
   readonly status: "progress" | "caught-up" | "source-closed" | "limit-reached";
@@ -156,12 +155,8 @@ export const pass = Effect.fn("Projection.pass")(function* <
   return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(next) };
 });
 
-/**
- * Internal kernel without a permit. Call only while holding the permit or simulating
- * a competing process in tests. Repeats `pass` until caught-up, every input is closed, or
- * the limit is reached. The trailing empty pass adds nothing to the totals.
- */
-export const runKernel = Effect.fn("Projection.runKernel")(function* <
+/** Repeats pass until caught up, closed, or limited. Use one writer per key. */
+export const run = Effect.fn("Projection.run")(function* <
   Inputs extends InputMap,
   E,
   R,
@@ -193,13 +188,3 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
 
   return { ...result, status: "limit-reached", units, items };
 });
-
-/** Runs one projection at a time for this canonical key across hosts in the current process. */
-export const run = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
-  options: RunOptions = {},
-): Effect.Effect<
-  Progress<Inputs>,
-  E | ProjectionFault,
-  Exclude<R, P> | Q | OR | InputServices<Inputs>
-> => withPermit(projection, runKernel(projection, options));

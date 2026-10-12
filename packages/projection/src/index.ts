@@ -2,6 +2,8 @@ export * as Projection from "./projection.ts";
 
 export type { Declaration } from "./declaration.ts";
 
+export type { CurrentProjection } from "./current.ts";
+
 export type { DecideSpec } from "./decide.ts";
 
 export type { FollowOptions } from "./follow.ts";

@@ -98,7 +98,8 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
                   ? new ProjectionFault({
                       phase: "checkpoint",
                       reason: "token-conflict",
-                      message: "A concurrent save created the checkpoint record first",
+                      message:
+                        "A second writer on the same key likely created the checkpoint first. Use one writer per key: the follower or one run at a time.",
                       cause,
                     })
                   : storageFailure("checkpoint", "Cannot write a checkpoint")(cause),
@@ -205,7 +206,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
           return yield* new ProjectionFault({
             phase: "checkpoint",
             reason: "token-conflict",
-            message: `Record for ${key.id} changed: expected token ${ifToken}, found ${current.token}`,
+            message: `Record for ${key.id} changed: expected token ${ifToken}, found ${current.token}. A second writer on the same key is the likely cause. Use one writer per key: the follower or one run at a time.`,
           });
         const version = Number(ifToken) + 1;
 

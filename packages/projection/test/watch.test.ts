@@ -28,6 +28,19 @@ class WatchRoute1 extends Streamsy.json<WatchRoute1>()(
   },
 ) {}
 
+/** Wait for the watcher checkpoint without starting another writer. */
+const awaitCheckpoint = (projection: Parameters<typeof Projection.key>[0], offset: string) =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+
+    while (true) {
+      const loaded = yield* store.load(Projection.key(projection));
+
+      if (Option.isSome(loaded.record) && loaded.record.value.inputs.input === offset) return;
+      yield* Effect.yieldNow;
+    }
+  });
+
 const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
   Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
@@ -67,7 +80,7 @@ layer(FamilyFixture.withFamilies(layerSqlite()))((it) => {
         const fiber = yield* Projection.watch(projection);
         yield* Streams.append(input, [1]);
         yield* Deferred.await(handled);
-        yield* Projection.run(projection);
+        yield* awaitCheckpoint(projection, (yield* Streams.head(input)).nextOffset);
         expect(calls).toBe(1);
         expect(yield* readAll(output)).toEqual([1]);
         expect(
@@ -123,7 +136,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), WatchRoute1, WatchRoute2))((it) =
       yield* Streams.append(input, [4]);
       yield* Deferred.succeed(release, undefined);
       yield* Deferred.await(second);
-      yield* Projection.run(projection);
+      yield* awaitCheckpoint(projection, (yield* Streams.head(input)).nextOffset);
       expect(calls).toBe(2);
       expect(yield* readAll(output)).toEqual([1, 2, 3, 4]);
       const tail = yield* Streams.head(input);
@@ -161,7 +174,7 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1 })))((it) => {
 
       const fiber = yield* Projection.watch(projection, { limit: 1 });
       yield* Deferred.await(drained);
-      yield* Projection.run(projection);
+      yield* awaitCheckpoint(projection, (yield* Streams.head(input)).nextOffset);
       expect(seen).toEqual([1, 2, 3]);
       const tail = yield* Streams.head(input);
       const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
@@ -227,50 +240,6 @@ layer(FamilyFixture.withFamilies(memoryHost(), WatchRoute1, WatchRoute2))((it) =
         expect(result.failure.reason).toBe("history-unavailable");
         expect(result.failure.input).toBe("input");
       }
-    }),
-  );
-});
-
-layer(FamilyFixture.withFamilies(memoryHost(), WatchRoute1, WatchRoute2))((it) => {
-  it.effect("watch and a serialized request share the same key lock", () =>
-    Effect.gen(function* () {
-      const input = FamilyFixture.json("change-request-input", {
-        schema: Schema.Finite,
-      });
-
-      const output = FamilyFixture.json("change-request-output", {
-        schema: Schema.Finite,
-      });
-
-      yield* Streams.create(input);
-      const entered = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let calls = 0;
-
-      const projection = Projection.emit({
-        commit: Commit.producer,
-        id: "change-request",
-        params: {},
-        inputs: { input },
-        outputs: { output: output },
-        emit: (entry) =>
-          Effect.sync(() => (calls += 1)).pipe(
-            Effect.andThen(Deferred.succeed(entered, undefined)),
-            Effect.andThen(Deferred.await(release)),
-            Effect.as({ output: [entry.item] }),
-          ),
-      }).at({});
-
-      const watcher = yield* Projection.watch(projection);
-      yield* Streams.append(input, [1]);
-      yield* Deferred.await(entered);
-      const request = yield* Projection.run(projection).pipe(Effect.forkScoped);
-      expect(request.pollUnsafe()).toBeUndefined();
-      yield* Deferred.succeed(release, undefined);
-      expect((yield* Fiber.join(request)).status).toBe("caught-up");
-      expect(calls).toBe(1);
-      expect(yield* readAll(output)).toEqual([1]);
-      yield* Fiber.interrupt(watcher);
     }),
   );
 });
