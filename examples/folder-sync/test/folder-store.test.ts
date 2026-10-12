@@ -74,6 +74,22 @@ for (const [name, storage] of [
         expect(yield* Effect.flip(store.read(folderId, "__proto__"))).toBeInstanceOf(MissingFile);
       }),
     );
+    it.effect("head reads and version waits fold in memory without writing the checkpoint", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const head = folderHead.at({ folderId: "read-only" });
+        yield* store.create("read-only", "Read only");
+        yield* store.write("read-only", "a", metadata("ro-1"), bytes("one"));
+        const before = yield* Projection.read(head);
+
+        const second = yield* store.write("read-only", "a", metadata("ro-2", 1), bytes("two"));
+        const latest = yield* store.read("read-only", "a", { minVersion: second.version });
+
+        expect(latest.version).toBe(second.version);
+        expect(latest.bytes).toEqual(bytes("two"));
+        expect(yield* Projection.read(head)).toEqual(before);
+      }),
+    );
     it.effect("head reads distinguish deleted files from missing and historical versions", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;

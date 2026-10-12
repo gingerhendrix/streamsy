@@ -1,9 +1,9 @@
 import { CommitBoundary, ZERO_OFFSET } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
+import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule } from "effect";
 import { SqlClient } from "effect/sql";
 import { InvalidFile } from "./domain.ts";
-import { Changes, Files, Folders, Manifest, ManifestFile, folderHead } from "./streams.ts";
+import { Changes, Folders, Manifest, ManifestFile, folderHead } from "./streams.ts";
 import {
   folderChanges,
   folderTriggers,
@@ -149,8 +149,6 @@ export const IndexLive = Layer.effectDiscard(
     const changes = yield* Changes;
     const state = yield* Manifest;
     const registry = yield* Folders;
-    const files = yield* Files;
-    const boundary = yield* CommitBoundary;
     yield* changes.create({});
     yield* state.create({});
     const scope = yield* Effect.scope;
@@ -159,21 +157,14 @@ export const IndexLive = Layer.effectDiscard(
     const start = Effect.fn("FolderTriggers.start")(function* (folderId: string) {
       if (started.has(folderId)) return;
       const head = folderHead.at({ folderId });
-      // Decide owns the SQL boundary before the projection permit. Use that same lock order.
-      yield* boundary.withTransaction(Projection.run(head));
       const bound = folderChanges.at({ folderId });
       // Finish both catch-up runs before forking, so a failed registry attempt leaves no partial bindings.
+      yield* Projection.run(head);
       yield* Projection.run(bound);
+      // The only writer of the head checkpoint. Reads and decide fold from it in memory.
       yield* supervise(
         `head:${folderId}`,
-        Effect.gen(function* () {
-          // Read again on every restart, after the previous attempt's durable progress.
-          const progress = yield* boundary.withTransaction(Projection.read(head));
-
-          yield* files
-            .follow({ folderId }, { offset: progress.offsets.input })
-            .pipe(Stream.runForEach(() => boundary.withTransaction(Projection.run(head))));
-        }),
+        Projection.follow(head).pipe(Effect.flatMap(Fiber.join)),
       ).pipe(Effect.forkIn(scope));
       yield* supervise(
         `changes:${folderId}`,

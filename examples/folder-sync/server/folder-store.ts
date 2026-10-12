@@ -208,16 +208,14 @@ const waitForVersion = Effect.fn("Folder.waitForVersion")(function* (
 ) {
   const files = yield* Files;
   yield* requireFolder(folderId);
-  const boundary = yield* CommitBoundary;
   const projection = folderHead.at({ folderId });
 
   while (true) {
-    const progress = yield* boundary.withTransaction(
-      Projection.run(projection).pipe(Effect.andThen(Projection.read(projection))),
-    );
+    // Folds in memory from the follower's checkpoint. Reads never write the head checkpoint.
+    const progress = yield* Projection.current(projection);
 
     if (progress.state.seq >= version) return;
-    // Wait outside the transaction. This offset is only a wake-up cursor; the fold decides readiness.
+    // This offset is only a wake-up cursor; the fold decides readiness.
     yield* files.wire.readNext(Files.at({ folderId }).id, {
       offset: progress.offsets.input ?? ZERO_OFFSET,
     });
@@ -246,15 +244,8 @@ const read = Effect.fn("Folder.read")(function* (
   if (options.at !== undefined) {
     selected = (yield* history(folderId, normalized)).find((row) => row.version === options.at);
   } else {
-    const boundary = yield* CommitBoundary;
-    selected = yield* boundary.withTransaction(
-      Effect.gen(function* () {
-        const projection = folderHead.at({ folderId });
-        yield* Projection.run(projection);
-
-        return headAt((yield* Projection.read(projection)).state.heads, normalized);
-      }),
-    );
+    const head = yield* Projection.current(folderHead.at({ folderId }));
+    selected = headAt(head.state.heads, normalized);
   }
 
   if (selected === undefined || selected.operation.type === "delete")
