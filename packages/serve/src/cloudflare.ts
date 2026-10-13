@@ -12,6 +12,6 @@ export { router } from "./cloudflare/router.ts";
 
 export type { RouterOptions } from "./cloudflare/router.ts";
 
-export { Wakeup, Wakeups } from "./cloudflare/wakeup.ts";
+export { Wakeup, Wakeups, type WakeupProgress } from "./cloudflare/wakeup.ts";
 
 export { alarmSlotLayer } from "./cloudflare/alarm.ts";

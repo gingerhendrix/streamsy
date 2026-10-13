@@ -4,12 +4,23 @@ import { Storage, type StorageFault } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { AlarmSlot } from "./alarm.ts";
 
+/**
+ * A bounded run that stopped at its bound returns `{ more: true }`. The
+ * scheduler then re-arms at once and does not count the pass as a failure.
+ */
+export interface WakeupProgress {
+  readonly more: boolean;
+}
+
 /** One source of deadline-driven work, derived from committed state. */
 export interface Wakeup<R = never> {
   readonly name: string;
   readonly next: Effect.Effect<Option.Option<number>, StorageFault, R>;
-  /** Bounded, idempotent work. Delivery is at least once. */
-  readonly run: Effect.Effect<void, unknown, R>;
+  /**
+   * Bounded, idempotent work. Delivery is at least once. The permit for this
+   * name is not reentrant, so a run must not call its own wakeup's `run`.
+   */
+  readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
   readonly retry?: {
     readonly initial?: Duration.Input;
     readonly max?: Duration.Input;
@@ -23,6 +34,9 @@ const Permits = Context.Reference<ReadonlyMap<string, Semaphore.Semaphore> | und
 );
 
 const Guarded = Symbol.for("@streamsy/serve/cloudflare/WakeupPermit");
+
+const reportsMore = (value: void | WakeupProgress) =>
+  Predicate.hasProperty(value, "more") && value.more;
 
 export const Wakeup = {
   make: <R>(wakeup: Wakeup<R>): Wakeup<R> => {
@@ -44,6 +58,11 @@ export const Wakeup = {
 export class Wakeups extends Context.Service<
   Wakeups,
   {
+    /**
+     * Marks the current request so the host reconciles when the handler
+     * returns. Call it before the handler returns. A streamed body that
+     * queues work later must call `reconcile` itself.
+     */
     readonly touch: Effect.Effect<void>;
     readonly reconcile: Effect.Effect<void>;
     readonly status: Effect.Effect<
@@ -51,6 +70,8 @@ export class Wakeups extends Context.Service<
         readonly name: string;
         readonly next: Option.Option<number>;
         readonly failures: number;
+        /** The backoff floor. The wakeup does not run before this instant. */
+        readonly retryAt: Option.Option<number>;
       }>
     >;
   }
@@ -101,26 +122,57 @@ export const makeWakeups = <R>(
     // Initialized before any of the effects below are executed.
     const provided = () => Context.add(Context.add(context, Permits, permits), Wakeups, service);
 
+    type State = (typeof states)[number];
+
+    const backOff = (state: State, at: number) => {
+      state.failures += 1;
+      state.floor = at + Math.min(state.max, state.initial * 2 ** (state.failures - 1));
+    };
+
+    const recover = (state: State) => {
+      state.failures = 0;
+      state.floor = 0;
+    };
+
     const status = Effect.forEach(states, (state) =>
       state.wakeup.next.pipe(
-        Effect.map((next) => ({ name: state.wakeup.name, next, failures: state.failures })),
+        Effect.map((next) => ({
+          name: state.wakeup.name,
+          next,
+          failures: state.failures,
+          retryAt: state.floor > 0 ? Option.some(state.floor) : Option.none<number>(),
+        })),
       ),
     );
+
+    // A failing `next` must not stop other deadlines from arming. The broken
+    // wakeup retries on its own backoff, which grows at most once per floor.
+    const deadlineOf = (state: State, now: number) =>
+      state.wakeup.next.pipe(
+        Effect.map(Option.map((next) => Math.max(next, state.floor))),
+        Effect.catchCause((cause) => {
+          if (state.floor <= now) backOff(state, now);
+
+          return Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause).pipe(
+            Effect.as(Option.some(state.floor)),
+          );
+        }),
+      );
 
     // A forced pass replaces the in-flight guard, which is always earlier than real work.
     const reconcileWith = (force: boolean) =>
       reconcilePermit.withPermit(
         Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
           let target = Infinity;
 
           for (const state of states) {
-            const next = yield* state.wakeup.next;
+            const next = yield* deadlineOf(state, now);
 
-            if (Option.isSome(next)) target = Math.min(target, Math.max(next.value, state.floor));
+            if (Option.isSome(next)) target = Math.min(target, next.value);
           }
 
           if (target === Infinity) return yield* slot.clear;
-          const now = yield* Clock.currentTimeMillis;
           const current = yield* slot.current;
 
           if (!force && Option.isSome(current) && now < current.value && current.value <= target)
@@ -151,39 +203,41 @@ export const makeWakeups = <R>(
 
         for (const state of states) {
           const attempt = Effect.gen(function* () {
-            const next = yield* state.wakeup.next;
             const at = yield* Clock.currentTimeMillis;
 
-            if (Option.isNone(next) || next.value > at || state.floor > at) return;
+            if (state.floor > at) return;
+            const next = yield* state.wakeup.next;
+
+            if (Option.isNone(next) || next.value > at) return;
             const exit = yield* Effect.exit(state.wakeup.run);
-            const after = yield* state.wakeup.next;
-            const finished = yield* Clock.currentTimeMillis;
 
-            if (Exit.isFailure(exit) || (Option.isSome(after) && after.value <= finished)) {
-              state.failures += 1;
-              state.floor =
-                finished + Math.min(state.max, state.initial * 2 ** (state.failures - 1));
+            if (Exit.isFailure(exit)) {
+              backOff(state, yield* Clock.currentTimeMillis);
+              yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
 
-              if (Exit.isFailure(exit))
-                yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
-            } else {
-              state.failures = 0;
-              state.floor = 0;
+              return;
             }
+
+            // A run that stopped at its bound made progress. Work that became
+            // due during the run is new work. Only work that was due before
+            // the run and is still due shows a run that changed nothing.
+            const after = yield* state.wakeup.next;
+
+            if (!reportsMore(exit.value) && Option.isSome(after) && after.value <= at)
+              backOff(state, yield* Clock.currentTimeMillis);
+            else recover(state);
           });
 
           yield* attempt.pipe(
-            Effect.catchCause((cause) => {
-              state.failures += 1;
-
-              return Clock.currentTimeMillis.pipe(
+            Effect.catchCause((cause) =>
+              Clock.currentTimeMillis.pipe(
                 Effect.flatMap((at) => {
-                  state.floor = at + Math.min(state.max, state.initial * 2 ** (state.failures - 1));
+                  backOff(state, at);
 
                   return Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
                 }),
-              );
-            }),
+              ),
+            ),
           );
         }
       }).pipe(

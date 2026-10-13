@@ -118,7 +118,8 @@ test("a reconcile failure preserves the committed response and standard headers"
   expect(response.status).toBe(201);
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   expect(response.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
-  expect((await probe(harness, "reconcile-failure")).alarm).toBeNull();
+  // A failing expiry deadline arms its own retry instead of leaving the slot empty.
+  expect((await probe(harness, "reconcile-failure")).alarm).not.toBeNull();
   expect((await probe(harness, "reconcile-failure")).rows).toHaveLength(1);
 
   expect(

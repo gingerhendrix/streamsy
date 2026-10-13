@@ -20,6 +20,7 @@ import {
   type OutboxEntry,
 } from "@streamsy/serve/action/outbox";
 import {
+  OutboxWakeup,
   drain,
   draftsFor,
   actionSinkHandler,
@@ -353,3 +354,16 @@ for (const ordered of [true, false]) {
     );
   });
 }
+
+test("outbox wakeup names keep a sink with a slash apart from a lane", () => {
+  const handler = handlerFor(recorder());
+  const nested = defineActionSink<Notification, NotificationRelation>({ ...sink, name: "a/b" });
+  const parent = defineActionSink<Notification, NotificationRelation>({ ...sink, name: "a" });
+
+  const names = [
+    OutboxWakeup.make(nested, handler).name,
+    OutboxWakeup.make(parent, handler, { partitionId: "b" }).name,
+  ];
+
+  expect(names).toEqual(["streamsy/outbox/a%2Fb", "streamsy/outbox/a/b"]);
+});

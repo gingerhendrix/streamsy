@@ -41,5 +41,6 @@ test("Cloudflare entries expose wakeups and the slot layer without the raw slot 
       ]),
     ).toEqual([]);
   const runtime = await import("@streamsy/serve/action/runtime");
-  expect(runtime.Wakeup.outbox).toBeFunction();
+  expect(runtime.OutboxWakeup.make).toBeFunction();
+  expect(Object.keys(runtime)).not.toContain("Wakeup");
 });

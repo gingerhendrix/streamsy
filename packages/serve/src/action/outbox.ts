@@ -51,7 +51,6 @@ export interface OutboxBacking {
   readonly enqueue: (
     drafts: readonly OutboxDraft[],
   ) => Effect.Effect<OutboxEnqueueReport, OutboxUnavailable>;
-  /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
   /** Pending deadline in one lane or the whole sink. Settled entries are excluded. */
   readonly nextDue: (
     sink: string,
@@ -59,6 +58,7 @@ export interface OutboxBacking {
     /** Read the oldest pending entry's deadline for strict enqueue order. */
     ordered?: boolean,
   ) => Effect.Effect<Option.Option<number>, OutboxUnavailable>;
+  /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
   readonly claimDue: (
     sink: string,
     partitionId: string | undefined,

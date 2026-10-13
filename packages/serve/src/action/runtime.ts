@@ -25,7 +25,7 @@ import {
   type OutboxUnavailable,
 } from "./errors.ts";
 import { StorageFault } from "@streamsy/core";
-import { Wakeup as CoreWakeup } from "../cloudflare/wakeup.ts";
+import { Wakeup, type WakeupProgress } from "../cloudflare/wakeup.ts";
 import { OutboxStore, type OutboxDraft, type OutboxEntry } from "./outbox.ts";
 
 /** One attempt at one delivery, as the handler sees it. */
@@ -98,6 +98,7 @@ export interface DrainOptions {
 
 export interface DrainReport {
   readonly sink: string;
+  /** Entries this pass attempted. An ordered pass does not count the future head it read. */
   readonly claimed: number;
   readonly delivered: number;
   /** Entries that failed and are scheduled for another attempt. */
@@ -143,7 +144,11 @@ const drainPermit = (store: typeof OutboxStore.Service, sink: string) => {
   return permit;
 };
 
-/** Deliver due entries serially, applying the declared retry policy and optional strict order. */
+/**
+ * Deliver due entries serially, applying the declared retry policy and optional strict order.
+ *
+ * Each sink's permit is not reentrant. A handler must not drain its own sink.
+ */
 export const drain = <Payload, From extends ActionSinkRelation, Requirements = never>(
   sink: CheckedActionSink<Payload, From>,
   handler: ActionSinkHandler<Payload, Requirements>,
@@ -300,16 +305,21 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** Wakeup constructors for action delivery; the host entry does not load action code. */
-export const Wakeup = {
-  make: CoreWakeup.make,
-  outbox: <Payload, From extends ActionSinkRelation, R = never>(
+/**
+ * The wakeup for one action outbox. The host entry does not load action code.
+ *
+ * Its name is `streamsy/outbox/<sink>` or `streamsy/outbox/<sink>/<partition>`,
+ * with each part URI-encoded so a sink named `a/b` cannot collide with a lane.
+ * A pass that fills its limit reports more work, so a backlog is not backed off.
+ */
+export const OutboxWakeup = {
+  make: <Payload, From extends ActionSinkRelation, R = never>(
     sink: CheckedActionSink<Payload, From>,
     handler: ActionSinkHandler<Payload, R>,
     options: DrainOptions = {},
-  ): import("../cloudflare/wakeup.ts").Wakeup<OutboxStore | R> =>
-    CoreWakeup.make({
-      name: `streamsy/outbox/${sink.name}${options.partitionId === undefined ? "" : `/${options.partitionId}`}`,
+  ): Wakeup<OutboxStore | R> =>
+    Wakeup.make({
+      name: outboxWakeupName(sink.name, options.partitionId),
       next: OutboxStore.use((store) =>
         store.nextDue(sink.name, options.partitionId, options.ordered),
       ).pipe(
@@ -322,6 +332,16 @@ export const Wakeup = {
             }),
         ),
       ),
-      run: drain(sink, handler, options).pipe(Effect.asVoid),
+      run: drain(sink, handler, options).pipe(
+        Effect.map((report): WakeupProgress => ({
+          more: report.claimed >= (options.limit ?? DEFAULT_DRAIN_LIMIT),
+        })),
+      ),
     }),
 };
+
+function outboxWakeupName(sink: string, partitionId: string | undefined): string {
+  const lane = partitionId === undefined ? "" : `/${encodeURIComponent(partitionId)}`;
+
+  return `streamsy/outbox/${encodeURIComponent(sink)}${lane}`;
+}
