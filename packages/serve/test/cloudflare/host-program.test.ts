@@ -1,5 +1,5 @@
 import { expect, it as baseIt, layer } from "@streamsy/effect-test";
-import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Logger, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
 import { withMutationReconciliation } from "../../src/cloudflare/host-program.ts";
@@ -66,6 +66,29 @@ baseIt.effect("a reconciliation defect cannot replace a committed mutation resul
     );
 
     expect(response).toBe("committed");
+  }),
+);
+
+baseIt.effect("a reconciliation failure after a mutation is logged", () =>
+  Effect.gen(function* () {
+    const messages: Array<string> = [];
+
+    const response = yield* withMutationReconciliation(
+      Effect.succeed("committed"),
+      Effect.fail("reconcile failure"),
+    ).pipe(
+      Effect.provideService(
+        Logger.CurrentLoggers,
+        new Set([
+          Logger.make((options) => {
+            messages.push(...[options.message].flat().map(String));
+          }),
+        ]),
+      ),
+    );
+
+    expect(response).toBe("committed");
+    expect(messages).toContain("Wakeup reconciliation failed");
   }),
 );
 
