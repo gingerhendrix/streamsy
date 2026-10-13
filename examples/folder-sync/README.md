@@ -414,3 +414,111 @@ including these feed fields. Streams use the default limit of 1000 entries.
 Delivered outbox rows and receiver dedup rows are retained without a quota.
 There is no public index-rebuild command; reset procedures must rotate the epoch
 and clear derived outputs, checkpoints, and index head tables together.
+
+## Agent filesystem
+
+`agent/index.ts` creates one HTTP core with adapters for just-bash 3.6.0 and
+`@better-fs-tools/fs` 0.1.0. The returned `fs` implements just-bash `IFileSystem`;
+`tools` implements Better FS Tools `WritableFileSystem`. Both adapters share the
+same selection and session observations. This works against the Bun or Worker
+URL. It does not mirror files to disk.
+
+From code run at the repository root:
+
+```ts
+import { createAgentFileSystem } from "./examples/folder-sync/agent/index.ts";
+
+const session = await createAgentFileSystem({
+  server: "http://localhost:1339",
+  folders: ["docs/root"],
+  writable: ["docs/root"],
+  // token: "the Worker writer token",
+});
+
+console.log(await session.bash.exec("ls /docs/root"));
+console.log(await session.bash.exec("cat /docs/root/tutorial.mdx"));
+console.log(await session.bash.exec("grep --search projection -n projection /docs/root"));
+console.log(await session.bash.exec("echo 'agent note' > /docs/root/agent-note.txt"));
+console.log(await session.bash.exec("cat /docs/root/agent-note.txt"));
+
+const stat = await session.tools.stat("/docs/root/agent-note.txt", {});
+if (stat.ok && stat.stat.exists) {
+  console.log(
+    await session.tools.write(
+      "/docs/root/agent-note.txt",
+      new TextEncoder().encode("revised note\n"),
+      { precondition: { kind: "version", version: stat.stat.version }, createParents: false },
+    ),
+  );
+}
+```
+
+Files appear at `/<folderId>/<path>`; the slash in `docs/root` creates synthetic
+parents. `folderDirectory(id)` can instead return a relative directory. It uses
+the CLI's shared mapping validation: paths must stay inside the virtual root,
+folder roots must be disjoint, and `.folder-sync` is reserved. Explicit `folders`
+restricts selection; otherwise `/api/ls` discovers folders with indexed files.
+An empty folder can be selected explicitly or named in `writable`. The default
+writable list is empty. The root, folder roots, and their synthetic parents are
+read-only. Writing there or into an unselected or read-only folder gives `EROFS`.
+
+Writes go directly to the file API with the current head as `x-file-base` and
+one operation ID reused across retries. Each receipt updates session observations;
+the next write refreshes the authoritative head, which includes that receipt.
+Deletes retain the tombstone version as the next base. Reads fetch bytes through
+the file API. Stat and verification use history metadata without fetching bytes.
+The tools adapter buffers one file, reports `streaming: false`, and exposes no
+stable identity. `open().info.version` and `stat().version` are the file's decimal
+folder sequence. Handles have single-use bytes, change verification, and
+idempotent close.
+
+`writeCapabilities` is `{ atomic: true, compareAndSwap: false, preserveMode: false }`.
+The API atomically commits a complete file, but `base` records unseen overwrites
+instead of rejecting them. The adapter checks `absent` and `version` before
+writing; another writer can commit between that check and the PUT. Better FS Tools
+must treat those preconditions as advisory. There is no staged write, persistent
+mode, symlink, hard link, or atomic rename. File copying, appending, and deletion
+work; directory copying and removal are unsupported. Empty directories made by
+`mkdir` or `createParents` exist only for this session. Server directories remain
+implicit in file paths. A failed shell redirection can reject `bash.exec()`;
+catch it and reuse the same session.
+
+Every listing fetches `/api/ls`, which can lag folder commits. Session mutations
+bridge that lag and refresh their heads on listing, so external edits and deletes
+are observed. There is no head TTL or background cache. Shell glob expansion uses
+the latest path snapshot populated at creation and by listings or mutations;
+list again to refresh it after external changes. Ordinary file reads and version
+checks always reach the authoritative file API.
+
+The custom `grep` requires `--search FTS_QUERY [OPTIONS] PATTERN [PATH ...]`.
+It asks `/api/search` for candidates, joins the snippet segments' `text` fields,
+and passes candidate paths to just-bash's real grep. Matches are confirmed against
+current file bytes; snippets are never match evidence. Supported options are
+`-F`, `-E`, `-i`, `-n`, `-w`, `-l`, `-c`, `-v`, `-q`, and `-H`. With no path, the
+scope is the current directory. Use `--` before a pattern starting with a dash.
+This is an explicitly scoped index search: FTS token semantics, text-only indexing,
+projection lag, and the API's 100-hit limit can omit files. It does not promise a
+complete corpus grep. Construct a plain `Bash` with the returned `fs` to use the
+ordinary filesystem grep without this wrapper.
+
+Expected errors keep the session usable:
+
+| Failure                                            | just-bash errno | Better FS Tools reason                  |
+| -------------------------------------------------- | --------------- | --------------------------------------- |
+| 400                                                | `EINVAL`        | `io`                                    |
+| 404                                                | `ENOENT`        | `not-found`                             |
+| 413 or more than 8 MiB                             | `EFBIG`         | `too-large`                             |
+| 401 or 403                                         | `EACCES`        | `permission-denied`                     |
+| Read-only target                                   | `EROFS`         | `read-only`                             |
+| Folder ID over 100 UTF-16 units or 249 UTF-8 bytes | `ENAMETOOLONG`  | `io` (nearest reason, with errno cause) |
+
+Invalid folder IDs or mappings fail session creation. HTTP 408, 409, 429, and 503
+retry at most three times after the initial request, with exponential backoff and
+`Retry-After` seconds or an HTTP date as a minimum delay. Exhaustion gives `EIO`.
+The attempt count is bounded; a server-specified long delay can extend elapsed
+time. 401 and 403 never retry, and the writer token is sent only on writes.
+Tools calls accept an abort signal, including during retry backoff.
+
+The agent tests run both Better FS Tools conformance suites against the in-process
+Bun host and a scripted just-bash session. `test:worker` also includes the agent's
+workerd authorization test.

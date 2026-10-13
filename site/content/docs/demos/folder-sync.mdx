@@ -183,6 +183,66 @@ A local edit in a read-only folder is backed up before restoration. Unsupported 
 bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-sync/mirror-a"
 ```
 
+## Agent filesystem
+
+`agent/index.ts` exposes the same folders to just-bash 3.6.0 and Better FS Tools
+0.1.0. Call `createAgentFileSystem({ server, folders, writable, token })` to get
+`bash`, the just-bash `fs`, and the Better FS Tools `tools` adapter. Files appear
+at `/<folderId>/<path>`. Selection defaults to discovery through `/api/ls`, and
+writable folders default to none. `folderDirectory(id)` follows the same relative,
+disjoint mapping rules as the sync CLI. The root and synthetic parents are
+read-only.
+
+```ts title="agent/index.ts"
+export async function createAgentFileSystem(options: AgentOptions) {
+  const core = await FolderHttpFileSystem.create(options);
+  const fs = justBashFileSystem(core);
+
+  return {
+    core,
+    fs,
+    tools: betterFileSystem(core),
+    bash: new Bash({ fs, cwd: "/", customCommands: [searchGrep(core, fs)] }),
+  };
+}
+```
+
+After the docs seed, run `session.bash.exec("ls /docs/root")`,
+`session.bash.exec("cat /docs/root/tutorial.mdx")`, then
+`session.bash.exec("grep --search projection -n projection /docs/root")`.
+With `writable: ["docs/root"]`,
+`session.bash.exec("echo note > /docs/root/agent-note.txt")` writes through the
+HTTP API and another reader sees it immediately. The README has a complete
+example using `tools.stat()` and a version precondition.
+
+The core fetches file bytes through the file API and lists through `/api/ls`.
+Listings can lag projections; session writes bridge that lag and refresh their
+heads on listing. Reads and version checks always reach the authoritative API.
+Shell globs use the latest session path snapshot; list again after external edits.
+Empty directories exist only within the session. Links, persistent modes, staged
+writes, atomic rename, and directory copying or removal are unsupported.
+
+Writes carry the current head as base and use each receipt for session observations.
+The API records an unseen overwrite rather than rejecting a stale base. Therefore
+`writeCapabilities` reports `atomic: true`, `compareAndSwap: false`, and
+`preserveMode: false`. The adapter checks `absent` and `version` before writing,
+but a concurrent commit can still win between the check and PUT. Handles buffer
+one file, verify changes, and have single-use byte streams.
+
+The grep wrapper requires an explicit `--search` FTS query. It joins snippet text
+segments and uses the index only to choose candidate paths. just-bash's real grep
+confirms matches against file bytes. FTS token rules, text-only indexing, eventual
+consistency, and the 100-hit API limit make this an index-scoped search. A plain
+`Bash` using the returned `fs` can run ordinary filesystem grep.
+
+401 and 403 give `EACCES` (`permission-denied`) without retry. 400, 404, and 413
+map to `EINVAL`, `ENOENT`, and `EFBIG`; tools receive `io`, `not-found`, and
+`too-large`. Read-only writes give `EROFS` (`read-only`). IDs over 100 UTF-16 units
+or 249 UTF-8 bytes fail with `ENAMETOOLONG`; the nearest tools reason is `io`.
+408, 409, 429, and 503 retry three times with bounded exponential backoff and
+`Retry-After` as a minimum delay. Tools support cancellation. A failed redirection
+can reject `bash.exec()`; the same session remains usable after catching it.
+
 ## Limits
 
 - The listener has no authentication. Anyone who can reach it can read and write files.
@@ -192,4 +252,4 @@ bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-syn
 - The CLI preserves pending local edits, but an external editor can still save during the final local read-to-rename window.
 - An index rebuild must rotate the feed epoch, and mirrors then bootstrap again. If history goes backwards within one epoch, as after a backup restore, the sync CLI stops with `HistoryRewound`.
 - Browser drafts stay in memory. Navigation and reload discard unsaved drafts. The page has no phone cache.
-- Cloudflare hosting and the agent filesystem are later slices. This demo has no hosted deployment.
+- The Worker and agent filesystem run locally. This demo has no hosted deployment.
