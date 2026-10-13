@@ -16,6 +16,10 @@ export const isEcho = (hash: string | null, known: KnownHead | undefined, pendin
 
 export const feedReset = (cursor: string, tail: string) => cursor > tail;
 
+/** Within one epoch the server log only grows, so an older head means its history was lost. */
+export const headRewound = (known: KnownHead | undefined, version: number | null) =>
+  known?.version != null && (version === null || version < known.version);
+
 export const encodeFilePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
 export interface SyncOptions {

@@ -21,6 +21,7 @@ import {
   conflictBase,
   feedReset,
   folderDirectory,
+  headRewound,
   isEcho,
   ignoredPath,
   conflictPath,
@@ -39,6 +40,16 @@ import {
 } from "./local.ts";
 import { SyncState, stateLayer } from "./state.ts";
 import type { Known } from "./state.ts";
+
+/** The server lost history it had already sent. Syncing on would mix two timelines. */
+export class HistoryRewound extends Schema.TaggedError<HistoryRewound>()("HistoryRewound", {
+  message: Schema.String,
+}) {}
+
+const rewound = (detail: string) =>
+  new HistoryRewound({
+    message: `Server history went backwards: ${detail}. Sync stopped before it replaced the local copy. Rotate the server feed epoch to resync, or mirror into a new --dir.`,
+  });
 
 const skipLocal =
   (warn: (file: string, message: string) => Effect.Effect<void>) =>
@@ -177,6 +188,11 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     // An epoch change invalidates old echo hashes as well as remote versions.
     // Keep pending observations in storage, but adopt unqueued paths as fresh files.
     const known = unknownServer ? undefined : yield* state.head(folderId, file);
+
+    if (headRewound(known, head.version))
+      return yield* rewound(
+        `${folderId}/${file} is at version ${head.version ?? "none"}, but this mirror saw version ${known?.version}`,
+      );
 
     if (!force && head.version !== null && known !== undefined && !applyChange(known, head.version))
       return yield* Effect.void;
@@ -369,12 +385,16 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       return yield* new LocalFailure({ message: "Bootstrap did not save a cursor" });
     const tail = yield* remote.tail;
 
-    if (feedReset(offset, tail.cursor) || tail.epoch !== (yield* state.get("epoch"))) {
-      yield* Effect.logWarning("Change feed reset; bootstrapping again");
+    // A new epoch is a declared replacement. Only an unchanged epoch promises an append-only feed.
+    if (tail.epoch !== (yield* state.get("epoch"))) {
+      yield* Effect.logWarning("Change feed epoch changed; bootstrapping again");
       yield* bootstrap();
 
       return yield* Effect.void;
     }
+
+    if (feedReset(offset, tail.cursor))
+      return yield* rewound(`feed cursor ${offset} is past the server tail ${tail.cursor}`);
 
     let cursor: string = offset;
     let live = true;
@@ -382,11 +402,14 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     do {
       const page: Effect.Success<ReturnType<typeof remote.page>> = yield* remote.page(cursor, live);
 
-      if (feedReset(cursor, page.cursor) || page.epoch !== (yield* state.get("epoch"))) {
+      if (page.epoch !== (yield* state.get("epoch"))) {
         yield* bootstrap();
 
         return yield* Effect.void;
       }
+
+      if (feedReset(cursor, page.cursor))
+        return yield* rewound(`feed cursor ${cursor} is past the server tail ${page.cursor}`);
 
       yield* gate.withPermit(
         Effect.gen(function* () {

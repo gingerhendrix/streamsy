@@ -76,6 +76,12 @@ const history = Effect.fn("SyncTest.history")(function* (
   return yield* Schema.decodeUnknownEffect(History)(yield* response.json);
 });
 
+const feedEpoch = Effect.fn("SyncTest.feedEpoch")(function* (server: string) {
+  const response = yield* HttpClient.head(`${server}/streams/changes`);
+
+  return response.headers["stream-epoch"];
+});
+
 const create = Effect.fn("SyncTest.create")(function* (server: string, folderId: string) {
   const response = yield* HttpClient.post(`${server}/api/folders`, {
     body: yield* HttpBody.json({ folderId, title: folderId }),
@@ -252,7 +258,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
     { timeout: 40000 },
   );
   it.effect(
-    "lost responses and 503 reads replay the same opId, preserve intervening writes, and reset the feed",
+    "lost responses and 503 reads replay the same opId and preserve intervening writes",
     () =>
       Effect.gen(function* () {
         const directory = yield* testDirectory("sync-replay-");
@@ -281,31 +287,11 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const lost = yield* Deferred.make<void>();
         const releaseRetry = yield* Deferred.make<void>();
         const attempts: string[] = [];
-        let snapshots = 0;
-        let firstTail = true;
         let failHead = true;
         const http = yield* HttpClient.HttpClient;
 
         const intercepted = SyncRemote.of({
           ...remote,
-          snapshot: remote.snapshot.pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                snapshots++;
-              }),
-            ),
-          ),
-          tail: Effect.suspend(() => {
-            if (firstTail) {
-              firstTail = false;
-
-              return remote.tail.pipe(
-                Effect.map((head) => ({ ...head, cursor: "0000000000000000_0000000000000000" })),
-              );
-            }
-
-            return remote.tail;
-          }),
           push: (operation, origin) =>
             Effect.gen(function* () {
               attempts.push(operation.opId);
@@ -359,11 +345,6 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           Effect.forkScoped,
         );
 
-        yield* until(state.get("ready"), (value) => value === "true");
-        yield* until(
-          Effect.sync(() => snapshots),
-          (value) => value === 2,
-        );
         yield* until(state.get("ready"), (value) => value === "true");
         yield* fs.writeFileString(`${mirror}/docs/a.md`, "from A");
         yield* Deferred.await(lost);
@@ -1194,4 +1175,102 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
       }),
     { timeout: 20000 },
   );
+
+  for (const writable of [true, false]) {
+    it.effect(
+      `a backup restored with the same epoch stops a ${writable ? "writable" : "read-only"} mirror and keeps its newer bytes`,
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("sync-restore-");
+          const fs = yield* FileSystem.FileSystem;
+          const mirror = `${directory}/mirror`;
+          const data = `${directory}/server`;
+          const backup = `${directory}/backup`;
+          const cwd = `${import.meta.dir}/../..`;
+          const env = { FOLDER_SYNC_DB: `${data}/files.sqlite` };
+
+          const options = {
+            directory: mirror,
+            folders: ["docs"],
+            writable: writable ? ["docs"] : [],
+          };
+
+          yield* fs.makeDirectory(data, { recursive: true });
+          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+
+          const first = yield* spawnServer({ cwd, entry: "server/index.ts", env });
+          yield* create(first.url, "docs");
+          yield* put(first.url, "docs", "a.md", "version one", "one");
+          // The epoch row is created on first read. The backup must hold it.
+          const epoch = yield* feedEpoch(first.url);
+          yield* first.stop;
+          yield* fs.copy(data, backup);
+
+          const server = yield* spawnServer({
+            cwd,
+            entry: "server/index.ts",
+            port: first.port,
+            env,
+          });
+
+          const daemon = yield* sync({ ...options, server: server.url }).pipe(Effect.forkScoped);
+          const state = yield* inspect(mirror);
+          yield* until(state.get("ready"), (value) => value === "true");
+          yield* until(
+            fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
+            (value) => value === "version one",
+          );
+          const restoredCursor = yield* state.get("cursor");
+
+          // The newest bytes reach the server after the backup point.
+          if (writable) yield* fs.writeFileString(`${mirror}/docs/a.md`, "version two");
+          else yield* put(server.url, "docs", "a.md", "version two", "two");
+
+          const two = yield* until(
+            history(server.url, "docs", "a.md"),
+            (rows) => rows.length === 2,
+          );
+
+          yield* until(
+            Effect.gen(function* () {
+              return {
+                head: yield* state.head("docs", "a.md"),
+                cursor: yield* state.get("cursor"),
+                pending: (yield* state.pending()).length,
+              };
+            }),
+            (value) =>
+              value.head?.version === two[1]?.version &&
+              value.cursor !== restoredCursor &&
+              value.pending === 0,
+          );
+          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
+
+          yield* server.stop;
+          yield* fs.remove(data, { recursive: true });
+          yield* fs.copy(backup, data);
+
+          const restored = yield* spawnServer({
+            cwd,
+            entry: "server/index.ts",
+            port: first.port,
+            env,
+          });
+
+          expect(yield* feedEpoch(restored.url)).toBe(epoch);
+          const failure = yield* Effect.flip(Fiber.join(daemon));
+          expect(failure).toMatchObject({ _tag: "HistoryRewound" });
+          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
+          expect(yield* fs.exists(`${mirror}/.folder-sync/rejected`)).toBe(false);
+          expect((yield* history(restored.url, "docs", "a.md")).length).toBe(1);
+
+          // A restart sees the same rewind and stays stopped.
+          const again = yield* Effect.flip(sync({ ...options, server: restored.url }));
+          expect(again).toMatchObject({ _tag: "HistoryRewound" });
+          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
+          yield* restored.stop;
+        }),
+      { timeout: 30000 },
+    );
+  }
 });

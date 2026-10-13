@@ -6,6 +6,7 @@ import {
   encodeFilePath,
   feedReset,
   folderDirectory,
+  headRewound,
   isEcho,
   ignoredPath,
 } from "../../sync/decisions.ts";
@@ -37,6 +38,15 @@ test("apply decisions ignore duplicate and older per-folder versions", () => {
   expect(conflictBase({ ...head, hash: null, localHash: null })).toBe(head.version);
   expect(conflictBase(undefined)).toBeNull();
   expect(conflictBase({ ...head, localVersion: 1 })).toBe(1);
+});
+
+test("a head older than the known version, or missing after one, means history went backwards", () => {
+  expect(headRewound(head, 1)).toBe(true);
+  expect(headRewound(head, null)).toBe(true);
+  expect(headRewound(head, head.version)).toBe(false);
+  expect(headRewound(head, 3)).toBe(false);
+  expect(headRewound({ ...head, version: null }, 1)).toBe(false);
+  expect(headRewound(undefined, null)).toBe(false);
 });
 
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {
