@@ -222,7 +222,10 @@ Shell globs use the latest session path snapshot; list again after external edit
 Empty directories exist only within the session. Links, persistent modes, staged
 writes, atomic rename, and directory copying or removal are unsupported.
 
-Writes carry the current head as base and use each receipt for session observations.
+Writes use the session's last file read or receipt as base, including tombstone
+receipts. Listings, stat, and precondition checks do not advance that observation.
+Only a first write to a never-observed path uses the fresh head. Later unseen
+external edits retain their `overwrote` marks.
 The API records an unseen overwrite rather than rejecting a stale base. Therefore
 `writeCapabilities` reports `atomic: true`, `compareAndSwap: false`, and
 `preserveMode: false`. The adapter checks `absent` and `version` before writing,

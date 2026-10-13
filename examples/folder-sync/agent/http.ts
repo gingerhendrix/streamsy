@@ -66,6 +66,8 @@ export interface MutationOptions {
     | { readonly kind: "any" | "absent" }
     | { readonly kind: "version"; readonly version: string };
   readonly createParents?: boolean;
+  /** Pin the bytes read by an append or same-path copy, across asynchronous checks. */
+  readonly observedVersion?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -111,6 +113,7 @@ const retryAfter = (value: string | null) => {
 /** The HTTP core deliberately imports neither filesystem library. No background work or head TTL. */
 export class FolderHttpFileSystem {
   private readonly roots = new Map<string, string>();
+  private readonly observedVersions = new Map<string, number>();
   private readonly emptyDirectories = new Set<string>();
   // Session writes overlay the eventually consistent manifest until newer rows arrive.
   private readonly mutations = new Map<
@@ -387,6 +390,8 @@ export class FolderHttpFileSystem {
       if (!Schema.is(Version)(version)) throw new FileSystemError("EIO", path);
       const bytes = new Uint8Array(await response.arrayBuffer());
 
+      this.observedVersions.set(target.resolved, version);
+
       return { bytes, version, resolved: target.resolved };
     } catch (error) {
       if (
@@ -459,6 +464,7 @@ export class FolderHttpFileSystem {
 
   async mutate(path: string, bytes: Uint8Array | null, options: MutationOptions = {}) {
     const target = this.assertWritable(path);
+    const observedVersion = options.observedVersion ?? this.observedVersions.get(target.resolved);
 
     if (options.signal?.aborted) throw new FileSystemError("ECANCELED", path);
 
@@ -488,7 +494,10 @@ export class FolderHttpFileSystem {
       "x-file-origin": this.origin,
     });
 
-    if (head !== undefined) headers.set("x-file-base", String(head.version));
+    // Metadata checks must not claim the session saw an external edit.
+    const base = observedVersion ?? head?.version;
+
+    if (base !== undefined) headers.set("x-file-base", String(base));
 
     if (this.options.token !== undefined)
       headers.set("authorization", `Bearer ${this.options.token}`);
@@ -506,6 +515,8 @@ export class FolderHttpFileSystem {
       ),
       Written,
     );
+
+    this.observedVersions.set(target.resolved, receipt.version);
 
     for (const parent of parents) this.emptyDirectories.add(parent);
     this.mutations.set(target.resolved, {

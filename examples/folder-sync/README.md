@@ -462,10 +462,15 @@ An empty folder can be selected explicitly or named in `writable`. The default
 writable list is empty. The root, folder roots, and their synthetic parents are
 read-only. Writing there or into an unselected or read-only folder gives `EROFS`.
 
-Writes go directly to the file API with the current head as `x-file-base` and
-one operation ID reused across retries. Each receipt updates session observations;
-the next write refreshes the authoritative head, which includes that receipt.
-Deletes retain the tombstone version as the next base. Reads fetch bytes through
+Writes go directly to the file API with the session's last observed version as
+`x-file-base` and one operation ID reused across retries. File reads and write
+receipts update that observation; metadata checks and listings do not. Deletes
+retain the tombstone receipt as the next base. Only a first write to a path that
+the session has never observed uses a fresh head as base. That blind first write
+can replace content without a mark; later unseen edits produce `overwrote`.
+Append pins the version of the bytes it read. Copy observes the source read and
+uses the destination's own observation as base, or the source read version for
+a same-path copy. Reads fetch bytes through
 the file API. Stat and verification use history metadata without fetching bytes.
 The tools adapter buffers one file, reports `streaming: false`, and exposes no
 stable identity. `open().info.version` and `stat().version` are the file's decimal

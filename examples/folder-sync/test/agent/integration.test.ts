@@ -171,8 +171,141 @@ test("listing observes external edits and deletes while a session write waits fo
     expect(recreate.version).not.toBeNull();
     const history = await host.fetch(new Request("http://localhost/api/folders/docs/history/a"));
     const rows = await history.json();
-    expect(rows.at(-1).operation.base).toBe(rows.at(-2).version);
+    expect(rows.at(-1).operation.base).toBe(rows[0].version);
+    expect(rows.at(-1).operation.overwrote).toBe(rows.at(-2).version);
   } finally {
     await host.stop();
+  }
+});
+
+test("session receipts and reads expose unseen external edits in overwrite history", async () => {
+  const host = agentHost();
+
+  try {
+    await create(host, "docs");
+
+    const session = await createAgentFileSystem({
+      server: "http://localhost",
+      fetch: host.fetch,
+      folders: ["docs"],
+      writable: ["docs"],
+    });
+
+    await session.bash.exec("echo agent-one > /docs/a.txt");
+
+    const initial = await (
+      await host.fetch(new Request("http://localhost/api/folders/docs/history/a.txt"))
+    ).json();
+
+    const initialVersion = initial.at(-1).version;
+
+    const external = await host.fetch(
+      new Request("http://localhost/api/folders/docs/files/a.txt", {
+        method: "PUT",
+        headers: {
+          "x-file-op-id": "human-one",
+          "x-file-author": "human",
+          "x-file-origin": "human",
+          "x-file-base": "1",
+        },
+        body: "human edit",
+      }),
+    );
+
+    const human = await external.json();
+    // Fresh metadata and version precondition checks do not advance the observation.
+    const current = await session.tools.stat("/docs/a.txt", {});
+    expect(current.ok && current.stat.exists && current.stat.version).toBe(String(human.version));
+    await session.fs.writeFile("/docs/a.txt", "agent-two\n");
+
+    const history = await host.fetch(
+      new Request("http://localhost/api/folders/docs/history/a.txt"),
+    );
+
+    const rows = await history.json();
+    expect(rows.at(-1).operation.base).toBe(initialVersion);
+    expect(rows.at(-1).operation.overwrote).toBe(human.version);
+    await session.core.read("/docs/a.txt");
+    const readVersion = rows.at(-1).version;
+    await session.core.mutate("/docs/a.txt", encoded("after read"));
+
+    const after = await (
+      await host.fetch(new Request("http://localhost/api/folders/docs/history/a.txt"))
+    ).json();
+
+    expect(after.at(-1).operation.base).toBe(readVersion);
+    expect(after.at(-1).operation.overwrote).toBeUndefined();
+    await session.core.mutate("/docs/a.txt", null);
+    await session.core.mutate("/docs/a.txt", encoded("after tombstone"));
+
+    const recreated = await (
+      await host.fetch(new Request("http://localhost/api/folders/docs/history/a.txt"))
+    ).json();
+
+    expect(recreated.at(-1).operation.base).toBe(recreated.at(-2).version);
+    expect(recreated.at(-1).operation.overwrote).toBeUndefined();
+  } finally {
+    await host.stop();
+  }
+});
+
+test("append and same-path copy retain the version of their read across metadata races", async () => {
+  for (const operation of ["append", "copy"]) {
+    const host = agentHost();
+    let inject = false;
+    let readReturned = false;
+
+    const transport = async (request: Request) => {
+      if (inject && readReturned && new URL(request.url).pathname.includes("/history/")) {
+        inject = false;
+        await host.fetch(
+          new Request("http://localhost/api/folders/docs/files/a", {
+            method: "PUT",
+            headers: {
+              "x-file-op-id": "between-read-and-write",
+              "x-file-author": "human",
+              "x-file-origin": "human",
+            },
+            body: "unseen",
+          }),
+        );
+      }
+
+      const response = await host.fetch(request);
+
+      if (inject && request.method === "GET" && new URL(request.url).pathname.includes("/files/"))
+        readReturned = true;
+
+      return response;
+    };
+
+    try {
+      await create(host, "docs");
+
+      const session = await createAgentFileSystem({
+        server: "http://localhost",
+        fetch: transport,
+        folders: ["docs"],
+        writable: ["docs"],
+      });
+
+      await session.core.mutate("/docs/a", encoded("read bytes"));
+      inject = true;
+
+      if (operation === "append") await session.fs.appendFile("/docs/a", " appended");
+      else await session.fs.cp("/docs/a", "/docs/a");
+
+      const history = await (
+        await host.fetch(new Request("http://localhost/api/folders/docs/history/a"))
+      ).json();
+
+      expect(history.at(-1).operation.base).toBe(history[0].version);
+      expect(history.at(-1).operation.overwrote).toBe(history.at(-2).version);
+      expect(new TextDecoder().decode((await session.core.read("/docs/a")).bytes)).toBe(
+        operation === "append" ? "read bytes appended" : "read bytes",
+      );
+    } finally {
+      await host.stop();
+    }
   }
 });

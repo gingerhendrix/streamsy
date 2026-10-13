@@ -45,9 +45,12 @@ export function justBashFileSystem(core: FolderHttpFileSystem): IFileSystem {
     async appendFile(path, content, options) {
       core.assertWritable(path);
       let old = new Uint8Array();
+      let observedVersion: number | undefined;
 
       try {
-        old = (await core.read(path)).bytes;
+        const opened = await core.read(path);
+        old = opened.bytes;
+        observedVersion = opened.version;
       } catch (error) {
         if (!(error instanceof FileSystemError && error.code === "ENOENT")) throw error;
       }
@@ -56,7 +59,7 @@ export function justBashFileSystem(core: FolderHttpFileSystem): IFileSystem {
       const combined = new Uint8Array(old.length + extra.length);
       combined.set(old);
       combined.set(extra, old.length);
-      await core.mutate(path, combined);
+      await core.mutate(path, combined, { observedVersion });
     },
     async exists(path) {
       return (await core.stat(path)) !== undefined;
@@ -93,7 +96,10 @@ export function justBashFileSystem(core: FolderHttpFileSystem): IFileSystem {
       core.assertWritable(dest);
 
       if ((await stat(src)).isDirectory) await unsupported(src);
-      await core.mutate(dest, (await core.read(src)).bytes);
+      const opened = await core.read(src);
+      // A source version describes the destination only for a same-path copy.
+      const observedVersion = core.resolve(src) === core.resolve(dest) ? opened.version : undefined;
+      await core.mutate(dest, opened.bytes, { observedVersion });
     },
     async mv(_src, dest) {
       return unsupported(dest);
