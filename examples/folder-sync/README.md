@@ -458,7 +458,11 @@ parents. `folderDirectory(id)` can instead return a relative directory. It uses
 the CLI's shared mapping validation: paths must stay inside the virtual root,
 folder roots must be disjoint, and `.folder-sync` is reserved. Explicit `folders`
 restricts selection; otherwise `/api/ls` discovers folders with indexed files.
-An empty folder can be selected explicitly or named in `writable`. The default
+A discovered folder whose mapping overlaps an existing root is skipped with one
+warning, so later listings, reads, and search continue. `onWarning(message)` can
+capture those warnings; by default the host logs them. Explicit `folders` or
+`writable` configurations still refuse overlapping roots. An empty folder can be
+selected explicitly or named in `writable`. The default
 writable list is empty. The root, folder roots, and their synthetic parents are
 read-only. Writing there or into an unselected or read-only folder gives `EROFS`.
 

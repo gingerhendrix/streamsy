@@ -242,3 +242,62 @@ test("cancellation stops a pending Retry-After backoff", async () => {
   await expect(pending).rejects.toMatchObject({ code: "ECANCELED" });
   expect(attempts).toBeLessThanOrEqual(1);
 });
+
+const manifest = (folderId: string, path: string) => ({
+  id: JSON.stringify([folderId, path]),
+  folderId,
+  path,
+  version: 1,
+  hash: "0".repeat(64),
+  size: 1,
+  updatedAt: "2026-10-13T00:00:00Z",
+  author: "agent",
+});
+
+test("discovered overlaps warn once and leave listing, metadata, reads and search usable", async () => {
+  const warnings: string[] = [];
+  let overlap = false;
+
+  const fs = await FolderHttpFileSystem.create({
+    server: "http://localhost",
+    onWarning: (message) => warnings.push(message),
+    fetch: async (request) => {
+      const route = new URL(request.url).pathname;
+
+      if (route === "/api/ls")
+        return Response.json([
+          manifest("docs", "a"),
+          ...(overlap ? [manifest("docs/root", "b")] : []),
+        ]);
+
+      if (route === "/api/search")
+        return Response.json([
+          { folderId: "docs/root", path: "b", version: 1, snippet: [] },
+          { folderId: "docs", path: "a", version: 1, snippet: [] },
+        ]);
+
+      if (route.includes("/history/"))
+        return Response.json([{ version: 1, operation: { type: "put", size: 1 } }]);
+
+      return new Response("x", { headers: { "x-file-version": "1" } });
+    },
+  });
+
+  overlap = true;
+  expect(await fs.list("/docs")).toEqual([{ name: "a", kind: "file" }]);
+  expect((await fs.stat("/docs/a"))?.kind).toBe("file");
+  expect(new TextDecoder().decode((await fs.read("/docs/a")).bytes)).toBe("x");
+  expect((await fs.search("x")).map((hit) => hit.path)).toEqual(["/docs/a"]);
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("Skipping discovered folder docs/root");
+  const initialWarnings: string[] = [];
+
+  const initial = await FolderHttpFileSystem.create({
+    server: "http://localhost",
+    onWarning: (message) => initialWarnings.push(message),
+    fetch: async () => Response.json([manifest("docs", "a"), manifest("docs/root", "b")]),
+  });
+
+  expect(await initial.list("/docs")).toEqual([{ name: "a", kind: "file" }]);
+  expect(initialWarnings).toHaveLength(1);
+});

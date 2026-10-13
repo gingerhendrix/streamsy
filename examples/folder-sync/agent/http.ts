@@ -45,6 +45,8 @@ export interface AgentOptions {
   readonly folderDirectory?: (id: string) => string;
   /** Transport injection for in-process hosts. */
   readonly fetch?: (request: Request) => Promise<Response>;
+  /** Discovered overlaps are skipped once, with a host warning by default. */
+  readonly onWarning?: (message: string) => void;
 }
 
 export interface FileHead {
@@ -113,6 +115,7 @@ const retryAfter = (value: string | null) => {
 /** The HTTP core deliberately imports neither filesystem library. No background work or head TTL. */
 export class FolderHttpFileSystem {
   private readonly roots = new Map<string, string>();
+  private readonly skippedFolders = new Set<string>();
   private readonly observedVersions = new Map<string, number>();
   private readonly emptyDirectories = new Set<string>();
   // Session writes overlay the eventually consistent manifest until newer rows arrive.
@@ -138,7 +141,9 @@ export class FolderHttpFileSystem {
     return fs;
   }
 
-  private async addFolder(id: string) {
+  private async addFolder(id: string, discovered = false) {
+    if (discovered && this.skippedFolders.has(id)) return;
+
     if (this.options.folders !== undefined && !this.options.folders.includes(id)) return;
 
     if (this.roots.has(id)) return;
@@ -154,7 +159,20 @@ export class FolderHttpFileSystem {
       ),
     );
 
-    if (Result.isFailure(mapped)) throw new FileSystemError("EINVAL", mapped.failure.message);
+    if (Result.isFailure(mapped)) {
+      if (discovered && mapped.failure.message.startsWith("Overlapping folder directories:")) {
+        this.skippedFolders.add(id);
+        const message = `Skipping discovered folder ${id}: ${mapped.failure.message}`;
+
+        if (this.options.onWarning !== undefined) this.options.onWarning(message);
+        else await Effect.runPromise(Effect.logWarning(message));
+
+        return;
+      }
+
+      throw new FileSystemError("EINVAL", mapped.failure.message);
+    }
+
     this.roots.set(id, mapped.success);
   }
 
@@ -285,7 +303,7 @@ export class FolderHttpFileSystem {
     );
 
     if (this.options.folders === undefined)
-      for (const row of rows) await this.addFolder(row.folderId);
+      for (const row of rows) await this.addFolder(row.folderId, true);
     const files = new Map<string, FileHead>();
 
     for (const row of rows) {
@@ -553,7 +571,7 @@ export class FolderHttpFileSystem {
     );
 
     if (this.options.folders === undefined)
-      for (const hit of hits) await this.addFolder(hit.folderId);
+      for (const hit of hits) await this.addFolder(hit.folderId, true);
 
     const candidates = hits.flatMap((hit) => {
       const path = this.folderPath(hit.folderId, hit.path);

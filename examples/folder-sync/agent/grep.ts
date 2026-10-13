@@ -39,6 +39,7 @@ export const searchGrep = (core: FolderHttpFileSystem) =>
         rest.length === 0 ? [ctx.cwd] : rest.map((path) => core.resolve(path, ctx.cwd));
 
       const { hits, truncated } = await core.searchCandidates(query, ctx.signal);
+
       const note = truncated
         ? "grep: search reached the 100-hit limit; candidates may be incomplete\n"
         : "";

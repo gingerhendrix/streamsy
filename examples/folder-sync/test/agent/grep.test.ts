@@ -19,8 +19,10 @@ test("candidate grep warns at the API limit before selection and preserves origi
             })),
           ),
   });
+
   const args: string[][] = [];
   const command = searchGrep(core);
+
   const ctx = createCommandContext({
     fs: justBashFileSystem(core),
     cwd: "/",
@@ -30,6 +32,7 @@ test("candidate grep warns at the API limit before selection and preserves origi
       return { stdout: "", stderr: "", exitCode: 1 };
     },
   });
+
   const limited = await command.execute(["--search", "needle", "-r", "needle", "/docs"], ctx);
   expect(limited.exitCode).toBe(1);
   expect(limited.stderr).toContain("100-hit limit");

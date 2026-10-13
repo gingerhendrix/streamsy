@@ -190,8 +190,9 @@ bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-syn
 `bash`, the just-bash `fs`, and the Better FS Tools `tools` adapter. Files appear
 at `/<folderId>/<path>`. Selection defaults to discovery through `/api/ls`, and
 writable folders default to none. `folderDirectory(id)` follows the same relative,
-disjoint mapping rules as the sync CLI. The root and synthetic parents are
-read-only.
+disjoint mapping rules as the sync CLI. A discovered overlap is skipped with a
+warning; explicit overlapping selections still fail. The root and synthetic
+parents are read-only.
 
 ```ts title="agent/index.ts"
 export async function createAgentFileSystem(options: AgentOptions) {
