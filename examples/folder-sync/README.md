@@ -532,8 +532,8 @@ Expected errors keep the session usable:
 Invalid folder IDs or mappings fail session creation. HTTP 408, 409, 429, and 503
 retry at most three times after the initial request, with exponential backoff and
 `Retry-After` seconds or an HTTP date as a minimum delay. Exhaustion gives `EIO`.
-The attempt count is bounded; a server-specified long delay can extend elapsed
-time. 401 and 403 never retry, and the writer token is sent only on writes.
+Retry-After is accepted up to 5 seconds. A larger delay fails immediately with
+`EIO` rather than sleeping or retrying. 401 and 403 never retry, and the writer token is sent only on writes.
 Tools calls accept an abort signal, including during retry backoff.
 
 The agent tests run both Better FS Tools conformance suites against the in-process

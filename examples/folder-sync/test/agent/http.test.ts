@@ -233,7 +233,7 @@ test("cancellation stops a pending Retry-After backoff", async () => {
     if (new URL(request.url).pathname === "/api/ls") return empty();
     attempts++;
 
-    return new Response("busy", { status: 503, headers: { "retry-after": "60" } });
+    return new Response("busy", { status: 503, headers: { "retry-after": "5" } });
   });
 
   const controller = new AbortController();
@@ -300,4 +300,23 @@ test("discovered overlaps warn once and leave listing, metadata, reads and searc
 
   expect(await initial.list("/docs")).toEqual([{ name: "a", kind: "file" }]);
   expect(initialWarnings).toHaveLength(1);
+});
+
+test("Retry-After above five seconds fails immediately for seconds and HTTP dates", async () => {
+  // oxlint-disable-next-line effecttsgo/global-date -- Exercise HTTP-date parsing against the real adapter clock.
+  for (const value of ["6", new Date(Date.now() + 60000).toUTCString()]) {
+    let attempts = 0;
+    const started = performance.now();
+
+    const fs = await core(async (request) => {
+      if (new URL(request.url).pathname === "/api/ls") return empty();
+      attempts++;
+
+      return new Response("busy", { status: 503, headers: { "retry-after": value } });
+    });
+
+    await expect(fs.read("/docs/a")).rejects.toMatchObject({ code: "EIO" });
+    expect(attempts).toBe(1);
+    expect(performance.now() - started).toBeLessThan(1000);
+  }
 });

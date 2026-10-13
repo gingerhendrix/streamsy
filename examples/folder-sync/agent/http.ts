@@ -242,11 +242,15 @@ export class FolderHttpFileSystem {
         );
 
         if (!response.ok) {
+          const retryable = [408, 409, 429, 503].includes(response.status);
+          const retryAfterMs = retryAfter(response.headers.get("retry-after"));
+
+          // Refuse excessive server delays instead of sleeping beyond the session retry ceiling.
           const error = new FileSystemError(
             statusCode(response.status),
             route,
-            [408, 409, 429, 503].includes(response.status),
-            retryAfter(response.headers.get("retry-after")),
+            retryable && retryAfterMs <= 5000,
+            retryAfterMs,
           );
 
           await response.body?.cancel();

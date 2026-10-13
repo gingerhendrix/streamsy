@@ -249,7 +249,7 @@ map to `EINVAL`, `ENOENT`, and `EFBIG`; tools receive `io`, `not-found`, and
 `too-large`. Read-only writes give `EROFS` (`read-only`). IDs over 100 UTF-16 units
 or 249 UTF-8 bytes fail with `ENAMETOOLONG`; the nearest tools reason is `io`.
 408, 409, 429, and 503 retry three times with bounded exponential backoff and
-`Retry-After` as a minimum delay. Tools support cancellation. A failed redirection
+`Retry-After` as a minimum delay up to 5 seconds; larger delays fail with `EIO`. Tools support cancellation. A failed redirection
 can reject `bash.exec()`; the same session remains usable after catching it.
 
 ## Limits
