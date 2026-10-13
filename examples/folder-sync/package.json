@@ -16,9 +16,10 @@
     "smoke:worker": "bun run build:web && bun run build:worker && bun scripts/worker-smoke.ts",
     "build:worker": "bun scripts/build-worker.ts",
     "dev:worker": "bun run build:web && bun run build:worker && bun scripts/local-worker.ts",
-    "test:worker": "bun run build:web && bun run build:worker && bun test test/worker && FOLDER_SYNC_TEST_WORKER=true bun test test/sync/integration.test.ts"
+    "test:worker": "bun run build:web && bun run build:worker && bun test test/worker test/agent/worker.test.ts && FOLDER_SYNC_TEST_WORKER=true bun test test/sync/integration.test.ts"
   },
   "dependencies": {
+    "@better-fs-tools/fs": "0.1.0",
     "@durable-streams/state": "^0.3.1",
     "@effect/platform-bun": "4.0.1",
     "@effect/sql-sqlite-bun": "4.0.1",
@@ -29,6 +30,7 @@
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
     "effect": "4.0.1",
+    "just-bash": "3.6.0",
     "picomatch": "^4.0.7",
     "react": "latest",
     "react-dom": "latest",

@@ -38,6 +38,7 @@ import {
   pathKind,
   skipWarnings,
 } from "./local.ts";
+import { folderRoot } from "./layout.ts";
 import { SyncState, stateLayer } from "./state.ts";
 import type { Known } from "./state.ts";
 
@@ -126,23 +127,10 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
   const addFolder = Effect.fn("Sync.addFolder")(function* (folderId: string) {
     if (!selected(folderId) || roots.has(folderId)) return yield* Effect.void;
-    const relative = yield* normalisePath(mapping(folderId));
 
-    if (relative === ".folder-sync" || relative.startsWith(".folder-sync/"))
-      return yield* new LocalFailure({
-        message: "Folder mapping uses reserved .folder-sync directory",
-      });
-
-    for (const [id, existing] of roots) {
-      if (
-        relative === existing ||
-        relative.startsWith(`${existing}/`) ||
-        existing.startsWith(`${relative}/`)
-      )
-        return yield* new LocalFailure({
-          message: `Overlapping folder directories: ${id} and ${folderId}. Supply disjoint folderDirectory mappings.`,
-        });
-    }
+    const relative = yield* folderRoot(folderId, mapping(folderId), roots).pipe(
+      Effect.catchTag("InvalidFile", ({ message }) => new LocalFailure({ message })),
+    );
 
     const previous = yield* state.get(`mapping:${folderId}`);
 
