@@ -219,7 +219,11 @@ The core fetches file bytes through the file API and lists through `/api/ls`.
 Listings can lag projections; session writes bridge that lag and refresh their
 heads on listing. Reads and version checks always reach the authoritative API.
 Shell globs use the latest session path snapshot; list again after external edits.
-Empty directories exist only within the session. Links, persistent modes, staged
+Empty directories exist only within the session. The shell's in-memory `/dev`
+mount supplies the standard just-bash devices and discards writes to `/dev/null`.
+A separate InMemoryFs at `/tmp` provides private session scratch. Listings and
+globs include both mounts. `touch` accepts timestamp updates on writable HTTP
+files as a no-op. Links, persistent modes, staged
 writes, atomic rename, and directory copying or removal are unsupported.
 
 Writes use the session's last file read or receipt as base, including tombstone

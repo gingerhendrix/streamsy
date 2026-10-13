@@ -108,6 +108,17 @@ test("scripted just-bash session lists, reads, candidate greps, writes and survi
       expect(ordinary.stdout).not.toBe("");
     }
 
+    const discardedError = await bash.exec("cat /docs/root/missing 2>/dev/null; echo status $?");
+    expect(discardedError.stdout).toBe("status 1\n");
+    expect(discardedError.stderr).toBe("");
+    expect((await bash.exec("ls /docs/root > /dev/null && echo ok")).stdout).toBe("ok\n");
+    expect((await bash.exec("cat /dev/null")).stdout).toBe("");
+    expect((await bash.exec("echo scratch > /tmp/x; cat /tmp/x")).stdout).toBe("scratch\n");
+    expect((await bash.exec("printf '%s\\n' /tmp/* /docs/root/*.txt /dev/std*")).stdout).toBe(
+      "/tmp/x\n/docs/root/a.txt\n/docs/root/b.txt\n/dev/stderr\n/dev/stdin\n/dev/stdout\n",
+    );
+    expect((await bash.exec("cat /dev/stdin")).exitCode).toBe(0);
+    expect((await bash.exec("touch /docs/root/touched.txt")).exitCode).toBe(0);
     requests.length = 0;
     const grep = await bash.exec("grep --search needle -n needle /docs/root");
     expect(grep.exitCode).toBe(0);
@@ -322,5 +333,34 @@ test("append and same-path copy retain the version of their read across metadata
     } finally {
       await host.stop();
     }
+  }
+});
+
+test("shell mounts discard null writes and isolate scratch across sessions", async () => {
+  const host = agentHost();
+
+  try {
+    const options = { server: "http://localhost", fetch: host.fetch, folders: [] };
+    const first = await createAgentFileSystem(options);
+    await first.fs.writeFile("/dev/null", "discard");
+    await first.fs.appendFile("/dev/null", "discard too");
+    expect(await first.fs.readFile("/dev/null")).toBe("");
+    expect(await first.fs.readdir("/dev")).toEqual([
+      "fd",
+      "null",
+      "stderr",
+      "stdin",
+      "stdout",
+      "zero",
+    ]);
+    await first.fs.writeFile("/tmp/x", "scratch");
+    expect(first.fs.getAllPaths()).toContain("/tmp/x");
+    expect(first.fs.getAllPaths()).toContain("/dev/null");
+    expect(first.fs.resolvePath("/tmp", "../dev/null")).toBe("/dev/null");
+    const second = await createAgentFileSystem(options);
+    expect(await second.fs.exists("/tmp/x")).toBe(false);
+    expect((await second.bash.exec("ls /dev > /dev/null; echo ok")).stdout).toBe("ok\n");
+  } finally {
+    await host.stop();
   }
 });

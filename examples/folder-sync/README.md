@@ -482,10 +482,17 @@ The API atomically commits a complete file, but `base` records unseen overwrites
 instead of rejecting them. The adapter checks `absent` and `version` before
 writing; another writer can commit between that check and the PUT. Better FS Tools
 must treat those preconditions as advisory. There is no staged write, persistent
-mode, symlink, hard link, or atomic rename. File copying, appending, and deletion
+mode, symlink, hard link, or atomic rename for HTTP files. File copying, appending, and deletion
 work; directory copying and removal are unsupported. Empty directories made by
 `mkdir` or `createParents` exist only for this session. Server directories remain
-implicit in file paths. A failed shell redirection can reject `bash.exec()`;
+implicit in file paths. The shell mounts an InMemoryFs at `/tmp` for private,
+non-durable session scratch, and an in-memory device filesystem at `/dev` with
+`null`, `zero`, `stdin`, `stdout`, `stderr`, and `fd`, matching just-bash's standard
+layout. `/dev/null` writes and appends are discarded. These mounts participate
+in listing, path resolution, and globbing and shadow HTTP paths under `/dev` and
+`/tmp`; map such folders elsewhere with `folderDirectory`. The Better FS Tools
+adapter remains over the HTTP core. `touch` on a writable HTTP file accepts the
+timestamp call as a no-op. A failed shell redirection can reject `bash.exec()`;
 catch it and reuse the same session.
 
 Every listing fetches `/api/ls`, which can lag folder commits. Session mutations

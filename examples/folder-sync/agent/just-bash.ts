@@ -1,7 +1,9 @@
 /* oxlint-disable effecttsgo/async-function -- Implements just-bash Promise filesystem methods. */
 /* oxlint-disable effecttsgo/global-date -- FsStat requires native Date values. */
 import { Predicate } from "effect";
+import { InMemoryFs, MountableFs } from "just-bash";
 import type { BufferEncoding, FileContent, FsStat, IFileSystem } from "just-bash";
+import { ShellDevices } from "./devices.ts";
 import { FileSystemError, FolderHttpFileSystem } from "./http.ts";
 
 // just-bash's contract supports encodings beyond TextDecoder. Buffer is Bun's byte compatibility API.
@@ -129,9 +131,18 @@ export function justBashFileSystem(core: FolderHttpFileSystem): IFileSystem {
       return core.resolve(path);
     },
     async utimes(path) {
-      return unsupported(path);
+      core.assertWritable(path);
+
+      if (!(await stat(path)).isFile) await unsupported(path);
+      // The file API has no timestamps to change. A writable file can still be touched.
     },
   };
 
-  return fs;
+  return new MountableFs({
+    base: fs,
+    mounts: [
+      { mountPoint: "/dev", filesystem: new ShellDevices() },
+      { mountPoint: "/tmp", filesystem: new InMemoryFs() },
+    ],
+  });
 }
