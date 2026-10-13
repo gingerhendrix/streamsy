@@ -190,6 +190,6 @@ bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-syn
 - Head checkpoints keep all paths and operation receipts. History reads scan folder logs. Search preparation uses content references in the change feed. The example suits a small corpus.
 - Sync scans hash every selected file. Its local outbox and backup files have no quota.
 - The CLI preserves pending local edits, but an external editor can still save during the final local read-to-rename window.
-- Feed cursors are unsafe across an index rebuild. Use a fresh mirror after rebuilding; a feed epoch belongs to the Cloudflare slice.
+- An index rebuild must rotate the feed epoch, and mirrors then bootstrap again. If history goes backwards within one epoch, as after a backup restore, the sync CLI stops with `HistoryRewound`.
 - Browser drafts stay in memory. Navigation and reload discard unsaved drafts. The page has no phone cache.
 - Cloudflare hosting and the agent filesystem are later slices. This demo has no hosted deployment.

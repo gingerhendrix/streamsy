@@ -271,13 +271,23 @@ including HEAD and long-poll. The CLI checks the epoch before tailing and on eve
 page. A changed epoch triggers a fresh bootstrap even when the feed cursor still
 fits. The replacement server is treated as unknown: old echo hashes cannot justify
 removing a local file. Each unqueued local file follows the fresh-bootstrap rules
-above, so an empty or older database preserves local bytes. Stored folder versions
-and unsent bases are cleared; pending bytes and opIds stay queued. A pending write
-in a replacement database uses an absent base and may carry an overwrite mark.
-Rebuild tools must rotate the epoch with
-`rotateFeedEpoch` in the same owner transaction that resets outputs. There is no
+above, so an empty or older database with a new epoch preserves local bytes.
+Stored folder versions and unsent bases are cleared; pending bytes and opIds stay
+queued. A pending write in a replacement database uses an absent base and may carry
+an overwrite mark. Rebuild tools must rotate the epoch with `rotateFeedEpoch` in
+the same owner transaction that resets outputs. There is no
 public rebuild endpoint. A live read already parked during a reset can take the
 long-poll timeout to observe it; restart checks immediately.
+
+Within one epoch the feed is append-only. If the server history goes backwards, the
+CLI stops with a `HistoryRewound` error and changes no more files. It checks two
+signs: a saved cursor past the feed tail, and a file head older than the version
+the mirror already saw. A restart stops again at the same point. A database
+restored from a backup keeps its old epoch, so it stops every mirror that synced
+past the backup point. To resync after a restore, rotate the epoch with
+`rotateFeedEpoch`; mirrors then follow the replacement rules above. A restore that
+the CLI cannot see is not caught: if new writes move the tail past the saved
+cursor, the CLI reads on and stops only when a known file shows an older head.
 
 Atomic replacement still has a final local read-to-rename window in which an
 external editor save can be replaced. SQLite and disk replacement have no shared
