@@ -495,16 +495,17 @@ the latest path snapshot populated at creation and by listings or mutations;
 list again to refresh it after external changes. Ordinary file reads and version
 checks always reach the authoritative file API.
 
-The custom `grep` requires `--search FTS_QUERY [OPTIONS] PATTERN [PATH ...]`.
+Ordinary `grep` delegates unchanged to the built-in command, including pipes,
+recursive flags, and stdin. Opt-in candidate mode uses `--search FTS_QUERY [OPTIONS] PATTERN [PATH ...]`.
 It asks `/api/search` for candidates, joins the snippet segments' `text` fields,
 and passes candidate paths to just-bash's real grep. Matches are confirmed against
 current file bytes; snippets are never match evidence. Supported options are
-`-F`, `-E`, `-i`, `-n`, `-w`, `-l`, `-c`, `-v`, `-q`, and `-H`. With no path, the
+`-F`, `-E`, `-i`, `-n`, `-w`, `-l`, `-c`, `-v`, `-q`, `-H`, `-r`, and `-R`. With no path, the
 scope is the current directory. Use `--` before a pattern starting with a dash.
 This is an explicitly scoped index search: FTS token semantics, text-only indexing,
 projection lag, and the API's 100-hit limit can omit files. It does not promise a
-complete corpus grep. Construct a plain `Bash` with the returned `fs` to use the
-ordinary filesystem grep without this wrapper.
+complete corpus grep. Reaching 100 search hits prints an incompleteness note on
+stderr, even when the requested scope filters out those hits.
 
 Expected errors keep the session usable:
 

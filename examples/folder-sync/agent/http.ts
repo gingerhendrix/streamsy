@@ -543,6 +543,10 @@ export class FolderHttpFileSystem {
   }
 
   async search(query: string, signal?: AbortSignal) {
+    return (await this.searchCandidates(query, signal)).hits;
+  }
+
+  async searchCandidates(query: string, signal?: AbortSignal) {
     const hits = await this.decode(
       await this.request(`/api/search?q=${encodeURIComponent(query)}`, {}, signal),
       Schema.Array(SearchResult),
@@ -551,12 +555,14 @@ export class FolderHttpFileSystem {
     if (this.options.folders === undefined)
       for (const hit of hits) await this.addFolder(hit.folderId);
 
-    return hits.flatMap((hit) => {
+    const candidates = hits.flatMap((hit) => {
       const path = this.folderPath(hit.folderId, hit.path);
 
       return path === undefined
         ? []
         : [{ path, snippet: hit.snippet.map((part) => part.text).join("") }];
     });
+
+    return { hits: candidates, truncated: hits.length >= 100 };
   }
 }

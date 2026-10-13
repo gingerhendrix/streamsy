@@ -25,6 +25,6 @@ export async function createAgentFileSystem(options: AgentOptions) {
     core,
     fs,
     tools: betterFileSystem(core),
-    bash: new Bash({ fs, cwd: "/", customCommands: [searchGrep(core, fs)] }),
+    bash: new Bash({ fs, cwd: "/", customCommands: [searchGrep(core)] }),
   };
 }

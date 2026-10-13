@@ -93,6 +93,21 @@ test("scripted just-bash session lists, reads, candidate greps, writes and survi
     requests.length = 0;
     expect((await bash.exec("ls /docs/root")).stdout).toContain("a.txt");
     expect((await bash.exec("cat /docs/root/a.txt")).stdout).toBe("needle one\nother\n");
+
+    for (const command of [
+      "ls /docs/root | grep a",
+      "cat /docs/root/a.txt | grep needle",
+      "grep needle /docs/root/a.txt",
+      "grep -rn needle /docs/root",
+      "find /docs/root -name '*.txt' | xargs grep -l needle",
+      "grep --search needle -r needle /docs/root",
+    ]) {
+      const ordinary = await bash.exec(command);
+      expect(ordinary.exitCode).toBe(0);
+      expect(ordinary.stderr).toBe("");
+      expect(ordinary.stdout).not.toBe("");
+    }
+
     requests.length = 0;
     const grep = await bash.exec("grep --search needle -n needle /docs/root");
     expect(grep.exitCode).toBe(0);

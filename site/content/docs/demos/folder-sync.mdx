@@ -202,7 +202,7 @@ export async function createAgentFileSystem(options: AgentOptions) {
     core,
     fs,
     tools: betterFileSystem(core),
-    bash: new Bash({ fs, cwd: "/", customCommands: [searchGrep(core, fs)] }),
+    bash: new Bash({ fs, cwd: "/", customCommands: [searchGrep(core)] }),
   };
 }
 ```
@@ -232,11 +232,12 @@ The API records an unseen overwrite rather than rejecting a stale base. Therefor
 but a concurrent commit can still win between the check and PUT. Handles buffer
 one file, verify changes, and have single-use byte streams.
 
-The grep wrapper requires an explicit `--search` FTS query. It joins snippet text
+Ordinary grep keeps built-in flags and stdin, including pipes. Opt-in candidate
+mode requires an explicit `--search` FTS query. It joins snippet text
 segments and uses the index only to choose candidate paths. just-bash's real grep
 confirms matches against file bytes. FTS token rules, text-only indexing, eventual
-consistency, and the 100-hit API limit make this an index-scoped search. A plain
-`Bash` using the returned `fs` can run ordinary filesystem grep.
+consistency, and the 100-hit API limit make this an index-scoped search. At 100 hits it prints an
+incompleteness note to stderr.
 
 401 and 403 give `EACCES` (`permission-denied`) without retry. 400, 404, and 413
 map to `EINVAL`, `ENOENT`, and `EFBIG`; tools receive `io`, `not-found`, and
