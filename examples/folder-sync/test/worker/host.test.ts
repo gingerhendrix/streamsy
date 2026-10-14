@@ -83,11 +83,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           });
 
           yield* restored.text;
+          // The folder alarm retries the notice. Nothing here calls the scheduled handler.
           yield* until(
             Effect.gen(function* () {
-              const runtime = yield* Effect.promise(() => host.mf.getWorker());
-              yield* Effect.promise(() => runtime.scheduled({ cron: "* * * * *" }));
-
               const response = yield* HttpClient.get(
                 `${host.url}/api/admin/pending?folder=lost-response`,
                 { headers },
@@ -109,7 +107,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
       { timeout: 15000 },
     );
     it.effect(
-      "workerd persists notices and runs cron while projection reads fail",
+      "workerd persists notices and wakes folders while projection reads fail",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
@@ -142,18 +140,22 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(put.status).toBe(200);
           yield* put.text;
 
-          const pending = yield* HttpClient.get(`${host.url}/api/admin/pending?folder=fault`, {
-            headers,
-          });
+          // The folder alarm delivers the notice. Intake persists it while the projection fails.
+          yield* until(
+            Effect.gen(function* () {
+              const pending = yield* HttpClient.get(`${host.url}/api/admin/pending?folder=fault`, {
+                headers,
+              });
 
-          const entries = yield* Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ state: Schema.String })),
-          )(yield* pending.json);
-
-          expect(entries.filter((row) => row.state === "pending")).toHaveLength(0);
-          const drain = yield* HttpClient.post(`${host.url}/api/admin/drain`, { headers });
-          expect(drain.status).toBe(200);
-          yield* drain.text;
+              return yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ state: Schema.String })),
+              )(yield* pending.json);
+            }),
+            (entries) => entries.every((row) => row.state !== "pending"),
+          );
+          const wake = yield* HttpClient.post(`${host.url}/api/admin/wake`, { headers });
+          expect(wake.status).toBe(200);
+          yield* wake.text;
           const stalled = yield* HttpClient.get(`${host.url}/api/ls`);
           expect(stalled.status).toBe(503);
           expect(stalled.headers["retry-after"]).toBe("1");
@@ -291,7 +293,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
       { timeout: 15000 },
     );
     it.effect(
-      "workerd recovers durable notices through the actual scheduled handler exactly once",
+      "workerd recovers durable notices through the folder alarm exactly once",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
@@ -352,11 +354,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           yield* restored.text;
 
-          // Poll scheduled passes until the outbox's durable backoff instant is due. No folder read drives recovery.
+          // The folder alarm fires at the outbox's durable backoff instant. No folder request or cron drives recovery.
           const rows = yield* until(
             Effect.gen(function* () {
-              const runtime = yield* Effect.promise(() => host.mf.getWorker());
-              yield* Effect.promise(() => runtime.scheduled({ cron: "* * * * *" }));
               const response = yield* HttpClient.get(`${host.url}/api/ls`);
 
               return yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
@@ -367,8 +367,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           );
 
           expect(rows[0]?.version).toBe(written.version);
+          // The hourly backstop wakes the folder again and must not deliver the notice twice.
           const runtime = yield* Effect.promise(() => host.mf.getWorker());
-          yield* Effect.promise(() => runtime.scheduled({ cron: "* * * * *" }));
+          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
           const changes = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
           const feed = yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* changes.json);
           expect(feed).toHaveLength(1);
@@ -554,9 +555,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const listed = yield* HttpClient.get(`${restarted.url}/api/ls`);
           expect(listed.headers["stream-epoch"]).toBe(epoch);
           expect(yield* listed.json).toHaveLength(1);
-          const drain = yield* HttpClient.post(`${restarted.url}/api/admin/drain`, { headers });
-          expect(drain.status).toBe(200);
-          yield* drain.text;
+          const wake = yield* HttpClient.post(`${restarted.url}/api/admin/wake`, { headers });
+          expect(wake.status).toBe(200);
+          yield* wake.text;
           const changes = yield* HttpClient.get(`${restarted.url}/streams/changes?offset=-1`);
           expect(yield* changes.json).toHaveLength(1);
           expect(changes.headers["stream-up-to-date"]).toBe("true");

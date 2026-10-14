@@ -356,7 +356,7 @@ localStorage for that origin and supplies it on saves. Clear the field to remove
 it. Unsaved drafts still live only in memory.
 
 The `alchemy.run.ts` stack declares two SQLite Durable Object classes, an R2
-bucket, static assets, a redacted writer token, and a cron every minute. This
+bucket, static assets, a redacted writer token, and an hourly cron. This
 batch uses the local workerd runner; the stack is typechecked. No Alchemy apply,
 Cloudflare provisioning, or deployment has been run.
 
@@ -368,16 +368,21 @@ notice inbox, change feed, manifest, and FTS5 table.
 A folder write and its durable notice enqueue commit in one SQL transaction.
 Notices carry the folder version, overwrite mark, and inline text or R2 hash.
 `folderId/version` deduplicates intake; search needs no remote folder-log read.
-Pending notices drain before and after each folder request with a two-second
-bound per pass. The oldest pending notice blocks later ones until it succeeds,
-so retry backoff cannot reorder folder commits.
 
-A failed drain keeps the notice queued and the write still returns its receipt.
-The Worker scheduled handler lists registered folders and asks each to drain.
-Without traffic, retry latency is bounded by the one-minute cron interval, plus
-processing time. Larger backlogs may take multiple passes. The local runner
-calls the same pass every minute because Miniflare does not fire cron itself.
-`POST /api/admin/drain`, protected by the writer token, triggers it immediately.
+Each folder object registers two wakeups with the stock Streamsy host. The
+`OutboxWakeup.make(notices, handler, { ordered: true })` wakeup delivers
+notices. A write arms the object's alarm in its mutation finalizer, and the
+alarm turn drains the outbox. The write does not wait for delivery. The oldest
+pending notice blocks later ones until it succeeds, so retry backoff cannot
+reorder folder commits. Each delivery has a two-second bound. A failed delivery
+keeps the notice queued, and the alarm fires again at its retry time. A backlog
+larger than one pass of 100 notices drains in back-to-back alarm turns.
+
+The hourly cron is a backstop. It lists registered folders and wakes each one.
+The wake re-arms the alarm when work is due, so a folder that lost its alarm
+still delivers. The local runner calls the same pass every hour, because
+Miniflare fires object alarms but does not fire cron. `POST /api/admin/wake`,
+protected by the writer token, triggers the pass at once.
 
 Index reads catch up notices, changes, manifest, and search before answering.
 Projection failures are logged and reads answer 503 with `Retry-After: 1`;
@@ -386,14 +391,12 @@ Later passes retry from checkpoints. Both hosts read manifest rows, the consumed
 change cursor, and epoch in one SQL transaction.
 
 Each notice attempts the index projections twice: a best-effort pass before
-intake and a pass after durable intake. A folder write can wait for both the
-pre-request and post-request outbox drains, each bounded to two seconds. These
-extra passes add latency when the index is slow.
+intake and a pass after durable intake. These passes run in the folder's alarm
+turn, so a slow index delays search and does not delay the folder write.
 
-The stock Streamsy expiry alarm remains untouched. The package follow-up is an
-application alarm hook in `@streamsy/serve`; the stock host currently runs only
-stream expiry in its alarm. This example uses request and cron delivery instead
-of application alarms or long-lived projection followers in objects.
+The stock host runs stream expiry and notice delivery from
+one alarm. Each wakeup has its own deadline and backoff. The objects hold no
+long-lived projection followers.
 
 Run the local checks:
 
@@ -403,7 +406,7 @@ bun run --cwd examples/folder-sync test:worker
 ```
 
 `smoke:worker` runs the shared HTTP smoke against a fresh local Worker.
-`test:worker` verifies scheduled recovery, auth, SQLite query behavior, R2 and
+`test:worker` verifies alarm delivery and recovery, auth, SQLite query behavior, R2 and
 object persistence, then runs the entire sync integration suite against workerd.
 The ordinary `test` command keeps all Bun checks and includes the Worker host
 checks. Set `FOLDER_SYNC_SCRATCH` to place temporary test data in a chosen directory.

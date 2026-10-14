@@ -37,8 +37,12 @@ const authorized = (request: Request, env: Env) => {
   return Boolean(env.WRITER_TOKEN) && equal;
 };
 
-/** One scheduled pass, also called by the authenticated local trigger. A failed folder does not stop the other folders. */
-export const scheduledDrain = async (env: Env) => {
+/**
+ * The hourly backstop, also called by the authenticated local trigger. Folder
+ * alarms deliver notices. This pass wakes each folder, so an object that lost
+ * its alarm re-arms it. A failed folder does not stop the other folders.
+ */
+export const scheduledWake = async (env: Env) => {
   const response = await index(env).fetch("https://internal/__registry");
 
   if (!response.ok) throw new Error(`Registry unavailable: ${response.status}`);
@@ -46,14 +50,14 @@ export const scheduledDrain = async (env: Env) => {
 
   for (const row of folders) {
     try {
-      const delivered = await folder(env, row.folderId).fetch("https://internal/__drain", {
+      const woken = await folder(env, row.folderId).fetch("https://internal/__wake", {
         method: "POST",
       });
 
-      if (!delivered.ok) throw new Error(`Drain answered ${delivered.status}`);
+      if (!woken.ok) throw new Error(`Wake answered ${woken.status}`);
     } catch (error) {
-      // oxlint-disable-next-line effecttsgo/global-console -- Platform scheduled boundary reports deferred delivery for the next cron pass.
-      console.error(`Scheduled drain failed for ${row.folderId}`, error);
+      // oxlint-disable-next-line effecttsgo/global-console -- Platform scheduled boundary reports a folder the next cron pass retries.
+      console.error(`Scheduled wake failed for ${row.folderId}`, error);
     }
   }
 };
@@ -66,13 +70,13 @@ export default {
     if (write && !authorized(request, env)) return json("Writer authorization required", 401);
 
     // Internal object routes are not exposed through the public router.
-    if (url.pathname === "/api/admin/drain" && request.method === "POST") {
+    if (url.pathname === "/api/admin/wake" && request.method === "POST") {
       try {
-        await scheduledDrain(env);
+        await scheduledWake(env);
 
-        return new Response("drained");
+        return new Response("awake");
       } catch {
-        return json("Scheduled drain failed", 503);
+        return json("Scheduled wake failed", 503);
       }
     }
 
@@ -163,6 +167,6 @@ export default {
     return env.ASSETS.fetch(request);
   },
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    await scheduledDrain(env);
+    await scheduledWake(env);
   },
 };

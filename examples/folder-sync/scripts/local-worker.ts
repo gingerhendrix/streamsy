@@ -17,8 +17,8 @@ const local = Effect.gen(function* () {
   );
 
   yield* Effect.logInfo(`Local folder-sync Worker: ${server.url}`);
-  // Miniflare does not fire cron automatically. This authenticated trigger calls the production scheduled pass.
-  yield* HttpClient.post(`${server.url}/api/admin/drain`, {
+  // Miniflare fires object alarms but not cron. This authenticated trigger calls the hourly scheduled pass.
+  yield* HttpClient.post(`${server.url}/api/admin/wake`, {
     headers: { authorization: `Bearer ${token}` },
   }).pipe(
     Effect.tap((response) =>
@@ -26,8 +26,8 @@ const local = Effect.gen(function* () {
         ? Effect.void
         : Effect.logError(`Local cron answered ${response.status}`),
     ),
-    Effect.catch((cause) => Effect.logError("Local cron failed; retry next minute", cause)),
-    Effect.repeat(Schedule.spaced("1 minute")),
+    Effect.catch((cause) => Effect.logError("Local cron failed; retry next hour", cause)),
+    Effect.repeat(Schedule.spaced("1 hour")),
   );
 });
 

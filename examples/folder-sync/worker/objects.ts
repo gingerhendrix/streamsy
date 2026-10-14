@@ -1,6 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault, Streamsy } from "@streamsy/core";
-import { StreamsyObject } from "@streamsy/serve/cloudflare";
+import { StreamsyObject, Wakeups } from "@streamsy/serve/cloudflare";
 import { Serve } from "@streamsy/serve";
 import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
 import { CommitBoundary } from "@streamsy/core";
@@ -19,11 +19,11 @@ import { objectStorage } from "./storage.ts";
 import {
   Notices,
   Notice,
-  Delivery,
   OutboxLive,
   NoticeHook,
-  deliveryLayer,
+  noticeTransportLayer,
   noticeTables,
+  noticeWakeup,
   receiveNotice,
   noticeChanges,
   notices,
@@ -44,13 +44,12 @@ const fault = (cause: Cause.Cause<unknown>) =>
     retryable: true,
   });
 
-const FolderInternal = Layer.merge(
+const FolderInternal = Layer.mergeAll(
+  // The cron backstop. Acquisition and this reconcile arm the alarm for any due wakeup.
   HttpRouter.add(
     "POST",
-    "/__drain",
-    Effect.flatMap(Delivery, (delivery) => delivery.run).pipe(
-      Effect.as(HttpServerResponse.text("drained")),
-    ),
+    "/__wake",
+    Wakeups.use((wakeups) => wakeups.reconcile).pipe(Effect.as(HttpServerResponse.text("awake"))),
   ),
   HttpRouter.add(
     "GET",
@@ -67,7 +66,7 @@ const FolderInternal = Layer.merge(
 );
 
 const folderLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(FolderStoreLive, deliveryLayer(env)).pipe(
+  Layer.mergeAll(FolderStoreLive, noticeTransportLayer(env)).pipe(
     Layer.provideMerge(Initialise),
     Layer.provideMerge(NoticeHook),
     Layer.provideMerge(OutboxLive),
@@ -85,19 +84,7 @@ const FolderApp = Layer.mergeAll(
 export class FolderObject extends StreamsyObject.make<
   Env,
   Layer.Success<ReturnType<typeof folderLayer>>
->({ app: FolderApp, layer: folderLayer }) {
-  // oxlint-disable-next-line effecttsgo/async-function -- Public stock-host fetch wrapper dispatches application routes on the same acquired owner.
-  override async fetch(request: Request): Promise<Response> {
-    const path = new URL(request.url).pathname;
-
-    if (path === "/__drain" || path === "/__pending") return super.fetch(request);
-    await super.fetch(new Request("https://internal/__drain", { method: "POST" }));
-    const response = await super.fetch(request);
-    await super.fetch(new Request("https://internal/__drain", { method: "POST" }));
-
-    return response;
-  }
-}
+>({ app: FolderApp, layer: folderLayer, wakeups: [noticeWakeup] }) {}
 
 class IndexPass extends Context.Service<IndexPass, { readonly run: Effect.Effect<void> }>()(
   "FolderSync/IndexPass",

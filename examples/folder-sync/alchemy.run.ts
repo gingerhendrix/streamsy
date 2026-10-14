@@ -26,7 +26,8 @@ export default Alchemy.Stack(
         runWorkerFirst: true,
         notFoundHandling: "single-page-application",
       },
-      crons: ["* * * * *"],
+      // Folder alarms deliver notices. The cron only wakes folders as a backstop.
+      crons: ["0 * * * *"],
     });
 
     return { url: worker.url };

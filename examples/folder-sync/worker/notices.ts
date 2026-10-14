@@ -3,8 +3,8 @@ import { Commit, Projection } from "@streamsy/projection";
 import { defineActionSink } from "@streamsy/serve/action";
 import { OutboxStore } from "@streamsy/serve/action/outbox";
 import { createSqlOutboxBacking, migrateOutbox } from "@streamsy/serve/action/sql";
-import { draftsFor, actionSinkHandler, drain } from "@streamsy/serve/action/runtime";
-import { Clock, Context, Effect, Layer, Schema, Semaphore } from "effect";
+import { draftsFor, actionSinkHandler, OutboxWakeup } from "@streamsy/serve/action/runtime";
+import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { FileOp, Identifier, Version, overwriteMarkFromOp } from "../server/domain.ts";
 import { Changes, Change } from "../server/streams.ts";
@@ -65,68 +65,58 @@ export const OutboxLive = Layer.effect(
   }),
 );
 
-export class Delivery extends Context.Service<Delivery, { readonly run: Effect.Effect<void> }>()(
-  "FolderSync/Delivery",
+export class NoticeTransportFailure extends Schema.TaggedError<NoticeTransportFailure>()(
+  "NoticeTransportFailure",
+  {},
 ) {}
 
-export const deliveryLayer = (env: Env) =>
-  Layer.effect(
-    Delivery,
-    Effect.gen(function* () {
-      const store = yield* OutboxStore;
-      const gate = yield* Semaphore.make(1);
+/** The Worker's route to the index object. Built from `env`, so the static wakeup can use it. */
+export class NoticeTransport extends Context.Service<
+  NoticeTransport,
+  { readonly send: (body: string) => Effect.Effect<Response, NoticeTransportFailure> }
+>()("FolderSync/NoticeTransport") {}
 
-      const handler = actionSinkHandler(notices, (delivery, refuse) =>
-        Effect.gen(function* () {
-          const response = yield* Effect.tryPromise({
-            try: () =>
-              env.INDEX.get(env.INDEX.idFromName("index")).fetch("https://internal/__notice", {
-                method: "POST",
-                body: notices.payload.encode(delivery.payload),
-              }),
-            catch: () => refuse.retryable("Index transport unavailable"),
-          });
-
-          if (response.status !== 200)
-            return yield* refuse.retryable(`Index answered ${response.status}`);
-
-          return yield* Effect.void;
+export const noticeTransportLayer = (env: Env) =>
+  Layer.succeed(
+    NoticeTransport,
+    NoticeTransport.of({
+      send: (body) =>
+        Effect.tryPromise({
+          try: () =>
+            env.INDEX.get(env.INDEX.idFromName("index")).fetch("https://internal/__notice", {
+              method: "POST",
+              body,
+            }),
+          catch: () => new NoticeTransportFailure(),
         }),
-      );
-
-      // Stock lanes serialize attempts but permit a later entry to pass a retry. This feed needs commit order.
-      const orderedDrain = Effect.gen(function* () {
-        for (let count = 0; count < 100; count++) {
-          const first = (yield* store.list(notices.name, undefined)).find(
-            (row) => row.state === "pending",
-          );
-
-          if (first === undefined || first.nextAttemptAtMs > (yield* Clock.currentTimeMillis))
-            return yield* Effect.void;
-          const report = yield* drain(notices, handler, { limit: 1 });
-
-          if (report.retried || report.deadLettered) {
-            yield* Effect.logWarning("Notice delivery deferred", report);
-
-            return yield* Effect.void;
-          }
-        }
-
-        return yield* Effect.void;
-      });
-
-      const run = gate.withPermit(orderedDrain).pipe(
-        Effect.provideService(OutboxStore, store),
-        Effect.timeout("2 seconds"),
-        Effect.asVoid,
-        Effect.catchCause((cause) =>
-          Effect.logError("Notice drain failed; pending work will retry", cause),
-        ),
-      );
-
-      return Delivery.of({ run });
     }),
   );
+
+const noticeHandler = actionSinkHandler(notices, (delivery, refuse) =>
+  Effect.gen(function* () {
+    const transport = yield* NoticeTransport;
+
+    const response = yield* transport.send(notices.payload.encode(delivery.payload)).pipe(
+      Effect.mapError(() => refuse.retryable("Index transport unavailable")),
+      Effect.timeoutOrElse({
+        duration: "2 seconds",
+        orElse: () => Effect.fail(refuse.retryable("Index transport timed out")),
+      }),
+    );
+
+    if (response.status !== 200)
+      return yield* refuse.retryable(`Index answered ${response.status}`);
+
+    return yield* Effect.void;
+  }),
+);
+
+/**
+ * Delivers notices from the folder object's alarm. A write arms the alarm in its
+ * mutation finalizer. The ordered drain stops behind a retrying notice, so the
+ * index sees each folder's commits in order.
+ */
+export const noticeWakeup = OutboxWakeup.make(notices, noticeHandler, { ordered: true });
 
 export const noticeTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
