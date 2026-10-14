@@ -378,6 +378,11 @@ reorder folder commits. Each delivery has a two-second bound. A failed delivery
 keeps the notice queued, and the alarm fires again at its retry time. A backlog
 larger than one pass of 100 notices drains in back-to-back alarm turns.
 
+The `folder-sync/head` wakeup is the Worker's head writer. It runs
+`Projection.run` on `folderHead` when the stored checkpoint is behind the folder
+log. It is the only writer of that checkpoint, as the follower is on the Bun
+host. Reads and `decide` fold forward from it in memory.
+
 The hourly cron is a backstop. It lists registered folders and wakes each one.
 The wake re-arms the alarm when work is due, so a folder that lost its alarm
 still delivers. The local runner calls the same pass every hour, because
@@ -394,7 +399,7 @@ Each notice attempts the index projections twice: a best-effort pass before
 intake and a pass after durable intake. These passes run in the folder's alarm
 turn, so a slow index delays search and does not delay the folder write.
 
-The stock host runs stream expiry and notice delivery from
+The stock host runs stream expiry, notice delivery, and the head writer from
 one alarm. Each wakeup has its own deadline and backoff. The objects hold no
 long-lived projection followers.
 
@@ -406,7 +411,7 @@ bun run --cwd examples/folder-sync test:worker
 ```
 
 `smoke:worker` runs the shared HTTP smoke against a fresh local Worker.
-`test:worker` verifies alarm delivery and recovery, auth, SQLite query behavior, R2 and
+`test:worker` verifies alarm delivery and recovery, the head writer, auth, SQLite query behavior, R2 and
 object persistence, then runs the entire sync integration suite against workerd.
 The ordinary `test` command keeps all Bun checks and includes the Worker host
 checks. Set `FOLDER_SYNC_SCRATCH` to place temporary test data in a chosen directory.

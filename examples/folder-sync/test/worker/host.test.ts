@@ -389,6 +389,57 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
+      "workerd advances the folder head checkpoint from the folder alarm",
+      () =>
+        Effect.gen(function* () {
+          const host = yield* worker;
+
+          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: yield* HttpBody.json({ folderId: "head", title: "Head" }),
+          });
+
+          expect(create.status).toBe(200);
+          yield* create.text;
+
+          const head = HttpClient.get(`${host.url}/api/admin/head?folder=head`, { headers }).pipe(
+            Effect.flatMap((response) => response.json),
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(Schema.Struct({ seq: Schema.Int, offset: Schema.String })),
+            ),
+          );
+
+          const empty = yield* head;
+          expect(empty.seq).toBe(0);
+
+          for (const [index, path] of ["a.md", "b.md", "c.md"].entries()) {
+            const put = yield* HttpClient.put(`${host.url}/api/folders/head/files/${path}`, {
+              headers: {
+                ...headers,
+                "x-file-op-id": `head-${index}`,
+                "x-file-author": "test",
+                "x-file-origin": "test",
+              },
+              body: HttpBody.text(`head ${path}`),
+            });
+
+            expect(put.status).toBe(200);
+            yield* put.text;
+          }
+
+          // No read or cron runs the projection. Only the head wakeup writes this checkpoint.
+          const advanced = yield* until(head, (stored) => stored.seq === 3);
+          expect(advanced.offset > empty.offset).toBe(true);
+
+          const read = yield* HttpClient.get(`${host.url}/api/folders/head/files/b.md`);
+          expect(yield* read.text).toBe("head b.md");
+          expect(read.headers["x-file-version"]).toBe("2");
+          expect(yield* head).toEqual(advanced);
+        }),
+      { timeout: 15000 },
+    );
+
+    it.effect(
       "workerd enforces write auth and supports SQLite ranking, safe snippets, bad-query errors and portable globs",
       () =>
         Effect.gen(function* () {

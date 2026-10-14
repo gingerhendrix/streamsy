@@ -98,6 +98,19 @@ export default {
     )
       return folder(env, url.searchParams.get("folder") ?? "").fetch("https://internal/__pending");
 
+    if (
+      url.pathname === "/api/admin/head" &&
+      request.method === "GET" &&
+      env.TEST_HOOKS === "true" &&
+      authorized(request, env)
+    ) {
+      const folderId = url.searchParams.get("folder") ?? "";
+
+      return folder(env, folderId).fetch(
+        `https://internal/__head?folder=${encodeURIComponent(folderId)}`,
+      );
+    }
+
     if (url.pathname === "/api/folders" && request.method === "POST") {
       if (
         request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==

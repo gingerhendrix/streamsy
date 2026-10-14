@@ -13,9 +13,10 @@ import { FileIndexLive } from "../server/file-index.ts";
 import { BlobStore } from "../server/blob-store.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
 import { feedEpoch } from "../server/feed-epoch.ts";
-import { Folder, Folders, Files, Manifest, Changes } from "../server/streams.ts";
+import { Folder, Folders, Files, Manifest, Changes, folderHead } from "../server/streams.ts";
 import { initialiseSearch, manifest, search } from "../server/projections.ts";
 import { objectStorage } from "./storage.ts";
+import { headWakeup } from "./head.ts";
 import {
   Notices,
   Notice,
@@ -63,6 +64,17 @@ const FolderInternal = Layer.mergeAll(
       );
     }),
   ),
+  HttpRouter.add(
+    "GET",
+    "/__head",
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const folderId = new URL(request.url, "https://internal").searchParams.get("folder") ?? "";
+      const stored = yield* Projection.read(folderHead.at({ folderId }));
+
+      return HttpServerResponse.jsonUnsafe({ seq: stored.state.seq, offset: stored.offsets.input });
+    }).pipe(Effect.orDie),
+  ),
 );
 
 const folderLayer = (state: DurableObjectState, env: Env) =>
@@ -84,7 +96,7 @@ const FolderApp = Layer.mergeAll(
 export class FolderObject extends StreamsyObject.make<
   Env,
   Layer.Success<ReturnType<typeof folderLayer>>
->({ app: FolderApp, layer: folderLayer, wakeups: [noticeWakeup] }) {}
+>({ app: FolderApp, layer: folderLayer, wakeups: [noticeWakeup, headWakeup] }) {}
 
 class IndexPass extends Context.Service<IndexPass, { readonly run: Effect.Effect<void> }>()(
   "FolderSync/IndexPass",
