@@ -355,6 +355,7 @@
     },
     "tools/effect-test": {
       "name": "@streamsy/effect-test",
+      "version": "0.0.1",
       "dependencies": {
         "effect": "4.0.1",
       },
