@@ -4,7 +4,7 @@
  * A host types the program against an Alchemy `HttpEffect`, so three facts must
  * hold: the success type is `HttpServerResponse` alone, the error channel is
  * closed, and the requirement set is exactly the request plus the two protocol
- * services. `bun test` does not collect this file, so only `tsc` reads it and
+ * services. Vitest does not collect this file, so only `tsc` reads it and
  * every assertion below is checked at compile time.
  */
 import { Effect } from "effect";

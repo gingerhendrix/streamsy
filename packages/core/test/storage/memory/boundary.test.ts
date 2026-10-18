@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own their host Layers, including the deliberate foreign-owner case. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
 import { MemoryStorage } from "../../../src/index.ts";
 import * as Streams from "../../../src/toolkit/streams.ts";

@@ -1,8 +1,8 @@
-import { layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import { StorageFault, StreamAddress, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {

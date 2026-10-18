@@ -9,7 +9,7 @@
  * a race, so this is where the idempotency guarantee actually lives.
  */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

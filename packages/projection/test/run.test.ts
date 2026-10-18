@@ -1,7 +1,7 @@
-import { layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Array, Deferred, Effect, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";

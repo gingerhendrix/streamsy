@@ -1,11 +1,11 @@
 /* oxlint-disable effecttsgo/async-function -- The test runs the executable HTTP smoke at the process boundary. */
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The test resolves its package directory with the Node-compatible path API.
 import { resolve } from "node:path";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
 test("serves the HTTP walkthrough and starts empty after restart", async () => {
   const child = Bun.spawn(["bun", "run", "scripts/http-smoke.ts"], {
-    cwd: resolve(import.meta.dir, ".."),
+    cwd: resolve(import.meta.dirname, ".."),
     stdout: "pipe",
     stderr: "pipe",
   });

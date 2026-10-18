@@ -5,7 +5,7 @@
  * when the previous cursor is at or above the current interval.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 
 interface Clock {
   now(): number;

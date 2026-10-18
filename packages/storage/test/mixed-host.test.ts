@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web host boundary. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Layer, Schema } from "effect";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import * as Root from "@streamsy/core";
 import * as Protocol from "@streamsy/core/protocol";
 

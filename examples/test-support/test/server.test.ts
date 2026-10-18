@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, layer } from "@streamsy/effect-test";
+import { describe, expect, layer } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { spawnServer, UncleanStop } from "../server.ts";
@@ -7,7 +7,11 @@ import { spawnServer, UncleanStop } from "../server.ts";
 const services = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 
 const fixture = (mode: string) =>
-  spawnServer({ cwd: import.meta.dir, entry: "fixtures/server.ts", env: { FIXTURE_MODE: mode } });
+  spawnServer({
+    cwd: import.meta.dirname,
+    entry: "fixtures/server.ts",
+    env: { FIXTURE_MODE: mode },
+  });
 
 layer(services, { excludeTestServices: true })((it) => {
   describe("spawnServer", () => {

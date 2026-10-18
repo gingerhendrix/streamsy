@@ -1,7 +1,7 @@
 import { Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Deferred, Effect, Fiber, Layer, Schema } from "effect";
 import { type StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";

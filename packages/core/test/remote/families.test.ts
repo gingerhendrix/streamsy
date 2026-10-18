@@ -1,4 +1,4 @@
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpRouter } from "effect/http";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";

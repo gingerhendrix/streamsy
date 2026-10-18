@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import {
   Cause,
   Deferred,
@@ -240,7 +240,7 @@ it("follow echoes the cursor from each live read on the next live read", () =>
       // The catch-up read has no cursor, so the first live read sends none.
       expect(sent[0]).toBeUndefined();
       expect(sent.length).toBeGreaterThanOrEqual(2);
-      expect(sent[1]).toBeString();
+      expect(sent[1]).toBeTypeOf("string");
       expect(sent.slice(1)).toEqual(returned.slice(0, sent.length - 1));
     }).pipe(Effect.scoped),
   ));

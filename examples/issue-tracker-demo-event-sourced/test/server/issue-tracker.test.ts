@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { it } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { it } from "@effect/vitest";
+import { expect } from "vitest";
 import { Deferred, Effect, Exit, FileSystem, Path, Ref, Result } from "effect";
 import type { CommandView } from "../../server/command-view.ts";
 import { createIssue, mainWorkspaceSeed, updateIssue, type Decision } from "../../server/decide.ts";

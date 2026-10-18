@@ -1,4 +1,4 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
 import { Storage, StreamId } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";

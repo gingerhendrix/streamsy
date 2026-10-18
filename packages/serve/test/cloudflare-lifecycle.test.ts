@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the real local workerd boundary. */
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test } from "vitest";
 import { Clock, DateTime, Effect } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { request as httpRequest } from "./support/http.ts";
@@ -518,6 +518,7 @@ test("B16 chain forks reconcile an inherited alarm before the PUT returns", asyn
 
 test(
   "Batch B F2 keeps concurrent large same-object creates bounded",
+  { timeout: 35_000 },
   async () => {
     const harness = await makeHarness("worker-by-key.ts");
     const first = largeJson("first");
@@ -534,5 +535,4 @@ test(
     expect(messageRowsFor(stream, "t1/y")).toHaveLength(3_000);
     expect(stream.layerAcquisitions).toBe(1);
   },
-  { timeout: 35_000 },
 );

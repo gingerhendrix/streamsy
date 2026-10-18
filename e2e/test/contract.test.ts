@@ -1,5 +1,5 @@
-import { it as baseIt } from "@streamsy/effect-test";
-import { expect, test } from "bun:test";
+import { it as baseIt } from "@effect/vitest";
+import { expect, test } from "vitest";
 import { Effect, Exit, Fiber, Layer } from "effect";
 import { TestClock } from "effect/testing";
 import {

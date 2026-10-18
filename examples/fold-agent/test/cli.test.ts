@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { it as baseIt } from "@streamsy/effect-test";
-import { describe, expect } from "bun:test";
+import { it as baseIt } from "@effect/vitest";
+import { describe, expect } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, ConfigProvider, Console, Effect, Exit, Option } from "effect";
 import { Command } from "effect/cli";

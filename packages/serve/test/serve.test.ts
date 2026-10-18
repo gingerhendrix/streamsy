@@ -2,7 +2,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Serve } from "../src/index.ts";

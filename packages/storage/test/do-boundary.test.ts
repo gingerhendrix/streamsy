@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns the local workerd harness and retained state. */
 import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test } from "vitest";
 import { Config, Effect } from "effect";
 import { Miniflare } from "miniflare";
 
@@ -24,7 +24,7 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
   const bundle = join(root, "bundle");
 
   const built = await Bun.build({
-    entrypoints: [join(import.meta.dir, "support/do-worker.ts")],
+    entrypoints: [join(import.meta.dirname, "support/do-worker.ts")],
     outdir: bundle,
     target: "browser",
     format: "esm",

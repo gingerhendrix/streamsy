@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { StreamId } from "../../src/schema/index.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import { computeExpiresAtMs, isExpired } from "../../src/policy/expiry-policy.ts";

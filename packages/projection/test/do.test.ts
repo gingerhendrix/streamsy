@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { Miniflare } from "miniflare";
 
@@ -13,7 +13,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
 
       const built = yield* Effect.promise(() =>
         Bun.build({
-          entrypoints: [path.join(import.meta.dir, "support/do-worker.ts")],
+          entrypoints: [path.join(import.meta.dirname, "support/do-worker.ts")],
           outdir: path.join(root, "bundle"),
           target: "browser",
           format: "esm",

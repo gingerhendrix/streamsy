@@ -14,7 +14,7 @@ import {
   type StreamsWriter,
   routes as protocolRoutes,
 } from "@streamsy/core/protocol";
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
 import { StorageFault, MemoryStorage, Streamsy } from "@streamsy/core";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";

@@ -4,7 +4,7 @@
  * Postgres and MySQL. Each dialect runs in its own fresh database and skips when
  * its URL is absent.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Array, Context, Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { Storage, StreamId } from "@streamsy/core";

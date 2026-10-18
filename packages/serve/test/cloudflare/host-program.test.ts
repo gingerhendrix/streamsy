@@ -1,4 +1,4 @@
-import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { expect, it as baseIt, layer } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Logger, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";

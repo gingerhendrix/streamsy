@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { jitterDeadline, sse } from "../../src/http/sse.ts";

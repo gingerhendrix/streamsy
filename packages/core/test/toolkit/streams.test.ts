@@ -1,4 +1,4 @@
-import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { expect, it as baseIt, layer } from "@effect/vitest";
 import { Cause, Effect, Exit, Schedule, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import { MemoryStorage } from "../../src/index.ts";

@@ -1,5 +1,5 @@
-import { layer } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Layer, Effect, Schedule, Schema } from "effect";
 import { OffsetMismatch, StreamId, Streamsy, MemoryStorage } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";

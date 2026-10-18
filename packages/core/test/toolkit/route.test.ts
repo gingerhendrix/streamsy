@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Option, Schema } from "effect";
 import { StreamId } from "../../src/schema/index.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";

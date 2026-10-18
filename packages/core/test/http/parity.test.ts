@@ -1,6 +1,6 @@
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- These tests exercise the named Web conversion boundary and consume actual response bytes.
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Clock, Effect, Layer } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";

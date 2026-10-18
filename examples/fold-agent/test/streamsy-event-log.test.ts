@@ -3,8 +3,8 @@
  * asserts it against Fold's own wire contract rather than a local copy of it.
  */
 import { BunServices } from "@effect/platform-bun";
-import { layer, type MethodsNonLive } from "@streamsy/effect-test";
-import { describe, expect } from "bun:test";
+import { layer, type Vitest } from "@effect/vitest";
+import { describe, expect } from "vitest";
 import {
   AgentId,
   decodeStoredLogEntry,
@@ -132,7 +132,7 @@ const failureOf = <A, E>(exit: Exit.Exit<A, E>): { _tag?: string; message?: stri
 };
 
 const registerEventLogContract = (
-  it: MethodsNonLive<BunServices.BunServices>,
+  it: Vitest.MethodsNonLive<BunServices.BunServices>,
   backend: string,
   open: () => Effect.Effect<
     Layer.Layer<Sessions, StorageFault>,

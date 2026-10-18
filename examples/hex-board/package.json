@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test test",
-    "test:unit": "bun test test",
+    "test": "bun --bun vitest run --dir test",
+    "test:unit": "bun --bun vitest run --dir test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,7 +17,8 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
-    "@streamsy/effect-test": "workspace:*",
-    "@types/bun": "^1.2.0"
+    "@effect/vitest": "catalog:",
+    "@types/bun": "^1.2.0",
+    "vitest": "catalog:"
   }
 }

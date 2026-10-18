@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Context, Effect, Layer, Option, type Scope } from "effect";
 import { Offset, Storage, StreamId } from "@streamsy/core";
 import * as SqlClient from "effect/sql/SqlClient";

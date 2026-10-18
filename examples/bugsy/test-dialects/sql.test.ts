@@ -8,7 +8,7 @@
  *
  * Run: `bun run --cwd examples/bugsy test:dialects`.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";

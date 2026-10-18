@@ -2,7 +2,7 @@
  * Compile-time contract for `StreamRoute`.
  *
  * `Params` must be inferred from the codec record, and the template's `:name`
- * set must equal the codec record's key set. `bun test` does not collect this
+ * set must equal the codec record's key set. Vitest does not collect this
  * file, so every assertion below is checked by `tsc` alone.
  */
 import { Schema } from "effect";

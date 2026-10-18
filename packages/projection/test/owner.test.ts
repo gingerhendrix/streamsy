@@ -1,7 +1,7 @@
-import { layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";

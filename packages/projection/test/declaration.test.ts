@@ -1,7 +1,7 @@
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
-import { expect, test } from "bun:test";
-import { it as baseIt } from "@streamsy/effect-test";
+import { expect, test } from "vitest";
+import { it as baseIt } from "@effect/vitest";
 import { Effect, Layer, Option, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";

@@ -1,5 +1,5 @@
 import { Protocol } from "@streamsy/core/protocol";
-import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { expect, it as baseIt, layer } from "@effect/vitest";
 import { Storage } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { ForeignOwner, isForeignOwner } from "../../src/internal/owner.ts";

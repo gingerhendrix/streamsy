@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { Option, Schema } from "effect";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import { MutationRejected, Operation } from "../../src/storage/mutation.ts";

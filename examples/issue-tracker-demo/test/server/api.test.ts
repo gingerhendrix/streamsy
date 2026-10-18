@@ -1,8 +1,8 @@
 import { DateTime } from "effect";
-import { it as baseIt } from "@streamsy/effect-test";
+import { it as baseIt } from "@effect/vitest";
 import { BunCrypto, BunHttpServer } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, StorageFault } from "@streamsy/core";
-import { afterAll, describe, expect } from "bun:test";
+import { afterAll, describe, expect } from "vitest";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
@@ -181,7 +181,7 @@ describe("successful writes", () => {
 
       expect(status).toBe(201);
       expect(body).toMatchObject({ issue: { title: "Ship", status: "open" }, txid });
-      expect(body.awaitOffset).toBeString();
+      expect(body.awaitOffset).toBeTypeOf("string");
     }),
   );
 

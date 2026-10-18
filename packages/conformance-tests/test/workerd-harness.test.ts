@@ -1,4 +1,4 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { createWorkerdRunnerLifecycle } from "../src/workerd-harness.ts";

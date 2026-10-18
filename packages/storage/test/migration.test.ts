@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns retained migration fixtures. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import * as SqlClientTag from "effect/sql/SqlClient";

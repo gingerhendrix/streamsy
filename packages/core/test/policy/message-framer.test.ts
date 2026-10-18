@@ -4,7 +4,7 @@
  * canonicalization, JSON array splitting, and empty-array behavior.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { frameMessages } from "../../src/policy/message-framer.ts";
 
 const enc = new TextEncoder();

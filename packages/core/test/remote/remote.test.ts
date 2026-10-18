@@ -1,6 +1,6 @@
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/global-fetch, effecttsgo/global-timers -- Bun tests own the real local HTTP boundary and its teardown.
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import {
   Clock,
   Effect,

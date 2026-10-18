@@ -63,7 +63,7 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 | `@streamsy/core/remote`   | `RemoteStreams.layer(streams, { baseUrl })`: the same stream services over HTTP           |
 | `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                             |
 | `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, StreamRoute, and raw routes              |
-| `@streamsy/core/testing`  | Contract tests and fault injection for backends                                           |
+| `@streamsy/core/testing`  | Vitest contract tests and fault injection for backends                                    |
 
 ## Storage and hosts
 

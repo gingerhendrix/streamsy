@@ -1,4 +1,4 @@
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import { Cause, Effect, Exit } from "effect";
 import { spawnHost } from "./support/spawned-host.ts";
 

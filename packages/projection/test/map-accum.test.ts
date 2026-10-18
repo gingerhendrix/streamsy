@@ -1,5 +1,5 @@
-import { it as baseIt, layer } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { it as baseIt, layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Layer, Effect, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { Commit, Projection } from "@streamsy/projection";

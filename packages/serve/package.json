@@ -76,8 +76,8 @@
   "scripts": {
     "build": "tsdown src/index.ts src/contract.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sql.ts src/bun.ts src/node.ts src/deno.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.cloudflare-tests.json --noEmit",
-    "test:unit": "bun test test",
-    "test:dialects": "bun test test/action/outbox-dialects.test.ts"
+    "test:unit": "bun --bun vitest run --dir test",
+    "test:dialects": "bun --bun vitest run test/action/outbox-dialects.test.ts"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
@@ -91,12 +91,13 @@
     "@effect/sql-mysql2": "4.0.1",
     "@effect/sql-pg": "4.0.1",
     "@effect/sql-sqlite-do": "4.0.1",
-    "@streamsy/effect-test": "workspace:*",
+    "@effect/vitest": "catalog:",
     "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.2.0",
     "alchemy": "2.0.0-beta.80",
     "miniflare": "4.20260730.0",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@effect/platform-bun": "4.0.1",

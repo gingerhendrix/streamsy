@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { StorageFault, TransportFault } from "@streamsy/core";
 import { ProjectionFault } from "../src/fault.ts";
 

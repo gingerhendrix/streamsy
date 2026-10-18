@@ -1,4 +1,4 @@
-import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { expect, it as baseIt, layer } from "@effect/vitest";
 import { Effect, Schema, Stream } from "effect";
 import * as DurableState from "../../src/toolkit/durable-state.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";

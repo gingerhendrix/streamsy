@@ -1,8 +1,8 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { StorageFault } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
-import { it } from "@streamsy/effect-test";
-import { afterAll, describe, expect } from "bun:test";
+import { it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vitest";
 import { Effect, Exit, Layer, Schedule, Schema, Scope } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
@@ -186,7 +186,7 @@ describe("successful writes", () => {
 
       expect(status).toBe(201);
       expect(body).toMatchObject({ issue: { title: "Ship", status: "open" }, txid });
-      expect(body.awaitOffset).toBeString();
+      expect(body.awaitOffset).toBeTypeOf("string");
       expect(yield* awaitTxid("main", txid)).toEqual([
         expect.objectContaining({ type: "issue", key: body.issue.id }),
       ]);

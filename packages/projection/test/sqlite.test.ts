@@ -4,7 +4,7 @@ import { recordKey } from "@streamsy/projection/checkpoint";
 import * as FamilyFixture from "./support/families.ts";
 import { BunServices } from "@effect/platform-bun";
 
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { FileSystem, Path, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { Streams } from "@streamsy/core/protocol";
@@ -206,7 +206,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
     `,
           filename,
         ],
-        { cwd: path.join(import.meta.dir, "..") },
+        { cwd: path.join(import.meta.dirname, "..") },
       );
 
       expect(child.stderr.toString()).toBe("");

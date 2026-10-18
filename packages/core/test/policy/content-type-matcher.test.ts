@@ -4,7 +4,7 @@
  * stripping, and surrounding-whitespace tolerance.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { contentTypeMatches, normalizeContentType } from "../../src/policy/content-type-matcher.ts";
 
 describe("normalizeContentType", () => {

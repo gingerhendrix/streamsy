@@ -1,5 +1,5 @@
 import { Predicate } from "effect";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import type { CreateOptions } from "../../src/policy/options.ts";
 import { Offset, StreamId, type StoredMessage, type StreamRecord } from "../../src/schema/index.ts";
 import { ForkPlanBuilder } from "../../src/policy/fork-plan-builder.ts";

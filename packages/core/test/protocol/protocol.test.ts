@@ -1,7 +1,7 @@
 import { APPEND_REPLAN_LIMIT } from "../../src/protocol/append.ts";
 import { create } from "../../src/protocol/create.ts";
 import { MutationRejected } from "../../src/storage/mutation.ts";
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/tags.ts";

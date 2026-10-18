@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Layer } from "effect";
 
@@ -7,7 +7,7 @@ import * as Addresses from "./support/addresses.ts";
 // Probe D: all three stream outputs nonempty; the unit stops after the second
 // append (labelCounts landed, transitions not). Recovery after new input must
 // give one copy of each item and match a clean run with the same unit boundaries.
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { DurableState, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect } from "effect";

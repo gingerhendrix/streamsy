@@ -5,8 +5,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { FileSystem } from "effect";
 import { Layer } from "effect";
-import { layer } from "@streamsy/effect-test";
-import { describe, expect } from "bun:test";
+import { layer } from "@effect/vitest";
+import { describe, expect } from "vitest";
 
 import { Path } from "effect";
 import { SessionId, startSession } from "@humanlayer/fold-core";
@@ -140,7 +140,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
 
             expect(first.exitCode).toBe(0);
             const streamId = /^stream id:\s+(.+)$/m.exec(first.stdout)?.[1];
-            expect(streamId).toStartWith("fold/sessions/");
+            expect(streamId).toMatch(/^fold\/sessions\//);
 
             if (streamId === undefined) throw new Error(`missing stream id: ${first.stdout}`);
 

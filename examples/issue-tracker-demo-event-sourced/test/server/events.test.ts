@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { issueAfter, WorkspaceEvent } from "../../server/events.ts";
 import { createdAt, later } from "../support.ts";
 

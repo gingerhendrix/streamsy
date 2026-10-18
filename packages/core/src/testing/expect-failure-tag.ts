@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Effect } from "effect";
 
 /** An unexpected success stays a failure so the enclosing test cannot pass. */

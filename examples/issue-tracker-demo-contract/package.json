@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "bun run test:unit",
-    "test:unit": "bun test test",
+    "test:unit": "bun --bun vitest run --dir test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "bun-types": "^1.3.14",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

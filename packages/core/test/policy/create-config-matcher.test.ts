@@ -5,7 +5,7 @@
  * expiry, and closed-state agreement.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { configMatches } from "../../src/policy/create-config-matcher.ts";
 import { ZERO_OFFSET } from "../../src/offset/index.ts";
 import { StreamRecord, StreamId, Offset } from "../../src/schema/index.ts";

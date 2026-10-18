@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
 
 const dist = (name: string) => new URL(`../dist/${name}`, import.meta.url).pathname;

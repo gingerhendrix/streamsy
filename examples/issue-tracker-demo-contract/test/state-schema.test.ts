@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Result } from "effect";
 import { decodeStateEvents, issueTrackerState, type JsonValue } from "../state-schema.ts";
 

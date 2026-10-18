@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the SQLite runtime and transaction instrumentation. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";

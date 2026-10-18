@@ -1,5 +1,5 @@
 import { Protocol } from "@streamsy/core/protocol";
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import { Streamsy, MemoryStorage } from "../../src/index.ts";
 

@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/global-fetch, effecttsgo/prefer-schema-over-json -- Real Bun/process/HTTP contention edge writes exact numeric evidence JSON. */
 import { Database } from "bun:sqlite";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import {
   Cause,
   Config,

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { isStreamsFault } from "../../src/fault.ts";
 import { failure, unexpectedWith } from "../../src/remote/wire.ts";
 

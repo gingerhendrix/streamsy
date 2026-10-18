@@ -1,5 +1,5 @@
-import { layer } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Schema, Stream } from "effect";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";

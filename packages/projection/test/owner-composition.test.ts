@@ -1,7 +1,7 @@
-import { it as baseIt, layer } from "@streamsy/effect-test";
+import { it as baseIt, layer } from "@effect/vitest";
 import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Array, Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";

@@ -2,7 +2,7 @@ import { BunStorage } from "@streamsy/storage/bun";
 import { CommitBoundary, StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import * as Families from "./support/families.ts";
 import { memoryHost } from "./support/memory-host.ts";

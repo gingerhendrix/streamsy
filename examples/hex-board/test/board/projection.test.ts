@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { Result, Schema } from "effect";
 import { BoardState } from "../../src/board/fold.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";

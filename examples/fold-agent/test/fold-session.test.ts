@@ -4,8 +4,8 @@
  * resume it and keep going.
  */
 import { Layer } from "effect";
-import { it as baseIt } from "@streamsy/effect-test";
-import { describe, expect } from "bun:test";
+import { it as baseIt } from "@effect/vitest";
+import { describe, expect } from "vitest";
 import { resumeSession, SessionId, startSession, type LogEntry } from "@humanlayer/fold-core";
 import { Effect } from "effect";
 import { exampleAgent } from "../src/agent.ts";

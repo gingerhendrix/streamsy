@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns true process fixtures. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Clock, Config, Effect, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 

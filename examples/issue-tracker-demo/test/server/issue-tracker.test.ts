@@ -1,7 +1,7 @@
-import { it as baseIt } from "@streamsy/effect-test";
+import { it as baseIt } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Context, Deferred, Effect, Layer, Ref, Result, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import {

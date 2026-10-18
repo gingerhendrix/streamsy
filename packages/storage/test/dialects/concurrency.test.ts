@@ -5,7 +5,7 @@
  * one stream, purge a fork source under a new child, or leave a parent behind.
  * Add a dialect to `dialects` to run the same races on it.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "effect";
 import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { Protocol, StreamsWriter } from "@streamsy/core/protocol";

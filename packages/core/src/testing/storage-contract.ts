@@ -1,5 +1,5 @@
 /** Executable Bun edge: a fresh scoped Layer and virtual clock for every case. */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
   Predicate,
   Cause,

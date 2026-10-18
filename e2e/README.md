@@ -50,7 +50,7 @@ bun run --cwd e2e destroy --stage <stage> --yes
 ## Checks without Cloudflare
 
 ```bash
-bun run e2e:check    # typecheck and bun tests; CI runs this
+bun run e2e:check    # typecheck and Vitest tests; CI runs this
 ```
 
 The tests use fakes. `test/live.test.ts` runs the real adapters against a fake

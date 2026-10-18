@@ -38,8 +38,8 @@
   "scripts": {
     "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle @streamsy/core --deps.never-bundle @effect/platform-bun --deps.never-bundle @effect/sql-sqlite-bun --deps.never-bundle @effect/sql-sqlite-do",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test test",
-    "test:dialects": "bun test test/dialects"
+    "test:unit": "bun --bun vitest run --dir test",
+    "test:dialects": "bun --bun vitest run test/dialects"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
@@ -52,11 +52,12 @@
     "@effect/sql-pg": "4.0.1",
     "@effect/sql-sqlite-bun": "4.0.1",
     "@effect/sql-sqlite-do": "4.0.1",
-    "@streamsy/effect-test": "workspace:*",
+    "@effect/vitest": "catalog:",
     "@streamsy/serve": "workspace:*",
     "@types/bun": "^1.2.0",
     "miniflare": "4.20260730.0",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@effect/platform-bun": "4.0.1",

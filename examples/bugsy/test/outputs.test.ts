@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 
 import * as Addresses from "./support/addresses.ts";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { TransportFault } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { Effect, Layer } from "effect";

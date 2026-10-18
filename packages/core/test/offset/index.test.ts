@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 import { Offset } from "../../src/schema/index.ts";
 import { ZERO_OFFSET, next, isValid, compare } from "../../src/offset/index.ts";

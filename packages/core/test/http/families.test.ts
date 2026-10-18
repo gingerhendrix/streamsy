@@ -1,4 +1,4 @@
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { Http, Streamsy, MemoryStorage } from "../../src/index.ts";

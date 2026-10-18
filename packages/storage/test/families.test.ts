@@ -1,4 +1,4 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { type CommitBoundary, Storage, type StorageFault, Streamsy } from "@streamsy/core";

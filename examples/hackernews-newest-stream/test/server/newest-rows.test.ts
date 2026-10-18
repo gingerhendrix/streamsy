@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the runtime lifetime. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { applyChange, newestRows } from "../../src/server/newest-rows.ts";

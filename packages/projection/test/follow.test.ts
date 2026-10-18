@@ -1,10 +1,10 @@
-import { layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
 import { Streamsy } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { ProjectionRetry } from "@streamsy/projection";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import {
   Array,
   Duration,

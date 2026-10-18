@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, anti-slop/no-chained-type-assertions -- The fake namespace and Bun Fetch boundary intentionally narrow Cloudflare test doubles. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
 import { Schema } from "effect";
 import { StreamRoute } from "@streamsy/core/protocol";

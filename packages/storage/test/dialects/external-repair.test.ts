@@ -5,7 +5,7 @@
  * scenario of the removed Postgres and MySQL boundary proofs that no other
  * dialect test covers. It runs here on the product boundary.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Context, Effect, Layer } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { makeBoundaryTestProbe } from "../../src/boundary.ts";

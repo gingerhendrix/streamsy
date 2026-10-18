@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the Web request boundary. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRespondable, Etag } from "effect/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";

@@ -1,7 +1,7 @@
 import { layer as memoryStorage } from "../../src/storage/memory/layer.ts";
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- Web boundary tests use requests and response body promises.
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Effect, Layer, Schema } from "effect";
 import { StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";

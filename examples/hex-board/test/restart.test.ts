@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The native temporary-directory fixture builds the retained SQLite file path.
 import { join } from "node:path";
-import { it as baseIt } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { it as baseIt } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Layer, Option, Result } from "effect";
 import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
 import { Streamsy } from "@streamsy/core";

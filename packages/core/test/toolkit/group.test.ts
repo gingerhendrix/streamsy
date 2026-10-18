@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns test execution. */
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { Streamsy, MemoryStorage, Storage } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";

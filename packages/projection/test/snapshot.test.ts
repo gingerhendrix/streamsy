@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
-import { layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
 import { Commit, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Effect, FileSystem, Path, Layer, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";

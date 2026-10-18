@@ -4,7 +4,7 @@
  * skips when its URL is absent. MySQL needs the eager migration, so every case
  * migrates first, as a placement does at start.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Context, Effect, Exit, Layer, Option, Schema, type Scope } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";

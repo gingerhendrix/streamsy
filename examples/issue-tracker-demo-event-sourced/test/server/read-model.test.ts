@@ -1,6 +1,6 @@
 import { Projection } from "@streamsy/projection";
-import { it } from "@streamsy/effect-test";
-import { expect, test } from "bun:test";
+import { it } from "@effect/vitest";
+import { expect, test } from "vitest";
 import { Effect } from "effect";
 import { mainWorkspaceSeed } from "../../server/decide.ts";
 import { WorkspaceEvent } from "../../server/events.ts";

@@ -1,4 +1,4 @@
-import { expect, it as baseIt } from "@streamsy/effect-test";
+import { expect, it as baseIt } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import { HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamRoute } from "@streamsy/core/protocol";

@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { restore } from "../src/checkpoint-store.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
-import { expect, layer } from "@streamsy/effect-test";
+import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { type StorageFault } from "@streamsy/core";

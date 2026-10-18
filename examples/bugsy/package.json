@@ -8,9 +8,9 @@
     "app:full": "bun run scripts/full-app.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "run:once": "bun run scripts/run-once.ts",
-    "test": "bun test ./test",
-    "test:unit": "bun test ./test",
-    "test:dialects": "bun test ./test-dialects",
+    "test": "bun --bun vitest run --dir test",
+    "test:unit": "bun --bun vitest run --dir test",
+    "test:dialects": "bun --bun vitest run --dir test-dialects",
     "typecheck": "tsc --noEmit",
     "smoke:serve": "bun run scripts/serve-smoke.ts"
   },
@@ -27,8 +27,9 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
-    "@streamsy/effect-test": "workspace:*",
+    "@effect/vitest": "catalog:",
     "@streamsy/test-support": "workspace:*",
-    "@types/bun": "^1.2.0"
+    "@types/bun": "^1.2.0",
+    "vitest": "catalog:"
   }
 }

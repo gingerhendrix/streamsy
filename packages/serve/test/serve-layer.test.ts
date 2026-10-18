@@ -1,5 +1,5 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real HTTP host lifecycle test.
-import { describe, expect, it, it as baseIt } from "@streamsy/effect-test";
+import { describe, expect, it, it as baseIt } from "@effect/vitest";
 import { fileURLToPath } from "node:url";
 import {
   Cause,

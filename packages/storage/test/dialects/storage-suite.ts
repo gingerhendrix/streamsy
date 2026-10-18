@@ -4,7 +4,7 @@
  * plus the SQL edge and migration cases that do not depend on SQLite files.
  * One `<dialect>.test.ts` file calls `storageDialectSuite` per dialect.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   Cause,
   Context,

@@ -1,10 +1,10 @@
 import { freePort } from "@streamsy/test-support/server";
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { Layer } from "effect";
 
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Effect, Option } from "effect";
 import { CheckpointStore } from "@streamsy/projection";
 import { commandView } from "../server/command-view.ts";

@@ -7,7 +7,7 @@
  * ones behind it. Backoff is checked against a `TestClock` rather than a sleep,
  * so the pacing is asserted instead of waited for.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { TestClock } from "effect/testing";
 import { defineActionSink } from "@streamsy/serve/action";

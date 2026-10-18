@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { validateProducer } from "../../src/policy/producer-idempotency-service.ts";
 
 describe("producer idempotency decisions", () => {

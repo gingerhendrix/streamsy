@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The drift test feeds intentionally invalid JSON to both decoders. */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { canonicalJson, contractFingerprint, valueEtag } from "@streamsy/serve/contract";
 
 describe("canonical encoding", () => {

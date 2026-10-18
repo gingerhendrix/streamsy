@@ -1,9 +1,9 @@
 import { freePort } from "@streamsy/test-support/server";
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Context, Effect, Layer, Option } from "effect";
 import { applicationLayer, createInputs, hostLayer, sqliteStorage } from "../server/host.ts";
 import { Users } from "../server/streams.ts";

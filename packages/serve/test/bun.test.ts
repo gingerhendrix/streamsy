@@ -1,5 +1,5 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
-import { expect, it, spyOn } from "bun:test";
+import { expect, it, vi } from "vitest";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
 import { Storage, MemoryStorage } from "@streamsy/core";
 import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
@@ -125,10 +125,10 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       ),
     );
 
-    const errors = spyOn(console, "error");
-    const warnings = spyOn(console, "warn");
-    const logs = spyOn(console, "log");
-    const stderr = spyOn(process.stderr, "write");
+    const errors = vi.spyOn(console, "error");
+    const warnings = vi.spyOn(console, "warn");
+    const logs = vi.spyOn(console, "log");
+    const stderr = vi.spyOn(process.stderr, "write");
     const host = await Effect.runPromise(testHost({ layer: observedProtocol, port: 0 }));
     const abort = new AbortController();
 

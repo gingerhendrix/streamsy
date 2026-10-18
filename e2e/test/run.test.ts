@@ -1,5 +1,5 @@
-import { it as baseIt } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { it as baseIt } from "@effect/vitest";
+import { expect } from "vitest";
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Match } from "effect";
 import { TestClock } from "effect/testing";
 import { ContractError, type EvidenceReport, type RunIdentity } from "../src/contract.ts";

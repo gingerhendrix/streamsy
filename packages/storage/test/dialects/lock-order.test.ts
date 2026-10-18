@@ -6,7 +6,7 @@
  * captures each SQL statement with its transaction, so the check works on any
  * server dialect. Add a dialect to `dialects` to run it there.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Context, Effect, Layer, Option, Tracer } from "effect";
 import {
   CommitBoundary,

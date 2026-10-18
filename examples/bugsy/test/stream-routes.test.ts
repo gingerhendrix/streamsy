@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect } from "effect";
 
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { HttpRouter } from "effect/http";
 import { app } from "../server/app.ts";
 import { applicationLayer, sqliteStorage } from "../server/host.ts";

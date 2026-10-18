@@ -1,5 +1,5 @@
-import { layer } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Layer, Option, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";

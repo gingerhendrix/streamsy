@@ -1,10 +1,10 @@
 import { BunServices } from "@effect/platform-bun";
-import { layer as testLayer } from "@streamsy/effect-test";
+import { layer as testLayer } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Layer } from "effect";
 
 import * as Addresses from "./support/addresses.ts";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";

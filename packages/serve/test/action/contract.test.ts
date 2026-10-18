@@ -5,7 +5,7 @@
  * consumer or an operator can observe — the relation key, the handler it is
  * pinned to, the retry budget — are exactly the parts the fingerprint covers.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   backoffAfter,
   defineActionSink,

@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun file/package import boundary. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Effect } from "effect";
 import * as DenoHost from "@streamsy/serve/deno";
 import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
@@ -20,7 +20,7 @@ test("the Deno SQLite helper leaves node:sqlite able to open a database", async 
   await Effect.runPromise(DenoHost.nodeSqliteCompat);
   const { DatabaseSync } = await import("node:sqlite");
   const prototype: { enableLoadExtension?: unknown } = DatabaseSync.prototype;
-  expect(prototype.enableLoadExtension).toBeFunction();
+  expect(prototype.enableLoadExtension).toBeTypeOf("function");
 });
 
 test("Cloudflare entries expose wakeups and the slot layer without the raw slot tag", async () => {
@@ -41,6 +41,6 @@ test("Cloudflare entries expose wakeups and the slot layer without the raw slot 
       ]),
     ).toEqual([]);
   const runtime = await import("@streamsy/serve/action/runtime");
-  expect(runtime.OutboxWakeup.make).toBeFunction();
+  expect(runtime.OutboxWakeup.make).toBeTypeOf("function");
   expect(Object.keys(runtime)).not.toContain("Wakeup");
 });

@@ -2,7 +2,7 @@ import { DurableState } from "@streamsy/core";
 import { Commit, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";

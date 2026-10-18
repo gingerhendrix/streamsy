@@ -21,7 +21,9 @@
     "catalog": {
       "alchemy": "0.82.1",
       "@cloudflare/workers-types": "^4.20251228.0",
-      "typescript": "^7.0.2"
+      "typescript": "^7.0.2",
+      "vitest": "5.0.5",
+      "@effect/vitest": "4.0.1"
     }
   },
   "type": "module",
@@ -56,7 +58,7 @@
     "pack:dry-run": "for dir in packages/core packages/storage packages/projection packages/serve; do (cd \"$dir\" && bun pm pack --dry-run) || exit; done",
     "site:validate": "env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:terms && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:excerpts && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:demos && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:twoslash && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site build && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:og && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:links",
     "check:browser": "bun run --cwd packages/conformance-tests check:browser",
-    "test:client": "bun test packages/core/test/remote",
+    "test:client": "bun run --bun --cwd packages/core vitest run test/remote",
     "test:conformance:remote": "bun run --cwd packages/conformance-tests test:remote"
   },
   "devDependencies": {
@@ -79,6 +81,7 @@
     "@effect/sql-pg": "4.0.1",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "0.1.83",
-    "effect": "4.0.1"
+    "effect": "4.0.1",
+    "vitest": "5.0.5"
   }
 }

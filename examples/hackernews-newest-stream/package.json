@@ -11,7 +11,7 @@
     "smoke:http": "bun run scripts/http-smoke.ts",
     "test": "bun run test:unit",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test test"
+    "test:unit": "bun --bun vitest run --dir test"
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",
@@ -28,10 +28,11 @@
     "typescript": "catalog:"
   },
   "devDependencies": {
-    "@streamsy/effect-test": "workspace:*",
+    "@effect/vitest": "catalog:",
     "@streamsy/test-support": "workspace:*",
     "@types/bun": "^1.2.0",
     "@types/react": "latest",
-    "@types/react-dom": "latest"
+    "@types/react-dom": "latest",
+    "vitest": "catalog:"
   }
 }

@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the Web handler and runtime lifetime. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { BunHttpServer } from "@effect/platform-bun";
 import { DurableState } from "@streamsy/core";
 import { HttpRouter } from "effect/http";

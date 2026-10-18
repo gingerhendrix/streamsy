@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the runtime lifetime and inject competing writes at the service boundary. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Context, Deferred, Effect, Fiber } from "effect";

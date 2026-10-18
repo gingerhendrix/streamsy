@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid -- Bun owns retained SQLite edge fixtures. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Predicate } from "effect";
 import {
   Offset,

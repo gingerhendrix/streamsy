@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "vitest";
 import { Effect, Exit, Queue, Scope, Stream } from "effect";
 import { ZERO_OFFSET } from "../../../src/offset/index.ts";
 import { StreamId } from "../../../src/schema/index.ts";

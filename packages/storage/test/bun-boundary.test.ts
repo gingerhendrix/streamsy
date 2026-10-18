@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns the executable official-driver harness. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Config, Effect, Layer, ManagedRuntime } from "effect";
 import { Offset } from "@streamsy/core";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";

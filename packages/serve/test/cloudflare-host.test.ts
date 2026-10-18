@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- This is the real local workerd boundary test. */
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test } from "vitest";
 import { Clock, Effect } from "effect";
 import {
   cleanupHarnesses,

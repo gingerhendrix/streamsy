@@ -1,5 +1,5 @@
-import { it as baseIt, layer } from "@streamsy/effect-test";
-import { expect } from "bun:test";
+import { it as baseIt, layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";

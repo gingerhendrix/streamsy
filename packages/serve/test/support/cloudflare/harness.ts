@@ -155,7 +155,7 @@ const reclaimOwnedRoot = (root: string, errors: Array<unknown>): void => {
 
 const buildWorker = async (entry: string, outdir: string): Promise<string> => {
   const built = await Bun.build({
-    entrypoints: [join(import.meta.dir, entry)],
+    entrypoints: [join(import.meta.dirname, entry)],
     outdir,
     target: "browser",
     format: "esm",

@@ -1,5 +1,5 @@
 import { Board, LabelCounts, Transitions } from "../../server/outputs.ts";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { Effect, Schema } from "effect";
 import type { Streamsy, StreamId } from "@streamsy/core";
 

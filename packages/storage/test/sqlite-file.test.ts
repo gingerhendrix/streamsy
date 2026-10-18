@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- Each Bun test is an Effect entry point. */
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { BunStorage } from "@streamsy/storage/bun";
 

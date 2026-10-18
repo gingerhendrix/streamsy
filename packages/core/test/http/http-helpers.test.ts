@@ -1,7 +1,7 @@
 // oxlint-disable effecttsgo/async-function -- Named Web/Bun boundary owns native request, response and server disposal operations.
 import { Effect } from "effect";
 import { HttpServerRequest } from "effect/http";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import * as Etags from "../../src/http/etag-builder.ts";
 import { discardRequestBody } from "../../src/http/request-body-discard.ts";
 

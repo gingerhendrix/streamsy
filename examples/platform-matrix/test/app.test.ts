@@ -1,5 +1,5 @@
 // oxlint-disable effecttsgo/async-function -- Web boundary tests use requests and response body promises.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test } from "vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Http } from "@streamsy/core";
 import { ConfigProvider, Layer } from "effect";
