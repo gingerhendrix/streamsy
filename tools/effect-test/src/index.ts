@@ -96,9 +96,13 @@ const makeTester = <R>(
       test(name, () => execute(self), timeout);
     };
 
+  // Bun's `test.only` getter throws when CI=true, so read it only when a
+  // test uses `.only`. An eager read breaks every suite that imports this module.
+  const only: Test<R> = (name, self, timeout) => register(bunTest.only)(name, self, timeout);
+
   return Object.assign(register(bunTest), {
     skip: register(bunTest.skip),
-    only: register(bunTest.only),
+    only,
     fails: register(bunTest.failing),
     skipIf: (condition: boolean) => register(condition ? bunTest.skip : bunTest),
     runIf: (condition: boolean) => register(condition ? bunTest : bunTest.skip),
