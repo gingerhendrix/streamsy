@@ -13,7 +13,7 @@ export const clientRoute = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = path.join(import.meta.dir, "../../dist");
+    const root = path.join(import.meta.dirname, "../../dist");
 
     return (yield* fs.exists(path.join(root, "index.html")))
       ? HttpStaticServer.layer({ root, spa: true })
