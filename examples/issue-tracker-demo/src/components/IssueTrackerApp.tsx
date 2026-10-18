@@ -27,7 +27,7 @@ import { ProjectsPanel } from "./ProjectsPanel.tsx";
 import { Topbar } from "./Topbar.tsx";
 
 const newId = (prefix: string) =>
-  `${prefix}_${Effect.runSync(browserCrypto.randomUUIDv4).slice(0, 8)}`;
+  `${prefix}_${Effect.runSync(browserCrypto.randomUUIDv4()).slice(0, 8)}`;
 
 export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId: string }) {
   // Holds an explicit user selection only; while empty, rendering falls back to
@@ -75,7 +75,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
       createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
     };
 
-    const txid = Effect.runSync(browserCrypto.randomUUIDv4);
+    const txid = Effect.runSync(browserCrypto.randomUUIDv4());
 
     if (await run(db.actions.createProject, { project, txid })) setSelectedProjectId(project.id);
   };
@@ -95,7 +95,10 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
     };
 
     const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
-    await run(db.actions.createIssue, { issue, txid: Effect.runSync(browserCrypto.randomUUIDv4) });
+    await run(db.actions.createIssue, {
+      issue,
+      txid: Effect.runSync(browserCrypto.randomUUIDv4()),
+    });
   };
 
   const updateIssue = (issue: Issue, patch: { title?: string; status?: IssueStatus }) =>
@@ -103,7 +106,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
       issue,
       patch,
       updatedBy: writer,
-      txid: Effect.runSync(browserCrypto.randomUUIDv4),
+      txid: Effect.runSync(browserCrypto.randomUUIDv4()),
     });
 
   // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
@@ -118,7 +121,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
 
     await run(db.actions.createComment, {
       comment,
-      txid: Effect.runSync(browserCrypto.randomUUIDv4),
+      txid: Effect.runSync(browserCrypto.randomUUIDv4()),
     });
   };
 

@@ -15,7 +15,7 @@ describe("Effect SQLite Bun host", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const crypto = Context.get(yield* Layer.build(NodeCrypto.layer), Crypto.Crypto);
-        const id = yield* crypto.randomUUIDv4;
+        const id = yield* crypto.randomUUIDv4();
         const filename = `${scratch}/official-sqlite-conformance-${process.pid}-${id}.sqlite`;
         host = yield* testHost({
           layer: BunStorage.layerProtocol({

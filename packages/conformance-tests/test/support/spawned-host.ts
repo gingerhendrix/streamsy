@@ -63,7 +63,7 @@ export const spawnHost = (
     Crypto.Crypto,
   );
 
-  const filename = `${scratch}/${command[0]}-host-${process.pid}-${Effect.runSync(crypto.randomUUIDv4)}.sqlite`;
+  const filename = `${scratch}/${command[0]}-host-${process.pid}-${Effect.runSync(crypto.randomUUIDv4())}.sqlite`;
   const [executable, ...args] = command;
 
   if (executable === undefined) throw new Error("Expected a host command");

@@ -27,7 +27,11 @@ const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 const LOCK =
   /^SELECT stream_id FROM streamsy_streams WHERE stream_id IN \(.*\)\s+ORDER BY stream_id FOR UPDATE$/s;
 
-/** Records every span. Statement spans carry their SQL text as `db.query.text`. */
+/**
+ * Records every span. Statement spans carry their SQL text as `db.query.text`.
+ * Effect names them after the database system, such as `postgres`, so the
+ * attribute finds them on every dialect.
+ */
 const recorder = () => {
   const spans: Array<Tracer.NativeSpan> = [];
 
@@ -45,7 +49,7 @@ const recorder = () => {
     const grouped = new Map<Tracer.AnySpan, Array<string>>();
 
     for (const span of spans) {
-      if (span.name !== "sql.execute") continue;
+      if (!span.attributes.has("db.query.text")) continue;
       let outer: Tracer.AnySpan | undefined;
 
       for (let parent = span.parent; Option.isSome(parent);) {

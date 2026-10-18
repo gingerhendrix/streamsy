@@ -38,15 +38,15 @@
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
-    "effect": "4.0.1"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
-    "@effect/platform-bun": "4.0.1",
-    "@effect/sql-mysql2": "4.0.1",
-    "@effect/sql-pg": "4.0.1",
-    "@effect/sql-sqlite-bun": "4.0.1",
-    "@effect/sql-sqlite-do": "4.0.1",
+    "@effect/platform-bun": "4.0.5",
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@effect/sql-sqlite-do": "4.0.5",
     "@effect/vitest": "catalog:",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",

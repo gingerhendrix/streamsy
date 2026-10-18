@@ -23,7 +23,7 @@
       "@cloudflare/workers-types": "^4.20251228.0",
       "typescript": "^7.0.2",
       "vitest": "5.0.5",
-      "@effect/vitest": "4.0.1"
+      "@effect/vitest": "4.0.5"
     }
   },
   "type": "module",
@@ -62,10 +62,10 @@
     "test:conformance:remote": "bun run --cwd packages/conformance-tests test:remote"
   },
   "devDependencies": {
-    "@effect/sql-sqlite-bun": "4.0.1",
+    "@effect/sql-sqlite-bun": "4.0.5",
     "@effect/tsgo": "0.48.1",
     "@oxlint/plugins": "1.86.0",
-    "effect": "4.0.1",
+    "effect": "4.0.5",
     "oxfmt": "0.72.0",
     "oxlint": "1.86.0",
     "oxlint-tsgolint": "7.0.2003",
@@ -74,14 +74,16 @@
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
-    "@effect/ai-anthropic": "4.0.1",
-    "@effect/ai-openai": "4.0.1",
-    "@effect/platform-node": "4.0.1",
-    "@effect/sql-mysql2": "4.0.1",
-    "@effect/sql-pg": "4.0.1",
+    "@effect/ai-anthropic": "4.0.5",
+    "@effect/ai-openai": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-d1": "4.0.5",
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-do": "4.0.5",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "0.1.83",
-    "effect": "4.0.1",
+    "effect": "4.0.5",
     "vitest": "5.0.5"
   }
 }

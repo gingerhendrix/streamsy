@@ -306,7 +306,7 @@ export const measureThroughput = (
       (trial) =>
         Effect.gen(function* () {
           const http = yield* HttpOperation;
-          const streamPath = `/streams/throughput-${trial}-${yield* entropy.randomUUIDv4.pipe(Effect.orDie)}`;
+          const streamPath = `/streams/throughput-${trial}-${yield* entropy.randomUUIDv4().pipe(Effect.orDie)}`;
           const errors: Array<string> = [];
 
           const created = yield* Effect.result(

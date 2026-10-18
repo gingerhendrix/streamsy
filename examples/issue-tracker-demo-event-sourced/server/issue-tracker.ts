@@ -113,9 +113,9 @@ export const IssueTrackerLive = Layer.effect(
 
     const stamp = Effect.fn("IssueTracker.stamp")(function* (prefix: string, txid?: string) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      const id = `${prefix}_${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+      const id = `${prefix}_${(yield* crypto.randomUUIDv4()).slice(0, 8)}`;
 
-      return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4) };
+      return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4()) };
     }, Effect.orDie);
 
     /** The event stream and the State stream of a workspace, and its projection watcher. */

@@ -192,7 +192,7 @@ const spawned = Effect.fn("spawned")(function* (streamId: string) {
  */
 const smoke = Effect.gen(function* () {
   const baseUrl = yield* Config.String("BASE_URL").pipe(Config.option);
-  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4}`;
+  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4()}`;
   yield* Option.match(baseUrl, {
     onNone: () => spawned(streamId),
     onSome: (url) =>

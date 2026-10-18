@@ -15,15 +15,15 @@
     "smoke:serve": "bun run scripts/serve-smoke.ts"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.1",
-    "@effect/sql-mysql2": "4.0.1",
-    "@effect/sql-pg": "4.0.1",
-    "@effect/sql-sqlite-bun": "4.0.1",
+    "@effect/platform-bun": "4.0.5",
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.0.1",
+    "effect": "4.0.5",
     "typescript": "catalog:"
   },
   "devDependencies": {

@@ -11,13 +11,17 @@
     "destroy": "node node_modules/alchemy/bin/cli.js destroy"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.1",
-    "@effect/platform-node": "4.0.1",
-    "@effect/vitest": "4.0.1",
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/vitest": "4.0.5",
     "@types/bun": "1.4.0",
     "alchemy": "2.0.0-beta.80",
-    "effect": "4.0.1",
+    "effect": "4.0.5",
     "typescript": "^7.0.2",
     "vitest": "5.0.5"
+  },
+  "overrides": {
+    "@effect/sql-d1": "4.0.5",
+    "@effect/sql-sqlite-do": "4.0.5"
   }
 }
