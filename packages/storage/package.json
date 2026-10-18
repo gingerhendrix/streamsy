@@ -54,7 +54,7 @@
     "@effect/sql-sqlite-do": "4.0.5",
     "@effect/vitest": "catalog:",
     "@streamsy/serve": "workspace:*",
-    "@types/bun": "^1.2.0",
+    "@types/bun": "^1.4.3",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",
     "vitest": "catalog:"

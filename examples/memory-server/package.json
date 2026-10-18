@@ -18,7 +18,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@streamsy/test-support": "workspace:*",
-    "@types/bun": "^1.2.0",
+    "@types/bun": "^1.4.3",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
