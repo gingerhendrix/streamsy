@@ -72,10 +72,39 @@ const nodeServer = Layer.effect(
 );
 // oxlint-enable effecttsgo/any-unknown-in-error-context
 
+/**
+ * `NodeHttpServer` binds the port when the listener Layer builds. It adds its
+ * `request` handler only when the routes serve, and it removes that handler
+ * before the server closes. Node drops a request that has no `request`
+ * listener and never answers it. Bun and Deno answer such a request with 404.
+ *
+ * This server always has one `request` listener of its own. When no other
+ * listener is attached, it answers 503 with `Retry-After` and closes the
+ * connection. A client that retries then reaches the routes after they serve.
+ */
+const createUnavailableAwareServer = (options: ServerOptions) => {
+  const server = createServer(options);
+
+  server.on("request", (_request, response) => {
+    if (server.listenerCount("request") > 1) return;
+    response.writeHead(503, {
+      "content-type": "text/plain; charset=utf-8",
+      "retry-after": "1",
+      connection: "close",
+    });
+    response.end("service unavailable");
+  });
+
+  return server;
+};
+
 /** The Node listener for a Streamsy host. */
 export const listener = (options: ListenerOptions = {}) =>
   nodeServer.pipe(
     Layer.provideMerge(
-      NodeHttpServer.layer(() => createServer(options.server ?? {}), listenOptions(options)),
+      NodeHttpServer.layer(
+        () => createUnavailableAwareServer(options.server ?? {}),
+        listenOptions(options),
+      ),
     ),
   );
