@@ -81,8 +81,8 @@
     "@effect/sql-mysql2": "4.0.5",
     "@effect/sql-pg": "4.0.5",
     "@effect/sql-sqlite-do": "4.0.5",
-    "@tanstack/db": "0.6.8",
-    "@tanstack/react-db": "0.1.83",
+    "@tanstack/db": "0.15.1",
+    "@tanstack/react-db": "0.5.11",
     "effect": "4.0.5",
     "vitest": "5.0.5"
   }
