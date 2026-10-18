@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@durable-streams/state": "^0.3.1",
+    "@durable-streams/state": "^0.3.2",
     "@effect/platform-bun": "4.0.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/issue-tracker-demo-contract": "workspace:*",

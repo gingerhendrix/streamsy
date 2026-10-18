@@ -73,7 +73,7 @@
     "typescript": "catalog:"
   },
   "overrides": {
-    "@durable-streams/client": "^0.2.6",
+    "@durable-streams/client": "^0.2.7",
     "@effect/ai-anthropic": "4.0.5",
     "@effect/ai-openai": "4.0.5",
     "@effect/platform-node": "4.0.5",
