@@ -51,7 +51,12 @@
     // `schema-sync` flags every sync Schema call outside Effect, including
     // module-level codecs and plain async browser code. `schema-sync-in-effect`
     // stays on for the sync calls that do run inside an Effect.
-    "effecttsgo/schema-sync": "off"
+    "effecttsgo/schema-sync": "off",
+    // @effect/tsgo 0.53 added these rules to its presets. Together they report
+    // about 800 sites. Adopting them is a separate code-style change.
+    "effecttsgo/prefer-effect-array": "off",
+    "effecttsgo/prefer-effect-record": "off",
+    "effecttsgo/schema-class-missing-brand": "off"
   },
   "overrides": [
     {
