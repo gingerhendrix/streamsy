@@ -15,7 +15,7 @@
     "@effect/platform-node": "4.0.5",
     "@effect/vitest": "4.0.5",
     "@types/bun": "1.4.0",
-    "alchemy": "2.0.0-beta.80",
+    "alchemy": "2.0.0-beta.83",
     "effect": "4.0.5",
     "typescript": "^7.0.2",
     "vitest": "5.0.5"
