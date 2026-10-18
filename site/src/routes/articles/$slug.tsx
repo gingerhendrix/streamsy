@@ -40,7 +40,7 @@ export const Route = createFileRoute("/articles/$slug")({
 });
 
 const serverLoader = createServerFn({ method: "GET" })
-  .inputValidator((slug: string) => slug)
+  .validator((slug: string) => slug)
   .handler(async ({ data: slug }) => {
     const page = articlesSource.getPage([slug]);
 
