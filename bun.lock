@@ -373,17 +373,6 @@
         "typescript": "catalog:",
       },
     },
-    "tools/effect-test": {
-      "name": "@streamsy/effect-test",
-      "version": "0.0.1",
-      "dependencies": {
-        "effect": "4.0.1",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.2.0",
-        "typescript": "^7.0.2",
-      },
-    },
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
@@ -856,8 +845,6 @@
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/docs-snippets": ["@streamsy/docs-snippets@workspace:tools/docs-snippets"],
-
-    "@streamsy/effect-test": ["@streamsy/effect-test@workspace:tools/effect-test"],
 
     "@streamsy/issue-tracker-demo-contract": ["@streamsy/issue-tracker-demo-contract@workspace:examples/issue-tracker-demo-contract"],
 
