@@ -144,8 +144,27 @@ const makeBoundary = (
       Effect.suspend(() => {
         if (probe !== undefined) probe.transactionAttempts += 1;
         const pending = new Set<string>();
-        const transactionBody = body.pipe(Effect.provideService(PendingInvalidations, pending));
-        const transaction = sql.withTransaction(transactionBody);
+        let bodyCompleted = false;
+
+        const transactionBody = body.pipe(
+          Effect.provideService(PendingInvalidations, pending),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              bodyCompleted = true;
+            }),
+          ),
+        );
+
+        // A SqlError after the body completed comes from COMMIT. Streamsy treats
+        // a failed COMMIT as uncertain and never replays it. Effect 4.0.5 returns
+        // it on the error channel, where a retry policy would replay it, so turn
+        // it back into a defect, as Effect 4.0.1 did.
+        const transaction = sql.withTransaction(transactionBody).pipe(
+          Effect.catchIf(
+            (error) => bodyCompleted && isSqlError(error),
+            (error) => Effect.die(error),
+          ),
+        );
 
         const guardedTransaction =
           transactionMaxOpsBeforeYield === undefined
