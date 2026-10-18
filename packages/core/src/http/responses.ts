@@ -32,15 +32,12 @@ export function noStore(response: Response): Response {
 export function text(
   message: string | null,
   status: number,
-  headers?: ConstructorParameters<typeof Headers>[0],
+  headers?: ResponseInit["headers"],
 ): Response {
   return new Response(message, { status, headers });
 }
 
-export function empty(
-  status: number,
-  headers?: ConstructorParameters<typeof Headers>[0],
-): Response {
+export function empty(status: number, headers?: ResponseInit["headers"]): Response {
   return new Response(null, { status, headers });
 }
 
@@ -56,10 +53,7 @@ export function gone(message = "Stream is soft-deleted"): Response {
   return new Response(message, { status: 410 });
 }
 
-export function conflict(
-  message: string | null,
-  headers?: ConstructorParameters<typeof Headers>[0],
-): Response {
+export function conflict(message: string | null, headers?: ResponseInit["headers"]): Response {
   return new Response(message, { status: 409, headers });
 }
 
