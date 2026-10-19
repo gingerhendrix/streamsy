@@ -70,6 +70,14 @@
   },
   "overrides": [
     {
+      // isForeignOwner exposes this sentinel's instance type from the published
+      // @streamsy/core/internal entry. Keep its Data.TaggedError type unchanged.
+      "files": ["packages/core/src/internal/owner.ts"],
+      "rules": {
+        "effecttsgo/prefer-schema-tagged-error": "off"
+      }
+    },
+    {
       // These error classes are public API of the published packages. A brand
       // makes their instance types nominal, which is a breaking type change.
       "files": [
