@@ -19,6 +19,10 @@ core:packages:
       - effect-rewrite.md
     id: npm:@streamsy/storage
     updated: true
+npm:mark-latest:
+  - id: npm:@streamsy/projection
+  - id: npm:@streamsy/serve
+  - id: npm:@streamsy/storage
 npm:packages:
   - id: npm:@streamsy/core
   - id: npm:@streamsy/projection
