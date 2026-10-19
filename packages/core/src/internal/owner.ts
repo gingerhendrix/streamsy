@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-object-parameters -- Commit tokens are opaque object identities, not external records to parse. */
-import { Context, Data, Effect, Predicate } from "effect";
+import { Context, Effect, Predicate, Schema } from "effect";
 import type { Reader, Writer } from "../protocol/tags.ts";
 import type { StreamsFault } from "../fault.ts";
 import type { Storage } from "../storage/storage.ts";
@@ -7,13 +7,15 @@ import type { Storage } from "../storage/storage.ts";
 /** Private bridge: a stream guard dies with this sentinel; the atomic runner translates it. */
 const ForeignOwnerType = Symbol.for("@streamsy/core/internal/ForeignOwner");
 
-export class ForeignOwner extends Data.TaggedError("ForeignOwner")<{ readonly message: string }> {
+export class ForeignOwner extends Schema.TaggedError<
+  ForeignOwner,
+  { readonly brand: unique symbol }
+>()("ForeignOwner", { stream: Schema.String, message: Schema.String }) {
   readonly [ForeignOwnerType] = true;
-  constructor(
-    readonly stream: string,
-    knownOwner: boolean,
-  ) {
-    super({
+
+  static forStream(stream: string, knownOwner: boolean): ForeignOwner {
+    return new ForeignOwner({
+      stream,
       message: knownOwner
         ? `Stream write to ${stream} does not share the checkpoint owner`
         : `Cannot establish a storage owner for ${stream}; the exposed Storage does not own the protocol wires`,
@@ -49,7 +51,7 @@ export const checkWriteOwner = (owner: Owner, id: string, knownOwner: boolean) =
   Effect.flatMap(CurrentOwner, (expected) =>
     expected === undefined || expected === owner
       ? Effect.void
-      : Effect.die(new ForeignOwner(id, knownOwner)),
+      : Effect.die(ForeignOwner.forStream(id, knownOwner)),
   );
 
 // Metadata stays attached to the actual protocol wire, not an unrelated ambient Storage.
