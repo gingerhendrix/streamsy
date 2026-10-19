@@ -52,13 +52,38 @@
     // module-level codecs and plain async browser code. `schema-sync-in-effect`
     // stays on for the sync calls that do run inside an Effect.
     "effecttsgo/schema-sync": "off",
-    // @effect/tsgo 0.53 added these rules to its presets. Together they report
-    // about 800 sites. Adopting them is a separate code-style change.
-    "effecttsgo/prefer-effect-array": "off",
-    "effecttsgo/prefer-effect-record": "off",
-    "effecttsgo/schema-class-missing-brand": "off"
+    "effecttsgo/prefer-effect-array": "error",
+    "effecttsgo/prefer-effect-record": "error",
+    "effecttsgo/schema-class-missing-brand": "error",
+    "effecttsgo/error-payload-shadows-name": "error",
+    "effecttsgo/prefer-schema-tagged-error": "error",
+    "effecttsgo/effect-sleep-zero-to-yield-now": "error",
+    "effecttsgo/flat-map-to-tap": "error",
+    // `barrelImportPackages` in each root tsconfig sets the barrel for this rule.
+    "effecttsgo/prefer-barrel-import": "error",
+    // Streamsy imports Effect modules as named imports from the `effect` barrel,
+    // which `prefer-barrel-import` enforces. Namespace imports conflict with it.
+    "effecttsgo/prefer-namespace-import": "off",
+    // Streamsy does not mark its exports with `@stability` tags, and its public
+    // HTTP, SQL and Reactivity surface is built on `effect/unstable/*`.
+    "effecttsgo/api-stability-leak": "off"
   },
   "overrides": [
+    {
+      // These error classes are public API of the published packages. A brand
+      // makes their instance types nominal, which is a breaking type change.
+      "files": [
+        "packages/core/src/fault.ts",
+        "packages/core/src/protocol/errors.ts",
+        "packages/core/src/storage/mutation.ts",
+        "packages/projection/src/commit/model.ts",
+        "packages/projection/src/fault.ts",
+        "packages/serve/src/errors.ts"
+      ],
+      "rules": {
+        "effecttsgo/schema-class-missing-brand": "off"
+      }
+    },
     {
       // The docs site and repository CLIs use their host APIs directly.
       // Keep correctness and all other lint rules enabled.

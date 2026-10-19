@@ -6,6 +6,7 @@
     "test/twoslash.test.ts"
   ],
   "compilerOptions": {
+    "plugins": [{ "name": "@effect/language-service", "barrelImportPackages": ["effect"] }],
     "target": "ES2022",
     "jsx": "react-jsx",
     "module": "ESNext",

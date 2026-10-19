@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "plugins": [{ "name": "@effect/language-service", "barrelImportPackages": ["effect"] }],
     "target": "ES2023",
     "lib": ["ES2023", "DOM"],
     "strict": true,
