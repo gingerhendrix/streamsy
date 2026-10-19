@@ -1,4 +1,5 @@
 /** Executable Bun edge: a fresh scoped Layer and virtual clock for every case. */
+import type { SqlError } from "effect/sql";
 import { describe, expect, it } from "vitest";
 import {
   Predicate,
@@ -15,7 +16,6 @@ import {
   Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
-import type { SqlError } from "effect/sql/SqlError";
 import { ProducerId, StreamId, type ChangeSnapshot, type StreamRecord } from "../schema/index.ts";
 import { ZERO_OFFSET, next } from "../offset/index.ts";
 import { Storage } from "../storage/storage.ts";
@@ -191,7 +191,7 @@ export const StorageContract = {
           readonly records: OwnerRecordsApi;
         }) => Effect.Effect<
           unknown,
-          MutationRejected | StorageFault | SqlError,
+          MutationRejected | StorageFault | SqlError.SqlError,
           Storage | import("effect").Scope.Scope
         >,
       ) => {

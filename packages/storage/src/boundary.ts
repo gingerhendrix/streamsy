@@ -7,14 +7,12 @@ import {
   Option,
   Queue,
   Schedule,
+  Scheduler,
   Scope,
   Stream,
 } from "effect";
-import * as Scheduler from "effect/Scheduler";
-import * as Reactivity from "effect/reactivity/Reactivity";
-import * as SqlClient from "effect/sql/SqlClient";
-import type { SqlError } from "effect/sql/SqlError";
-import { isSqlError } from "effect/sql/SqlError";
+import { Reactivity } from "effect/reactivity";
+import { SqlClient, SqlError } from "effect/sql";
 import type { CommitBoundaryApi } from "@streamsy/core";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
@@ -62,7 +60,7 @@ export interface BoundaryRuntime extends CommitBoundaryApi {
     readonly keys: ReadonlyArray<string>;
     readonly effect: Effect.Effect<A, E, R>;
     readonly retryable: (error: E) => boolean;
-  }) => Effect.Effect<A, E | SqlError, R>;
+  }) => Effect.Effect<A, E | SqlError.SqlError, R>;
   readonly changes: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
     readonly read: Effect.Effect<A, E, R>;
@@ -161,7 +159,7 @@ const makeBoundary = (
         // it back into a defect, as Effect 4.0.1 did.
         const transaction = sql.withTransaction(transactionBody).pipe(
           Effect.catchIf(
-            (error) => bodyCompleted && isSqlError(error),
+            (error) => bodyCompleted && SqlError.isSqlError(error),
             (error) => Effect.die(error),
           ),
         );
@@ -222,7 +220,7 @@ const makeBoundary = (
           return Option.isSome(ambient)
             ? run
             : retryWithPolicy(ownedTransaction(run), transactionRetry, (error) =>
-                isSqlError(error) ? error.isRetryable : retryable(error),
+                SqlError.isSqlError(error) ? error.isRetryable : retryable(error),
               );
         }),
       ).pipe(

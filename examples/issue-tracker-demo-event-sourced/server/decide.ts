@@ -5,8 +5,7 @@ import {
   type Issue,
   type Project,
 } from "@streamsy/issue-tracker-demo-contract/state-schema";
-import { Effect, Schema } from "effect";
-import type { NonEmptyReadonlyArray } from "effect/Array";
+import { type Array, Effect, Schema } from "effect";
 import { countInProgress, findIssue, hasProject, type CommandView } from "./command-view.ts";
 import {
   commentRow,
@@ -173,7 +172,7 @@ function startsWork(
 
 /** The answer is the issue row after the events, as the read model writes it. */
 function decided(
-  events: NonEmptyReadonlyArray<IssueEvent>,
+  events: Array.NonEmptyReadonlyArray<IssueEvent>,
   previous: Issue | undefined,
 ): Effect.Effect<Decision<Issue>> {
   const issue = events.reduce<Issue | undefined>(issueAfter, previous);
@@ -219,7 +218,7 @@ export function starterProject(stamp: Stamp): Partial<Project> {
  * events that create them. "Streamsy Demo" starts with two issues in progress,
  * one below the limit, so two tabs can race for the last place.
  */
-export function mainWorkspaceSeed(stamp: Stamp): NonEmptyReadonlyArray<WorkspaceEvent> {
+export function mainWorkspaceSeed(stamp: Stamp): Array.NonEmptyReadonlyArray<WorkspaceEvent> {
   const stamped = { at: stamp.now, txid: stamp.txid };
 
   const issue = (

@@ -1,5 +1,4 @@
-import { Data, Predicate, type Types } from "effect";
-import type { NonEmptyReadonlyArray } from "effect/Array";
+import { type Array, Data, Predicate, type Types } from "effect";
 import type {
   Collections,
   CollectionsChange,
@@ -85,8 +84,8 @@ const readKey = <A>(type: string, field: StateKey<A>, value: A): string =>
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },
-  entries: NonEmptyReadonlyArray<Change<C>>,
-): NonEmptyReadonlyArray<CollectionsChange<C>>;
+  entries: Array.NonEmptyReadonlyArray<Change<C>>,
+): Array.NonEmptyReadonlyArray<CollectionsChange<C>>;
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },

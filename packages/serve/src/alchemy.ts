@@ -12,11 +12,11 @@ import type { DurableObject } from "alchemy/Cloudflare";
 import { Effect, Option, type Layer, type Scope } from "effect";
 import {
   HttpRouter,
+  type HttpServerError,
   HttpServerRequest,
-  HttpServerResponse,
   HttpServerRespondable,
+  HttpServerResponse,
 } from "effect/http";
-import type { HttpServerError } from "effect/http/HttpServerError";
 import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http";
 import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
 import { resolvePlacement } from "./cloudflare/router.ts";
@@ -36,7 +36,7 @@ export const router = (options: {
   readonly placement?: PlacementType;
 }): Effect.Effect<
   HttpServerResponse.HttpServerResponse,
-  HttpServerError,
+  HttpServerError.HttpServerError,
   HttpServerRequest.HttpServerRequest
 > => {
   const path = protocolPath(options.prefix);

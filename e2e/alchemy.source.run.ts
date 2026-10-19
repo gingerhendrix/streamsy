@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 import { sourceWorker } from "./src/source-worker.ts";
 import { STACK_NAME } from "./src/contract.ts";
 

@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 import { STACK_NAME } from "./src/contract.ts";
 
 const Streams = Cloudflare.DurableObject("Streams", { className: "StreamsObject" });

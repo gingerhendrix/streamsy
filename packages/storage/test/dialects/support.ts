@@ -2,9 +2,8 @@
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { Config, Context, Effect, Layer, Option, Redacted, type Scope } from "effect";
-import type * as Reactivity from "effect/reactivity/Reactivity";
-import * as SqlClient from "effect/sql/SqlClient";
-import type { SqlError } from "effect/sql/SqlError";
+import type { Reactivity } from "effect/reactivity";
+import { SqlClient, type SqlError } from "effect/sql";
 import { clientLayer } from "../../src/boundary.ts";
 
 const optionalUrl = (name: string) =>
@@ -21,7 +20,7 @@ export interface SqlDialect {
   readonly client: (
     url: string,
     options?: ClientOptions,
-  ) => Effect.Effect<SqlClient.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity>;
+  ) => Effect.Effect<SqlClient.SqlClient, SqlError.SqlError, Scope.Scope | Reactivity.Reactivity>;
   /** Lists the tables of the connected database as `name` rows. */
   readonly tables: string;
   readonly dropDatabase: (name: string) => string;
@@ -57,7 +56,7 @@ const databaseName = () => `streamsy_${crypto.randomUUID().replaceAll("-", "").s
 export const freshDatabase = (
   dialect: SqlDialect,
   baseUrl: string,
-): Effect.Effect<string, SqlError, Scope.Scope> =>
+): Effect.Effect<string, SqlError.SqlError, Scope.Scope> =>
   Effect.gen(function* () {
     const name = yield* Effect.sync(databaseName);
 

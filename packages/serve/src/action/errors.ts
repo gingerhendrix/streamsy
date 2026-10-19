@@ -9,8 +9,7 @@
  * error the host reports; the second is ordinary traffic for the retry policy
  * and never leaves the delivery loop.
  */
-import { Schema } from "effect";
-import type * as Cause from "effect/Cause";
+import { type Cause, Schema } from "effect";
 
 export const ACTION_SINK_ERROR_TAGS = ["ActionSinkDeliveryFailure", "OutboxUnavailable"] as const;
 

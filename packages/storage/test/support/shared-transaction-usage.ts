@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 
 const id = StreamId.make("compiled-shared-transaction");
 

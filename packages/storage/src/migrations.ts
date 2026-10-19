@@ -1,7 +1,7 @@
+import { SqlError } from "effect/sql";
+import type { SqlClient } from "effect/sql";
 import { Clock, Effect } from "effect";
 import { StorageFault } from "@streamsy/core";
-import type { SqlClient } from "effect/sql/SqlClient";
-import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import { storageDialect, type StorageDialect } from "./dialect.ts";
 import {
   LEGACY_VERSION_TABLES,
@@ -42,7 +42,7 @@ const MYSQL_MIGRATION_LOCK = STORAGE_VERSION_TABLE;
 
 const MYSQL_MIGRATION_LOCK_TIMEOUT_SECONDS = 30;
 
-const fault = (operation: string, error: SqlError): StorageFault =>
+const fault = (operation: string, error: SqlError.SqlError): StorageFault =>
   new StorageFault({
     operation,
     message: error.message,
@@ -50,7 +50,7 @@ const fault = (operation: string, error: SqlError): StorageFault =>
     cause: error,
   });
 
-const sqlAttempt = <A, R>(operation: string, effect: Effect.Effect<A, SqlError, R>) =>
+const sqlAttempt = <A, R>(operation: string, effect: Effect.Effect<A, SqlError.SqlError, R>) =>
   effect.pipe(Effect.mapError((error) => fault(operation, error)));
 
 /** Return whether the database already holds this format, or fail on an older format. */
@@ -82,7 +82,7 @@ export const newerVersionFault = (version: number) =>
     retryable: false,
   });
 
-const listTables = (sql: SqlClient, dialect: StorageDialect) =>
+const listTables = (sql: SqlClient.SqlClient, dialect: StorageDialect) =>
   sqlAttempt(
     "migration.inspect",
     {
@@ -96,7 +96,11 @@ const listTables = (sql: SqlClient, dialect: StorageDialect) =>
     }[dialect](),
   ).pipe(Effect.map((rows) => new Set(rows.map(({ name }) => name))));
 
-const migrateVersions = (sql: SqlClient, dialect: StorageDialect, hooks: MigrationHooks) =>
+const migrateVersions = (
+  sql: SqlClient.SqlClient,
+  dialect: StorageDialect,
+  hooks: MigrationHooks,
+) =>
   Effect.gen(function* () {
     const ownsFormat = yield* inspectFormat(yield* listTables(sql, dialect));
 
@@ -143,7 +147,7 @@ const migrateVersions = (sql: SqlClient, dialect: StorageDialect, hooks: Migrati
  * the migration. A named lock on one reserved connection serialises
  * instances instead, and every MySQL statement is safe to run twice.
  */
-const migrateMysql = (sql: SqlClient, hooks: MigrationHooks) =>
+const migrateMysql = (sql: SqlClient.SqlClient, hooks: MigrationHooks) =>
   Effect.scoped(
     Effect.gen(function* () {
       const connection = yield* sqlAttempt("migration.connection", sql.reserve);
@@ -186,7 +190,7 @@ const migrateMysql = (sql: SqlClient, hooks: MigrationHooks) =>
  * and statements that are safe to run twice.
  */
 export const migrate = (
-  sql: SqlClient,
+  sql: SqlClient.SqlClient,
   hooks: MigrationHooks = {},
   transactionRetry: TransactionRetryPolicy = transactionRetryPolicy({}),
 ): Effect.Effect<void, StorageFault> =>
@@ -207,8 +211,10 @@ export const migrate = (
         );
       }),
       transactionRetry,
-      (error) => (isSqlError(error) ? error.isRetryable : error.retryable),
+      (error) => (SqlError.isSqlError(error) ? error.isRetryable : error.retryable),
     ).pipe(
-      Effect.catchIf(isSqlError, (error) => Effect.fail(fault("migration.transaction", error))),
+      Effect.catchIf(SqlError.isSqlError, (error) =>
+        Effect.fail(fault("migration.transaction", error)),
+      ),
     ),
   );

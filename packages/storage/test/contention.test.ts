@@ -31,8 +31,7 @@ import {
   type TestHost,
   type TestHostOptions,
 } from "../../serve/test/support/scoped-host.ts";
-import * as SqlClient from "effect/sql/SqlClient";
-import { isSqlError } from "effect/sql/SqlError";
+import { SqlClient, SqlError } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";
 import { layerWithTestProbe } from "../src/storage.ts";
@@ -296,7 +295,7 @@ test("owned retries yield, progress after release, exhaust exactly, and preserve
 
         if (Exit.isFailure(rawBusy)) {
           const error = Option.getOrThrow(Cause.findErrorOption(rawBusy.cause));
-          expect(isSqlError(error) && error.isRetryable).toBe(true);
+          expect(SqlError.isSqlError(error) && error.isRetryable).toBe(true);
         }
 
         const beforeCallerOwned = probe.transactionAttempts;

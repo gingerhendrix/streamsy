@@ -26,7 +26,7 @@ import {
   type StreamRecord,
 } from "@streamsy/core";
 import { StorageContract } from "@streamsy/core/testing";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "../../src/schema.ts";
 import { storageLayer } from "../../src/storage.ts";

@@ -1,5 +1,4 @@
-import { Effect, Predicate, Result, Schedule } from "effect";
-import { isReadonlyArrayNonEmpty } from "effect/Array";
+import { Array, Effect, Predicate, Result, Schedule } from "effect";
 import type { Decided, Decision, OffsetMismatch, Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import type { InputMap, ItemOf } from "./batch.ts";
@@ -49,7 +48,7 @@ export const decide = Effect.fn("Projection.decide")(function* <
     const offset = snapshot.offsets[spec.input];
     const { value, items } = yield* spec.decide(snapshot);
 
-    if (!isReadonlyArrayNonEmpty(items)) {
+    if (!Array.isReadonlyArrayNonEmpty(items)) {
       const unchanged: Decided<B> = { value, offset, appended: false };
 
       return unchanged;

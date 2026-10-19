@@ -1,3 +1,4 @@
+import type { SqlError } from "effect/sql";
 import { StorageFault, type Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
@@ -5,7 +6,6 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
-import type { SqlError } from "effect/sql/SqlError";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import * as SqliteFile from "./sqlite-file.ts";
 import { storageLayer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
@@ -41,7 +41,7 @@ const openFault = (error: SqliteOpenError, rendered: string) =>
   });
 
 const normalizeSqliteDefect = <A, R>(
-  acquisition: Effect.Effect<A, SqlError, R>,
+  acquisition: Effect.Effect<A, SqlError.SqlError, R>,
 ): Effect.Effect<A, StorageFault, R> =>
   acquisition.pipe(
     // Since 4.0.1, SqliteClient.make fails with SqlError where it used to die with the

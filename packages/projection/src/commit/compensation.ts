@@ -1,5 +1,4 @@
-import { Effect, Option, type Cause } from "effect";
-import { dual } from "effect/Function";
+import { type Cause, Effect, Function, Option } from "effect";
 import { make, type Commit, type HandlerFailed } from "./model.ts";
 import type { ProjectionFault } from "../fault.ts";
 import type { Unit } from "../unit.ts";
@@ -21,7 +20,7 @@ export const withCompensation: {
       unit: Unit,
     ) => Effect.Effect<void, never, R>,
   ): Commit<Result, P, Q | R>;
-} = dual(
+} = Function.dual(
   2,
   <Result, P, Q, R>(
     self: Commit<Result, P, Q>,

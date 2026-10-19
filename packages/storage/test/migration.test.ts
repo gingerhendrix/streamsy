@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "vitest";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
-import * as SqlClientTag from "effect/sql/SqlClient";
+import { SqlClient as SqlClientTag } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { migrate } from "../src/migrations.ts";

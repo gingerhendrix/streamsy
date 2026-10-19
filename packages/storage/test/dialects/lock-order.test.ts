@@ -18,7 +18,7 @@ import {
   type Mutation,
   type StreamLifecycle,
 } from "@streamsy/core";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import { storageLayer } from "../../src/storage.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
 

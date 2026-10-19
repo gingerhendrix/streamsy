@@ -1,6 +1,15 @@
-import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
-import type { LazyArg } from "effect/Function";
-import { Duration, Effect, Option, Predicate, Result, Schedule, Schema, Stream } from "effect";
+import {
+  Array,
+  Duration,
+  Effect,
+  type Function,
+  Option,
+  Predicate,
+  Result,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { DecodeFault, EncodeFault, isRetryableFault, type StreamsFault } from "../fault.ts";
 import { ZERO_OFFSET } from "../offset/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
@@ -72,7 +81,7 @@ export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
  */
 export type AppendItems<A, O> = O extends { readonly close: true }
   ? ReadonlyArray<A>
-  : NonEmptyReadonlyArray<A>;
+  : Array.NonEmptyReadonlyArray<A>;
 
 /** Whether these options can lead to this rejection. Any other rejection is a host bug. */
 const possibleFor = (options: AppendCallOptions, error: AppendError | StreamsFault): boolean =>
@@ -219,7 +228,7 @@ export interface Collected<A> {
  */
 export const fold = Effect.fn("Streams.fold")(function* <A, RD, RE, S>(
   address: StreamAddress<A, RD, RE>,
-  initial: LazyArg<S>,
+  initial: Function.LazyArg<S>,
   f: (state: S, item: A) => S,
   options: ReadOptions = {},
 ): Effect.fn.Return<Folded<S>, ReadFailure, StreamsReader | RD> {
@@ -276,7 +285,7 @@ export interface Decided<B> {
 
 export interface DecideSpec<A, S, B, E, R> {
   /** The start value of the fold. Each call starts from a new value. */
-  readonly initial: LazyArg<S>;
+  readonly initial: Function.LazyArg<S>;
   readonly fold: (state: S, item: A) => S;
   /**
    * Decide what to append from the folded state. `offset` is the tail the state is
@@ -320,7 +329,7 @@ export const decide = Effect.fn("Streams.decide")(function* <A, RD, RE, S, B, E,
     const { state, offset } = folded;
     const { value, items } = yield* spec.decide(state, { offset });
 
-    if (!isReadonlyArrayNonEmpty(items)) {
+    if (!Array.isReadonlyArrayNonEmpty(items)) {
       const unchanged: Decided<B> = { value, offset, appended: false };
 
       return unchanged;

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { Context, Effect, Exit, Layer, Option, Schema, type Scope } from "effect";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import type { OutboxBacking, OutboxDraft } from "@streamsy/serve/action/outbox";
 import { createSqlOutboxBacking, migrateOutbox } from "@streamsy/serve/action/sql";

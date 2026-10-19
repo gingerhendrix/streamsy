@@ -1,6 +1,5 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
-import { Effect, Predicate, type Schema } from "effect";
-import type { NonEmptyReadonlyArray } from "effect/Array";
+import { type Array, Effect, Predicate, type Schema } from "effect";
 import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -48,7 +47,11 @@ export const collect = (
     for (const [name, entries] of Object.entries(emitted)) {
       const output = outputs[name];
 
-      if (!Object.hasOwn(outputs, name) || output === undefined || !Array.isArray(entries))
+      if (
+        !Object.hasOwn(outputs, name) ||
+        output === undefined ||
+        !globalThis.Array.isArray(entries)
+      )
         return yield* new ProjectionFault({
           phase: "process",
           reason: "invalid-output",
@@ -88,7 +91,7 @@ const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown
 export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
   output: StreamAddress.StreamAddress<O>,
   wire: ResolvedOutput["service"]["wire"],
-  items: NonEmptyReadonlyArray<O>,
+  items: Array.NonEmptyReadonlyArray<O>,
   position: Producer.Position,
 ) {
   return yield* Streams.append(output, items, { producer: position }).pipe(

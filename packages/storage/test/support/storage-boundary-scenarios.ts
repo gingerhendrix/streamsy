@@ -11,7 +11,7 @@ import {
   type StreamRecord,
 } from "@streamsy/core";
 import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import type { BoundaryTestProbe } from "../../src/boundary.ts";
 
 const one = Offset.make("0000000000000001_0000000000000000");

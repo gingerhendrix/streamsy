@@ -5,8 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it as baseIt } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Layer, Option, Result } from "effect";
-import { isReadonlyArrayNonEmpty, type NonEmptyReadonlyArray } from "effect/Array";
+import { Array, Effect, Layer, Option, Result } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
@@ -58,8 +57,8 @@ const tempFile = (prefix: string) =>
   ).pipe(Effect.map((directory) => join(directory, "board.sqlite")));
 
 /** Each half of a split game has events; an append needs at least one. */
-const nonEmpty = <A>(events: ReadonlyArray<A>): NonEmptyReadonlyArray<A> => {
-  if (!isReadonlyArrayNonEmpty(events)) throw new Error("expected events");
+const nonEmpty = <A>(events: ReadonlyArray<A>): Array.NonEmptyReadonlyArray<A> => {
+  if (!Array.isReadonlyArrayNonEmpty(events)) throw new Error("expected events");
 
   return events;
 };
@@ -114,7 +113,7 @@ const advance = (
 
     if (events === fullGame) expect(after.state.board.game.status).toBe("finished");
     expect(after.state.board.moves.map((move) => move.id)).toEqual(
-      Array.from({ length: Math.min(events.length, MOVE_FEED_LIMIT) }, (_, i) =>
+      globalThis.Array.from({ length: Math.min(events.length, MOVE_FEED_LIMIT) }, (_, i) =>
         moveId(Math.max(0, events.length - MOVE_FEED_LIMIT) + i),
       ),
     );
@@ -137,7 +136,9 @@ for (const [name, events, cut] of [
       if (events === fullGame) expect(before.state.board.combat?.status).toBe("awaiting-defense");
       else
         expect(before.state.board.moves.map((move) => move.id)).toEqual(
-          Array.from({ length: MOVE_FEED_LIMIT }, (_, i) => moveId(cut - MOVE_FEED_LIMIT + i)),
+          globalThis.Array.from({ length: MOVE_FEED_LIMIT }, (_, i) =>
+            moveId(cut - MOVE_FEED_LIMIT + i),
+          ),
         );
       yield* Effect.gen(function* () {
         expect((yield* Projection.run(board)).items).toBe(0);

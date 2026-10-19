@@ -1,6 +1,5 @@
+import type { SqlClient, SqlError } from "effect/sql";
 import { Effect, Option, Predicate, Schema } from "effect";
-import type { SqlClient } from "effect/sql/SqlClient";
-import type { SqlError } from "effect/sql/SqlError";
 import type { DeadLetterReason } from "./errors.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import type {
@@ -101,7 +100,7 @@ const isOutboxUnavailable = Schema.is(OutboxUnavailable);
 
 const attempt = <A>(
   operation: string,
-  effect: Effect.Effect<A, OutboxUnavailable | SqlError>,
+  effect: Effect.Effect<A, OutboxUnavailable | SqlError.SqlError>,
 ): Effect.Effect<A, OutboxUnavailable> =>
   effect.pipe(
     Effect.mapError((cause) =>
@@ -123,7 +122,7 @@ const unsupported = (operation: string) =>
   );
 
 /** The names of the outbox indexes that exist in the current MySQL database. */
-const mysqlIndexes = (sql: SqlClient) =>
+const mysqlIndexes = (sql: SqlClient.SqlClient) =>
   sql<{
     readonly name: string;
   }>`SELECT DISTINCT index_name AS name FROM information_schema.statistics
@@ -132,7 +131,9 @@ const mysqlIndexes = (sql: SqlClient) =>
   );
 
 /** MySQL has no `CREATE INDEX IF NOT EXISTS`. A concurrent migration may win the create. */
-const migrateMysql = (sql: SqlClient): Effect.Effect<void, OutboxUnavailable | SqlError> =>
+const migrateMysql = (
+  sql: SqlClient.SqlClient,
+): Effect.Effect<void, OutboxUnavailable | SqlError.SqlError> =>
   Effect.gen(function* () {
     // MySQL DDL commits the open transaction, so it must run outside one.
     if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
@@ -158,8 +159,8 @@ const migrateMysql = (sql: SqlClient): Effect.Effect<void, OutboxUnavailable | S
     return undefined;
   });
 
-export function migrateOutbox(sql: SqlClient): Effect.Effect<void, OutboxUnavailable> {
-  const statements = (dialect: "sqlite" | "pg"): Effect.Effect<void, SqlError> =>
+export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, OutboxUnavailable> {
+  const statements = (dialect: "sqlite" | "pg"): Effect.Effect<void, SqlError.SqlError> =>
     Effect.forEach(
       [CREATE_TABLE[dialect], ...INDEXES.map((index) => createIndex(index, true))],
       (statement) => sql.unsafe<Record<string, never>>(statement),
@@ -181,7 +182,7 @@ export function migrateOutbox(sql: SqlClient): Effect.Effect<void, OutboxUnavail
  * MySQL readiness only reads the catalog. The backing may run inside a caller's
  * transaction, and DDL there would commit it early.
  */
-const mysqlReady = (sql: SqlClient) =>
+const mysqlReady = (sql: SqlClient.SqlClient) =>
   Effect.flatMap(mysqlIndexes(sql), (names) =>
     INDEXES.every((index) => names.has(index.name))
       ? Effect.void
@@ -216,27 +217,31 @@ const mysqlKeyFault = (draft: OutboxDraft): OutboxUnavailable | undefined => {
   return undefined;
 };
 
-export function createSqlOutboxBacking(sql: SqlClient): OutboxBacking {
+export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking {
   // Readiness deliberately is not cached: on SQLite and Postgres, migration can
   // run inside a caller's transaction, and publishing that transaction-local
   // result after rollback would leave this backing unable to recover. The
   // idempotent statements make a retry safe; placements may still migrate
   // eagerly before publishing stores. MySQL only checks, so it must migrate eagerly.
-  const ready: Effect.Effect<void, OutboxUnavailable | SqlError> = Effect.suspend(() =>
+  const ready: Effect.Effect<void, OutboxUnavailable | SqlError.SqlError> = Effect.suspend(() =>
     sql.onDialectOrElse({
       mysql: () => mysqlReady(sql),
       orElse: () => migrateOutbox(sql),
     }),
   );
 
-  const run = <A>(operation: string, statement: Effect.Effect<A, SqlError | OutboxUnavailable>) =>
-    attempt(operation, Effect.andThen(ready, statement));
+  const run = <A>(
+    operation: string,
+    statement: Effect.Effect<A, SqlError.SqlError | OutboxUnavailable>,
+  ) => attempt(operation, Effect.andThen(ready, statement));
 
-  const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>) =>
+  const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.SqlError>) =>
     run(operation, statement).pipe(Effect.asVoid);
 
-  const rows = (operation: string, statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError>) =>
-    run(operation, statement).pipe(Effect.map((found) => found.map(decodeRow)));
+  const rows = (
+    operation: string,
+    statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError.SqlError>,
+  ) => run(operation, statement).pipe(Effect.map((found) => found.map(decodeRow)));
 
   /** Whether the draft was new. A draft with a known sink and key changes nothing. */
   const insert = (draft: OutboxDraft) => {

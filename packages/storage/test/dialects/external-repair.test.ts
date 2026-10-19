@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { Context, Effect, Layer } from "effect";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import { makeBoundaryTestProbe } from "../../src/boundary.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import { runExternalRepair } from "../support/storage-boundary-scenarios.ts";

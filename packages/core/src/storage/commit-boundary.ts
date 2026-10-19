@@ -1,5 +1,5 @@
+import type { SqlError } from "effect/sql";
 import { Context, type Effect } from "effect";
-import type { SqlError } from "effect/sql/SqlError";
 
 export interface CommitBoundaryApi {
   /**
@@ -11,7 +11,7 @@ export interface CommitBoundaryApi {
    */
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | SqlError, R>;
+  ) => Effect.Effect<A, E | SqlError.SqlError, R>;
 }
 
 /** The transaction of the storage owner. Every Streamsy storage host provides it. */

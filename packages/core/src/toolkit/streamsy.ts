@@ -1,11 +1,10 @@
-import { Context, Effect, Layer, Option, Predicate, Stream } from "effect";
+import { Context, Effect, type Function, Layer, Option, Predicate, Stream } from "effect";
 import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
 import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { DecodeFault, StreamsFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
-import type { LazyArg } from "effect/Function";
 import type {
   AppendResult,
   CreateResult,
@@ -113,8 +112,12 @@ function wireApi<P, A, RD, RE>(
     ) => Streams.append(route.address(params), items, options).pipe(Effect.provide(context)),
     read: (params: P, options?: ReadOptions) =>
       Streams.read(route.address(params), options).pipe(Stream.provideContext(context)),
-    fold: <S>(params: P, initial: LazyArg<S>, f: (state: S, item: A) => S, options?: ReadOptions) =>
-      Streams.fold(route.address(params), initial, f, options).pipe(Effect.provide(context)),
+    fold: <S>(
+      params: P,
+      initial: Function.LazyArg<S>,
+      f: (state: S, item: A) => S,
+      options?: ReadOptions,
+    ) => Streams.fold(route.address(params), initial, f, options).pipe(Effect.provide(context)),
     collect: (params: P, options?: ReadOptions) =>
       Streams.collect(route.address(params), options).pipe(Effect.provide(context)),
     decide: <S, B, E, R>(params: P, spec: Streams.DecideSpec<A, S, B, E, R>) =>
@@ -153,7 +156,7 @@ export interface Api<P, A, RD = never, RE = never> {
   ) => Stream.Stream<Streams.Batch<A>, Streams.ReadFailure, RD>;
   readonly fold: <S>(
     params: P,
-    initial: LazyArg<S>,
+    initial: Function.LazyArg<S>,
     f: (state: S, item: A) => S,
     options?: ReadOptions,
   ) => Effect.Effect<Streams.Folded<S>, Streams.ReadFailure, RD>;

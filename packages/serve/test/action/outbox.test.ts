@@ -14,7 +14,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit, ManagedRuntime, Option } from "effect";
-import * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient } from "effect/sql";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import {
   makeMemoryOutboxBacking,

@@ -22,9 +22,8 @@ import {
   type RecordPatch,
 } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
-import * as Reactivity from "effect/reactivity/Reactivity";
-import * as SqlClient from "effect/sql/SqlClient";
-import { isSqlError, type SqlError } from "effect/sql/SqlError";
+import { Reactivity } from "effect/reactivity";
+import { SqlClient, SqlError } from "effect/sql";
 import {
   BoundaryRuntimeService,
   boundaryLayer,
@@ -188,7 +187,7 @@ const copyRecord = (record: StreamRecord): StreamRecord => ({
   lifecycle: { ...record.lifecycle },
 });
 
-const sqlFault = (operation: string, error: SqlError): StorageFault =>
+const sqlFault = (operation: string, error: SqlError.SqlError): StorageFault =>
   new StorageFault({
     operation,
     message: error.message,
@@ -198,7 +197,7 @@ const sqlFault = (operation: string, error: SqlError): StorageFault =>
 
 // A concurrent create of the same id has no row to lock, so the loser meets the
 // primary key. Retrying runs preflight again, which then rejects with `exists`.
-const createFault = (error: SqlError): StorageFault =>
+const createFault = (error: SqlError.SqlError): StorageFault =>
   Predicate.isTagged(error.reason, "UniqueViolation")
     ? new StorageFault({
         operation: "mutate.create-record",
@@ -208,10 +207,10 @@ const createFault = (error: SqlError): StorageFault =>
       })
     : sqlFault("mutate.create-record", error);
 
-const attempt = <A>(operation: string, effect: Effect.Effect<A, SqlError>) =>
+const attempt = <A>(operation: string, effect: Effect.Effect<A, SqlError.SqlError>) =>
   effect.pipe(Effect.mapError((error) => sqlFault(operation, error)));
 
-const execute = (operation: string, statement: Effect.Effect<unknown, SqlError>) =>
+const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.SqlError>) =>
   attempt(operation, statement).pipe(Effect.asVoid);
 
 /** MySQL keys hold at most this many characters, so every dialect enforces it. */
@@ -746,7 +745,9 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
           retryable: (error) => Predicate.isTagged(error, "StorageFault") && error.retryable,
         })
         .pipe(
-          Effect.catchIf(isSqlError, (error) => Effect.fail(sqlFault("mutate.transaction", error))),
+          Effect.catchIf(SqlError.isSqlError, (error) =>
+            Effect.fail(sqlFault("mutate.transaction", error)),
+          ),
         );
     }),
     changes: (id): Stream.Stream<ChangeSnapshot, StorageFault> =>

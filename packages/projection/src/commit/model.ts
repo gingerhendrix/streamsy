@@ -1,6 +1,5 @@
 import { extend } from "./range.ts";
-import { Data, Schema, type Effect } from "effect";
-import { pipeArguments, type Pipeable } from "effect/Pipeable";
+import { Data, type Effect, Pipeable, Schema } from "effect";
 import type { StreamAddress } from "@streamsy/core";
 import type { CheckpointRecord, Loaded, ProjectionKey } from "../checkpoint-store.ts";
 import type { ProjectionFault } from "../fault.ts";
@@ -14,7 +13,8 @@ export interface Variance<in Result, in Provides, out Requires> {
   readonly requires: () => Requires;
 }
 
-export interface Commit<in Result, in Provides = never, out Requires = never> extends Pipeable {
+export interface Commit<in Result, in Provides = never, out Requires = never>
+  extends Pipeable.Pipeable {
   readonly [TypeId]: Variance<Result, Provides, Requires>;
   readonly name: string;
   readonly guarantee: "exactly-once" | "effectively-once" | "at-least-once";
@@ -89,6 +89,6 @@ export const make = <Result, Provides = never, Requires = never>(
       },
     },
     pipe() {
-      return pipeArguments(this, arguments);
+      return Pipeable.pipeArguments(this, arguments);
     },
   });
