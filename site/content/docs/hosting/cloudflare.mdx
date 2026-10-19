@@ -1,0 +1,165 @@
+---
+title: Cloudflare
+description: Route protocol paths from a Worker to Durable Objects that own their SQLite storage and route app.
+---
+
+A Worker router sends each protocol path to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Http, Streamsy } from "@streamsy/core";
+import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { Events } from "./streams.ts";
+
+const game = Streamsy.group(Events);
+
+interface Env {
+  readonly STREAMS: DurableObjectNamespace;
+}
+export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof game>>({
+  app: Http.routes(game, { prefix: "/streams", access: "append" }),
+  layer: (state) => DurableObjectStorage.layer(game, { client: { storage: state.storage } }),
+}) {}
+export default router<Env>({
+  prefix: "/streams",
+  namespace: (env) => env.STREAMS,
+  placement: Placement.byKey(() => "streams"),
+});
+```
+
+The second type parameter of `StreamsyObject.make` is the services that the app needs. `Streamsy.Services<typeof game>` is the stream services of the group.
+
+## Storage
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+import type { DurableObjectState } from "@cloudflare/workers-types";
+declare const ctx: DurableObjectState;
+// ---cut---
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { shop } from "./streams.ts";
+
+const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storage } });
+```
+
+Pass the full `ctx.storage` handle. The driver needs its transaction API. The long-poll timeout is 25 s.
+
+## Placement
+
+| Placement                                      | Object name                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `Placement.byStream()`                         | One object for each stream. The default                                |
+| `Placement.byKey(fn)`                          | The key that `fn` returns for the stream path                          |
+| `Placement.byRoute([rule({ stream, owner })])` | `owner` of the decoded stream parameters. The first matching rule wins |
+
+| Result                    | Response |
+| ------------------------- | -------- |
+| Empty or no owner key     | 400      |
+| Placement function throws | 500      |
+
+Rules:
+
+- A fork source and its child must be on the same object.
+- Keep placement stable while data lives on an object.
+- There are no writes across objects.
+- The router understands protocol paths only. Route Serve paths to their object in your own Worker code.
+- Authenticate before the router forwards a request.
+
+## Object lifecycle
+
+| Event                                  | Behaviour                                                           |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| First access                           | Acquires storage, reconciles deadlines, and builds the handler once |
+| Acquisition fails                      | 503 with `retry-after: 1`. The next access tries again              |
+| PUT, POST, DELETE                      | Reconciles the alarm after the request, also on rejection           |
+| Alarm                                  | Arms a recovery guard, runs due wakeups, and reconciles             |
+| Any request that calls `Wakeups.touch` | Reconciles when the request ends                                    |
+| Defect                                 | 500 with security headers                                           |
+
+Request logging is off. No URL or request header can start an alarm turn.
+
+## Wakeups
+
+Pass `wakeups` to `StreamsyObject.make` or `objectHandlers`. Each wakeup reads its next deadline from committed state and runs bounded, idempotent work when due. Return `Option.none()` when there is no work. The host always runs stream expiry first. Names must be unique within the object, including `streamsy/expiry`; duplicates fail at acquisition.
+
+```ts
+import { Effect, Option } from "effect";
+import type { StorageFault } from "@streamsy/core";
+declare const nextDeadline: Effect.Effect<Option.Option<number>, StorageFault>;
+declare const runDueWork: Effect.Effect<void>;
+// ---cut---
+import { Wakeup } from "@streamsy/serve/cloudflare";
+
+const catchUp = Wakeup.make({
+  name: "app/catch-up",
+  next: nextDeadline,
+  run: runDueWork,
+});
+// Add wakeups: [catchUp] to the object's configuration.
+```
+
+The earliest deadline owns the object's one alarm slot. Due work arms an alarm at `now + 1` after a write; it runs in an alarm turn. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before the handler returns, and the host reconciles when the request ends. A streamed body that queues work after the handler returns calls `Wakeups.use((wakeups) => wakeups.reconcile)`. Work outside a request does the same.
+
+Failures are logged and do not stop the other wakeups. This applies to `next` and to `run`. A failing `next` arms its own retry, and the other deadlines still arm. A failed run backs off from one second to one hour. A successful run backs off in the same way when work that was due before it started is still due. Override these floors with `retry: { initial, max }`. A run that stops at its bound returns `{ more: true }`. The alarm then fires again at once and the failure count stays at zero. Progress to a future deadline, or no work, resets the failure count. `Wakeups.status` shows each `retryAt` floor. Backoff lives in memory and resets on eviction. The alarm turn sets a 30-second recovery guard before dispatch. Delivery is at least once. A wakeup's permit is not reentrant, so a run must not call its own wakeup's `run`.
+
+For an action outbox, import `OutboxWakeup` from `@streamsy/serve/action/runtime` and register `OutboxWakeup.make(sink, handler, options)`. The wakeup reads the outbox deadline and drains it in the same acquired context as requests. A pass that fills `limit` reports more work, so a large backlog drains in back-to-back turns. A delivery handler must not drain its own sink. Set `ordered: true` to stop behind a retrying entry. With `partitionId`, order applies to that lane; otherwise it applies to the whole sink. The default lets later due entries pass a retry. Request drains and alarm drains share a permit for the sink.
+
+Reconciliation at acquisition restores deadlines left by a crash between a commit and arming the alarm. An object must wake again for that recovery to happen.
+
+## Projections
+
+Run projections in request middleware or register a wakeup to run them in an alarm turn, over the same storage Layer as their checkpoints. See [Triggers](/docs/projections/define#triggers). A long-lived `follow` fiber does not suit an object.
+
+## Alchemy
+
+`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack.
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { Effect, Layer } from "effect";
+import { Streamsy, Http } from "@streamsy/core";
+import * as Host from "@streamsy/serve/alchemy";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+export class Streams extends Cloudflare.DurableObject<Streams>()(
+  "Streams",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.suspend(() =>
+      Host.objectHandlers({
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
+        layer: Layer.mergeAll(
+          DurableObjectStorage.layer(streams, { client: { storage: state.raw.storage } }),
+          Host.alarmSlotLayer(state.raw.storage),
+        ),
+      }),
+    );
+  }),
+) {}
+```
+
+The outer generator declares resources. The inner Effect acquires storage for each instance. `objectHandlers` shares one acquisition across fetch and alarm, and releases it when the instance scope closes.
+
+The Worker gets the `Streams` namespace during construction. Its fetch uses `Host.router({ objects, prefix: "/streams", placement })`. The router is an `HttpEffect`, so authentication can run before it.
+
+| Command          | Does                                |
+| ---------------- | ----------------------------------- |
+| `alchemy dev`    | Runs the Worker and objects locally |
+| `alchemy deploy` | Deploys the stack                   |
+
+The pinned Alchemy version is `2.0.0-beta.80`.
+
+A remote client uses [`RemoteStreams.layer`](/docs/http/remote) with the Worker protocol prefix as `baseUrl`.
+
+## Projection services
+
+Compose `CheckpointStore.layer` and `Transaction.layer` from `@streamsy/projection` over this storage Layer with `Layer.provideMerge`. They provide `CheckpointStore` and `Transaction` on the same SQL owner. `Commit.transaction` commits SQL, output appends, and offsets together. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).

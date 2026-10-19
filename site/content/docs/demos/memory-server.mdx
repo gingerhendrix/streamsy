@@ -1,0 +1,52 @@
+---
+title: Memory server
+description: A complete Durable Streams server in a few lines of Streamsy.
+---
+
+This demo is a [Durable Streams](https://durablestreams.com/) server with full support
+for the protocol. It keeps every stream in memory, so you need no database to try it.
+
+## How it works
+
+```ts title="src/server.ts"
+import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { Layer } from "effect";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+export const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
+  disableLogger: true,
+}).pipe(Layer.provide(MemoryStorage.layer(streams)));
+```
+
+`Streamsy.Wildcard` makes the group own every stream id. `Http.routes` serves the
+protocol for that group. With `access: "full"`, any client can create, append to, read,
+and delete a stream. `MemoryStorage.layer` gives the storage.
+
+The example's `src/index.ts` starts this server on a Bun listener at port 1337. See the
+[full example](https://github.com/gingerhendrix/streamsy/tree/effect/examples/memory-server)
+to run it.
+
+## Use SQLite storage
+
+The storage is one Layer. To keep your streams after a restart, replace `MemoryStorage.layer`
+with the Bun SQLite Layer:
+
+```diff
+-import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
++import { Http, Streamsy } from "@streamsy/core";
+ import { Serve } from "@streamsy/serve";
++import * as BunStorage from "@streamsy/storage/bun";
+ import { Layer } from "effect";
+
+ const streams = Streamsy.group(Streamsy.Wildcard);
+
+ export const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
+   disableLogger: true,
+-}).pipe(Layer.provide(MemoryStorage.layer(streams)));
++}).pipe(Layer.provide(BunStorage.layer(streams, { client: { filename: "./streams.sqlite" } })));
+```
+
+The routes do not change. See [Bun](/docs/hosting/bun) for the SQLite options, and
+[Layers and storage](/docs/hosting) for the other backends.

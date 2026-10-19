@@ -1,0 +1,230 @@
+---
+title: Issue tracker, event sourced
+description: The same issue tracker with a server that appends domain events and projects the rows that the browser reads.
+---
+
+This variant of the [issue tracker](/docs/demos/issue-tracker) keeps the product, the browser code and the wire contract. Only the server changes. A command appends domain events, for example `IssueRenamed`, to an event stream. A projection turns the events into the same project, issue and comment rows, on the same State stream at `/streams/workspace/:workspaceId`. The browser cannot tell the two servers apart.
+
+Read the base page first. This page shows only what is different.
+
+The source is in [`examples/issue-tracker-demo-event-sourced`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo-event-sourced). Both apps import the wire contract from [`examples/issue-tracker-demo-contract`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/issue-tracker-demo-contract).
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/issue-tracker-demo-event-sourced dev
+```
+
+Open http://localhost:1338. Set `ISSUE_TRACKER_DB` to a SQLite file path to keep the events, the rows and the projection checkpoints across restarts.
+
+## What changes
+
+| Concern           | Base app                                   | This variant                                                     |
+| ----------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| Source of truth   | The State stream of rows                   | A JSON stream of domain events for each workspace                |
+| A write           | One row upsert                             | One or two events                                                |
+| Rules read        | A fold of the State stream in each request | A fold projection with a checkpoint (`Projection.decide`)        |
+| The browser reads | The stream that the request wrote          | A State stream that a producer projection writes from the events |
+| Restart           | The stream is the state                    | Each projection resumes from its checkpoint                      |
+| Browser code      | `src/`, `public/index.html`                | The base app's files, imported, not copied                       |
+
+The HTTP routes, the error mapping and the status codes are the same as the base app. A 422 still means the work-in-progress rule refused the change. A 409 still means the write lost the race four times.
+
+## 1. Domain events
+
+Each event names what a user did. Every event carries the server time and the txid of the request. Issue events also carry the writer's display name. A rename and a status change are two events, where the base app writes one upsert of the whole issue.
+
+```ts title="server/events.ts"
+export const WorkspaceEvent = Schema.TaggedUnion({
+  ProjectCreated: {
+    projectId: Schema.String,
+    name: Schema.String,
+    description: Schema.String,
+    ...stamped,
+  },
+  // ...
+  IssueRenamed: { issueId: Schema.String, title: Schema.String, ...writer, ...stamped },
+  IssueStatusChanged: { issueId: Schema.String, status: IssueStatus, ...writer, ...stamped },
+```
+
+The events live on a `Streamsy.json` stream. The server does not mount it, so the browser never reads it.
+
+```ts title="server/streams.ts"
+export class WorkspaceEvents extends Streamsy.json<WorkspaceEvents>()(
+  "IssueTrackerEventSourced/WorkspaceEvents",
+  "workspace-events/:workspaceId",
+  { params: { workspaceId: Schema.String }, schema: WorkspaceEvent },
+) {}
+```
+
+## 2. Decide against a projection
+
+In the base app, each request folds the whole workspace stream. Here a fold projection keeps the command view: the project ids and the issue rows. `Projection.current` folds the view in memory for each command. There is no command view follower, so commands replay from the start. A `run` or follower can save a checkpoint to bound that replay.
+
+```ts title="server/command-view.ts"
+export const commandView = Projection.fold({
+  id: "issue-tracker-commands",
+  params: { workspaceId: Schema.String },
+  inputs: { events: WorkspaceEvents },
+  state: { schema: CommandView, initial: emptyView },
+  fold: (view, { item }) => applyEvent(view, item),
+});
+```
+
+`Projection.decide` replaces `Workspaces.decide`. It folds the checkpoint and input tail in memory, reads the view and its offset, and calls the decision. Then it appends the events with that offset as `expectedOffset`. A lost race folds and decides again, three times at most.
+
+```ts title="server/issue-tracker.ts"
+const decideAt = <A, E>(
+  workspaceId: string,
+  decision: (view: CommandView) => Effect.Effect<Decision<A>, E>,
+) =>
+  Projection.decide(commandView.at({ workspaceId }), {
+    input: "events",
+    // A domain failure is an answer at the offset that was read, so it appends nothing.
+    decide: ({ state }) =>
+      Effect.map(Effect.result(decision(state)), (answer) => ({
+        value: answer,
+        items: Result.isSuccess(answer) ? answer.success.events : [],
+      })),
+  }).pipe(
+    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ workspaceId }))),
+```
+
+The base app has the same shape in `IssueTracker.mutate`:
+
+```ts title="issue-tracker-demo/server/issue-tracker.ts"
+        decide: (state, { offset }) =>
+          Effect.map(Effect.result(attempt(view(state))), (answer) => ({
+            value: answer,
+            items: Result.isSuccess(answer)
+              ? workspaceEvents(workspaceId, offset, [answer.success.change])
+              : [],
+          })),
+```
+
+The rules are the base app's rules. The work-in-progress race works in the same way: two requests read a view with two issues in progress, one append lands, and the other folds the projection in memory again, sees three and fails with 422. The difference is in what a decision returns. An issue patch returns one event for each field that it changes:
+
+```ts title="server/decide.ts"
+const edit = { issueId, ...writer(input.updatedBy), at: stamp.now, txid: stamp.txid };
+const events: IssueEvent[] = [];
+
+if (input.title !== undefined) {
+  events.push(IssueRenamed.make({ ...edit, title: input.title.trim() }));
+}
+
+if (input.status !== undefined) {
+  if (startsWork(view, previous, input.status, previous.projectId)) {
+    // ... fail with TooManyInProgress
+  }
+
+  events.push(IssueStatusChanged.make({ ...edit, status: input.status }));
+}
+
+const [first, ...rest] = events;
+
+if (first === undefined) return Effect.fail(new NothingToChange({ issueId }));
+```
+
+A patch with no title and no status names no event. The browser waits for each write's txid, so a write must append something. This variant answers that patch with 400 "Nothing to change". The browser never sends one.
+
+See [Read, decide, append](/docs/projections/state#read-decide-append).
+
+## 3. Project the rows
+
+A second projection writes the rows. It is a `mapAccum` projection with `Commit.producer`. Its state holds the issue rows, because a rename event has only the new title and the State stream needs the whole row. Its output is the `Workspaces` State stream, at the base app's path.
+
+```ts title="server/read-model.ts"
+export const readModel = Projection.mapAccum({
+  id: "issue-tracker-rows",
+  commit: Commit.producer,
+  params: { workspaceId: Schema.String },
+  inputs: { events: WorkspaceEvents },
+  outputs: { workspace: Workspaces },
+  state: { schema: IssueRows, initial: {} },
+  mapAccum: (issues, { item }) => {
+    const [next, changes] = project(issues, item);
+
+    return [next, { workspace: changes }] as const;
+  },
+});
+```
+
+Each row change carries the event's time and txid as headers. The browser's `awaitTxId` waits for that txid, as it does in the base app. So `src/db.ts` does not change, even though the row lands after the request answers.
+
+```ts title="server/read-model.ts"
+const headers = (event: WorkspaceEvent) => ({
+  headers: { timestamp: event.at, txid: event.txid },
+});
+```
+
+`Commit.producer` pins each unit of events in the checkpoint before it appends. A retry after a crash sends the same producer sequence, and the server drops the duplicate. Both projections use one pure function, `issueAfter`, to turn an event into a row. So the row that a request answers with is the row that the browser gets.
+
+See [Output projections](/docs/projections/define#output-projections).
+
+## 4. Keep a runner for each workspace
+
+Users create workspaces while the server runs. The projection package keeps no list of bound parameters, so the app keeps one: a registry stream with one record for each shared workspace. A new workspace gets its streams, a registry record and a runner. At boot the server starts a runner for `main` and for each registered workspace.
+
+```ts title="server/issue-tracker.ts"
+const boot = Effect.gen(function* () {
+  yield* registry.create({});
+  yield* open(mainWorkspaceId);
+  yield* seed;
+  const registered = yield* registry.collect({});
+
+  for (const { workspaceId } of registered.items) yield* watchers.start(workspaceId);
+}).pipe(Effect.withSpan("IssueTracker.boot"));
+```
+
+A runner catches up from the checkpoint, then follows input changes with `Projection.follow`. A `FiberMap` keeps one runner for each workspace. The layer scope owns the map, so every runner stops before the storage closes. A failure is logged, and the runner starts again on the `ProjectionRetry` schedule.
+
+```ts title="server/watchers.ts"
+    const runner = (workspaceId: string) => {
+      const rows = readModel.at({ workspaceId });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Projection.run(rows);
+
+          return yield* Fiber.join(yield* Projection.follow(rows));
+        }),
+      ).pipe(
+```
+
+`CheckpointStore.layer` keeps the checkpoints in the same storage as the streams. With `ISSUE_TRACKER_DB` set, the events, the rows and the checkpoints are in one SQLite file, and a restart resumes each projection from its checkpoint.
+
+```ts title="server/streams.ts"
+export const StorageLive = Layer.unwrap(
+  Effect.map(ServerConfig, ({ databasePath }) =>
+    CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath))),
+  ),
+);
+```
+
+See [Triggers](/docs/projections/define#triggers) and [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).
+
+## 5. Reuse the browser code
+
+The server imports the base app's HTML page. Bun bundles it with the base app's `src/` and CSS, so the two apps serve the same browser code.
+
+```ts title="server/index.ts"
+// The base app's page, scripts and styles. This variant changes only the server.
+import index from "issue-tracker-demo/public/index.html";
+```
+
+## What `awaitOffset` means here
+
+The success body keeps `awaitOffset`, because the contract is shared. In this variant it is the offset of the event stream after the command's events. That stream is not served, and its offsets are not offsets of the State stream. The browser ignores `awaitOffset` in both apps and waits on the txid. A client that wants to read its own write must wait for the txid on the State stream.
+
+## Limits
+
+- The read model lags the event append by one projection run. The txid wait hides the lag from the writer. Another tab sees the change when the row lands.
+- The read model keeps its state in one checkpoint record, and each unit saves the whole value. This suits a demo workspace of a few hundred rows.
+- A runner that fails on every attempt logs the failure and tries again, up to every 30 seconds. The State stream of that workspace stops until the cause is fixed.
+- A crash between the stream creation and the registry record leaves a workspace with no runner. The request that made it failed, so no user has its link.
+- The event stream has no route. A later variant can serve it read-only, for example for an issue activity list.
+- The other limits of the [base app](/docs/demos/issue-tracker#limits) still hold.

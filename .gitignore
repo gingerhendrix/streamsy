@@ -25,3 +25,16 @@ Thumbs.db
 dist/
 build/
 *.log
+
+# fold-agent example local database
+examples/fold-agent/.data/
+
+# Hacker News example local database
+examples/hackernews-newest-stream/.data/
+examples/issue-tracker-demo/.data/
+
+# Deployed e2e run reports
+e2e/reports/
+
+# Platform matrix run results
+examples/platform-matrix/.matrix/

@@ -1,162 +1,206 @@
-import { MaterializedState } from "@durable-streams/state";
-import { ZERO_OFFSET } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
+import { Effect, Schema } from "effect";
 import {
-  issueTrackerState,
+  anonymousAuthor,
+  wipLimit,
   type Comment,
   type Issue,
   type Project,
-  type StateEvent,
-} from "../shared/state-schema.ts";
-import { mainWorkspaceId, workspaceStreamId } from "./config.ts";
-import type { DemoStreams } from "./streams.ts";
-import { conflict, id, notFound, now, type TxId } from "./utils.ts";
+} from "@streamsy/issue-tracker-demo-contract/state-schema";
+import type { WorkspaceChange } from "./streams.ts";
 
 /** Read-only view over one workspace's materialized state. */
 export interface WorkspaceState {
   getProject(projectId: string): Project | undefined;
   getIssue(issueId: string): Issue | undefined;
   hasProjects(): boolean;
+  /** How many issues of the project are `in_progress` at this head. */
+  countInProgress(projectId: string): number;
 }
 
-function eventHeaders(txid: TxId = crypto.randomUUID()) {
+/**
+ * Server-chosen values for one write: a fresh entity id, the time and the
+ * txid. A request makes one stamp, so every CAS retry writes the same values.
+ */
+export interface Stamp {
+  readonly id: string;
+  readonly now: string;
+  readonly txid: string;
+}
+
+/** One validated write: the change to append and the value to answer with. */
+export interface Mutation<A> {
+  readonly change: WorkspaceChange;
+  readonly value: A;
+}
+
+export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
+  field: Schema.Literals(["projectId", "issueId"]),
+  id: Schema.String,
+}) {}
+
+export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()("IssueNotFound", {
+  issueId: Schema.String,
+}) {}
+
+/** The project already has `limit` issues in progress. */
+export class TooManyInProgress extends Schema.TaggedError<TooManyInProgress>()(
+  "TooManyInProgress",
+  { projectId: Schema.String, limit: Schema.Finite },
+) {}
+
+const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });
+
+export const projectUpsert = (project: Project, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("project", project, headers(stamp));
+
+export const issueUpsert = (issue: Issue, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("issue", issue, headers(stamp));
+
+export const commentUpsert = (comment: Comment, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("comment", comment, headers(stamp));
+
+// The attempts below run inside the read, fold, append recipe of
+// `IssueTracker.mutate`. Each one validates the request against freshly folded
+// state and either returns one change or fails with a typed error. They are
+// pure, so a retry simply runs them again.
+
+export const createProject =
+  (input: Partial<Project>, stamp: Stamp) => (): Effect.Effect<Mutation<Project>> => {
+    const project = newProject(input, stamp);
+
+    return Effect.succeed({ change: projectUpsert(project, stamp), value: project });
+  };
+
+export const createIssue =
+  (input: Partial<Issue>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference | TooManyInProgress> => {
+    const issue = newIssue(input, stamp);
+
+    if (!state.getProject(issue.projectId)) {
+      return Effect.fail(new UnknownReference({ field: "projectId", id: issue.projectId }));
+    }
+
+    if (startsWork(state, undefined, issue)) {
+      return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
+    }
+
+    return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
+  };
+
+export const updateIssue =
+  (issueId: string, input: Partial<Issue>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound | TooManyInProgress> => {
+    const previous = state.getIssue(issueId);
+
+    if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
+    const issue = nextIssue(previous, input, stamp);
+
+    if (startsWork(state, previous, issue)) {
+      return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
+    }
+
+    return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
+  };
+
+/**
+ * The work-in-progress rule. It depends on every issue of the project, so it
+ * holds only because each attempt sees the state at the head it appends to.
+ * An issue that stays in progress does not count twice.
+ */
+function startsWork(state: WorkspaceState, previous: Issue | undefined, issue: Issue): boolean {
+  return (
+    issue.status === "in_progress" &&
+    previous?.status !== "in_progress" &&
+    state.countInProgress(issue.projectId) >= wipLimit
+  );
+}
+
+export const createComment =
+  (input: Partial<Comment>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Comment>, UnknownReference> => {
+    const comment = newComment(input, stamp);
+
+    if (!state.getIssue(comment.issueId)) {
+      return Effect.fail(new UnknownReference({ field: "issueId", id: comment.issueId }));
+    }
+
+    return Effect.succeed({ change: commentUpsert(comment, stamp), value: comment });
+  };
+
+// The server owns time: every time field comes from the stamp, never from
+// the request.
+
+export function newProject(input: Partial<Project>, stamp: Stamp): Project {
   return {
-    timestamp: now(),
-    txid,
+    id: input.id ?? stamp.id,
+    name: (input.name ?? "Untitled project").trim(),
+    description: (input.description ?? "").trim(),
+    createdAt: stamp.now,
+  };
+}
+
+export function newIssue(input: Partial<Issue>, stamp: Stamp): Issue {
+  return {
+    id: input.id ?? stamp.id,
+    projectId: input.projectId ?? "",
+    title: (input.title ?? "Untitled issue").trim(),
+    status: input.status ?? "open",
+    createdAt: stamp.now,
+    updatedAt: stamp.now,
+    ...writer(input.updatedBy),
+  };
+}
+
+/** The issue after a patch. `updatedBy` names this writer, or nobody. */
+export function nextIssue(previous: Issue, input: Partial<Issue>, stamp: Stamp): Issue {
+  return {
+    id: previous.id,
+    projectId: previous.projectId,
+    title: input.title === undefined ? previous.title : input.title.trim(),
+    status: input.status ?? previous.status,
+    createdAt: previous.createdAt,
+    updatedAt: stamp.now,
+    ...writer(input.updatedBy),
+  };
+}
+
+export function newComment(input: Partial<Comment>, stamp: Stamp): Comment {
+  return {
+    id: input.id ?? stamp.id,
+    issueId: input.issueId ?? "",
+    author: input.author?.trim() || anonymousAuthor,
+    body: (input.body ?? "").trim(),
+    createdAt: stamp.now,
+  };
+}
+
+/** A blank display name is no name. */
+function writer(name: string | undefined): Pick<Issue, "updatedBy"> {
+  const trimmed = name?.trim();
+
+  return trimmed ? { updatedBy: trimmed } : {};
+}
+
+/** The first project of a new shared workspace. */
+export function starterProject(stamp: Stamp): Project {
+  return {
+    id: stamp.id,
+    name: "Getting started",
+    description: "Shared workspace — anyone with this link sees changes live.",
+    createdAt: stamp.now,
   };
 }
 
 /**
- * Materialize one workspace's state by folding its durable stream from the
- * beginning. Stateless by design: nothing outlives the request. Returns the
- * state plus the stream's head offset — the CAS token for appends conditioned
- * on exactly this state — or undefined when the workspace does not exist.
+ * The known demo workspace's first changes. "Streamsy Demo" starts with two
+ * issues in progress, one below the limit, so two tabs can race for the last
+ * place.
  */
-export async function materializeWorkspace(
-  streams: DemoStreams,
-  workspaceId: string,
-): Promise<{ state: WorkspaceState; headOffset: string } | undefined> {
-  const read = await streams.readAll(workspaceStreamId(workspaceId));
-  if (!read) return undefined;
+export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
+  const createdAt = stamp.now;
 
-  const state = new MaterializedState();
-  for (const event of read.events) {
-    state.apply(event);
-  }
-
-  return {
-    state: {
-      getProject: (projectId) => state.get<Project>("project", projectId),
-      getIssue: (issueId) => state.get<Issue>("issue", issueId),
-      hasProjects: () => state.getType("project").size > 0,
-    },
-    headOffset: read.headOffset,
-  };
-}
-
-/** Outcome of one mutation attempt against freshly materialized state. */
-export type MutationAttempt =
-  | { response: Response }
-  | { event: StateEvent; respond: (ack: { offset: string }) => Response };
-
-const maxMutationAttempts = 4;
-
-/**
- * Optimistic-concurrency mutation loop (CAS append with retry): materialize
- * the workspace, let the caller validate and build an event from that fresh
- * state, then append conditioned on the materialized head offset. If another
- * writer appended in between, re-materialize and retry — validation and the
- * event are rebuilt from the new state each attempt, so a successful CAS
- * proves validation ran against the exact state the event landed on. Correct
- * even across processes; production writers would add backoff/jitter.
- *
- * Validation outcomes (`{ response }`) are returned as-is and never retried.
- * Unknown workspaces yield 404; retry exhaustion yields 409.
- */
-export async function mutateWorkspace(
-  streams: DemoStreams,
-  workspaceId: string,
-  attempt: (state: WorkspaceState) => MutationAttempt,
-): Promise<Response> {
-  const streamId = workspaceStreamId(workspaceId);
-
-  for (let attemptNumber = 1; attemptNumber <= maxMutationAttempts; attemptNumber++) {
-    const materialized = await materializeWorkspace(streams, workspaceId);
-    if (!materialized) return notFound("Unknown workspace");
-
-    const outcome = attempt(materialized.state);
-    if ("response" in outcome) return outcome.response;
-
-    const result = await streams.appendEvent(streamId, outcome.event, materialized.headOffset);
-    if (result.status === "appended") {
-      return outcome.respond({ offset: result.offset });
-    }
-    if (result.status === "conflict" && result.conflictReason === "expected-offset") {
-      continue; // Lost the race; re-materialize and rebuild from the new head.
-    }
-    throw new Error(`Unable to append state event to ${streamId}: ${result.status}`);
-  }
-
-  return conflict("Concurrent updates, please retry");
-}
-
-// === Event builders ===
-
-export function projectUpsert(project: Project, txid?: TxId): StateEvent {
-  return issueTrackerState.projects.upsert({
-    value: project,
-    headers: eventHeaders(txid),
-  });
-}
-
-export function issueUpsert(issue: Issue, txid?: TxId): StateEvent {
-  return issueTrackerState.issues.upsert({
-    value: issue,
-    headers: eventHeaders(txid),
-  });
-}
-
-export function issueUpdate(issue: Issue, oldValue: Issue, txid?: TxId): StateEvent {
-  return issueTrackerState.issues.update({
-    value: issue,
-    oldValue,
-    headers: eventHeaders(txid),
-  });
-}
-
-export function commentUpsert(comment: Comment, txid?: TxId): StateEvent {
-  return issueTrackerState.comments.upsert({
-    value: comment,
-    headers: eventHeaders(txid),
-  });
-}
-
-// === Seeding ===
-
-async function appendSeedEvent(
-  streams: DemoStreams,
-  streamId: string,
-  event: StateEvent,
-  expectedOffset?: string,
-): Promise<void> {
-  const result = await streams.appendEvent(streamId, event, expectedOffset);
-  if (result.status !== "appended") {
-    throw new Error(`Unable to seed Streamsy stream ${streamId}: ${result.status}`);
-  }
-}
-
-/**
- * Ensure and seed the known demo workspace at boot. No-op when the stream
- * already holds projects (e.g. a hot reload of the server module).
- */
-export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
-  const streamId = workspaceStreamId(mainWorkspaceId);
-  await streams.ensureStream(streamId);
-
-  const materialized = await materializeWorkspace(streams, mainWorkspaceId);
-  if (!materialized || materialized.state.hasProjects()) return;
-
-  const createdAt = now();
-  const initialProjects: Project[] = [
+  const projects: Project[] = [
     {
       id: "proj_streamsy",
       name: "Streamsy Demo",
@@ -171,7 +215,7 @@ export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
     },
   ];
 
-  const initialIssues: Issue[] = [
+  const issues: Issue[] = [
     {
       id: "issue_bootstrap",
       projectId: "proj_streamsy",
@@ -189,6 +233,22 @@ export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
       updatedAt: createdAt,
     },
     {
+      id: "issue_filters",
+      projectId: "proj_streamsy",
+      title: "Filter issues by status with live queries",
+      status: "in_progress",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: "issue_names",
+      projectId: "proj_streamsy",
+      title: "Show who made each change",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
       id: "issue_article",
       projectId: "proj_docs",
       title: "Connect the demo to the Part 2 StreamDB article",
@@ -198,7 +258,7 @@ export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
     },
   ];
 
-  const initialComments: Comment[] = [
+  const comments: Comment[] = [
     {
       id: "comment_welcome",
       issueId: "issue_bootstrap",
@@ -208,75 +268,9 @@ export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
     },
   ];
 
-  const events: StateEvent[] = [
-    ...initialProjects.map((project) => projectUpsert(project)),
-    ...initialIssues.map((issue) => issueUpsert(issue)),
-    ...initialComments.map((comment) => commentUpsert(comment)),
+  return [
+    ...projects.map((project) => projectUpsert(project, stamp)),
+    ...issues.map((issue) => issueUpsert(issue, stamp)),
+    ...comments.map((comment) => commentUpsert(comment, stamp)),
   ];
-  for (const event of events) {
-    await appendSeedEvent(streams, streamId, event);
-  }
-}
-
-/**
- * Seed a freshly created shared workspace with one starter project so the
- * shareable link does not open onto a blank UI. The `ZERO_OFFSET` CAS is a
- * belt-and-braces assertion that the new stream is still empty.
- */
-export async function seedStarterProject(streams: DemoStreams, workspaceId: string): Promise<void> {
-  const project: Project = {
-    id: id("proj"),
-    name: "Getting started",
-    description: "Shared workspace — anyone with this link sees changes live.",
-    createdAt: now(),
-  };
-  await appendSeedEvent(
-    streams,
-    workspaceStreamId(workspaceId),
-    projectUpsert(project),
-    ZERO_OFFSET,
-  );
-}
-
-// === Entity builders ===
-
-export function newProject(input: Partial<Project>): Project {
-  return {
-    id: input.id ?? id("proj"),
-    name: String(input.name ?? "Untitled project").trim(),
-    description: String(input.description ?? "").trim(),
-    createdAt: input.createdAt ?? now(),
-  };
-}
-
-export function newIssue(input: Partial<Issue>): Issue {
-  const timestamp = now();
-  const createdAt = input.createdAt ?? timestamp;
-  return {
-    id: input.id ?? id("issue"),
-    projectId: String(input.projectId ?? ""),
-    title: String(input.title ?? "Untitled issue").trim(),
-    status: input.status ?? "open",
-    createdAt,
-    updatedAt: input.updatedAt ?? createdAt,
-  };
-}
-
-export function nextIssue(previous: Issue, input: Partial<Issue>): Issue {
-  return {
-    ...previous,
-    title: input.title === undefined ? previous.title : String(input.title).trim(),
-    status: input.status ?? previous.status,
-    updatedAt: input.updatedAt ?? now(),
-  };
-}
-
-export function newComment(input: Partial<Comment>): Comment {
-  return {
-    id: input.id ?? id("comment"),
-    issueId: String(input.issueId ?? ""),
-    author: String(input.author ?? "you").trim() || "you",
-    body: String(input.body ?? "").trim(),
-    createdAt: input.createdAt ?? now(),
-  };
 }

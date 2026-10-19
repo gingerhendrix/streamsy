@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"]
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/cloudflare.ts",
+    "src/cloudflare/**/*",
+    "src/alchemy.ts",
+    "test/support/cloudflare/**/*",
+    "test/support/alchemy/**/*",
+    "test/cloudflare/**/*",
+    "test/cloudflare-host.test.ts",
+    "test/cloudflare-lifecycle.test.ts",
+    "test/alchemy.test.ts",
+    "test/alchemy-runtime.test.ts"
+  ]
+}

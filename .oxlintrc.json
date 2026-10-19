@@ -1,12 +1,175 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
+  "extends": [
+    "./node_modules/@effect/tsgo/oxlint-presets/recommended.json",
+    "./node_modules/@effect/tsgo/oxlint-presets/effect-native.json"
+  ],
+  "plugins": ["typescript", "unicorn", "oxc", "effecttsgo"],
+  "options": {
+    "typeAware": true
+  },
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
   },
-  "rules": {},
   "env": {
     "builtin": true
-  }
+  },
+  "rules": {
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
+    "anti-slop/no-array-filter-map": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "error",
+    "anti-slop/no-shape-in-symbol-names": "error",
+    "anti-slop/no-unknown-parameters": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "anti-slop-effect/no-manual-effect-error-tag": "error",
+    "anti-slop-effect/no-manual-tag-comparison": "error",
+    "anti-slop-effect/no-manual-tagged-construction": "error",
+    "anti-slop-effect/no-service-constructor-imports": "error",
+    "anti-slop-effect/prefer-effect-match": "error",
+    "effect-idioms/no-tag-comparison": "error",
+    "effect-idioms/no-tag-destructure": "error",
+    "effect-idioms/no-tag-literal": "error",
+    "effect-idioms/no-tag-switch": "error",
+    // Effect 4 ships its HTTP, SQL, Reactivity and process modules only under
+    // `effect/unstable/*`, and Streamsy is built on them. No stable API exists
+    // to move to.
+    "effecttsgo/unstable-api-usage": "off",
+    // `schema-sync` flags every sync Schema call outside Effect, including
+    // module-level codecs and plain async browser code. `schema-sync-in-effect`
+    // stays on for the sync calls that do run inside an Effect.
+    "effecttsgo/schema-sync": "off",
+    // @effect/tsgo 0.53 added these rules to its presets. Together they report
+    // about 800 sites. Adopting them is a separate code-style change.
+    "effecttsgo/prefer-effect-array": "off",
+    "effecttsgo/prefer-effect-record": "off",
+    "effecttsgo/schema-class-missing-brand": "off"
+  },
+  "overrides": [
+    {
+      // The docs site and repository CLIs use their host APIs directly.
+      // Keep correctness and all other lint rules enabled.
+      "files": ["site/**", "scripts/**"],
+      "rules": {
+        "effecttsgo/abort-controller-in-effect": "off",
+        "effecttsgo/async-function": "off",
+        "effecttsgo/crypto-random-uuid": "off",
+        "effecttsgo/crypto-random-uuid-in-effect": "off",
+        "effecttsgo/extends-native-error": "off",
+        "effecttsgo/global-console": "off",
+        "effecttsgo/global-console-in-effect": "off",
+        "effecttsgo/global-date": "off",
+        "effecttsgo/global-date-in-effect": "off",
+        "effecttsgo/global-fetch": "off",
+        "effecttsgo/global-fetch-in-effect": "off",
+        "effecttsgo/global-random": "off",
+        "effecttsgo/global-random-in-effect": "off",
+        "effecttsgo/global-timers": "off",
+        "effecttsgo/global-timers-in-effect": "off",
+        "effecttsgo/instance-of-schema": "off",
+        "effecttsgo/new-promise": "off",
+        "effecttsgo/node-builtin-import": "off",
+        "effecttsgo/prefer-schema-over-json": "off",
+        "effecttsgo/process-env": "off",
+        "effecttsgo/process-env-in-effect": "off",
+        "effecttsgo/schema-sync": "off"
+      }
+    },
+    {
+      // External-host conformance fixtures own processes, scratch files and
+      // runner environment at the black-box HTTP boundary.
+      "files": [
+        "packages/conformance-tests/test/support/spawned-host.ts",
+        "packages/conformance-tests/test/sqlite.conformance.test.ts",
+        "packages/conformance-tests/test/workerd.conformance.test.ts"
+      ],
+      "rules": {
+        "effecttsgo/global-fetch": "off",
+        "effecttsgo/process-env": "off",
+        "effecttsgo/node-builtin-import": "off"
+      }
+    },
+    {
+      // Conformance artifact boundaries use native lstatSync to reject
+      // symlinks before they delete or publish files. Effect FileSystem stat
+      // follows symlinks, so it would weaken the check.
+      "files": [
+        "packages/conformance-tests/src/workerd-harness.ts",
+        "packages/conformance-tests/scripts/build-worker.ts"
+      ],
+      "rules": {
+        "effecttsgo/node-builtin-import": "off"
+      }
+    },
+    {
+      // The live e2e suite is a black-box check of deployed hosts. It reads
+      // runner environment and writes native evidence files.
+      "files": ["e2e/test/live.test.ts"],
+      "rules": {
+        "effecttsgo/node-builtin-import": "off",
+        "effecttsgo/process-env": "off",
+        "effecttsgo/process-env-in-effect": "off"
+      }
+    },
+    {
+      "files": ["packages/storage/test/support/do-worker.ts"],
+      "rules": {
+        "anti-slop-effect/no-service-constructor-imports": "off"
+      }
+    },
+    {
+      // Tests and test support assert encoded wire shapes, so they name `_tag` directly.
+      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/src/testing/**"],
+      "rules": {
+        "effect-idioms/no-tag-comparison": "off",
+        "effect-idioms/no-tag-destructure": "off",
+        "effect-idioms/no-tag-literal": "off",
+        "effect-idioms/no-tag-switch": "off",
+        "anti-slop-effect/no-manual-effect-error-tag": "off",
+        "anti-slop-effect/no-manual-tag-comparison": "off",
+        "anti-slop-effect/no-manual-tagged-construction": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**",
+    "tools/oxlint/**"
+  ],
+  "jsPlugins": [
+    {
+      "name": "anti-slop",
+      "specifier": "./tools/oxlint/anti-slop/index.ts"
+    },
+    {
+      "name": "anti-slop-effect",
+      "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
+    },
+    {
+      "name": "effect-idioms",
+      "specifier": "./tools/oxlint/effect-idioms/index.ts"
+    }
+  ]
 }

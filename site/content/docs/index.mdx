@@ -1,22 +1,52 @@
 ---
-title: Streamsy
-description: A Durable Streams server implementation and toolkit. Run anywhere, with pluggable backends and TypeScript interfaces for direct protocol access.
+title: Overview
+description: Streamsy is an Effect implementation of the Durable Streams protocol, with typed streams, projections, and hosts for Bun and Cloudflare.
 ---
 
-Streamsy is a toolkit for working with [Durable Streams](https://durablestreams.com).
+Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol.
 
-> Durable Streams are the data primitive for the agent loop.
+```ts
+import { Effect, Schema, Stream } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
 
-> Persistent, addressable, real‑time streams for building resilient agent sessions and collaborative multi-user, multi-agent systems.
+class Notes extends Streamsy.json<Notes>()("App/Notes", "notes", {
+  params: {},
+  schema: Schema.Struct({ text: Schema.String }),
+}) {}
 
-Streamsy provides a server implementation of the Durable Streams protocol with:
+const program = Effect.gen(function* () {
+  const notes = yield* Notes;
+  yield* notes.create({});
+  yield* notes.append({}, [{ text: "hello" }]);
+  return yield* notes.read({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runCollect,
+  );
+});
 
-- support for any runtime/framework that supports Web Standards `fetch`
-- pluggable storage backends with in-memory, SQLite, and Durable Object implementations
-- TypeScript interfaces for direct protocol access, including support for JSON mode with typed codecs and Standard Schema support
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Notes)))));
+```
 
-## Start here
+The stream class is a service key. The program asks for the service, and the Layer decides where the streams are kept.
 
-- [Basic usage](/docs/user/basic-usage) — compose a Durable Streams HTTP server, drive the protocol in-process, and choose a storage backend (memory / SQLite / Durable Object).
-- [JSON mode](/docs/user/json-mode) — typed JSON streams with `@streamsy/json` (codecs and Standard Schema).
-- [Durable State](/docs/user/durable-state) — typed change/control messages over collections with `@streamsy/state`.
+## Packages
+
+| Package                | Contents                                                                    |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `@streamsy/core`       | Stream classes, groups, the memory Layer, protocol routes, the remote Layer |
+| `@streamsy/storage`    | SQLite storage for Bun and for Durable Objects                              |
+| `@streamsy/projection` | Checkpointed projections over one or more streams                           |
+| `@streamsy/serve`      | Serve routes, Bun and Cloudflare hosts, and the action outbox               |
+
+## Sections
+
+| Section                          | Contents                                         |
+| -------------------------------- | ------------------------------------------------ |
+| [Tutorial](/docs/tutorial)       | One small application, from a stream to a deploy |
+| [Streams](/docs/streams/declare) | Declare, create, read, and write streams         |
+| [Projections](/docs/projections) | Derive streams and state from other streams      |
+| [HTTP](/docs/http/routes)        | Protocol routes, Serve routes, the remote client |
+| [Hosting](/docs/hosting)         | Layers, storage, Bun, and Cloudflare             |
+| [Demos](/docs/demos)             | Runnable example applications                    |
+
+Effect runs on the server. In the browser, use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client).

@@ -1,0 +1,173 @@
+---
+title: How projections work
+description: A projection reads input streams in checkpointed units and writes derived streams or state.
+---
+
+A projection reads one or more input streams and writes derived data. It works in units. Each unit reads a slice of each input, runs a handler, and commits a checkpoint. A restart continues from the last checkpoint.
+
+One pass:
+
+1. Load the checkpoint.
+2. Read each input after its checkpoint offset, in declaration order.
+3. Run the handler over the unit.
+4. Commit the checkpoint.
+
+## Constructors
+
+| Constructor                                             | One step  | Keeps a value | Emits to routes |
+| ------------------------------------------------------- | --------- | ------------- | --------------- |
+| [fold](/docs/projections/define#fold)                   | One entry | Yes           |                 |
+| [process](/docs/projections/define#process)             | One batch |               | Runs effects    |
+| [emit](/docs/projections/define#emit)                   | One entry |               | Yes             |
+| [mapAccum](/docs/projections/define#mapaccum)           | One entry | Yes           | Yes             |
+| [mapAccumBatch](/docs/projections/define#mapaccumbatch) | One batch | Yes           | Yes             |
+
+Choose the guarantee with [a Commit](/docs/projections/define#commits). `fold` defaults to `Commit.checkpoint`; other constructors require `commit:`.
+
+## Transactional outputs
+
+`Projection.emit` maps each entry to output items. With `Commit.transaction`, the handler runs inside a SQL transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
+
+```ts include projections-minimal
+// @filename: minimal.ts
+// ---cut---
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "doubled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const minimal = Effect.gen(function* () {
+  const numbers = yield* Numbers;
+  const doubled = yield* Doubled;
+  yield* numbers.create({});
+  yield* doubled.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  return yield* Projection.run(
+    Projection.emit({
+      id: "doubled",
+      params: {},
+      inputs: { input: Numbers },
+      outputs: { output: Doubled },
+      commit: Commit.transaction,
+      emit: ({ item }) => ({ output: [item * 2] }),
+    }).at({}),
+    { limit: 10 },
+  );
+});
+```
+
+One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/examples/minimal.ts`.
+
+## Output projections
+
+`Commit.producer` pins input ranges and output positions. The handler returns items for each route, and the runner appends them.
+
+```ts include projections-tripled
+// @include: projections-minimal
+// @filename: tripled.ts
+// ---cut---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+import { Numbers } from "./minimal.ts";
+
+export class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const tripled = Projection.emit({
+  id: "tripled",
+  params: {},
+  inputs: { input: Numbers },
+  outputs: { output: Tripled },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ output: [item * 3] }),
+});
+```
+
+| Output           | Items                     |
+| ---------------- | ------------------------- |
+| `Streamsy.json`  | Typed items               |
+| `Streamsy.state` | Durable State row changes |
+
+Each output append has its own producer position, so a retry does not write a unit twice.
+
+## State
+
+`fold`, `mapAccum`, and `mapAccumBatch` declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
+
+## Fact streams and state streams
+
+A fact stream records what happened. Each message is a domain event, appended once. Declare it with `Streamsy.json`.
+
+A state stream carries the current value of keyed rows as Durable State change events. Declare it with `Streamsy.state`. A browser reads it with `@durable-streams/state`.
+
+```json
+{
+  "type": "order",
+  "key": "o-17",
+  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
+  "headers": { "operation": "upsert" }
+}
+```
+
+A projection can rebuild a state stream from the facts.
+
+## Hosts
+
+Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transaction`, supplied only by SQL hosts. Provide the services over the storage Layer:
+
+| Storage                  | Projection Layers                               |
+| ------------------------ | ----------------------------------------------- |
+| `MemoryStorage.layer`    | `CheckpointStore.layer`                         |
+| SQLite storage (Bun, DO) | `CheckpointStore.layer` and `Transaction.layer` |
+
+```ts
+// @include: projections-tripled
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { CheckpointStore } from "@streamsy/projection";
+import { Numbers } from "./minimal.ts";
+import { Tripled } from "./tripled.ts";
+
+export const host = CheckpointStore.layer.pipe(
+  Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Numbers, Tripled))),
+);
+// ---cut-after---
+// The memory host runs `tripled`, and a SQL host runs `minimal`, with nothing left to provide.
+import { Effect } from "effect";
+import { Projection, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Doubled, minimal } from "./minimal.ts";
+import { tripled } from "./tripled.ts";
+const memory: Effect.Effect<unknown, unknown, never> = Projection.run(tripled.at({})).pipe(
+  Effect.provide(host),
+);
+const sqlHost = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Numbers, Doubled), { client: { filename: ":memory:" } }),
+  ),
+);
+const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.provide(sqlHost));
+```
+
+The memory host runs `tripled` with `Commit.producer`. The `minimal` transaction example needs a SQL host. See [Layers](/docs/projections/state#checkpoints-and-generations).
+
+## Pages
+
+| Page                                             | Contents                                              |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| [Define and run](/docs/projections/define)       | Declarations, handlers, guarantees, runners, triggers |
+| [State and checkpoints](/docs/projections/state) | State, read, decide, append, generations, faults      |
+| [Actions](/docs/projections/actions)             | External effects through a durable outbox             |

@@ -1,11 +1,7 @@
 {
   "name": "@streamsy/core",
-  "version": "0.2.1",
-  "description": "Public protocol and HTTP facades for Streamsy durable streams.",
-  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
-  "bugs": {
-    "url": "https://github.com/gingerhendrix/streamsy/issues"
-  },
+  "version": "0.3.0",
+  "description": "Effect-first Durable Streams protocol, storage contract, memory layer and toolkit.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,29 +9,70 @@
     "directory": "packages/core"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal/index.d.ts",
+      "import": "./dist/internal/index.js",
+      "default": "./dist/internal/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "import": "./dist/http/index.js",
+      "default": "./dist/http/index.js"
+    },
+    "./remote": {
+      "types": "./dist/remote/index.d.ts",
+      "import": "./dist/remote/index.js",
+      "default": "./dist/remote/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js",
+      "default": "./dist/protocol/index.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean",
+    "build": "tsdown src/index.ts src/internal/index.ts src/testing/index.ts src/http/index.ts src/remote/index.ts src/protocol/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle vitest",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest --run src"
+    "test:unit": "bun --bun vitest run --dir test"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/bun": "^1.4.3",
+    "effect": "4.0.5",
     "typescript": "catalog:",
-    "vitest": "^4.0.16"
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.5",
+    "vitest": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
+  },
+  "tsdown": {
+    "fixedExtension": false,
+    "tsconfig": "tsconfig.build.json"
   }
 }

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": [
+    "src/cloudflare.ts",
+    "src/cloudflare/**/*",
+    "src/alchemy.ts",
+    "test/support/cloudflare/**/*",
+    "test/support/alchemy/**/*"
+  ],
+  "exclude": ["node_modules", "dist", "test/support/cloudflare/harness.ts"]
+}

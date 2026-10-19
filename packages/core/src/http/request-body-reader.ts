@@ -1,26 +1,25 @@
-import { HttpResponseFactory } from "./responses.ts";
+import { Effect } from "effect";
+import type { HttpServerRequest } from "effect/http";
+import * as Responses from "./responses.ts";
 
 export type BodyReadResult =
   | { ok: true; data: Uint8Array; byteLength: number }
   | { ok: false; response: Response };
 
-export class RequestBodyReader {
-  constructor(
-    private maxMessageSize: number,
-    private responses: HttpResponseFactory,
-  ) {}
-
-  async read(request: Request): Promise<BodyReadResult> {
-    let data: ArrayBuffer;
-    try {
-      data = await request.arrayBuffer();
-    } catch (error) {
-      console.error("Error reading request body:", error);
-      return { ok: false, response: this.responses.payloadTooLarge() };
-    }
-    if (data.byteLength > this.maxMessageSize) {
-      return { ok: false, response: this.responses.payloadTooLarge() };
-    }
-    return { ok: true, data: new Uint8Array(data), byteLength: data.byteLength };
-  }
-}
+export const requestBodyReader = (maxMessageSize: number) => ({
+  read: Effect.fn("Http.readBody")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.fn.Return<BodyReadResult> {
+    return yield* request.arrayBuffer.pipe(
+      Effect.map((data): BodyReadResult =>
+        data.byteLength > maxMessageSize
+          ? { ok: false, response: Responses.payloadTooLarge() }
+          : { ok: true, data: new Uint8Array(data), byteLength: data.byteLength },
+      ),
+      Effect.orElseSucceed(() => ({
+        ok: false as const,
+        response: Responses.payloadTooLarge(),
+      })),
+    );
+  }),
+});

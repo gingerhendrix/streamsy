@@ -1,27 +1,15 @@
-/**
- * Memory-backed Durable Streams server (Bun)
- *
- * Demonstrates wiring createHttpHandler + createStreamProtocol + memory storage
- * on a Bun runtime. Used for running conformance tests.
- */
+import { BunRuntime } from "@effect/platform-bun";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
+import { Config, Effect, Layer } from "effect";
+import { Server } from "./server.ts";
 
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-} from "@streamsy/core";
+const Listener = Layer.unwrap(
+  Effect.map(Config.Port("PORT").pipe(Config.withDefault(1337)), (port) =>
+    listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
+  ),
+);
 
-const factory = createMemoryStorageAdapter();
-const protocol = createStreamProtocol({ storage: { adapter: factory } });
-const handler = createHttpHandler({ protocol, pathPrefix: "/" });
-
-const port = parseInt(process.env.PORT ?? "1337", 10);
-
-const server = Bun.serve({
-  port,
-  fetch: (req) => handler.fetch(req),
+BunRuntime.runMain(Layer.launch(Server.pipe(Layer.provide(Listener))), {
+  teardown: Serve.teardown,
 });
-
-console.log(`Memory server listening on http://localhost:${server.port}`);
-
-export { server };

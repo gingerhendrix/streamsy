@@ -1,0 +1,96 @@
+---
+title: Protocol routes
+description: Serve the Durable Streams protocol for a group of streams as an HttpRouter route Layer, with one access rule for each stream.
+---
+
+`Http.routes(group, options)` serves the Durable Streams protocol for a group as an Effect `HttpRouter` route Layer.
+
+```ts include routes-app
+// @filename: app.ts
+// ---cut---
+import { Layer, Schema } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+
+export class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+export class Scores extends Streamsy.json<Scores>()("Game/Scores", "scores", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export const game = Streamsy.group(Events, Scores);
+
+export const App = Layer.mergeAll(
+  Http.routes(game, {
+    prefix: "/streams",
+    access: (stream) => (stream === Events ? "append" : "read"),
+  }),
+);
+```
+
+The route Layer needs the service of each stream in the group. Provide a storage Layer for the group. To host it, see [Bun](/docs/hosting/bun) or [Cloudflare](/docs/hosting/cloudflare).
+
+## Options
+
+| Option            | Default    | Value                                                                 |
+| ----------------- | ---------- | --------------------------------------------------------------------- |
+| `access`          | (required) | One rule for the group, or a function from a stream class to its rule |
+| `prefix`          | `/`        | The path under which stream ids are served                            |
+| `maxMessageSize`  | 1 MiB      | The largest accepted message                                          |
+| `cacheVisibility` | `private`  | `private` or `public` in cache headers                                |
+| `sseDeadlineMs`   | 60,000     | The lifetime of one SSE response                                      |
+
+`/streams/` is the same as `/streams`. A request for the bare prefix answers 400. An id that no stream owns answers 404.
+
+## Access
+
+| Access   | Methods                               |
+| -------- | ------------------------------------- |
+| `read`   | GET, HEAD, OPTIONS                    |
+| `append` | GET, HEAD, POST, OPTIONS              |
+| `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
+
+A method that the rule does not allow answers 405 with an `allow` header.
+
+To serve every id, use `Streamsy.group(Streamsy.Wildcard)`, usually with `access: "full"`. The [memory server demo](/docs/demos/memory-server) does this.
+
+## Protocol
+
+| Method  | Operation                                          |
+| ------- | -------------------------------------------------- |
+| PUT     | Create, or fork with `Stream-Forked-From`          |
+| POST    | Append                                             |
+| GET     | Read. Add `live=long-poll` or `live=sse` to follow |
+| HEAD    | Metadata                                           |
+| DELETE  | Remove                                             |
+| OPTIONS | Preflight                                          |
+
+A long poll that times out answers 204 with a cursor. An SSE response ends at `sseDeadlineMs`, and the client reconnects from its last offset. See [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md).
+
+## Extensions
+
+`Stream-Expected-Offset` on POST is a Streamsy extension. The append runs only when the tail equals the header value. A miss writes nothing and answers 409, with the tail in `stream-next-offset`.
+
+## Web handler
+
+```ts
+// @include: routes-app
+// @filename: index.ts
+// ---cut---
+import { HttpRouter } from "effect/http";
+import { BunStorage } from "@streamsy/storage/bun";
+import { App, game } from "./app.ts";
+
+const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });
+
+const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage)), {
+  disableLogger: true,
+});
+// await web.handler(request)
+// await web.dispose() at shutdown
+```
+
+Effect converts the Request and Response. Call `dispose` at shutdown, also on failure.
+
+`Http.app` is the underlying `HttpEffect` over the generic protocol services, for protocol tools.

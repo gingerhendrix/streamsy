@@ -1,0 +1,24 @@
+{
+  "name": "@streamsy/test-support",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun --bun vitest run --dir test"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@streamsy/serve": "workspace:*",
+    "@types/bun": "^1.4.3",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

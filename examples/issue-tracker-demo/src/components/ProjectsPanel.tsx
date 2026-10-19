@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { Project } from "../../shared/types.ts";
+import type { Project } from "@streamsy/issue-tracker-demo-contract/types";
 
 export function ProjectsPanel({
   projects,
@@ -8,25 +8,21 @@ export function ProjectsPanel({
   onSelect,
   onCreate,
 }: {
-  projects: Project[];
+  projects: ReadonlyArray<Project>;
   selectedProjectId: string | undefined;
   issueCountByProject: Map<string, number>;
   onSelect: (projectId: string) => void;
-  onCreate: (project: Project) => Promise<void>;
+  onCreate: (name: string, description: string) => Promise<void>;
 }) {
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
 
+  // oxlint-disable-next-line effecttsgo/async-function -- React/browser callers await this Promise; preserve native rejection handling at this boundary.
   const submitNewProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
     if (!projectName.trim()) return;
-    const project: Project = {
-      id: `proj_${crypto.randomUUID().slice(0, 8)}`,
-      name: projectName.trim(),
-      description: projectDescription.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    await onCreate(project);
+    await onCreate(projectName.trim(), projectDescription.trim());
     setProjectName("");
     setProjectDescription("");
   };

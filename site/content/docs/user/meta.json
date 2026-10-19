@@ -1,4 +1,0 @@
-{
-  "title": "User docs",
-  "pages": ["basic-usage", "json-mode", "durable-state", "adapter-authoring"]
-}

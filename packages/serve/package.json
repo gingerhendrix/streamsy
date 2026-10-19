@@ -1,0 +1,129 @@
+{
+  "name": "@streamsy/serve",
+  "version": "0.3.0",
+  "description": "Effect HttpRouter routes, Bun, Node, Deno and Cloudflare hosts, and durable action delivery.",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./action": {
+      "types": "./dist/action/contract.d.ts",
+      "import": "./dist/action/contract.js",
+      "default": "./dist/action/contract.js"
+    },
+    "./action/errors": {
+      "types": "./dist/action/errors.d.ts",
+      "import": "./dist/action/errors.js",
+      "default": "./dist/action/errors.js"
+    },
+    "./action/outbox": {
+      "types": "./dist/action/outbox.d.ts",
+      "import": "./dist/action/outbox.js",
+      "default": "./dist/action/outbox.js"
+    },
+    "./action/runtime": {
+      "types": "./dist/action/runtime.d.ts",
+      "import": "./dist/action/runtime.js",
+      "default": "./dist/action/runtime.js"
+    },
+    "./action/sql": {
+      "types": "./dist/action/sql.d.ts",
+      "import": "./dist/action/sql.js",
+      "default": "./dist/action/sql.js"
+    },
+    "./bun": {
+      "types": "./dist/bun.d.ts",
+      "import": "./dist/bun.js",
+      "default": "./dist/bun.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "default": "./dist/node.js"
+    },
+    "./deno": {
+      "types": "./dist/deno.d.ts",
+      "import": "./dist/deno.js",
+      "default": "./dist/deno.js"
+    },
+    "./cloudflare": {
+      "types": "./dist/cloudflare.d.ts",
+      "import": "./dist/cloudflare.js",
+      "default": "./dist/cloudflare.js"
+    },
+    "./alchemy": {
+      "types": "./dist/alchemy.d.ts",
+      "import": "./dist/alchemy.js",
+      "default": "./dist/alchemy.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js",
+      "default": "./dist/contract.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/contract.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sql.ts src/bun.ts src/node.ts src/deno.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.cloudflare-tests.json --noEmit",
+    "test:unit": "bun --bun vitest run --dir test",
+    "test:dialects": "bun --bun vitest run test/action/outbox-dialects.test.ts"
+  },
+  "dependencies": {
+    "@streamsy/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-deno": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-do": "4.0.5",
+    "@effect/vitest": "catalog:",
+    "@streamsy/storage": "workspace:*",
+    "@types/bun": "^1.4.3",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
+    "miniflare": "4.20260730.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "^4.0.5",
+    "@effect/platform-deno": "^4.0.5",
+    "@effect/platform-node": "^4.0.5",
+    "alchemy": "^2.0.0-beta.83",
+    "effect": "^4.0.5"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-deno": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "alchemy": {
+      "optional": true
+    }
+  },
+  "tsdown": {
+    "fixedExtension": false,
+    "tsconfig": "tsconfig.build.json"
+  }
+}

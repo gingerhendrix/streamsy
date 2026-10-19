@@ -1,0 +1,54 @@
+/** Human-readable rendering of durable Fold entries, shared by the CLI commands. */
+import type { LogEntry } from "@humanlayer/fold-core";
+import { Match, Predicate, Schema } from "effect";
+
+const preview = (text: string, limit = 110): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+
+  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
+};
+
+/**
+ * Effect AI encodes a message whose content is plain text as a bare string, and
+ * anything richer as an array of parts. Normalize both to a rendered string.
+ */
+const renderContent = <Part extends { readonly type: string }>(
+  content: string | ReadonlyArray<Part>,
+  part: (value: Part) => string,
+): string => (Predicate.isString(content) ? content : content.map(part).join(" "));
+
+const detail = (entry: LogEntry): string =>
+  Match.value(entry).pipe(
+    Match.tags({
+      session_started: (started) => `session=${started.sessionId} root=${started.rootAgentId}`,
+      "user-message": (user) =>
+        renderContent(user.message.content, (part) =>
+          part.type === "text" ? part.text : `<${part.type}>`,
+        ),
+      "assistant-message": (assistant) =>
+        renderContent(assistant.message.content, (part) =>
+          Match.value(part).pipe(
+            Match.discriminators("type")({
+              text: (text) => text.text,
+              "tool-call": (call) =>
+                `calls ${call.name}(${Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(call.params)})`,
+            }),
+            Match.orElse((other) => `<${other.type}>`),
+          ),
+        ),
+      "tool-result": (tool) =>
+        renderContent(tool.message.content, (part) =>
+          part.type === "tool-result"
+            ? `${part.name} -> ${Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(part.result)}`
+            : `<${part.type}>`,
+        ),
+      "agent-finished": (finished) =>
+        `${finished.outcome}${finished.resultText === null ? "" : `: ${finished.resultText}`}`,
+      "model-change": (change) => `${change.model.providerId}/${change.model.modelId}`,
+    }),
+    Match.orElse(() => ""),
+  );
+
+/** A one-line summary of one durable entry: its sequence, tag, and a short gist. */
+export const formatEntry = (entry: LogEntry): string =>
+  `${String(entry.seq).padStart(3, " ")}  ${entry._tag.padEnd(20, " ")} ${preview(detail(entry))}`;

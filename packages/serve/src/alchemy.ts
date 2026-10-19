@@ -1,0 +1,111 @@
+import type { Storage, StorageFault } from "@streamsy/core";
+import {
+  acquireObject,
+  providedApp,
+  unavailable,
+  type ObjectApp,
+  type ObjectServices,
+} from "./cloudflare/object-runtime.ts";
+import type { AlarmSlot } from "./cloudflare/alarm.ts";
+import type { Wakeup } from "./cloudflare/wakeup.ts";
+import type { DurableObject } from "alchemy/Cloudflare";
+import { Effect, Option, type Layer, type Scope } from "effect";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+  HttpServerRespondable,
+} from "effect/http";
+import type { HttpServerError } from "effect/http/HttpServerError";
+import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http";
+import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
+import { resolvePlacement } from "./cloudflare/router.ts";
+
+export { Wakeup, Wakeups, type WakeupProgress } from "./cloudflare/wakeup.ts";
+
+export { alarmSlotLayer } from "./cloudflare/alarm.ts";
+
+export { Placement };
+
+export { rule } from "./cloudflare/placement.ts";
+
+/** An Alchemy HttpEffect; authenticate before evaluating this router. */
+export const router = (options: {
+  readonly objects: Pick<DurableObject, "getByName">;
+  readonly prefix?: `/${string}`;
+  readonly placement?: PlacementType;
+}): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  HttpServerError,
+  HttpServerRequest.HttpServerRequest
+> => {
+  const path = protocolPath(options.prefix);
+  const placement = options.placement ?? Placement.byStream();
+
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const pathname = new URL(request.url, "https://streamsy.internal").pathname;
+    const streamPath = path.strip(pathname);
+
+    if (!streamPath || streamPath === pathname) {
+      return HttpServerResponse.text(`Stream path required: ${path.requiredPathPattern()}`, {
+        status: 400,
+        headers: securityHeaders,
+      });
+    }
+
+    const child = resolvePlacement(placement, streamPath);
+
+    if (!child.ok) {
+      return HttpServerResponse.fromWeb(child.response);
+    }
+
+    return yield* options.objects.getByName(child.name).fetch(request);
+  });
+};
+
+export type ObjectHandlers = {
+  readonly fetch: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    HttpServerRequest.HttpServerRequest
+  >;
+  readonly alarm: () => Effect.Effect<void>;
+};
+
+export function objectHandlers<R = never>(options: {
+  readonly app: ObjectApp<R>;
+  readonly layer: Layer.Layer<Storage | AlarmSlot | R, StorageFault>;
+  readonly wakeups?: ReadonlyArray<Wakeup<ObjectServices<R>>>;
+}): Effect.Effect<ObjectHandlers, never, Scope.Scope> {
+  return Effect.gen(function* () {
+    const get = yield* acquireObject(
+      options.layer,
+      (context, alarm) =>
+        Effect.gen(function* () {
+          const fetch = yield* HttpRouter.toHttpEffect(providedApp(options.app, context));
+
+          return {
+            fetch: fetch.pipe(Effect.scoped, Effect.catch(HttpServerRespondable.toResponse)),
+            alarm: alarm.pipe(Effect.provide(context)),
+          };
+        }),
+      options.wakeups,
+    );
+
+    return {
+      fetch: Effect.flatMap(
+        get.pipe(
+          Effect.asSome,
+          Effect.catch(() => Effect.succeedNone),
+          Effect.catchDefect(() => Effect.succeedNone),
+        ),
+        (compiled) =>
+          Option.isSome(compiled) ? compiled.value.fetch : Effect.succeed(unavailable()),
+      ),
+      alarm: () =>
+        // Acquisition failed, so no reconcile ran. Platform retry is the only re-arm.
+        Effect.flatMap(get, (compiled) => compiled.alarm).pipe(Effect.orDie),
+    };
+  });
+}

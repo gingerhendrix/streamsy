@@ -1,28 +1,22 @@
-import type { BunRequest } from "bun";
-import type { Project } from "../../shared/types.ts";
-import { isValidWorkspaceId } from "../config.ts";
-import { mutateWorkspace, newProject, projectUpsert } from "../state.ts";
-import type { DemoStreams } from "../streams.ts";
-import { badRequest, json, type MutationBody } from "../utils.ts";
+import { Effect } from "effect";
+import { HttpApiBuilder } from "effect/http-api";
+import { IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
+import { IssueTracker } from "../issue-tracker.ts";
+import { createProject } from "../state.ts";
+import { apiErrors } from "./errors.ts";
 
-export function projectRoutes(streams: DemoStreams) {
-  return {
-    "/api/w/:ws/projects": {
-      async POST(request: BunRequest<"/api/w/:ws/projects">): Promise<Response> {
-        const workspaceId = request.params.ws;
-        if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
+export const ProjectsLive = HttpApiBuilder.group(IssueTrackerApi, "projects", (handlers) =>
+  Effect.gen(function* () {
+    const tracker = yield* IssueTracker;
 
-        const body = (await request.json()) as MutationBody<Project>;
-        return mutateWorkspace(streams, workspaceId, () => {
-          const project = newProject(body);
-          const event = projectUpsert(project, body.txid);
-          return {
-            event,
-            respond: ({ offset }) =>
-              json({ project, awaitOffset: offset, txid: event.headers.txid }, { status: 201 }),
-          };
-        });
-      },
-    },
-  };
-}
+    return handlers.handle(
+      "create",
+      Effect.fn("projects.create")(function* ({ params, payload }) {
+        const stamp = yield* tracker.stamp("proj", payload.txid);
+        const written = yield* tracker.mutate(params.ws, createProject(payload, stamp));
+
+        return { project: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
+      }, apiErrors),
+    );
+  }),
+);

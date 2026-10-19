@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@cloudflare/workers-types": ["./test/support/cloudflare/workers-types-test.d.ts"]
+    }
+  },
+  "include": [
+    "test/cloudflare/**/*.test.ts",
+    "test/cloudflare-host.test.ts",
+    "test/cloudflare-lifecycle.test.ts",
+    "test/alchemy.test.ts",
+    "test/alchemy-runtime.test.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

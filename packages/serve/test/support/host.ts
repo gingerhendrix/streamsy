@@ -1,0 +1,17 @@
+import { Effect } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { request } from "./http.ts";
+import { testHost } from "./scoped-host.ts";
+
+const host = await Effect.runPromise(testHost({ layer: MemoryStorage.layerProtocol(), port: 0 }));
+
+try {
+  const response = await request(new URL("/streams/events", host.url), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+  });
+
+  if (response.status !== 201) throw new Error(`Create failed: ${response.status}`);
+} finally {
+  await Effect.runPromise(host.stop);
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@streamsy/docs-snippets",
+  "private": true,
+  "description": "Dependencies and shared modules for the type-checked code blocks in site/content/docs.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/platform-bun": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "@types/bun": "^1.4.3",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

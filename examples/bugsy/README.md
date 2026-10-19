@@ -1,0 +1,110 @@
+# Bugsy
+
+This example combines five workspace inputs in two checkpointed projections.
+Commands use an in-memory fold command view to check known issues, status and the
+next sequence, then append canonical facts through `transact`. Responses contain
+`commandId`, `event` and the event `offset`. The host watches the SQL rows and
+outputs with one writer per key. Clients wait for the outputs to catch up before
+reading their rows. Startup attempts to catch up each configured address before accepting requests.
+Startup and watcher failures are logged with the projection key and do not stop other
+addresses or the server. A failed address can serve stale rows and a stale summary until
+repaired; a terminated watcher does not automatically restart.
+
+```bash
+bun run --cwd examples/bugsy start
+bun run smoke:bugsy
+bun run app:bugsy
+bun run smoke:bugsy-serve
+BUGSY_DB=tracker.sqlite bun run --cwd examples/bugsy run:once acme
+```
+
+`server/config.ts` reads the settings with `Config`. `PORT` defaults to `1340`.
+`BUGSY_WORKSPACES` is the comma-separated fixed address list and
+defaults to `acme,live`.
+
+The server keeps streams, checkpoints and application tables in one database:
+
+| Set                  | Database                                                               |
+| -------------------- | ---------------------------------------------------------------------- |
+| `STREAMSY_PG_URL`    | Postgres at that URL (`@effect/sql-pg`)                                |
+| `STREAMSY_MYSQL_URL` | MySQL at that URL (`@effect/sql-mysql2`)                               |
+| neither              | Bun SQLite at `BUGSY_DB` (default: `/tmp/streamsy-bugsy-<pid>.sqlite`) |
+
+Setting both URLs is an error. The server creates its tables at startup. Give
+it a database of its own. `hostLayer` and `applicationLayer` in `server/host.ts`
+take a storage Layer: `sqliteStorage(filename)` for Bun SQLite, or
+`sqlStorage(makeClient)` over any SQL client.
+
+`smoke:bugsy` uses the same config, so it runs against Postgres or MySQL
+when a URL is set, and restarts the server on that database. Start from an
+empty database. `smoke:bugsy-serve`, `app:bugsy` and `run:once`
+use SQLite only; run them with no URL set.
+
+```bash
+bun run db:up
+STREAMSY_PG_URL=postgres://streamsy:streamsy@127.0.0.1:54329/<empty database> bun run smoke:bugsy
+```
+
+`bun run --cwd examples/bugsy test:dialects` runs the application SQL
+(schema, upserts, the label sequence rule, ignored duplicates, catalog deletes)
+on SQLite, and on Postgres and MySQL when their URLs are set. It makes and drops
+its own database on each server. It is not part of `test:unit`.
+
+The server composes protocol, command and declared output routes with `Layer.mergeAll`
+and runs `Serve.layer` with a scoped Bun listener under `BunRuntime.runMain`.
+SIGINT or SIGTERM closes the launched scope: live reads drain, then the listener and
+storage close, and `Serve.teardown` exits 0. The routes are:
+
+| Route                                                       | Result                                            |
+| ----------------------------------------------------------- | ------------------------------------------------- |
+| `/streams/*`                                                | Durable Streams protocol                          |
+| `POST /api/workspaces/:workspaceId/commands`                | Create, status and assign commands                |
+| `GET /api/workspaces/:workspaceId/status`                   | SQL projection checkpoint offsets                 |
+| `GET /api/workspaces/:workspaceId/drafts`                   | SQL notification drafts                           |
+| `/state/workspaces/:workspaceId/issues?offset=-1`           | `board` Durable State changes, keyed by `issueId` |
+| `/state/workspaces/:workspaceId/label-counts?offset=-1`     | `labelCounts` changes, keyed by `labelId`         |
+| `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts, retaining their event ids   |
+| `/workspaces/:workspaceId/summary`                          | Compact counts, with ETag and conditional 304     |
+
+The old `/api/.../issues` and `/api/.../changes` reads are replaced by the board and
+transition routes. State readers start at `-1`, apply upserts/deletes, and follow
+`stream-next-offset` until `stream-up-to-date`. There is no snapshot; retained history
+and replay cost grow. Reads do not run projections: missing output streams return 404.
+A workspace with no saved `tracker` checkpoint, including one outside the runner list,
+has a summary with zero counts, because `Projection.read` returns the initial value.
+The raw protocol routes are open in this local demo; there is no authentication.
+
+The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
+`issue_changes`, and `notification_drafts`. `issueRows` uses `Projection.process` with `Commit.transaction` to write
+those tables and its checkpoint through the same SQL transaction. The separate
+`tracker` uses `Projection.mapAccumBatch` with `Commit.producer`: `Board` and
+`LabelCounts` are `Streamsy.state` routes, `Transitions` is a `Streamsy.json` route,
+and the workspace value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
+Projection checkpoints, with offsets and the persisted value, sit in the storage
+table `streamsy_owner_records`. The command path still reads facts rather than the projection state.
+
+`ProjectBoardCard` extends the issue row with label ids and nullable project/assignee
+names. Label counts count attached memberships of existing issues for each catalog
+label, including zero counts; deleting a catalog label emits
+`DurableState.remove("labelCounts", labelId)` without `old_value`. Membership ids remain on cards until a detach fact arrives.
+`IssueTransition` uses the existing `IssueEvent` schema, excluding stale facts rejected
+by the sequence fold. The `workspace` value uses `WorkspaceState` to retain source rows
+and membership tombstones for deterministic replay. The full fold state stays private
+to the server. A handler maps `Projection.read` to `WorkspaceSummary`:
+`workspaceId`, `issueCount`, `doneCount`, `labelCount`, and `projectCount`. Counts of
+labels and projects are catalog row counts. Count-neutral changes preserve its ETag.
+The encoded state still grows with workspace size and is rewritten per unit and decoded
+per summary read.
+
+Both projections apply catalog deletes, including key-only deletes, in the address's
+workspace. SQL catalog upserts use the address workspace too. A catalog value naming
+a different workspace fails with `CatalogWorkspaceMismatch`, naming both workspaces;
+SQL writes in that unit roll back and checkpoints do not advance. Such malformed
+input requires operator repair/rebuild; valid key-only deletes do not stop progress.
+
+The named fold uses only the pinned batch and prior value, never mutable SQL rows.
+SQL and output checkpoints are independent, and there is no atomicity across outputs
+or across the two projections. A command can be accepted before projection failure;
+this demo does not add command idempotency. The new `smoke:bugsy-serve` script
+(package-local `smoke:serve`) checks rows, a key-only delete, transitions, summary
+ETags/304, restart on the same SQLite file, and another command after restart. Client bindings remain a later slice.

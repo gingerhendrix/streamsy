@@ -1,216 +1,155 @@
-# Streamsy Issue Tracker Demo
+# Issue tracker demo
 
-A small application-level demo: use **Streamsy** as the append-only durable transport for an
-issue tracker, while sharing the official **Durable State** schema, materialization helpers, and
-the **StreamDB / TanStack DB** client path. The app shows project/issue/comment state, with
-optimistic local writes, without writing a bespoke sync engine.
+A complete Streamsy application with an Effect backend. An `HttpApi` handler
+reads the workspace stream from the beginning, folds it into Durable State,
+validates the mutation, and appends one conditional change. The browser replays
+that same stream into TanStack DB with `@durable-streams/state/db`.
 
-The demo is built around **shareable links for multi-user sync**: click "New shared workspace" to
-get a fresh workspace with its own durable stream and a URL (`?w=<id>`) you can copy and share.
-Anyone who opens that link syncs to the same workspace stream live — no accounts, no rooms
-machinery, just a stream per workspace.
+![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Serve.mount serves the stream read-only, and createStreamDB follows it in the browser.](../../site/assets/docs/demos/issue-tracker-demo-architecture.svg)
 
-## The Durable State + StreamDB story
-
-```text
-   browser form            Bun API server                 Streamsy stream            browser StreamDB
-  (optimistic write)  (stateless: materialize/request)   (durable transport)         (TanStack DB view)
-        │                       │                              │                            │
-        │ POST /api/w/:ws/issues│                              │                            │
-        ├──────────────────────▶│                              │                            │
-        │                       │  1. materialize workspace ◀──┤  /streams/workspace/<id>   │
-        │                       │     state from the stream    │                            │
-        │                       │  2. validate + build Durable │                            │
-        │                       │     State ChangeEvent        │                            │
-        │                       │  3. CAS append at the        │                            │
-        │                       │     materialized head ──────▶│  (retry on conflict)       │
-        │  201 { txid, offset } │                              │   live read (long-poll) ──▶│ createStreamDB
-        │◀──────────────────────┤                              │                            │ replays events
-        │                       │                              │                            │ into collections
-        │   awaitTxId(txid) reconciles the optimistic write once the event round-trips ─────▶│
-```
-
-The **same Durable State `ChangeEvent`** is the unit of truth on both sides:
-
-- the server appends it to the workspace's Streamsy stream;
-- the browser replays it from the stream into StreamDB / TanStack DB collections.
-
-There is no snapshot endpoint, no custom stream-materialization adapter, and no server-side
-database — the durable stream _is_ the database log, for the server too.
-
-## Shareable workspaces
-
-- **Known workspace**: `main` is the one hardcoded workspace — always present, seeded with demo
-  data at boot, and the default when no `?w=` param is set.
-- **Shared workspaces**: `POST /api/workspaces` creates a fresh workspace stream with a
-  server-generated random id (10 base36 chars) and seeds a "Getting started" project. The client
-  navigates to `?w=<id>`; the URL is the shareable artifact.
-- **Existence = stream existence**: a workspace exists iff its stream
-  (`/streams/workspace/<id>`) exists. There is no registry and deliberately no way to enumerate
-  workspaces — a link is unguessable-ish by construction. That is a property of the design, not a
-  security boundary; this is a demo.
-- **Multi-user sync needs nothing new**: every client on the same `?w=` subscribes to the same
-  stream and folds the same events. For a local dev server, "second browser or incognito window"
-  is the honest multi-user story; sharing across machines requires the server to be reachable by
-  the other user.
-- **Memory storage caveat**: the demo uses Streamsy's in-memory storage, so shareable links die
-  with the server process. Swapping in the SQLite adapter would make links survive restarts.
-
-## What it demonstrates
-
-- **Backend**: one Bun server (`server/`) — per-resource API route objects (`server/routes/`),
-  workspace creation (`workspaces.ts`), Streamsy stream serving (`streams.ts`), Bun fullstack SPA
-  serving (the `public/index.html` route), and per-request state materialization (`state.ts`).
-- **Transport**: Streamsy (`@streamsy/core` + the in-memory storage factory) serves one durable
-  stream per workspace at `/streams/workspace/<id>` from the same Bun process via
-  `createHttpHandler`.
-- **Stateless server with optimistic concurrency**: there is no long-lived server-side state.
-  Each mutation materializes the workspace's `MaterializedState` by folding its stream from the
-  beginning, validates against that fresh state, and appends the new event with Streamsy's
-  `expectedOffset` CAS precondition at the materialized head. If another writer (a second user on
-  the same link) appended in between, the handler re-materializes and retries — so validation
-  provably ran against the exact state each event landed on, even across processes. Retry
-  exhaustion returns 409. Materialization is O(events) per request — fine for a demo; snapshots/
-  compaction are the real fix at scale. Production writers would also add backoff/jitter.
-- **State events**: each project, issue, or comment mutation appends a Durable State JSON event:
-
-  ```json
-  {
-    "type": "issue",
-    "key": "issue_123",
-    "value": { "id": "issue_123", "status": "done", "title": "..." },
-    "old_value": { "id": "issue_123", "status": "open", "title": "..." },
-    "headers": { "operation": "update", "txid": "...", "timestamp": "..." }
-  }
-  ```
-
-  `upsert` events carry only `value`; `update` events also carry `old_value` for replication.
-
-- **Frontend**: React, bundled and served by Bun's fullstack server (an `index.html` import passed
-  to `Bun.serve` routes — no Vite, no separate dev server). The workspace comes from `?w=`;
-  switching workspace is a full navigation, which keeps the StreamDB lifecycle trivial.
-- **Client DB**: `createStreamDB` from `@durable-streams/state/db` builds StreamDB collections
-  (`projects`, `issues`, `comments`) directly from the workspace's durable stream, with optimistic
-  `onMutate` actions reconciled by `awaitTxId`.
-
-### Package layout note (`@durable-streams/state` 0.3.x)
-
-`@durable-streams/state` 0.3 split its entry points so framework-agnostic state code does not pull
-in TanStack DB:
-
-| Import                      | Used by                                              | Provides                                                |
-| --------------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `@durable-streams/state`    | server (`server/state.ts`, `shared/state-schema.ts`) | `createStateSchema`, `MaterializedState`, `ChangeEvent` |
-| `@durable-streams/state/db` | browser client (`src/db.ts`)                         | `createStreamDB`, `StreamDB`, TanStack DB bindings      |
-
-`@tanstack/db` is now a peer dependency of `@durable-streams/state`, so this demo declares it
-directly.
-
-## Project layout
-
-The folder structure follows the [Bun fullstack dev server best practices](https://bun.com/docs/bundler/fullstack):
-frontend in `src/`, HTML entrypoints in `public/`, server in `server/` with per-resource route
-modules. Code shared by both sides (the Durable State schema and entity types) lives in `shared/`.
-
-```text
-issue-tracker-demo/
-├── public/
-│   └── index.html          # HTML entrypoint, imported by the server as a route
-├── src/                    # frontend (bundled by Bun from index.html)
-│   ├── components/         # incl. ShareControls.tsx (new workspace + copy link)
-│   ├── styles/globals.css
-│   ├── utils/format.ts
-│   ├── utils/workspace.ts  # ?w= param, navigation, create-workspace API call
-│   ├── App.tsx             # keys the db lifecycle on the workspace id
-│   ├── db.ts               # StreamDB / TanStack DB collections + optimistic actions
-│   └── main.tsx
-├── server/
-│   ├── routes/             # Bun route objects, one module per resource
-│   │   ├── projects.ts     # POST /api/w/:ws/projects
-│   │   ├── issues.ts       # POST /api/w/:ws/issues, PATCH /api/w/:ws/issues/:id
-│   │   └── comments.ts     # POST /api/w/:ws/comments
-│   ├── config.ts           # workspace ids: pattern, generator, stream naming
-│   ├── state.ts            # per-request materialization + CAS mutation retry loop
-│   ├── streams.ts          # multi-stream Streamsy access + /streams HTTP handler
-│   ├── workspaces.ts       # POST /api/workspaces (create + seed starter project)
-│   ├── utils.ts            # json/error response helpers
-│   └── index.ts            # Bun.serve with routes + development options
-├── shared/
-│   ├── state-schema.ts     # Durable State schema (zod), used by both sides
-│   └── types.ts
-└── scripts/http-smoke.ts
-```
-
-API endpoints are plain `Bun.serve` route objects — exact and parameterized paths with
-per-HTTP-method handlers (`req.params.ws` / `req.params.id` via `BunRequest`) — instead of a
-hand-rolled router. Unknown `/api/*` paths return a JSON 404; everything else falls back to the
-bundled SPA. In development the server enables `development: { hmr: true, console: true }`, so the
-client hot-reloads and browser console logs are echoed to the terminal.
+The [guide](https://streamsy.dev/docs/demos/issue-tracker) explains each
+numbered step with excerpts from this folder.
 
 ## Run it
 
 From the repository root:
 
 ```bash
-bun install
-bun --cwd examples/issue-tracker-demo run dev
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/issue-tracker-demo dev
 ```
 
-Open `http://localhost:1338`. One Bun process serves everything: the React app (bundled on the
-fly from `public/index.html`, with HMR in development), the `/api` mutation endpoints, and the
-per-workspace durable streams under `/streams/workspace/`. `--hot` also hot-reloads the server
-code.
+Open <http://localhost:1338>. The seeded `main` workspace is ready immediately;
+the share control creates isolated workspaces with their own stream.
 
-To try the multi-user premise end to end: click **New shared workspace**, **Copy link**, open the
-link in a second browser or incognito window, then create an issue in one window and watch it
-appear live in the other. The `main` demo workspace is unaffected.
+| Variable           | Default       | Meaning                                               |
+| ------------------ | ------------- | ----------------------------------------------------- |
+| `PORT`             | `1338`        | HTTP port                                             |
+| `ISSUE_TRACKER_DB` | unset         | SQLite file; unset keeps a process-local store        |
+| `NODE_ENV`         | `development` | `production` turns off hot reload and console echoing |
 
-For production-style serving (minified client assets, in-memory caching, no HMR):
+## The product
+
+This app is the base for a family of variants. Each variant changes one side,
+the server or the browser, and keeps this product and its wire contract.
+
+- A seeded `main` workspace has two projects, five issues and one comment.
+  "Streamsy Demo" has two of its three in-progress places taken.
+- Create projects and issues. Rename an issue inline. Set its status. Comment.
+- Filter the issue list by status. Each filter shows its count.
+- Set a display name. It shows on your comments and as the last writer of an
+  issue. The browser keeps it in `localStorage`.
+- A project can have at most three issues in progress. The server refuses a
+  fourth with HTTP 422 and the `WipLimitReached` tag.
+- A local change shows at once, faded, and turns solid when the stream confirms
+  it. A refused change goes away, and a short message says why.
+- An "Offline" badge shows while the page cannot reach the stream.
+- The server stamps every time field. The API ignores times in a body.
+
+### Try it by hand
+
+Every variant must pass this script.
+
+1. Open `main`. See two projects, five issues and one comment.
+2. Set a display name. Add a comment. The comment shows the name.
+3. Create a project. It becomes selected. Add an issue. It shows at once,
+   faded, then solid.
+4. Rename the issue. Change its status. Filter by status. The counts change.
+5. Open the same URL in a second tab. Each change in one tab shows in the other.
+6. In "Streamsy Demo", move a different issue to "In progress" in each tab at
+   the same time. One change stays. The other rolls back with a message.
+7. Create a shared workspace. Open its link in a new tab. It shows only its
+   starter project.
+8. With `ISSUE_TRACKER_DB` set, restart the server. All data is still there.
+
+## Persistence
+
+Set `ISSUE_TRACKER_DB` when state should survive a server restart:
 
 ```bash
-bun --cwd examples/issue-tracker-demo run start
+ISSUE_TRACKER_DB=.data/issues.sqlite bun run --cwd examples/issue-tracker-demo dev
 ```
 
-## Smoke test
+Create the parent directory before starting the server.
 
-A headless smoke test exercises the full mutation + durable-read contract on the known workspace
-(create project, reject an issue with an unknown project, create issue, update status, comment,
-then replay the stream), plus the shareable-workspace surface: workspace creation and starter
-seeding, isolation between workspaces (cross-workspace references are rejected), unknown/malformed
-workspace ids, parallel writes converging through the CAS retry loop with no lost updates, and a
-direct `Stream-Expected-Offset` conflict probe over HTTP.
+## How it works
 
-From the repository root:
+`server/index.ts` is one layer graph, launched with
+`BunRuntime.runMain(Layer.launch(...), { teardown: Serve.teardown })`. `Config` reads `PORT`,
+`ISSUE_TRACKER_DB` and `NODE_ENV`. The graph opens storage, builds the
+`IssueTracker` service, seeds the `main` workspace, and then starts the
+listener. `BunHttpServer.layer` keeps Bun's HTML bundle and hot reload for
+`/*`; `/api` and `/streams` fall through to one Effect `HttpRouter`. That
+router holds two things: `HttpApiBuilder.layer(IssueTrackerApi)` for the JSON
+API, and `Serve.mount(Workspaces, "/streams/workspace/:workspaceId")` from
+`@streamsy/serve` for the read-only Durable State route. `Serve.layer` serves
+that router. On SIGINT or SIGTERM it answers parked long polls with 204, the
+listener stops, storage closes last, and the process exits 0.
+
+The wire contract lives in the private workspace package
+[`@streamsy/issue-tracker-demo-contract`](../issue-tracker-demo-contract), so
+the variants import the same schemas. Its `api.ts` declares `IssueTrackerApi`:
+one group each for workspaces, projects, issues and comments. Effect schemas in
+its `api-schema.ts` check the workspace id, the partial entity body and its
+optional `txid`, and describe the success bodies and the `{ "error": string }`
+error bodies. The same entity schemas in its `state-schema.ts` type the stream
+collections on the server and, through `Schema.toStandardSchemaV1`, the
+StreamDB collections in the browser.
+
+`IssueTracker.mutate` is the read, decide, append recipe in one
+`Workspaces.decide` call: fold the workspace's State changes, validate against
+the resulting view, and append with `expectedOffset`. `decide` retries on an
+`OffsetMismatch` only, so parallel writers cannot silently overwrite one
+another; after three retries the API answers 409. The validation rules in `server/state.ts` return
+the change to append or a typed error, and the handlers map those errors to
+400, 404, 409 or 422. The work-in-progress rule reads every issue of the
+project, so it holds only because each attempt sees the state at the head it
+appends to: when two writers race for the last place, the loser's retry sees
+the winner's issue and fails with 422. Project, issue, and comment changes share one
+`Streamsy.state` declaration, `Workspaces`, whose collections type both reads
+and writes. `DurableState.changes` stamps each change for the append. Because
+the tracker appends its own events rather than projecting an upstream, each
+change records the workspace head that `decide` read as its source offset.
+
+The server keeps no workspace cache. In the browser, `createStreamDB` follows
+the public workspace stream and exposes projects, issues, and comments as
+TanStack DB collections, including optimistic writes keyed by the transaction
+id returned from the API. `src/queries.ts` derives every view from those
+collections with live queries: the filtered and sorted issue list, the counts by
+status and by project, and the comments of each issue. Each result row keeps
+TanStack DB's `$synced` flag, which marks a pending local change.
+
+## Verify
 
 ```bash
-bun run smoke:issue-tracker
-```
-
-or from this package:
-
-```bash
+bun run --cwd examples/issue-tracker-demo test:unit
+bun run --cwd examples/issue-tracker-demo typecheck
 bun run --cwd examples/issue-tracker-demo smoke:http
 ```
 
-## Endpoints
+The offline HTTP smoke calls the API through an `HttpApiClient` built from
+`IssueTrackerApi`. It covers the seed, projects, issues, comments, workspace isolation,
+two concurrent requests that race for the last in-progress place (one 200, one 422),
+ten concurrent writers landing with the exact event count and no duplicates,
+raw probes for bodies the typed client cannot send, raw stream writes (405), a
+shutdown that drains a parked read with 204, and a SQLite process restart. The in-process
+recipe tests use a read barrier to force a CAS conflict and prove that the
+losing writer retries against the new state, the same race against the
+work-in-progress rule, and a writer that loses every race to prove the 409 after
+three retries.
 
-| Endpoint                      | Purpose                                                               |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `POST /api/workspaces`        | Create a shared workspace (server-generated id) → `201 {id}`.         |
-| `POST /api/w/:ws/projects`    | Create a project and append a `project` upsert event.                 |
-| `POST /api/w/:ws/issues`      | Create an issue and append an `issue` upsert event.                   |
-| `PATCH /api/w/:ws/issues/:id` | Update issue title/status and append an `issue` update event.         |
-| `POST /api/w/:ws/comments`    | Create a comment and append a `comment` upsert event.                 |
-| `/streams/workspace/:ws`      | Streamsy durable stream per workspace (read/live-read, `?offset=-1`). |
+The smoke takes an optional app folder, for example
+`bun run scripts/http-smoke.ts ../issue-tracker-demo-event-sourced`. It starts
+that folder's `server/index.ts` and runs the same checks, so every server
+variant is held to this wire contract. Each read after a write waits for the
+write's txid on the stream, because a projected stream can trail the answer.
 
-Unknown workspaces return 404; malformed workspace ids return 400; mutations that lose the CAS
-race four times return 409 with a retry hint.
+## Limits
 
-## Why this shape
+With no database path, restarting the server starts with a fresh memory store.
+Every mutation replays one complete workspace, so the recipe suits small
+workspaces, not a large-workspace read model. Shared workspace ids are
+unguessable-ish links, not an authorization boundary.
 
-This version intentionally avoids snapshots and prehydration. The demo keeps Streamsy as the
-server-side durable stream implementation while using the official Durable State tools where they
-are useful: shared `shared/state-schema.ts` types, `MaterializedState` folded per request on the
-server, and StreamDB on the browser client. The stateless server plus `expectedOffset` CAS shows
-the 2026 sync doctrine end to end: read from truth, validate against the exact state you condition
-on, and let the stream be the only database.
+Guide: [streamsy.dev/docs/demos/issue-tracker](https://streamsy.dev/docs/demos/issue-tracker).

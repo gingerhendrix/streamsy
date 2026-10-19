@@ -1,0 +1,24 @@
+{
+  "name": "hex-board",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun --bun vitest run --dir test",
+    "test:unit": "bun --bun vitest run --dir test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.5",
+    "typescript": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/bun": "^1.4.3",
+    "vitest": "catalog:"
+  }
+}

@@ -1,26 +1,33 @@
-import type { IssueStatus } from "../../shared/types.ts";
+import type { IssueStatus } from "@streamsy/issue-tracker-demo-contract/types";
+import { DateTime, Option } from "effect";
 
-export const STATUS_LABEL: Record<IssueStatus, string> = {
+export const STATUS_LABEL = {
   open: "open",
   in_progress: "in progress",
   done: "done",
-};
+} satisfies Record<IssueStatus, string>;
 
 export function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diff = Date.now() - then;
+  const then = Option.getOrElse(Option.map(DateTime.make(iso), DateTime.toEpochMillis), () => NaN);
+  const diff = DateTime.toEpochMillis(DateTime.nowUnsafe()) - then;
+
   if (Number.isNaN(diff)) return "";
   const seconds = Math.round(diff / 1000);
+
   if (seconds < 60) return `${Math.max(seconds, 0)}s ago`;
   const minutes = Math.round(seconds / 60);
+
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
+
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
+
   return `${days}d ago`;
 }
 
 export function shortId(id: string): string {
   const idx = id.indexOf("_");
+
   return idx >= 0 ? id.slice(idx + 1).toUpperCase() : id.toUpperCase();
 }

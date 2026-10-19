@@ -1,0 +1,27 @@
+{
+  "name": "@streamsy/e2e",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun --bun vitest run --dir test",
+    "test:deployed": "bun run --cwd ../packages/conformance-tests build:worker && bun run src/main.ts",
+    "deploy": "node node_modules/alchemy/bin/cli.js deploy",
+    "destroy": "node node_modules/alchemy/bin/cli.js destroy"
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/vitest": "4.0.5",
+    "@types/bun": "1.4.3",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
+    "typescript": "^7.0.2",
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "@effect/sql-d1": "4.0.5",
+    "@effect/sql-sqlite-do": "4.0.5"
+  }
+}

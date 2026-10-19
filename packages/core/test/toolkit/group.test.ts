@@ -1,0 +1,63 @@
+/* oxlint-disable effecttsgo/async-function -- Bun owns test execution. */
+import { expect, it } from "vitest";
+import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Streamsy, MemoryStorage, Storage } from "../../src/index.ts";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
+
+class Notes extends Streamsy.json<Notes>()("Group/Notes", "notes/:user", {
+  params: { user: Schema.String },
+  schema: Schema.String,
+}) {}
+
+class Counts extends Streamsy.bytes<Counts>()("Group/Counts", "counts/:user", {
+  params: { user: Schema.String },
+}) {}
+
+class DuplicateName extends Streamsy.bytes<DuplicateName>()("Group/Notes", "other", {
+  params: {},
+}) {}
+
+class DuplicateTemplate extends Streamsy.bytes<DuplicateTemplate>()(
+  "Group/Duplicate",
+  "notes/:user",
+  { params: { user: Schema.String } },
+) {}
+
+class Overlap extends Streamsy.bytes<Overlap>()("Group/Overlap", "notes/:id", {
+  params: { id: Schema.String },
+}) {}
+
+const group = Streamsy.group(Notes, Counts);
+
+it("groups freeze their ordered declarations and reject duplicates and misplaced catch-alls", () => {
+  expect(group.streams).toEqual([Notes, Counts]);
+  expect(Object.isFrozen(group)).toBe(true);
+  expect(Object.isFrozen(group.streams)).toBe(true);
+  expect(() => Streamsy.group(Notes, DuplicateName)).toThrow("duplicate stream name");
+  expect(() => Streamsy.group(Notes, DuplicateTemplate)).toThrow("duplicate stream template");
+  expect(() => Streamsy.group(Notes, Overlap)).toThrow("overlap");
+  expect(() => Streamsy.group(Streamsy.Wildcard, Notes)).toThrow("Wildcard must be last");
+  expect(Streamsy.group(Notes, Streamsy.Wildcard).streams).toHaveLength(2);
+});
+
+it("memory streams expose storage but no generic protocol keys", async () => {
+  for (const host of [
+    MemoryStorage.layer(group),
+    MemoryStorage.layer(Streamsy.group(Notes, Counts)),
+  ]) {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const context = yield* Layer.build(host);
+          expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
+          expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
+          const notes = Context.get(context, Notes);
+          expect(Context.get(context, Counts).owner).toBe(notes.owner);
+          yield* notes.create({ user: "ann" });
+          const record = yield* Context.get(context, Storage).record(Notes.at({ user: "ann" }).id);
+          expect(Option.isSome(record)).toBe(true);
+        }),
+      ),
+    );
+  }
+});

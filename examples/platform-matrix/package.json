@@ -1,0 +1,34 @@
+{
+  "name": "platform-matrix",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start:bun": "bun run src/bun.ts",
+    "start:node": "node src/node.ts",
+    "start:deno": "deno run --allow-all --no-lock src/deno.ts",
+    "matrix": "bun run scripts/run-matrix.ts",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun --bun vitest run --dir test"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-deno": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@effect/sql-sqlite-node": "4.0.5",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

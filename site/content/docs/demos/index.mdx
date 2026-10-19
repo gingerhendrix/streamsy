@@ -1,0 +1,16 @@
+---
+title: Demos
+description: Runnable Streamsy example applications, from a plain HTTP host to projection-backed apps.
+---
+
+| Demo                                                                    | What it does                                                    | Shows                                                      |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| [Memory server](/docs/demos/memory-server)                              | A Durable Streams server with full protocol support             | Protocol routes, the memory Layer, a storage swap          |
+| [Hacker News newest](/docs/demos/hackernews-newest-stream)              | A live list of the newest Hacker News stories in the browser    | State streams, read, decide, append, SQLite restart        |
+| [Issue tracker](/docs/demos/issue-tracker)                              | A small issue tracker with live updates                         | Read, fold, append, Serve routes, browser state            |
+| [Issue tracker, event sourced](/docs/demos/issue-tracker-event-sourced) | The same issue tracker with a server that appends domain events | Decide over a projection, producer outputs, runtime keys   |
+| [Fold agent](/docs/demos/fold-agent)                                    | An agent session log that one process owns at a time            | Conditional writes as a fence                              |
+| [Hex board](/docs/demos/hex-board)                                      | A board game whose board survives restarts                      | Projection state, rollback, state size                     |
+| [Bugsy](/docs/demos/bugsy)                                              | An issue tracker with derived rows, transitions, and a summary  | SQL transactions, producer outputs, triggers, Serve values |
+
+The first three use streams and HTTP only. The event-sourced issue tracker and the last three add projection features.

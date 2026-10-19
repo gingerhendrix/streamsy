@@ -1,56 +1,31 @@
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-  type ProtocolStream,
-} from "@streamsy/core";
-import { contentType, streamPath } from "./config.ts";
+import { MemoryStorage, Streamsy, type StorageFault } from "@streamsy/core";
+import { CheckpointStore } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Effect, Layer } from "effect";
+import { DemoConfig } from "./config.ts";
+import { HackerNewsStories } from "./stories.ts";
 
-const encoder = new TextEncoder();
-const streamPrefix = "/streams";
-const streamId = streamPath.replace(/^\/streams\/?/, "");
+const streams = Streamsy.group(HackerNewsStories);
 
-export class DemoStreams {
-  private readonly protocol = createStreamProtocol({
-    storage: { adapter: createMemoryStorageAdapter() },
-  });
-  private readonly handler = createHttpHandler({
-    protocol: this.protocol,
-    pathPrefix: streamPrefix,
-  });
-  private stream: ProtocolStream | undefined;
+/** Create before HTTP starts, so a fresh State replay is 200 and empty. */
+export const createStoriesLayer = Layer.effectDiscard(
+  Effect.flatMap(HackerNewsStories, (stories) => stories.create({})),
+);
 
-  async start(): Promise<void> {
-    const result = await this.protocol.create(streamId, { contentType });
-    if (result.status !== "created" && result.status !== "exists") {
-      throw new Error(`Unable to create Streamsy demo stream: ${result.status}`);
-    }
+const storage = (databasePath: string, options: { readonly readLimit?: number } = {}) =>
+  databasePath === "memory"
+    ? MemoryStorage.layer(streams, options)
+    : BunStorage.layer(streams, { ...options, client: { filename: databasePath } });
 
-    this.stream = result.stream;
-  }
+type HostLayer = Layer.Layer<Streamsy.Host<typeof streams> | CheckpointStore, StorageFault>;
 
-  async appendJson(value: unknown): Promise<string> {
-    if (!this.stream) {
-      const result = await this.protocol.get(streamId);
-      if (result.status !== "ok") {
-        throw new Error(`Unable to resolve Streamsy demo stream: ${result.status}`);
-      }
-      this.stream = result.stream;
-    }
+/** The checkpoints join the owner of the stream: one SQLite file, or memory. */
+export const host = (
+  databasePath: string,
+  options: { readonly readLimit?: number } = {},
+): HostLayer => CheckpointStore.layer.pipe(Layer.provideMerge(storage(databasePath, options)));
 
-    const result = await this.stream.append({
-      data: encoder.encode(JSON.stringify(value)),
-      contentType,
-    });
+const hostLayer = Layer.unwrap(Effect.map(DemoConfig, ({ databasePath }) => host(databasePath)));
 
-    if (result.status !== "appended" && result.status !== "duplicate") {
-      throw new Error(`Unable to append state event to Streamsy stream: ${result.status}`);
-    }
-
-    return result.offset;
-  }
-
-  async fetch(request: Request): Promise<Response> {
-    return this.handler.fetch(request);
-  }
-}
+/** One SQLite file owns the stream, checkpoint and fold state. */
+export const demoHostLayer = createStoriesLayer.pipe(Layer.provideMerge(hostLayer));

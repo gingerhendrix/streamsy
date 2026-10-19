@@ -1,0 +1,45 @@
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
+import * as Cloudflare from "alchemy/Cloudflare";
+import type { HttpEffect } from "alchemy/Http";
+import { Effect, Layer } from "effect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import * as Host from "@streamsy/serve/alchemy";
+
+/** Only the runtime phase reads raw storage. No stack is executed by this fixture. */
+export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
+  "Streams",
+  Effect.map(Cloudflare.DurableObjectState, (state) =>
+    Effect.suspend(() =>
+      Host.objectHandlers({
+        app: protocolRoutes({ prefix: "/streams" }),
+        layer: Layer.mergeAll(
+          DurableObjectStorage.layerProtocol({ client: { storage: state.raw.storage } }),
+          Host.alarmSlotLayer(state.raw.storage),
+        ),
+      }),
+    ),
+  ),
+) {}
+
+export const worker = Effect.gen(function* () {
+  const objects = yield* StreamsObject;
+
+  const routed: HttpEffect = Host.router({
+    objects,
+    prefix: "/streams",
+    placement: Host.Placement.byStream(),
+  });
+
+  return {
+    fetch: Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+
+      if (request.headers.authorization !== "Bearer fixture") {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+
+      return yield* routed;
+    }),
+  };
+});

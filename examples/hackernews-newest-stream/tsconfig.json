@@ -16,8 +16,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["bun-types"]
+    "types": ["bun"]
   },
-  "include": ["src"],
+  "include": ["src", "test", "scripts"],
   "references": []
 }

@@ -71,7 +71,7 @@ A single ordered stream can contain several entity types. `type + key` is enough
 
 On the client, we need to synchronise local TanStack DB collections with the remote state. We could [write our own sync adapter](https://tanstack.com/db/latest/docs/guides/collection-options-creator#2-sync-implementation) by providing a `sync` function:
 
-```ts
+```ts no-twoslash
 const sync: SyncConfig<T>["sync"] = (params) => {
   const { begin, write, commit, markReady, collection } = params;
 
@@ -87,7 +87,7 @@ const sync: SyncConfig<T>["sync"] = (params) => {
 
 However, the wonderful folks behind Durable Streams have already done this for us with [StreamDB](https://durablestreams.com/stream-db). We simply need to provide a schema and the URL of our Durable State stream.
 
-```ts
+```ts no-twoslash
 import { createStreamDB } from "@durable-streams/state/db";
 
 const db = createStreamDB({
@@ -105,7 +105,7 @@ The client `schema` describes the same task collection and entity shape that the
 
 On the server, we need a Durable Streams server implementation — for example [Streamsy](https://github.com/gingerhendrix/streamsy), or [any other implementation](https://github.com/durable-streams/durable-streams#servers--tools). With Streamsy it looks like this:
 
-```ts
+```ts no-twoslash
 import {
   createHttpHandler,
   createMemoryStorageAdapter,

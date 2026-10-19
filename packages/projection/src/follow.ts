@@ -1,0 +1,142 @@
+import { ProjectionRetry } from "./retry.ts";
+import type { Executable } from "./executable.ts";
+import { Schema, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
+import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
+import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
+import { ProjectionFault } from "./fault.ts";
+import { validateOptions, type RunOptions } from "./read.ts";
+import { run, type Progress } from "./run.ts";
+
+export interface FollowOptions extends RunOptions {
+  /** Upper bound on one wake wait; default 30000. */
+  readonly repairIntervalMs?: number;
+  /** Override the forever, capped exponential retry for retryable storage failures. */
+  readonly retry?: Schedule.Schedule<unknown>;
+}
+
+/**
+ * One wake hint per input; the messages are discarded because the next run is
+ * authoritative. Only the response cursor is kept, so the next hint on that
+ * input echoes it. A closed input answers `readNext` at once, so a closed and
+ * drained input parks for the interval instead of waking every cycle; the
+ * open inputs, and the interval itself, decide when the next run happens.
+ */
+const hint = Effect.fn("Projection.wake")(function* <R>(
+  input: string,
+  address: Streamsy.Address<unknown, R>,
+  offset: string,
+  interval: number,
+  cursors: Ref.Ref<Readonly<Record<string, string>>>,
+) {
+  const cursor = (yield* Ref.get(cursors))[input];
+  const { wire: reader } = yield* address.stream;
+
+  const historyUnavailable = () =>
+    new ProjectionFault({
+      phase: "read",
+      reason: "history-unavailable",
+      input,
+      message: `Required history of ${address.id} after ${offset} is unavailable`,
+    });
+
+  const storageFailure = (cause: unknown) =>
+    new ProjectionFault({
+      phase: "read",
+      reason: "storage-failure",
+      input,
+      message: `Cannot wait on ${address.id}`,
+      cause,
+    });
+
+  return yield* reader.readNext(address.id, { offset, cursor }).pipe(
+    Effect.tap((result) =>
+      Ref.update(cursors, (current) => ({ ...current, [input]: result.cursor })),
+    ),
+    Effect.flatMap((result) =>
+      result.closed && result.messages.length === 0 ? Effect.never : Effect.void,
+    ),
+    Effect.catchTags({
+      InvalidReadRequest: (cause) =>
+        new ProjectionFault({
+          phase: "read",
+          reason: "invalid-source",
+          input,
+          message: cause.message,
+          cause,
+        }),
+      StreamNotFound: () => historyUnavailable(),
+      StreamGone: () => historyUnavailable(),
+      NotSupported: (error) =>
+        new ProjectionFault({
+          phase: "read",
+          reason: "unsupported-composition",
+          input,
+          message: `${address.id} does not support ${error.feature}`,
+        }),
+      StorageFault: storageFailure,
+      TransportFault: storageFailure,
+    }),
+    Effect.timeoutOption(interval),
+    Effect.asVoid,
+  );
+});
+
+/**
+ * Runs to caught-up, then waits for the first input to hint at a change and runs
+ * again. The caller's scope owns the fiber and every parked wait; joining exposes
+ * the terminal close or a typed failure. On HTTP backends a parked hint is cancelled
+ * and replaced once per `repairIntervalMs` until an input changes.
+ */
+export const follow = Effect.fn("Projection.follow")(function* <
+  Inputs extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P,
+  OR = never,
+>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+  options: FollowOptions = {},
+): Effect.fn.Return<
+  Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
+  ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs> | Scope.Scope
+> {
+  yield* validateOptions(options);
+  const interval = options.repairIntervalMs ?? 30_000;
+
+  if (!Number.isSafeInteger(interval) || interval <= 0)
+    return yield* new ProjectionFault({
+      phase: "load",
+      reason: "invalid-options",
+      message: "repairIntervalMs must be a positive safe integer",
+    });
+  const cursors = yield* Ref.make<Readonly<Record<string, string>>>({});
+
+  const wake = (result: Progress<Inputs>) =>
+    Effect.raceAllFirst(
+      inputEntries(projection.inputs).map(([name, address]) =>
+        hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval, cursors),
+      ),
+    );
+
+  const cycle = run(projection, options).pipe(
+    Effect.tap((result) => (result.status === "caught-up" ? wake(result) : Effect.yieldNow)),
+  );
+
+  return yield* cycle.pipe(
+    Effect.retry({
+      while: (fault) => Schema.is(ProjectionFault)(fault) && fault.retryable,
+      schedule: (options.retry ?? (yield* ProjectionRetry)).pipe(
+        Schedule.tap(({ input }) =>
+          Schema.is(ProjectionFault)(input) && input.retryable
+            ? Effect.logWarning("Projection.follow retry", input)
+            : Effect.void,
+        ),
+      ),
+    }),
+    Effect.repeat({ while: (result) => result.status !== "source-closed" }),
+    Effect.forkScoped,
+  );
+});

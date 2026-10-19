@@ -1,0 +1,13 @@
+{
+  "title": "Demos",
+  "pages": [
+    "index",
+    "memory-server",
+    "hackernews-newest-stream",
+    "issue-tracker",
+    "issue-tracker-event-sourced",
+    "fold-agent",
+    "hex-board",
+    "bugsy"
+  ]
+}

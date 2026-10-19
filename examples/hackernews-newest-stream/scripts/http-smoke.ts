@@ -1,28 +1,52 @@
-import { resolve } from "node:path";
+import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
+import { StreamAddress } from "@streamsy/core";
+import { spawnServer } from "@streamsy/test-support/server";
+import {
+  Console,
+  type Duration,
+  Effect,
+  FileSystem,
+  Formatter,
+  Layer,
+  Path,
+  Schedule,
+  Schema,
+} from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
+import { createHnDb, type HnDb } from "../src/client/db.ts";
+import { ApiStatusSmokeView } from "../src/state-schema.ts";
+import { storiesAddress } from "../src/server/stories.ts";
 
-// Offline smoke test: stand up a tiny local fixture that mimics the Hacker News
-// Firebase API, point the demo's poller at it via HN_API_BASE, then assert that
-// the server-side TanStack DB -> createEffect projection emits client-readable
-// Durable State events onto the Streamsy stream.
+// Offline vertical smoke: fixture -> poller CAS append -> served State -> TanStack DB,
+// including a departure during downtime and restart on the same SQLite file.
 
-const packageDir = resolve(import.meta.dir, "..");
-const demoPort = 20_000 + Math.floor(Math.random() * 20_000);
-const fixturePort = demoPort + 1;
-const baseUrl = `http://127.0.0.1:${demoPort}`;
-const streamUrl = `${baseUrl}/streams/session/main`;
+class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
+  message: Schema.String,
+}) {}
 
-class SmokeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SmokeError";
-  }
-}
+/** A condition that has not converged yet; `eventually` retries it. */
+class Pending extends Schema.TaggedError<Pending>()("Pending", { message: Schema.String }) {}
 
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new SmokeError(message);
-  }
-}
+const check = (condition: boolean, message: string) =>
+  condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));
+
+const eventually = <A, E, R>(attempt: Effect.Effect<A, E | Pending, R>, interval: Duration.Input) =>
+  attempt.pipe(
+    Effect.retry({
+      while: (error) => Schema.is(Pending)(error),
+      schedule: Schedule.spaced(interval).pipe(Schedule.upTo({ duration: "10 seconds" })),
+    }),
+    Effect.mapError((error) =>
+      Schema.is(Pending)(error) ? new SmokeFailure({ message: error.message }) : error,
+    ),
+  );
 
 interface FixtureStory {
   id: number;
@@ -35,178 +59,295 @@ interface FixtureStory {
   url: string;
 }
 
+const story = (id: number, time: number, title: string): FixtureStory => ({
+  id,
+  type: "story",
+  by: `user-${id}`,
+  time,
+  title,
+  score: id - 60,
+  descendants: id - 95,
+  url: `https://example.com/${id}`,
+});
+
 const baseTime = 1_700_000_000;
-const fixtureStories: FixtureStory[] = [
-  {
-    id: 101,
-    type: "story",
-    by: "alice",
-    time: baseTime + 30,
-    title: "Streamsy ships durable streams",
-    score: 42,
-    descendants: 7,
-    url: "https://example.com/a",
-  },
-  {
-    id: 102,
-    type: "story",
-    by: "bob",
-    time: baseTime + 20,
-    title: "Materializers over event streams",
-    score: 17,
-    descendants: 3,
-    url: "https://example.com/b",
-  },
-  {
-    id: 103,
-    type: "story",
-    by: "carol",
-    time: baseTime + 10,
-    title: "TanStack DB on the server",
-    score: 9,
-    descendants: 1,
-    url: "https://example.com/c",
-  },
-];
-const fixtureById = new Map(fixtureStories.map((story) => [story.id, story]));
 
-interface ChangeEvent {
-  type: string;
-  key: string;
-  value: Record<string, unknown>;
-  headers: { operation: string };
-}
+const fixtureById = new Map(
+  [
+    story(101, baseTime + 30, "Streamsy ships durable streams"),
+    story(102, baseTime + 20, "Bounded projections over event streams"),
+    story(103, baseTime + 40, "Durable State lineage"),
+  ].map((value) => [value.id, value]),
+);
 
-interface ApiStatus {
-  projectionDisposed: boolean;
-  lastPollCompletedAt?: string;
-  lastPollError?: string;
-  lastStoryCount: number;
-}
+let newestIds = [101, 102];
 
-// A minimal fixture HTTP server mimicking the HN Firebase v0 API.
-const fixture = Bun.serve({
-  port: fixturePort,
-  fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname === "/newstories.json") {
-      return Response.json(fixtureStories.map((story) => story.id));
-    }
-    const itemMatch = url.pathname.match(/^\/item\/(\d+)\.json$/);
-    if (itemMatch) {
-      const story = fixtureById.get(Number(itemMatch[1]));
-      return Response.json(story ?? null);
-    }
-    return new Response("not found", { status: 404 });
-  },
+/** The HN API fixture: the newest id list and one item per id. */
+const fixtureApp = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const pathname = new URL(request.url, "http://fixture").pathname;
+
+  if (pathname === "/newstories.json") return HttpServerResponse.jsonUnsafe(newestIds);
+  const itemMatch = pathname.match(/^\/item\/(\d+)\.json$/);
+
+  if (itemMatch)
+    return HttpServerResponse.jsonUnsafe(fixtureById.get(Number(itemMatch[1])) ?? null);
+
+  return HttpServerResponse.text("not found", { status: 404 });
 });
 
-async function waitForServer(): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(baseUrl);
-      if (response.status === 200) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await Bun.sleep(100);
-  }
-  throw new SmokeError(`HN demo server did not become ready: ${lastError}`);
-}
+const StoryEvents = Schema.Array(
+  StreamAddress.stateChange({
+    type: "hn-story",
+    schema: storiesAddress.collections["hn-story"].schema,
+  }),
+);
 
-async function waitForPoll(): Promise<ApiStatus> {
-  const deadline = Date.now() + 10_000;
-  let last: ApiStatus | undefined;
-  while (Date.now() < deadline) {
-    const response = await fetch(`${baseUrl}/api/status`);
-    if (response.ok) {
-      last = (await response.json()) as ApiStatus;
-      assert(!last.lastPollError, `poll reported an error: ${last.lastPollError}`);
-      if (last.lastPollCompletedAt && last.lastStoryCount >= fixtureStories.length) {
-        return last;
+const smoke = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cwd = path.resolve(import.meta.dir, "..");
+  const scratchDir = yield* fs.makeTempDirectoryScoped({ prefix: "streamsy-hn-smoke-" });
+
+  const fixture = yield* BunHttpServer.make({ port: 0 });
+  yield* fixture.serve(fixtureApp);
+  const fixturePort = new URL(HttpServer.formatAddress(fixture.address)).port;
+
+  const serverOptions = {
+    cwd,
+    entry: "src/server/index.ts",
+    env: {
+      HN_API_BASE: `http://127.0.0.1:${fixturePort}`,
+      HN_NEWEST_LIMIT: "2",
+      HN_POLL_INTERVAL_MS: "600000",
+      HN_DB: path.join(scratchDir, "hackernews.sqlite"),
+    },
+    isReady: (status: number) => status === 200,
+  };
+
+  const server = yield* spawnServer(serverOptions);
+  const baseUrl = server.url;
+
+  const waitForStatus = eventually(
+    Effect.gen(function* () {
+      const response = yield* HttpClient.get(`${baseUrl}/api/status`);
+
+      if (response.status !== 200) {
+        return yield* new Pending({ message: `HN status answered ${response.status}` });
       }
-    }
-    await Bun.sleep(100);
-  }
-  throw new SmokeError(`HN demo did not complete a poll. Last status: ${JSON.stringify(last)}`);
-}
 
-async function waitForStreamEvents(): Promise<ChangeEvent[]> {
-  const deadline = Date.now() + 10_000;
-  let last: ChangeEvent[] = [];
-  while (Date.now() < deadline) {
-    const response = await fetch(`${streamUrl}?offset=-1`);
-    if (response.status === 200) {
-      last = (await response.json()) as ChangeEvent[];
-      assert(Array.isArray(last), "stream read body should be a JSON array");
-      const upserts = last.filter((event) => event.headers.operation === "upsert");
-      if (upserts.length >= fixtureStories.length) return last;
-    }
-    await Bun.sleep(100);
-  }
-  throw new SmokeError(
-    `Projection did not emit enough stream events. Got ${last.length}: ${JSON.stringify(last)}`,
+      const status = yield* HttpClientResponse.schemaBodyJson(ApiStatusSmokeView)(response);
+      yield* check(!status.lastPollError, `poll reported an error: ${status.lastPollError}`);
+
+      if (
+        status.lastPollCompletedAt === undefined ||
+        status.polling ||
+        status.lastOffset === undefined
+      ) {
+        return yield* new Pending({
+          message: `HN demo did not converge. Last status: ${Formatter.formatJson(status)}`,
+        });
+      }
+
+      return status;
+    }),
+    "100 millis",
   );
-}
 
-const server = Bun.spawn(["bun", "src/server/index.ts"], {
-  cwd: packageDir,
-  env: {
-    ...process.env,
-    PORT: String(demoPort),
-    HN_API_BASE: `http://127.0.0.1:${fixturePort}`,
-    HN_NEWEST_LIMIT: String(fixtureStories.length),
-    // Large interval so only the startup poll runs; the test is deterministic.
-    HN_POLL_INTERVAL_MS: "600000",
-  },
-  stdout: "pipe",
-  stderr: "pipe",
+  const readStoryEvents = Effect.gen(function* () {
+    const response = yield* HttpClient.get(`${baseUrl}/state/newest?offset=-1`);
+    yield* check(response.status === 200, `State stream read failed: ${response.status}`);
+    yield* check(response.headers["x-streamsy-state-version"] === "1", "served state version");
+
+    return yield* HttpClientResponse.schemaBodyJson(StoryEvents)(response);
+  });
+
+  const poll = Effect.gen(function* () {
+    const response = yield* HttpClient.post(`${baseUrl}/api/poll`);
+    yield* check(
+      response.status >= 200 && response.status < 300,
+      `poll failed: ${response.status}`,
+    );
+  });
+
+  // Browser sessions close before the servers stop, as in a real page unload.
+  const sessions: HnDb[] = [];
+
+  const session = Effect.gen(function* () {
+    const db = createHnDb(baseUrl);
+    sessions.push(db);
+    yield* Effect.tryPromise({
+      try: () => db.preload(),
+      catch: (cause) => new SmokeFailure({ message: `session preload failed: ${String(cause)}` }),
+    });
+
+    return db;
+  });
+
+  const waitForRows = (db: HnDb, title: string, ids = "101,103") =>
+    eventually(
+      Effect.suspend(() => {
+        const rows = Array.from(db.collections.stories.values());
+
+        const converged =
+          rows.length === ids.split(",").length &&
+          rows.some((row) => row.title === title) &&
+          rows
+            .map((row) => String(row.id))
+            .toSorted()
+            .join(",") === ids;
+
+        return converged
+          ? Effect.void
+          : Effect.fail(
+              new Pending({
+                message: `Collection did not converge: ${Formatter.formatJson(rows)}`,
+              }),
+            );
+      }),
+      "20 millis",
+    );
+
+  const body = Effect.gen(function* () {
+    const initialStatus = yield* waitForStatus;
+    const initialEvents = yield* readStoryEvents;
+    yield* check(initialStatus.lastUpserts === 2, "initial poll should append two upserts");
+    yield* check(initialEvents.length === 2, "initial poll should emit two story upserts");
+
+    const live = yield* session;
+    yield* check(
+      live.collections.stories.size === 2,
+      "new session replays two current rows from -1",
+    );
+    const initialOffset = live.offset;
+
+    const updated = yield* Effect.fromNullishOr(fixtureById.get(101)).pipe(
+      Effect.mapError(() => new SmokeFailure({ message: "fixture story 101 should exist" })),
+    );
+
+    fixtureById.set(101, { ...updated, title: "Streamsy ships a complete projection", score: 43 });
+    newestIds = [103, 101];
+    yield* poll;
+    const changedStatus = yield* waitForStatus;
+    const changedEvents = yield* readStoryEvents;
+    yield* waitForRows(live, "Streamsy ships a complete projection");
+    yield* check(live.offset !== initialOffset, "same session consumes the live suffix after poll");
+    const deleted = changedEvents.find((event) => event.headers.operation === "delete");
+    yield* check(
+      deleted !== undefined && "old_value" in deleted,
+      "Durable State delete carries the departed row",
+    );
+    const replay = yield* session;
+    yield* waitForRows(replay, "Streamsy ships a complete projection");
+
+    yield* check(
+      changedStatus.lastStoryCount === 2,
+      "bounded newest set should still contain two rows",
+    );
+    yield* check(
+      changedStatus.lastUpserts === 2 && changedStatus.lastDeletes === 1,
+      "changed poll should append delete plus two upserts",
+    );
+    yield* check(
+      changedEvents.some((event) => event.key === "102" && event.headers.operation === "delete"),
+      "story leaving the newest set should emit a delete",
+    );
+    yield* check(
+      changedEvents.some(
+        (event) =>
+          event.key === "101" &&
+          event.headers.operation === "upsert" &&
+          ("value" in event ? event.value.title : undefined) ===
+            "Streamsy ships a complete projection",
+      ),
+      "mutable story fields should emit an updated upsert",
+    );
+    yield* check(
+      changedEvents.some((event) => event.key === "103" && event.headers.operation === "upsert"),
+      "story entering the newest set should emit an upsert",
+    );
+
+    yield* poll;
+    const unchangedStatus = yield* waitForStatus;
+    const unchangedEvents = yield* readStoryEvents;
+    yield* check(
+      unchangedStatus.lastUpserts === 0 && unchangedStatus.lastDeletes === 0,
+      "unchanged poll must not append changes",
+    );
+    yield* check(
+      unchangedEvents.length === changedEvents.length,
+      "unchanged poll must not append State events",
+    );
+
+    const offsetBeforeRestart = unchangedStatus.lastOffset;
+    // The stop fails unless the server exits 0 with empty stderr.
+    yield* server.stop;
+    // Story 103 leaves while the poller is stopped: F-1 must be repaired on the first pass.
+    newestIds = [101];
+    yield* spawnServer({ ...serverOptions, port: server.port });
+    const restartedStatus = yield* waitForStatus;
+    const restartedEvents = yield* readStoryEvents;
+    yield* check(
+      restartedStatus.lastOffset !== offsetBeforeRestart,
+      "restart appends the departure",
+    );
+    yield* check(
+      restartedStatus.lastUpserts === 0 && restartedStatus.lastDeletes === 1,
+      "first restart poll deletes the downtime departure without redundant upserts",
+    );
+    yield* check(
+      restartedEvents.length === unchangedEvents.length + 1,
+      "restart appends exactly one delete",
+    );
+    yield* check(
+      restartedEvents.at(-1)?.key === "103" &&
+        restartedEvents.at(-1)?.headers.operation === "delete",
+      "story 103 departed during downtime",
+    );
+    yield* check(
+      Schema.toEquivalence(StoryEvents)(
+        restartedEvents.slice(0, unchangedEvents.length),
+        unchangedEvents,
+      ),
+      "restart preserves the retained prefix",
+    );
+    const restartedSession = yield* session;
+    yield* waitForRows(restartedSession, "Streamsy ships a complete projection", "101");
+    yield* waitForRows(live, "Streamsy ships a complete projection", "101");
+    yield* eventually(
+      Effect.suspend(() =>
+        live.offset === restartedSession.offset
+          ? Effect.void
+          : Effect.fail(
+              new Pending({ message: "pre-restart session resumes through downtime delete" }),
+            ),
+      ),
+      "20 millis",
+    );
+
+    yield* poll;
+    const restartedUnchangedStatus = yield* waitForStatus;
+    const finalEvents = yield* readStoryEvents;
+    yield* check(
+      restartedUnchangedStatus.lastUpserts === 0 && restartedUnchangedStatus.lastDeletes === 0,
+      "unchanged post-restart poll must not append changes",
+    );
+    yield* check(
+      finalEvents.length === restartedEvents.length,
+      "unchanged post-restart poll must be idle",
+    );
+
+    yield* Console.log(
+      `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} State events; TanStack replay, live upsert/delete, and SQLite restart with downtime departure`,
+    );
+  });
+
+  yield* body.pipe(Effect.ensuring(Effect.sync(() => sessions.forEach((db) => db.close()))));
 });
 
-try {
-  await waitForServer();
-
-  const status = await waitForPoll();
-  assert(status.projectionDisposed === false, "projection should still be live after the poll");
-
-  const events = await waitForStreamEvents();
-
-  // Each fixture story must surface as a client-readable Durable State upsert event.
-  for (const story of fixtureStories) {
-    const match = events.find(
-      (event) =>
-        event.type === "hn-story" &&
-        event.key === String(story.id) &&
-        event.headers.operation === "upsert",
-    );
-    assert(match, `expected an hn-story upsert event for story ${story.id}`);
-    assert(match.value.title === story.title, `event for story ${story.id} should carry its title`);
-  }
-
-  // Every event must be a well-formed change event a browser StreamDB can replay.
-  for (const event of events) {
-    assert(event.type === "hn-story", `unexpected event type ${event.type}`);
-    assert(typeof event.key === "string" && event.key.length > 0, "event missing key");
-    assert(event.value && typeof event.value === "object", "event missing value");
-    assert(typeof event.headers?.operation === "string", "event missing headers.operation");
-  }
-
-  console.log(
-    `hackernews-newest-stream HTTP smoke passed: ${status.lastStoryCount} polled, ${events.length} projected stream events`,
-  );
-} finally {
-  server.kill();
-  await server.exited.catch(() => undefined);
-  fixture.stop(true);
-
-  const stdout = await new Response(server.stdout).text();
-  const stderr = await new Response(server.stderr).text();
-  if (stdout.trim()) {
-    console.log(stdout.trim());
-  }
-  if (stderr.trim()) {
-    console.error(stderr.trim());
-  }
-}
+smoke.pipe(
+  Effect.scoped,
+  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.
+  Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)),
+  BunRuntime.runMain,
+);

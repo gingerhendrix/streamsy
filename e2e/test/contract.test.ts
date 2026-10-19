@@ -1,0 +1,417 @@
+import { it as baseIt } from "@effect/vitest";
+import { expect, test } from "vitest";
+import { Effect, Exit, Fiber, Layer } from "effect";
+import { TestClock } from "effect/testing";
+import {
+  ContractError,
+  decodeWorkerTarget,
+  expectedWorkerName,
+  isValidStage,
+  stageName,
+} from "../src/contract.ts";
+import {
+  HttpOperation,
+  measureLatency,
+  measureThroughput,
+  percentile,
+  summarize,
+  type FullResponse,
+  type HttpRequest,
+} from "../src/measurement.ts";
+import { awaitGone, awaitReady } from "../src/run.ts";
+
+test("stage generation uses the fixed short format and rejects unsafe inputs", () => {
+  const stage = stageName(1_800_000_000, "abcdef");
+  expect(stage).toBe("c-tro8w0-abcdef");
+  expect(stage.length).toBeLessThanOrEqual(16);
+  expect(isValidStage(stage)).toBe(true);
+  expect(() => stageName(-1, "abcdef")).toThrow(ContractError);
+  expect(() => stageName(1, "ABCDEF")).toThrow(ContractError);
+  expect(isValidStage("c-s4l6mo-abcdef-collision")).toBe(false);
+  expect(expectedWorkerName(stage)).toBe(`streamsy-conf-${stage}`);
+});
+
+test("worker output decoding is schema-backed and distrusts arbitrary targets", () => {
+  const stage = stageName(1_800_000_000, "abcdef");
+  const workerName = expectedWorkerName(stage);
+  expect(
+    decodeWorkerTarget({ workerName, url: "https://streamsy.example.workers.dev" }, workerName),
+  ).toEqual({
+    ok: true,
+    value: { workerName, url: "https://streamsy.example.workers.dev/" },
+  });
+  expect(
+    decodeWorkerTarget({ workerName, url: "http://streamsy.example.workers.dev/" }, workerName).ok,
+  ).toBe(false);
+  expect(
+    decodeWorkerTarget(
+      { workerName: "other", url: "https://streamsy.example.workers.dev/" },
+      workerName,
+    ).ok,
+  ).toBe(false);
+  expect(
+    decodeWorkerTarget(
+      { workerName, url: "https://streamsy.example.workers.dev/?token=secret" },
+      workerName,
+    ).ok,
+  ).toBe(false);
+  expect(decodeWorkerTarget(undefined, workerName).ok).toBe(false);
+});
+
+test("nearest-rank percentile uses index 284 for n=300 at p95", () => {
+  const samples = Array.from({ length: 300 }, (_, index) => index + 1);
+  expect(percentile(samples, 95)).toBe(285);
+  expect(summarize([1, 3, 2, 5, 4]).p50).toBe(3);
+  expect(() => percentile([], 95)).toThrow(ContractError);
+});
+
+baseIt.live("latency deltas preserve the historical first-minus-warm sign", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.gen(function* () {
+      const fiber = yield* measureLatency({
+        baseUrl: "https://example.test",
+        paths: ["/a"],
+        concurrency: 1,
+      }).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("1 second");
+
+      return yield* Fiber.join(fiber);
+    }).pipe(
+      withLayer(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.sleep(request.method === "PUT" ? "10 millis" : "3 millis").pipe(
+                Effect.as({ status: 200, body: "" }),
+              ),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+
+    expect(exit.pairs[0]?.firstMinusWarmMs).toBe(7);
+    expect(exit.deltas.status).toBe("success");
+  }),
+);
+
+baseIt.live("latency enforces bounded concurrent phases and completes all PUTs before HEADs", () =>
+  Effect.gen(function* () {
+    const paths = Array.from({ length: 7 }, (_, index) => `/streams/${index}`);
+    let active = 0;
+    let maximumPut = 0;
+    let maximumHead = 0;
+    let putsCompleted = 0;
+    let headBeforeAllPuts = false;
+
+    const result = yield* Effect.gen(function* () {
+      const fiber = yield* measureLatency({
+        baseUrl: "https://example.test",
+        paths,
+        concurrency: 3,
+      }).pipe(Effect.forkChild);
+
+      const ticker = yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* TestClock.adjust("10 millis");
+          yield* Effect.yieldNow;
+        }),
+      ).pipe(Effect.forkChild);
+
+      const value = yield* Fiber.join(fiber);
+      yield* Fiber.interrupt(ticker);
+
+      return value;
+    }).pipe(
+      withLayer(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.gen(function* () {
+                active += 1;
+
+                if (request.method === "PUT") maximumPut = Math.max(maximumPut, active);
+
+                if (request.method === "HEAD") maximumHead = Math.max(maximumHead, active);
+
+                if (request.method === "HEAD" && putsCompleted !== paths.length)
+                  headBeforeAllPuts = true;
+                yield* Effect.sleep("10 millis");
+
+                if (request.method === "PUT") putsCompleted += 1;
+                active -= 1;
+
+                return { status: 200, body: "" };
+              }),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.pairs).toHaveLength(paths.length);
+    expect(maximumPut).toBe(3);
+    expect(maximumHead).toBe(3);
+    expect(headBeforeAllPuts).toBe(false);
+  }),
+);
+
+baseIt.live("latency does not produce a valid aggregate after a failed response", () =>
+  Effect.gen(function* () {
+    const layer = Layer.succeed(HttpOperation, {
+      request: (request) =>
+        Effect.succeed({ status: request.method === "PUT" ? 500 : 200, body: "failure" }),
+    });
+
+    const result = yield* measureLatency({
+      baseUrl: "https://example.test",
+      paths: ["/a"],
+      concurrency: 1,
+    }).pipe(withLayer(layer));
+
+    expect(result.valid).toBe(false);
+    expect(result.first.status).toBe("failure");
+    expect(result.deltas.status).toBe("failure");
+  }),
+);
+
+baseIt.live("latency rejects initial PUT, HEAD, and body failures", () =>
+  Effect.gen(function* () {
+    const result = yield* measureLatency({
+      baseUrl: "https://example.test",
+      paths: ["/a"],
+      concurrency: 1,
+    }).pipe(
+      Effect.provideService(HttpOperation, {
+        request: (request) =>
+          request.method === "PUT"
+            ? Effect.succeed({ status: 500, body: "put failed" })
+            : Effect.fail(new ContractError({ message: "body failed" })),
+      }),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.first.status).toBe("failure");
+    expect(result.warm.status).toBe("failure");
+    expect(result.pairs[0]?.error).toContain("body failed");
+  }),
+);
+
+baseIt.live("throughput records invalid create and POST responses", () =>
+  Effect.gen(function* () {
+    let postCalls = 0;
+
+    const result = yield* measureThroughput({
+      baseUrl: "https://example.test",
+      trials: 1,
+      postsPerTrial: 2,
+      concurrency: 1,
+    }).pipe(
+      Effect.provideService(HttpOperation, {
+        request: (request) => {
+          if (request.method === "PUT")
+            return Effect.succeed({ status: 500, body: "create failed" });
+          postCalls += 1;
+
+          return postCalls === 1
+            ? Effect.fail(new ContractError({ message: "post body failed" }))
+            : Effect.succeed({ status: 201, body: "" });
+        },
+      }),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.medianRate).toBeUndefined();
+    expect(result.trials[0]?.errors).toEqual(["create: HTTP 500", "post 0: post body failed"]);
+  }),
+);
+
+baseIt.live("throughput runs its trials in order and reports the median rate", () =>
+  Effect.gen(function* () {
+    const methods: Array<string> = [];
+
+    const result = yield* measureThroughput({
+      baseUrl: "https://example.test",
+      trials: 5,
+      postsPerTrial: 1,
+      concurrency: 1,
+    }).pipe(
+      withLayer(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.gen(function* () {
+                methods.push(request.method);
+
+                if (request.method === "POST") yield* TestClock.adjust("1 second");
+
+                return { status: request.method === "PUT" ? 201 : 204, body: "" };
+              }),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+
+    expect(methods).toEqual([
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+      "PUT",
+      "POST",
+    ]);
+    expect(result.valid).toBe(true);
+    expect(result.medianRate).toBe(1);
+  }),
+);
+
+baseIt.live("throughput bounds POST concurrency and keeps trials sequential", () =>
+  Effect.gen(function* () {
+    let activePosts = 0;
+    let maximumPosts = 0;
+    let trialOverlap = false;
+
+    const result = yield* Effect.gen(function* () {
+      const fiber = yield* measureThroughput({
+        baseUrl: "https://example.test",
+        trials: 5,
+        postsPerTrial: 5,
+        concurrency: 2,
+      }).pipe(Effect.forkChild);
+
+      const ticker = yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* TestClock.adjust("10 millis");
+          yield* Effect.yieldNow;
+        }),
+      ).pipe(Effect.forkChild);
+
+      const value = yield* Fiber.join(fiber);
+      yield* Fiber.interrupt(ticker);
+
+      return value;
+    }).pipe(
+      withLayer(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.gen(function* () {
+                if (request.method === "PUT" && activePosts > 0) trialOverlap = true;
+
+                if (request.method === "POST") {
+                  activePosts += 1;
+                  maximumPosts = Math.max(maximumPosts, activePosts);
+                  yield* Effect.sleep("10 millis");
+                  activePosts -= 1;
+                }
+
+                return { status: request.method === "PUT" ? 201 : 204, body: "" };
+              }),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+
+    expect(result.valid).toBe(true);
+    expect(maximumPosts).toBe(2);
+    expect(trialOverlap).toBe(false);
+  }),
+);
+
+const clockLayer = (
+  request: (request: HttpRequest) => Effect.Effect<FullResponse, ContractError>,
+) => Layer.mergeAll(Layer.succeed(HttpOperation, { request }), TestClock.layer());
+
+baseIt.live("readiness requires five consecutive exact full-body matches", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+
+    const program = Effect.gen(function* () {
+      const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
+      yield* TestClock.adjust("8 seconds");
+
+      return yield* Fiber.join(fiber);
+    });
+
+    const result = yield* program.pipe(
+      withLayer(
+        clockLayer(() => {
+          calls += 1;
+
+          return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
+        }),
+      ),
+    );
+
+    expect(result.attempts).toBe(5);
+    expect(calls).toBe(5);
+  }),
+);
+
+baseIt.live("readiness resets on a transport failure and gone requires 404", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+
+    const result = yield* Effect.gen(function* () {
+      const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+
+      return yield* Fiber.join(fiber);
+    }).pipe(
+      withLayer(
+        clockLayer(() => {
+          calls += 1;
+
+          if (calls === 3) return Effect.fail(new ContractError({ message: "transport" }));
+
+          return Effect.succeed({ status: 400, body: "Stream path required: /{path}" });
+        }),
+      ),
+    );
+
+    expect(result.attempts).toBe(8);
+    expect(calls).toBe(8);
+
+    const gone = yield* Effect.gen(function* () {
+      const fiber = yield* awaitGone("https://example.test/").pipe(Effect.forkChild);
+      yield* TestClock.adjust("8 seconds");
+
+      return yield* Fiber.join(fiber);
+    }).pipe(withLayer(clockLayer(() => Effect.succeed({ status: 404, body: "" }))));
+
+    expect(gone.attempts).toBe(5);
+  }),
+);
+
+baseIt.live("a body that never completes is bounded by the probe timeout", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.gen(function* () {
+      const fiber = yield* awaitReady("https://example.test/").pipe(Effect.forkChild);
+      yield* TestClock.adjust("60 seconds");
+
+      return yield* Fiber.join(fiber);
+    }).pipe(withLayer(clockLayer(() => Effect.never)), Effect.exit);
+
+    expect(Exit.isFailure(exit)).toBe(true);
+  }),
+);
+
+/** Build local fixtures in a scope and supply their Context to the program. */
+const withLayer =
+  <ROut, LE, RIn>(fixture: Layer.Layer<ROut, LE, RIn>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
+
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );

@@ -1,0 +1,18 @@
+// oxlint-disable effecttsgo/strict-effect-provide -- This executable example is an application entry point that composes its complete host layer.
+import { Effect, Schema, Stream } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+
+class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
+  params: {},
+  schema: Schema.String,
+}) {}
+
+const program = Effect.gen(function* () {
+  const events = yield* Events;
+  yield* events.create({});
+  yield* events.append({}, ["hello"]);
+
+  return yield* events.read({}).pipe(Stream.runCollect);
+});
+
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));

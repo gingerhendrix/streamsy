@@ -1,0 +1,50 @@
+---
+title: Remote client
+description: Provide stream services from a remote Durable Streams host with the remote Layer.
+---
+
+`RemoteStreams.layer(group, options)` gives the stream services of a group from a remote host.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { game } from "./streams.ts";
+
+const remote = RemoteStreams.layer(game, {
+  baseUrl: "https://streams.example.com/streams",
+  capabilities: { expectedOffset: true, producer: true },
+}).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+A program runs over `remote` with no change.
+
+## Options
+
+| Option                        | Value                           |
+| ----------------------------- | ------------------------------- |
+| `baseUrl`                     | The protocol prefix of the host |
+| `headers`                     | Headers for each request        |
+| `capabilities.expectedOffset` | Sends `Stream-Expected-Offset`  |
+| `capabilities.producer`       | Sends the producer headers      |
+
+Capabilities are statements about the host. The Layer does not discover them.
+
+## Limits
+
+| Feature                       | Over remote                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| Writes                        | Need `append` or `full` access on the host                                       |
+| `Projection.follow`           | Works. One poll for each input, bounded by `repairIntervalMs` (default 30 s)     |
+| Projection inputs and outputs | Inputs work with any Commit; existing remote outputs work with `Commit.producer` |
+| `CheckpointStore`             | Provide a standalone store, such as `CheckpointStore.layerMemory`                |
+
+`RemoteStreams.layerProtocol(options)` gives the generic reader and writer, for protocol tools.
+
+## Browsers
+
+Browser applications use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client) and `@durable-streams/state`.

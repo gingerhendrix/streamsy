@@ -1,17 +1,75 @@
 # Streamsy
 
-Streamsy is a toolkit for working with [Durable Streams](https://durablestreams.com).
+An Effect implementation of the [Durable Streams](https://durablestreams.com)
+protocol: typed stream refs, checkpointed projections, SQLite storage, and
+hosts for Bun and Cloudflare.
 
-> Durable Streams are the data primitive for the agent loop.
+Documentation: [streamsy.dev](https://streamsy.dev)
 
-> Persistent, addressable, real‑time streams for building resilient agent sessions and collaborative multi-user, multi-agent systems.
+## Packages
 
-Streamsy provides a server implementation of the Durable Streams protocol with:
+| Package                                                 | What it gives you                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, stream services, memory Layer, HTTP app, remote client |
+| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                   |
+| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
+| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, action delivery                 |
 
-- support for any runtime/framework that supports Web Standards `fetch`
-- pluggable storage backends with in-memory, SQLite, and Durable Object implementations
-- TypeScript interfaces for direct protocol access, including support for JSON mode with typed codecs and Standard Schema support
-- a transport-neutral protocol client (`@streamsy/core` `directProtocolClient`, `@streamsy/client` `officialProtocolClient`) with checkpointed batch reads and result-object outcomes
+All four packages share one version. `effect` 4 is a peer dependency. See
+[docs/releasing.md](docs/releasing.md) for the release process.
+
+## Quick start
+
+```sh
+bun add @streamsy/core effect
+```
+
+```ts
+import { Effect, Schema, Stream } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+
+class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
+  params: {},
+  schema: Schema.String,
+}) {}
+const program = Effect.gen(function* () {
+  const events = yield* Events;
+  yield* events.create({});
+  yield* events.append({}, ["hello"]);
+  return yield* events.read({}).pipe(Stream.runCollect);
+});
+await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));
+```
+
+Read the [tutorial](https://streamsy.dev/docs/tutorial) for the path
+from a typed stream address to a served projection.
+
+## Examples
+
+- [Memory server](examples/memory-server/README.md): the smallest Bun host,
+  backed by one process-local memory store and exercised with `curl`.
+- [Issue tracker](examples/issue-tracker-demo/README.md): a complete application
+  with conditional writes, SQLite persistence, and live browser collections.
+- [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
+  server, a projection, and a browser client on the official Durable Streams
+  client.
+- [Bugsy](examples/bugsy/README.md): an issue tracker with five workspace
+  inputs in two checkpointed SQLite projections, with output streams and HTTP
+  routes.
+- [Hex board](examples/hex-board/README.md): a whole game board kept as fold
+  state in the checkpoint transaction, with SQLite restart tests.
+- [Fold agent](examples/fold-agent/README.md): an agent loop whose durable log
+  lives in Streamsy and fences competing writers by offset.
+
+## Development
+
+```sh
+bun install
+bun run typecheck
+bun run lint
+bun run test:unit
+bun run test:conformance
+```
 
 ## License
 

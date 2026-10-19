@@ -13,7 +13,7 @@ export const Route = createFileRoute("/articles/")({
       { title: "Articles — Streamsy" },
       {
         name: "description",
-        content: "Streams, sync, incremental view maintenance and all that jazz.",
+        content: "Local sync paths, typed streams and explicit storage lifetimes.",
       },
     ],
   }),
@@ -29,8 +29,11 @@ const loadArticles = createServerFn({ method: "GET" }).handler(() =>
       date:
         page.data.date instanceof Date ? page.data.date.toISOString().slice(0, 10) : page.data.date,
     }))
-    .filter((article): article is typeof article & { slug: string } => article.slug !== undefined)
-    .sort((a, b) => b.date.localeCompare(a.date)),
+    .filter(
+      (article): article is { slug: string; title: string; description: string; date: string } =>
+        article.slug !== undefined,
+    )
+    .toSorted((a, b) => b.date.localeCompare(a.date)),
 );
 
 const articleDateFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -58,7 +61,7 @@ function ArticlesIndex() {
             Streams for everything?
           </h1>
           <p className="mt-5 text-lg leading-8 text-fd-muted-foreground">
-            Streams, sync, incremental view maintenance and all that jazz.
+            Local sync paths, typed streams and explicit storage lifetimes.
           </p>
         </header>
 

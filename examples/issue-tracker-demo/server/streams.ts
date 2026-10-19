@@ -1,103 +1,52 @@
 import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-  type AppendResult,
+  DurableState,
+  MemoryStorage,
+  Streamsy,
+  type StorageFault,
+  type StreamAddress,
 } from "@streamsy/core";
-import { createJsonProtocol, type JsonStream } from "@streamsy/json";
-import type { StateEvent } from "../shared/state-schema.ts";
-import { contentType } from "./config.ts";
+import { BunStorage } from "@streamsy/storage/bun";
+import { type Array, Effect, Layer, Option, Schema } from "effect";
+import { Comment, Issue, Project } from "@streamsy/issue-tracker-demo-contract/state-schema";
+import { ServerConfig } from "./config.ts";
 
-const streamPrefix = "/streams";
+/** One stream owns every workspace's multi-collection stream. */
+export class Workspaces extends Streamsy.state<Workspaces>()(
+  "IssueTrackerDemo/Workspaces",
+  "workspace/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    collections: {
+      project: { schema: Project, key: "id" },
+      issue: { schema: Issue, key: "id" },
+      comment: { schema: Comment, key: "id" },
+    },
+  },
+) {}
 
-// Events are validated by the server before they are appended; reads trust
-// the durable log, so the codec is a plain identity passthrough.
-const eventCodec = {
-  encode: (value: StateEvent): unknown => value,
-  decode: (value: unknown): StateEvent => value as StateEvent,
-};
+export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>;
+
+/** One stamped event on a workspace stream. */
+export type WorkspaceEvent = StreamAddress.CollectionsChange<typeof Workspaces.collections>;
 
 /**
- * Multi-stream access to the demo's Streamsy protocol: one durable stream per
- * workspace (`workspace/<id>`), resolved per request — no per-stream state is
- * cached here, keeping the server stateless. The protocol is the only source
- * of truth for which workspaces exist.
+ * Stamp changes for one workspace. The tracker writes its own events, so the
+ * head that the recipe read is their source offset.
  */
-export class DemoStreams {
-  private readonly protocol = createStreamProtocol({
-    storage: { adapter: createMemoryStorageAdapter() },
+export const workspaceEvents = (
+  workspaceId: string,
+  sourceOffset: string,
+  changes: Array.NonEmptyReadonlyArray<WorkspaceChange>,
+) => DurableState.changes(Workspaces.at({ workspaceId }), { offset: sourceOffset }, changes);
+
+/** SQLite when `ISSUE_TRACKER_DB` is set, otherwise a process-local memory store. */
+export const StorageLive = Layer.unwrap(
+  Effect.map(ServerConfig, ({ databasePath }) => storage(databasePath)),
+);
+
+function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, StorageFault> {
+  return Option.match(databasePath, {
+    onNone: () => MemoryStorage.layer(Streamsy.group(Workspaces)),
+    onSome: (filename) => BunStorage.layer(Streamsy.group(Workspaces), { client: { filename } }),
   });
-  private readonly json = createJsonProtocol<StateEvent>(this.protocol, eventCodec);
-  private readonly handler = createHttpHandler({
-    protocol: this.protocol,
-    pathPrefix: streamPrefix,
-  });
-
-  /** Create the stream if it does not exist yet; no-op when it already does. */
-  async ensureStream(streamId: string): Promise<void> {
-    const result = await this.protocol.create(streamId, { contentType });
-    if (result.status !== "created" && result.status !== "exists") {
-      throw new Error(`Unable to create Streamsy stream ${streamId}: ${result.status}`);
-    }
-  }
-
-  /** Resolve a typed JSON stream, or undefined when the stream does not exist. */
-  async getJsonStream(streamId: string): Promise<JsonStream<StateEvent> | undefined> {
-    const result = await this.json.get(streamId);
-    if (result.status === "not-found" || result.status === "gone") return undefined;
-    if (result.status !== "ok") {
-      throw new Error(`Unable to resolve Streamsy stream ${streamId}: ${result.status}`);
-    }
-    return result.stream;
-  }
-
-  /**
-   * Append one state event, optionally guarded by an `expectedOffset` CAS
-   * precondition. Returns the raw {@link AppendResult} so callers can drive
-   * retry loops on `expected-offset` conflicts.
-   */
-  async appendEvent(
-    streamId: string,
-    event: StateEvent,
-    expectedOffset?: string,
-  ): Promise<AppendResult> {
-    const stream = await this.getJsonStream(streamId);
-    if (!stream) {
-      throw new Error(`Streamsy stream not found: ${streamId}`);
-    }
-    return stream.append(event, expectedOffset === undefined ? {} : { expectedOffset });
-  }
-
-  /**
-   * Read a stream from the beginning to its current head. Returns the decoded
-   * events plus the head offset — the CAS token for appends conditioned on
-   * exactly this state — or undefined when the stream does not exist.
-   */
-  async readAll(
-    streamId: string,
-  ): Promise<{ events: StateEvent[]; headOffset: string } | undefined> {
-    const stream = await this.getJsonStream(streamId);
-    if (!stream) return undefined;
-
-    const events: StateEvent[] = [];
-    let offset: string | undefined;
-    for (;;) {
-      const result = await stream.read(offset === undefined ? {} : { offset });
-      if (result.status !== "ok") {
-        throw new Error(`Unable to read Streamsy stream ${streamId}: ${result.status}`);
-      }
-      for (const message of result.messages) {
-        events.push(message.value);
-      }
-      offset = result.nextOffset;
-      if (result.upToDate) {
-        return { events, headOffset: result.nextOffset };
-      }
-    }
-  }
-
-  async proxy(request: Request): Promise<Response> {
-    console.log(`Proxying stream request: ${request.method} ${request.url}`);
-    return this.handler.fetch(request);
-  }
 }

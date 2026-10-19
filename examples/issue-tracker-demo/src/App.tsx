@@ -17,8 +17,10 @@ export function App() {
     void created.preload().then(() => {
       if (cancelled) {
         created.close();
+
         return;
       }
+
       setDb(created);
     });
 

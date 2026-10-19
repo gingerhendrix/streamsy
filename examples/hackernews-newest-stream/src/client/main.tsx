@@ -1,47 +1,21 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-timers -- React owns this browser lifecycle edge; Web fetch, wall-clock rendering, and interval cleanup are the platform contract here. */
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
+import { createHnDb, type HnDb } from "./db.ts";
 import { useLiveQuery } from "@tanstack/react-db";
-import { hackerNewsState, type HnStory } from "../state-schema.ts";
+import { Option, Schema } from "effect";
+import { ApiStatus, type HnStory } from "../state-schema.ts";
 import "./styles.css";
-
-type HnDb = StreamDB<typeof hackerNewsState>;
-type ApiStatus = {
-  streamPath: string;
-  newestLimit: number;
-  pollIntervalMs: number;
-  polling: boolean;
-  projectionDisposed: boolean;
-  lastPollStartedAt?: string;
-  lastPollCompletedAt?: string;
-  lastPollError?: string;
-  lastStoryCount: number;
-  lastFetchedNewStories: number;
-  lastRefreshedStories: number;
-  lastChangedStories: number;
-};
-
-function streamUrl(): string {
-  return new URL("/streams/session/main", window.location.origin).toString();
-}
-
-function createHnDb(): HnDb {
-  return createStreamDB({
-    streamOptions: {
-      url: streamUrl(),
-      contentType: "application/json",
-      warnOnHttp: false,
-    },
-    state: hackerNewsState,
-  });
-}
 
 function formatAge(unixSeconds: number): string {
   const diff = Date.now() - unixSeconds * 1000;
   const minutes = Math.max(0, Math.round(diff / 60000));
+
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
+
   if (hours < 24) return `${hours}h ago`;
+
   return `${Math.round(hours / 24)}d ago`;
 }
 
@@ -59,14 +33,16 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const created = createHnDb();
+    const created = createHnDb(window.location.origin);
 
     void created.preload().then(
       () => {
         if (cancelled) {
           created.close();
+
           return;
         }
+
         setDb(created);
       },
       (error) => {
@@ -102,22 +78,29 @@ function App() {
 
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
+
   const stories = useMemo(
     () => (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || b.id - a.id),
     [storiesQuery.data],
   );
+
   const [status, setStatus] = useState<ApiStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+
     async function refresh() {
       const response = await fetch("/api/status");
+
       if (!response.ok) return;
-      const next = (await response.json()) as ApiStatus;
-      if (!cancelled) setStatus(next);
+      const next = Schema.decodeUnknownOption(ApiStatus)(await response.json());
+
+      if (!cancelled && Option.isSome(next)) setStatus(next.value);
     }
+
     void refresh();
     const interval = setInterval(() => void refresh(), 5000);
+
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -127,12 +110,12 @@ function HnApp({ db }: { db: HnDb }) {
   return (
     <Shell status={status}>
       <section className="panel intro">
-        <p className="eyebrow">Demo 1: server TanStack DB to Durable State stream</p>
+        <p className="eyebrow">Streamsy projection demo</p>
         <h1>Hacker News newest stories</h1>
         <p>
-          A Bun server polls HN, writes rows into a server-owned TanStack DB collection, and a
-          <code> createEffect </code> projection emits durable state events. The browser mirrors
-          that stream into its own TanStack DB via <code>createStreamDB</code>.
+          A Bun server reconciles HN polls into a Durable State stream, and publishes the newest
+          stories at <code>/state/newest</code>. This page loads the retained changes, then updates
+          live as stories change.
         </p>
       </section>
 
@@ -142,7 +125,7 @@ function HnApp({ db }: { db: HnDb }) {
           <span>{status?.polling ? "Polling HN…" : "Live stream connected"}</span>
         </div>
         {stories.length === 0 ? (
-          <div className="empty">Waiting for the first projection batch…</div>
+          <div className="empty">Waiting for the first poll…</div>
         ) : (
           stories.map((story) => <StoryRow key={story.id} story={story} />)
         )}
@@ -186,12 +169,12 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
         {status ? (
           <div className="status">
             <span>{status.lastStoryCount} rows</span>
-            <span>{status.lastChangedStories} changed</span>
+            <span>{status.lastUpserts + status.lastDeletes} changed</span>
             <span>poll {status.pollIntervalMs / 1000}s</span>
             {status.lastPollError ? (
               <span className="bad">error</span>
             ) : (
-              <span className="good">ok</span>
+              <span className="good">{status.polling ? "polling" : "running"}</span>
             )}
           </div>
         ) : null}
@@ -201,4 +184,8 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = document.getElementById("root");
+
+if (!root) throw new Error("Hacker News app root element is missing");
+
+createRoot(root).render(<App />);

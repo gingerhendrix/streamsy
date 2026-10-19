@@ -1,10 +1,15 @@
-export const port = Number.parseInt(process.env.PORT ?? "1339", 10);
-export const streamPath = "/streams/session/main";
-export const contentType = "application/json";
-export const pollIntervalMs = Number.parseInt(process.env.HN_POLL_INTERVAL_MS ?? "60000", 10);
-export const newestLimit = Number.parseInt(process.env.HN_NEWEST_LIMIT ?? "50", 10);
+import { Config } from "effect";
 
-// Streamsy's in-memory storage long-polls for up to 30 seconds. Bun's default
-// HTTP idle timeout is 10 seconds, which can terminate live reads before
-// Streamsy returns its normal 204 timeout response.
-export const serverIdleTimeoutSeconds = 60;
+export const streamPath = "/state/newest";
+
+/** Host and poll settings. The server layers read them at startup. */
+export const DemoConfig = Config.all({
+  port: Config.Port("PORT").pipe(Config.withDefault(1339)),
+  pollIntervalMs: Config.Int("HN_POLL_INTERVAL_MS").pipe(Config.withDefault(60_000)),
+  newestLimit: Config.Int("HN_NEWEST_LIMIT").pipe(Config.withDefault(50)),
+  databasePath: Config.String("HN_DB").pipe(Config.withDefault(".data/hackernews.sqlite")),
+  hnApiBase: Config.String("HN_API_BASE").pipe(
+    Config.withDefault("https://hacker-news.firebaseio.com/v0"),
+    Config.map((base) => base.replace(/\/$/, "")),
+  ),
+});
