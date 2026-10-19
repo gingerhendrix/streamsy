@@ -4,11 +4,10 @@ import { Effect, Layer } from "effect";
 import index from "../public/web/index.html";
 import { ApiLive, HealthLive, NotFoundLive } from "./api.ts";
 import { ServerConfig } from "./config.ts";
-import { FolderStoreLive, Initialise, NoWriteHook } from "./folder-store.ts";
+import { FolderStoreLive, Initialise } from "./folder-store.ts";
 import { IndexApiLive } from "./index-api.ts";
 import { FileIndexLive, IndexLive } from "./file-index.ts";
-import { Changes, Manifest } from "./streams.ts";
-import { EpochHeaders } from "./feed-epoch.ts";
+import { Files, Folders } from "./streams.ts";
 import { StorageLive } from "./storage.ts";
 
 const Listener = Layer.unwrap(
@@ -33,12 +32,11 @@ const Listener = Layer.unwrap(
 const Server = Serve.layer(
   Layer.mergeAll(
     ApiLive,
-    EpochHeaders,
     IndexApiLive,
     HealthLive,
     NotFoundLive,
-    Serve.mount(Manifest, "/streams/manifest"),
-    Serve.mount(Changes, "/streams/changes"),
+    Serve.mount(Folders, "/streams/folders"),
+    Serve.mount(Files, "/streams/folders/:folderId/files"),
   ),
   {
     disableLogger: true,
@@ -49,7 +47,6 @@ const Server = Serve.layer(
   Layer.provide(IndexLive),
   Layer.provide(Initialise),
   Layer.provide(FolderStoreLive),
-  Layer.provide(NoWriteHook),
   Layer.provide(StorageLive),
 );
 

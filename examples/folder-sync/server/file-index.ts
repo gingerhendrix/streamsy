@@ -1,56 +1,19 @@
-import { CommitBoundary, ZERO_OFFSET } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule } from "effect";
+import { Projection } from "@streamsy/projection";
+import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
 import { SqlClient } from "effect/sql";
-import { InvalidFile } from "./domain.ts";
-import { Changes, Folders, Manifest, ManifestFile, folderHead } from "./streams.ts";
-import {
-  folderChanges,
-  folderTriggers,
-  initialiseSearch,
-  manifest,
-  search,
-} from "./projections.ts";
-
 import picomatch from "picomatch";
-import { feedEpoch } from "./feed-epoch.ts";
-
+import { InvalidFile } from "./domain.ts";
+import { Folders, ListedFile } from "./streams.ts";
+import { initialiseSearch, search } from "./projections.ts";
 import { SearchResult, snippetParts } from "./search-result.ts";
 
 export { SearchResult } from "./search-result.ts";
 
-/** Replays Durable State events into their current live rows. No SQL shadow manifest. */
-export const manifestRows = Effect.gen(function* () {
-  const stream = yield* Manifest;
-
-  const rows = yield* stream.fold(
-    {},
-    () => new Map<string, ManifestFile>(),
-    (state, event) => {
-      if ("value" in event) state.set(event.key, event.value);
-      else state.delete(event.key);
-
-      return state;
-    },
-  );
-
-  return [...rows.state.values()].toSorted(
-    (a, b) => a.folderId.localeCompare(b.folderId) || a.path.localeCompare(b.path),
-  );
-});
-
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const stream = yield* Manifest;
-  const boundary = yield* CommitBoundary;
-  const checkpoints = yield* CheckpointStore;
 
   const list = Effect.fn("FileIndex.list")(function* (
-    options: {
-      folder?: string;
-      prefix?: string;
-      glob?: string;
-    } = {},
+    options: { folder?: string; prefix?: string; glob?: string } = {},
   ) {
     const glob =
       options.glob === undefined
@@ -61,30 +24,15 @@ const make = Effect.gen(function* () {
             catch: () => new InvalidFile({ message: "Invalid glob pattern" }),
           });
 
-    const rows = yield* manifestRows.pipe(Effect.provideService(Manifest, stream));
+    const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ListedFile))(
+      yield* sql`SELECT * FROM folder_sync_manifest ORDER BY folderId, path`,
+    );
 
     return rows.filter(
       (row) =>
         (options.folder === undefined || row.folderId === options.folder) &&
         (options.prefix === undefined || row.path.startsWith(options.prefix)) &&
         (glob === undefined || glob(row.path)),
-    );
-  });
-
-  /** Rows and their consumed feed offset share the manifest writer's SQL boundary. */
-  const snapshot = Effect.fn("FileIndex.snapshot")(function* (
-    options: { folder?: string; prefix?: string; glob?: string } = {},
-  ) {
-    return yield* boundary.withTransaction(
-      Effect.gen(function* () {
-        const files = yield* list(options);
-
-        const progress = yield* Projection.read(manifest.at({})).pipe(
-          Effect.provideService(CheckpointStore, checkpoints),
-        );
-
-        return { files, cursor: progress.offsets.input ?? ZERO_OFFSET, epoch: yield* feedEpoch };
-      }),
     );
   });
 
@@ -113,7 +61,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return { list, snapshot, search: find };
+  return { list, search: find };
 });
 
 export class FileIndex extends Context.Service<FileIndex, Effect.Success<typeof make>>()(
@@ -142,53 +90,38 @@ export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =
     Effect.retry({ schedule: Schedule.spaced("1 second") }),
   );
 
-/** Each runtime restores all known bindings before tailing the persisted registry checkpoint. */
+/** Folder discovery owns one direct source follower per folder. No derived feed. */
 export const IndexLive = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* initialiseSearch;
-    const changes = yield* Changes;
-    const state = yield* Manifest;
-    const registry = yield* Folders;
-    yield* changes.create({});
-    yield* state.create({});
+    const folders = yield* Folders;
     const scope = yield* Effect.scope;
     const started = new Set<string>();
 
-    const start = Effect.fn("FolderTriggers.start")(function* (folderId: string) {
+    const start = Effect.fn("Index.start")(function* (folderId: string) {
       if (started.has(folderId)) return;
-      const head = folderHead.at({ folderId });
-      const bound = folderChanges.at({ folderId });
-      // Finish both catch-up runs before forking, so a failed registry attempt leaves no partial bindings.
-      yield* Projection.run(head);
+      const bound = search.at({ folderId });
       yield* Projection.run(bound);
-      // The only writer of the head checkpoint. Reads and decide fold from it in memory.
-      yield* supervise(
-        `head:${folderId}`,
-        Projection.follow(head).pipe(Effect.flatMap(Fiber.join)),
-      ).pipe(Effect.forkIn(scope));
-      yield* supervise(
-        `changes:${folderId}`,
-        Projection.follow(bound).pipe(Effect.flatMap(Fiber.join)),
-      ).pipe(Effect.forkIn(scope));
+      yield* supervise(folderId, Projection.follow(bound).pipe(Effect.flatMap(Fiber.join))).pipe(
+        Effect.forkIn(scope),
+      );
       started.add(folderId);
     });
 
-    for (const folder of (yield* registry.collect({})).items) yield* start(folder.folderId);
-
-    const triggers = folderTriggers(start).at({});
-    yield* Projection.run(triggers);
-    yield* supervise("registry", Projection.follow(triggers).pipe(Effect.flatMap(Fiber.join))).pipe(
-      Effect.forkIn(scope),
-    );
-    yield* Projection.run(manifest.at({}));
-    yield* Projection.run(search.at({}));
+    // Replay the small registry on every runtime start to restore all folder bindings.
     yield* supervise(
-      "manifest",
-      Projection.follow(manifest.at({})).pipe(Effect.flatMap(Fiber.join)),
-    ).pipe(Effect.forkIn(scope));
-    yield* supervise(
-      "search",
-      Projection.follow(search.at({})).pipe(Effect.flatMap(Fiber.join)),
+      "folders",
+      folders
+        .follow({})
+        .pipe(
+          Stream.runForEach((batch) =>
+            Effect.forEach(
+              batch.items,
+              (change) => ("value" in change ? start(change.value.folderId) : Effect.void),
+              { discard: true },
+            ),
+          ),
+        ),
     ).pipe(Effect.forkIn(scope));
   }),
 );

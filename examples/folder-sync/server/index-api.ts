@@ -1,4 +1,4 @@
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpRouter } from "effect/http";
 import { Effect, Layer, Match, Schema } from "effect";
 import {
   HttpApi,
@@ -8,7 +8,7 @@ import {
   HttpApiMiddleware,
 } from "effect/http-api";
 import { FileIndex, SearchResult } from "./file-index.ts";
-import { ManifestFile } from "./streams.ts";
+import { ListedFile } from "./streams.ts";
 
 class IndexBadRequest extends Schema.TaggedError<IndexBadRequest>()(
   "IndexBadRequest",
@@ -40,7 +40,7 @@ class IndexEndpoints extends HttpApiGroup.make("index").add(
       prefix: Schema.optionalKey(Schema.String),
       glob: Schema.optionalKey(Schema.String),
     },
-    success: Schema.Array(ManifestFile),
+    success: Schema.Array(ListedFile),
     error: [IndexBadRequest, IndexFailure],
   }),
   HttpApiEndpoint.get("search", "/search", {
@@ -55,10 +55,7 @@ class IndexApi extends HttpApi.make("FolderSyncIndexApi")
   .middleware(IndexRequestErrors)
   .prefix("/api") {}
 
-type IndexError =
-  | Effect.Error<ReturnType<typeof FileIndex.Service.list>>
-  | Effect.Error<ReturnType<typeof FileIndex.Service.search>>
-  | Effect.Error<ReturnType<typeof FileIndex.Service.snapshot>>;
+type IndexError = Effect.Error<ReturnType<typeof FileIndex.Service.list>>;
 
 const indexErrors = <A, R>(self: Effect.Effect<A, IndexError, R>) =>
   self.pipe(
@@ -79,14 +76,7 @@ const indexErrors = <A, R>(self: Effect.Effect<A, IndexError, R>) =>
 const HandlersLive = HttpApiBuilder.group(IndexApi, "index", (handlers) =>
   handlers
     .handle("list", ({ query }) =>
-      Effect.flatMap(FileIndex, (index) => index.snapshot(query)).pipe(
-        indexErrors,
-        Effect.map(({ files, cursor, epoch }) =>
-          HttpServerResponse.jsonUnsafe(files, {
-            headers: { "stream-next-offset": cursor, "stream-epoch": epoch },
-          }),
-        ),
-      ),
+      Effect.flatMap(FileIndex, (index) => index.list(query)).pipe(indexErrors),
     )
     .handle("search", ({ query }) =>
       Effect.flatMap(FileIndex, (index) => index.search(query.q, query.folder)).pipe(indexErrors),
