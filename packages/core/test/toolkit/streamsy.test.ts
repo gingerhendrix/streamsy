@@ -242,7 +242,7 @@ baseIt.effect("spreading a protocol writer does not copy its ownership claim", (
 );
 
 baseIt("the private guard sentinel is recognized by its stable brand", () => {
-  const foreignCopy = ForeignOwner.forStream("notes/ann", true);
+  const foreignCopy = new ForeignOwner("notes/ann", true);
   Object.setPrototypeOf(foreignCopy, Error.prototype);
   expect(ForeignOwner.prototype.isPrototypeOf(foreignCopy)).toBe(false);
   expect(isForeignOwner(foreignCopy)).toBe(true);
