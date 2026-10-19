@@ -1,6 +1,6 @@
 /** Human-readable rendering of durable Fold entries, shared by the CLI commands. */
 import type { LogEntry } from "@humanlayer/fold-core";
-import { Match, Predicate, Schema } from "effect";
+import { Array, Match, Predicate, Schema } from "effect";
 
 const preview = (text: string, limit = 110): string => {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -15,7 +15,7 @@ const preview = (text: string, limit = 110): string => {
 const renderContent = <Part extends { readonly type: string }>(
   content: string | ReadonlyArray<Part>,
   part: (value: Part) => string,
-): string => (Predicate.isString(content) ? content : content.map(part).join(" "));
+): string => (Predicate.isString(content) ? content : Array.join(Array.map(content, part), " "));
 
 const detail = (entry: LogEntry): string =>
   Match.value(entry).pipe(

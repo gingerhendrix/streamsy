@@ -1,5 +1,5 @@
 import { createStateSchema } from "@durable-streams/state";
-import { Schema } from "effect";
+import { Order, Schema } from "effect";
 
 export const HackerNewsStory = Schema.Struct({
   id: Schema.Finite,
@@ -59,6 +59,8 @@ export const hackerNewsState = createStateSchema({
   },
 });
 
-export function newestStorySort(a: HnStory, b: HnStory): number {
-  return b.time - a.time || b.id - a.id;
-}
+/** Newest first: `time` descending, then `id` descending. */
+export const newestStoryOrder: Order.Order<HnStory> = Order.combine(
+  Order.flip(Order.mapInput(Order.Number, (story: HnStory) => story.time)),
+  Order.flip(Order.mapInput(Order.Number, (story: HnStory) => story.id)),
+);

@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { HttpClientRequest } from "effect/http";
 import type {
   AppendOptions,
@@ -40,7 +41,7 @@ export function requests(options: Options) {
     // IDs are canonical HTTP path identities: reject ambiguous URL normalization.
     if (
       !id ||
-      id.split("/").some((part) => !part || part === "." || part === "..") ||
+      Array.some(id.split("/"), (part) => !part || part === "." || part === "..") ||
       /[%?#\\]/.test(id)
     )
       throw new TypeError("Stream ID must be a canonical relative path");

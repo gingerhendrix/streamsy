@@ -1,4 +1,4 @@
-import { Clock, Effect, Schema } from "effect";
+import { Array, Clock, Effect, Option, Schema } from "effect";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/crypto-random-uuid, anti-slop/no-chained-type-assertions -- This harness owns the real local workerd boundary for the Bun tests; Miniflare exposes a workers-types Fetch overload while the Bun tests use Bun Fetch values. */
 import {
   cpSync,
@@ -271,9 +271,9 @@ export const disposeHarness = async (
   }
 
   if (harness.ownership.disposed) {
-    const index = open.findIndex((item) => item.ownership === harness.ownership);
+    const index = Array.findFirstIndex(open, (item) => item.ownership === harness.ownership);
 
-    if (index >= 0) open.splice(index, 1);
+    if (Option.isSome(index)) open.splice(index.value, 1);
   }
 
   if (harness.ownership.disposed && ownedBundles.has(harness.bundleRoot)) {
@@ -328,8 +328,8 @@ export const cleanupHarnesses = async (): Promise<void> => {
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    for (const ownership of Array.from(pending)) {
-      if (open.some((harness) => harness.ownership === ownership)) continue;
+    for (const ownership of globalThis.Array.from(pending)) {
+      if (Array.some(open, (harness) => harness.ownership === ownership)) continue;
 
       try {
         await disposeHarness({
@@ -344,8 +344,11 @@ export const cleanupHarnesses = async (): Promise<void> => {
     }
   }
 
-  const pendingRoots = new Set(Array.from(pending, (ownership) => ownership.root));
-  const pendingBundles = new Set(Array.from(pending, (ownership) => ownership.bundleRoot));
+  const pendingRoots = new Set(globalThis.Array.from(pending, (ownership) => ownership.root));
+
+  const pendingBundles = new Set(
+    globalThis.Array.from(pending, (ownership) => ownership.bundleRoot),
+  );
 
   for (const bundleRoot of ownedBundles) {
     if (pendingBundles.has(bundleRoot)) continue;

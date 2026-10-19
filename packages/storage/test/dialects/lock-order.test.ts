@@ -7,7 +7,7 @@
  * server dialect. Add a dialect to `dialects` to run it there.
  */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Layer, Option, Tracer } from "effect";
+import { Array, Context, Effect, Layer, Option, Tracer } from "effect";
 import {
   CommitBoundary,
   Offset,
@@ -33,7 +33,7 @@ const LOCK =
  * attribute finds them on every dialect.
  */
 const recorder = () => {
-  const spans: Array<Tracer.NativeSpan> = [];
+  const spans: globalThis.Array<Tracer.NativeSpan> = [];
 
   const tracer = Tracer.make({
     span: (options) => {
@@ -46,7 +46,7 @@ const recorder = () => {
 
   /** Statements of each outermost transaction, in the order they ran. */
   const transactions = () => {
-    const grouped = new Map<Tracer.AnySpan, Array<string>>();
+    const grouped = new Map<Tracer.AnySpan, globalThis.Array<string>>();
 
     for (const span of spans) {
       if (!span.attributes.has("db.query.text")) continue;
@@ -163,12 +163,17 @@ for (const dialect of dialects) {
               );
 
               const storage = Context.get(context, Storage);
-              const outcomes: Array<string> = [];
+              const outcomes: globalThis.Array<string> = [];
               yield* Effect.gen(function* () {
                 for (const mutation of workload)
                   outcomes.push(
                     yield* storage.mutate(mutation).pipe(
-                      Effect.map(({ results }) => results.map(({ _tag }) => _tag).join("+")),
+                      Effect.map(({ results }) =>
+                        Array.join(
+                          Array.map(results, ({ _tag }) => _tag),
+                          "+",
+                        ),
+                      ),
                       Effect.catchTag("MutationRejected", ({ reason }) =>
                         Effect.succeed(`rejected:${reason}`),
                       ),
@@ -195,11 +200,20 @@ for (const dialect of dialects) {
       ]);
       const recorded = transactions();
       expect(recorded.length).toBe(workload.length);
-      expect(recorded.filter((statements) => !LOCK.test(statements[0] ?? ""))).toEqual([]);
+      expect(Array.filter(recorded, (statements) => !LOCK.test(statements[0] ?? ""))).toEqual([]);
       // The purge of `child` locks `parent` before it checks for other dependents.
       const purge = recorded[6] ?? [];
-      const parentLock = purge.findIndex((statement, index) => index > 0 && LOCK.test(statement));
-      const dependents = purge.findLastIndex((statement) => statement.includes("forked_from ="));
+
+      const parentLock = Option.getOrElse(
+        Array.findFirstIndex(purge, (statement, index) => index > 0 && LOCK.test(statement)),
+        () => -1,
+      );
+
+      const dependents = Option.getOrElse(
+        Array.findLastIndex(purge, (statement) => statement.includes("forked_from =")),
+        () => -1,
+      );
+
       expect(parentLock).toBeGreaterThan(0);
       expect(dependents).toBeGreaterThan(parentLock);
     });
@@ -285,7 +299,12 @@ for (const dialect of dialects) {
 
               const outcome = (mutation: Mutation) =>
                 storage.mutate(mutation).pipe(
-                  Effect.map(({ results }) => results.map(({ _tag }) => _tag).join("+")),
+                  Effect.map(({ results }) =>
+                    Array.join(
+                      Array.map(results, ({ _tag }) => _tag),
+                      "+",
+                    ),
+                  ),
                   Effect.catchTag("MutationRejected", ({ reason }) =>
                     Effect.succeed(`rejected:${reason}`),
                   ),
@@ -319,7 +338,7 @@ for (const dialect of dialects) {
 
               return {
                 outcomes,
-                messages: (yield* other.messages(stream, {})).map((stored) => stored.offset),
+                messages: Array.map(yield* other.messages(stream, {}), (stored) => stored.offset),
                 parent: Option.isSome(yield* other.record(StreamId.make("parent"))),
               };
             }).pipe(Effect.scoped),

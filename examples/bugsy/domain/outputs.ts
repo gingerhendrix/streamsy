@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Array, Order, Schema } from "effect";
 import { LabelRow, ProjectRow, UserRow } from "./catalog.ts";
 import { Identifier, IssueEvent, IssueLabelRow, IssueRow, Sequence } from "./issue.ts";
 
@@ -74,21 +74,21 @@ const group = <A>(rows: ReadonlyArray<A>, key: (row: A) => string) => {
 
 /** Rebuilt in linear time; row builders visit only the keys touched by a unit. */
 export const indexWorkspace = (state: WorkspaceState) => ({
-  issues: new Map(state.issues.map((row) => [row.issueId, row])),
-  projects: new Map(state.projects.map((row) => [row.projectId, row])),
-  users: new Map(state.users.map((row) => [row.userId, row])),
-  labels: new Map(state.labels.map((row) => [row.labelId, row])),
+  issues: new Map(Array.map(state.issues, (row) => [row.issueId, row] as const)),
+  projects: new Map(Array.map(state.projects, (row) => [row.projectId, row] as const)),
+  users: new Map(Array.map(state.users, (row) => [row.userId, row] as const)),
+  labels: new Map(Array.map(state.labels, (row) => [row.labelId, row] as const)),
   membershipsByIssue: group(
-    state.memberships.filter((row) => row.attached),
+    Array.filter(state.memberships, (row) => row.attached),
     (row) => row.issueId,
   ),
   membershipsByLabel: group(
-    state.memberships.filter((row) => row.attached),
+    Array.filter(state.memberships, (row) => row.attached),
     (row) => row.labelId,
   ),
   issuesByProject: group(state.issues, (row) => row.projectId),
   issuesByUser: group(
-    state.issues.filter((row) => row.assigneeId !== undefined),
+    Array.filter(state.issues, (row) => row.assigneeId !== undefined),
     (row) => row.assigneeId!,
   ),
 });
@@ -97,9 +97,10 @@ export type WorkspaceIndex = ReturnType<typeof indexWorkspace>;
 
 export const boardCard = (index: WorkspaceIndex, issue: IssueRow): ProjectBoardCard => ({
   ...issue,
-  labelIds: (index.membershipsByIssue.get(issue.issueId) ?? [])
-    .map((row) => row.labelId)
-    .toSorted(),
+  labelIds: Array.sort(
+    Array.map(index.membershipsByIssue.get(issue.issueId) ?? [], (row) => row.labelId),
+    Order.String,
+  ),
   projectName: index.projects.get(issue.projectId)?.name ?? null,
   assigneeName:
     issue.assigneeId === undefined ? null : (index.users.get(issue.assigneeId)?.name ?? null),
@@ -109,7 +110,7 @@ export const labelCount = (index: WorkspaceIndex, label: LabelRow): LabelCountRo
   workspaceId: label.workspaceId,
   labelId: label.labelId,
   name: label.name,
-  count: (index.membershipsByLabel.get(label.labelId) ?? []).filter((row) =>
+  count: Array.filter(index.membershipsByLabel.get(label.labelId) ?? [], (row) =>
     index.issues.has(row.issueId),
   ).length,
 });

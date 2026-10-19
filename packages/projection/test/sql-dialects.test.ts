@@ -5,7 +5,7 @@
  * its URL is absent.
  */
 import { describe, expect, test } from "vitest";
-import { Array, Context, Effect, Layer, Option, Result } from "effect";
+import { Array, Context, Effect, Layer, Option, Order, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { Storage, StreamId } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -130,7 +130,7 @@ for (const dialect of dialects) {
               loaded: [loaded.token, Option.map(loaded.record, ({ state }) => state)],
               stale: Result.isFailure(stale) ? stale.failure.reason : "applied",
               rows: rows.length,
-              json: rows.every(({ owner_value }) => owner_value.startsWith("{")),
+              json: Array.every(rows, ({ owner_value }) => owner_value.startsWith("{")),
               removed: (yield* store.load(key("upper"))).token,
               other: Option.map((yield* store.load(key("UPPER"))).record, ({ state }) => state),
             };
@@ -186,10 +186,15 @@ for (const dialect of dialects) {
               ).pipe(
                 Effect.flatMap((outcomes) =>
                   Effect.map(first.load(key(id)), (loaded) => {
-                    const winners = outcomes.filter(({ outcome }) => outcome.startsWith("saved"));
+                    const winners = Array.filter(outcomes, ({ outcome }) =>
+                      outcome.startsWith("saved"),
+                    );
 
                     return {
-                      outcomes: outcomes.map(({ outcome }) => outcome).toSorted(),
+                      outcomes: Array.sort(
+                        Array.map(outcomes, ({ outcome }) => outcome),
+                        Order.String,
+                      ),
                       // The stored record is the winner's, not a later loser's.
                       stored:
                         winners.length === 1 &&
@@ -208,8 +213,16 @@ for (const dialect of dialects) {
 
         const conflicts = Array.replicate("token-conflict", SAVES - 1);
         expect(result).toEqual({
-          existing: { outcomes: ["saved 2", ...conflicts].toSorted(), stored: true, token: "2" },
-          absent: { outcomes: ["saved 1", ...conflicts].toSorted(), stored: true, token: "1" },
+          existing: {
+            outcomes: Array.sort(["saved 2", ...conflicts], Order.String),
+            stored: true,
+            token: "2",
+          },
+          absent: {
+            outcomes: Array.sort(["saved 1", ...conflicts], Order.String),
+            stored: true,
+            token: "1",
+          },
         });
       },
       TIMEOUT_MS,
@@ -236,7 +249,7 @@ for (const dialect of dialects) {
               readonly owner_key: string;
             }>`SELECT owner_key FROM streamsy_owner_records WHERE owner_key = ${"x"}`;
 
-            return rows.map(({ owner_key }) => owner_key);
+            return Array.map(rows, ({ owner_key }) => owner_key);
           }),
         );
 
@@ -268,7 +281,7 @@ for (const dialect of dialects) {
                   Effect.gen(function* () {
                     for (const item of batch.input.items)
                       yield* sql`INSERT INTO seen ${sql.insert({ item })}`;
-                    const kept = batch.input.items.filter((item) => item > 0);
+                    const kept = Array.filter(batch.input.items, (item) => item > 0);
 
                     if (Array.isReadonlyArrayNonEmpty(kept)) yield* Streams.append(output, kept);
                   }),
@@ -350,7 +363,7 @@ for (const dialect of dialects) {
 
                     for (const item of batch.input.items)
                       yield* sql`INSERT INTO seen ${sql.insert({ item })}`;
-                    const kept = batch.input.items.filter((item) => item > 0);
+                    const kept = Array.filter(batch.input.items, (item) => item > 0);
 
                     if (Array.isReadonlyArrayNonEmpty(kept)) yield* Streams.append(output, kept);
                   }),
@@ -364,14 +377,15 @@ for (const dialect of dialects) {
               const storage = yield* Storage;
               const id = StreamId.make(output.id);
               const messages = yield* storage.messages(id, {});
-              const offsets = messages.map(({ offset }) => offset);
+              const offsets = Array.map(messages, ({ offset }) => offset);
               const tail = Option.map(yield* storage.record(id), (stored) => stored.currentOffset);
 
               return {
                 run,
                 seen: yield* count(sql),
                 output: yield* readAll(output),
-                ordered: offsets.every(
+                ordered: Array.every(
+                  offsets,
                   (offset, index) => index === 0 || offsets[index - 1]! < offset,
                 ),
                 tail: Option.getOrUndefined(tail) === offsets.at(-1),

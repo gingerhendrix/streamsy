@@ -22,7 +22,7 @@ export const positives = Projection.process({
   inputs: { input },
   process: (batch) =>
     Effect.gen(function* () {
-      const kept = batch.input.items.filter((item) => item > 0);
+      const kept = Array.filter(batch.input.items, (item) => item > 0);
 
       if (Array.isReadonlyArrayNonEmpty(kept)) yield* Streams.append(output, kept);
     }),

@@ -5,7 +5,7 @@
  * migrates first, as a placement does at start.
  */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Exit, Layer, Option, Schema, type Scope } from "effect";
+import { Array, Context, Effect, Exit, Layer, Option, Schema, type Scope } from "effect";
 import { SqlClient } from "effect/sql";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import type { OutboxBacking, OutboxDraft } from "@streamsy/serve/action/outbox";
@@ -95,7 +95,8 @@ for (const dialect of dialects) {
             // Keys compare exactly: case and trailing spaces make another key.
             const third = yield* outbox.enqueue([draft("A"), draft("a "), draft("a")]);
 
-            const keys = (yield* outbox.list("test.sink", undefined)).map(
+            const keys = Array.map(
+              yield* outbox.list("test.sink", undefined),
               (entry) => entry.idempotencyKey,
             );
 
@@ -122,20 +123,23 @@ for (const dialect of dialects) {
           Effect.gen(function* () {
             yield* outbox.enqueue([draft("a"), draft("b"), draft("c"), draft("d", "other")]);
 
-            const firstIds = (yield* outbox.claimDue("test.sink", "main", 1_000, 2)).map(
+            const firstIds = Array.map(
+              yield* outbox.claimDue("test.sink", "main", 1_000, 2),
               (entry) => entry.id,
             );
 
             yield* outbox.reschedule(1, 1, 5_000, "not yet");
 
-            const due = (yield* outbox.claimDue("test.sink", undefined, 1_000, 10)).map(
+            const due = Array.map(
+              yield* outbox.claimDue("test.sink", undefined, 1_000, 10),
               (entry) => entry.idempotencyKey,
             );
 
             yield* outbox.markDelivered(2, 1, 2_000);
             yield* outbox.deadLetter(3, 3, "attempts-exhausted", "handler down", 2_100);
 
-            const later = (yield* outbox.claimDue("test.sink", undefined, 9_000, 10)).map(
+            const later = Array.map(
+              yield* outbox.claimDue("test.sink", undefined, 9_000, 10),
               (entry) => entry.idempotencyKey,
             );
 
@@ -267,7 +271,7 @@ describe.skipIf(mysqlUrl === undefined)("the mysql outbox without the eager migr
           const enqueue = yield* outbox.enqueue([draft("a")]).pipe(Effect.flip);
           const tables = yield* sql.unsafe<{ readonly name: string }>(sqlDialects.mysql.tables);
 
-          return { operation: enqueue.operation, tables: tables.map(({ name }) => name) };
+          return { operation: enqueue.operation, tables: Array.map(tables, ({ name }) => name) };
         }),
       );
 
@@ -288,7 +292,7 @@ describe.skipIf(mysqlUrl === undefined)("the mysql outbox without the eager migr
 
           return {
             operation: isOutboxUnavailable(failure) ? failure.operation : String(failure),
-            tables: tables.map(({ name }) => name),
+            tables: Array.map(tables, ({ name }) => name),
           };
         }),
       );

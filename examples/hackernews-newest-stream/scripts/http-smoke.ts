@@ -2,12 +2,15 @@ import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import { StreamAddress } from "@streamsy/core";
 import { spawnServer } from "@streamsy/test-support/server";
 import {
+  Array,
   Console,
   type Duration,
   Effect,
   FileSystem,
   Formatter,
   Layer,
+  Option,
+  Order,
   Path,
   Schedule,
   Schema,
@@ -78,11 +81,14 @@ const story = (id: number, time: number, title: string): FixtureStory => ({
 const baseTime = 1_700_000_000;
 
 const fixtureById = new Map(
-  [
-    story(101, baseTime + 30, "Streamsy ships durable streams"),
-    story(102, baseTime + 20, "Bounded projections over event streams"),
-    story(103, baseTime + 40, "Durable State lineage"),
-  ].map((value) => [value.id, value]),
+  Array.map(
+    [
+      story(101, baseTime + 30, "Streamsy ships durable streams"),
+      story(102, baseTime + 20, "Bounded projections over event streams"),
+      story(103, baseTime + 40, "Durable State lineage"),
+    ],
+    (value) => [value.id, value] as const,
+  ),
 );
 
 let newestIds = [101, 102];
@@ -192,15 +198,18 @@ const smoke = Effect.gen(function* () {
   const waitForRows = (db: HnDb, title: string, ids = "101,103") =>
     eventually(
       Effect.suspend(() => {
-        const rows = Array.from(db.collections.stories.values());
+        const rows = globalThis.Array.from(db.collections.stories.values());
 
         const converged =
           rows.length === ids.split(",").length &&
-          rows.some((row) => row.title === title) &&
-          rows
-            .map((row) => String(row.id))
-            .toSorted()
-            .join(",") === ids;
+          Array.some(rows, (row) => row.title === title) &&
+          Array.join(
+            Array.sort(
+              Array.map(rows, (row) => String(row.id)),
+              Order.String,
+            ),
+            ",",
+          ) === ids;
 
         return converged
           ? Effect.void
@@ -237,7 +246,11 @@ const smoke = Effect.gen(function* () {
     const changedEvents = yield* readStoryEvents;
     yield* waitForRows(live, "Streamsy ships a complete projection");
     yield* check(live.offset !== initialOffset, "same session consumes the live suffix after poll");
-    const deleted = changedEvents.find((event) => event.headers.operation === "delete");
+
+    const deleted = Option.getOrUndefined(
+      Array.findFirst(changedEvents, (event) => event.headers.operation === "delete"),
+    );
+
     yield* check(
       deleted !== undefined && "old_value" in deleted,
       "Durable State delete carries the departed row",
@@ -254,11 +267,15 @@ const smoke = Effect.gen(function* () {
       "changed poll should append delete plus two upserts",
     );
     yield* check(
-      changedEvents.some((event) => event.key === "102" && event.headers.operation === "delete"),
+      Array.some(
+        changedEvents,
+        (event) => event.key === "102" && event.headers.operation === "delete",
+      ),
       "story leaving the newest set should emit a delete",
     );
     yield* check(
-      changedEvents.some(
+      Array.some(
+        changedEvents,
         (event) =>
           event.key === "101" &&
           event.headers.operation === "upsert" &&
@@ -268,7 +285,10 @@ const smoke = Effect.gen(function* () {
       "mutable story fields should emit an updated upsert",
     );
     yield* check(
-      changedEvents.some((event) => event.key === "103" && event.headers.operation === "upsert"),
+      Array.some(
+        changedEvents,
+        (event) => event.key === "103" && event.headers.operation === "upsert",
+      ),
       "story entering the newest set should emit an upsert",
     );
 
@@ -347,7 +367,7 @@ const smoke = Effect.gen(function* () {
     );
   });
 
-  yield* body.pipe(Effect.ensuring(Effect.sync(() => sessions.forEach((db) => db.close()))));
+  yield* body.pipe(Effect.ensuring(Effect.sync(() => Array.forEach(sessions, (db) => db.close()))));
 });
 
 smoke.pipe(

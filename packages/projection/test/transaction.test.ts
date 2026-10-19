@@ -1,6 +1,6 @@
 import { it as baseIt, layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
+import { Array, Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
@@ -215,14 +215,14 @@ layer(sqlite)((it) => {
 
         expect(failed).toMatchObject({ _tag: "Failure", failure: { reason: "token-conflict" } });
         expect((yield* Projection.read(projection)).state).toBe(0);
-        expect((yield* Stream.runCollect(sink.read({}))).flatMap((batch) => batch.items)).toEqual(
-          [],
-        );
+        expect(
+          Array.flatMap(yield* Stream.runCollect(sink.read({})), (batch) => batch.items),
+        ).toEqual([]);
         yield* Projection.run(projection);
         expect((yield* Projection.read(projection)).state).toBe(1);
-        expect((yield* Stream.runCollect(sink.read({}))).flatMap((batch) => batch.items)).toEqual([
-          1,
-        ]);
+        expect(
+          Array.flatMap(yield* Stream.runCollect(sink.read({})), (batch) => batch.items),
+        ).toEqual([1]);
       }),
   );
 });

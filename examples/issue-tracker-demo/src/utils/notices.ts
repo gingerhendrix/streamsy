@@ -1,4 +1,4 @@
-import { Effect, Fiber } from "effect";
+import { Array, Effect, Fiber } from "effect";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface Notice {
@@ -32,7 +32,7 @@ export function useNotices() {
         Effect.andThen(
           Effect.sync(() => {
             timers.current.delete(timer);
-            setNotices((current) => current.filter((notice) => notice.id !== id));
+            setNotices((current) => Array.filter(current, (notice) => notice.id !== id));
           }),
         ),
       ),

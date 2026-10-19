@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Array, Schema } from "effect";
 import { useRef, useState } from "react";
 import { IssueStatus } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import type { Comment, Issue } from "@streamsy/issue-tracker-demo-contract/types";
@@ -64,7 +64,7 @@ export function IssueRow({
         {comments.length === 0 ? (
           <p className="comments-empty">No comments yet.</p>
         ) : (
-          comments.map((comment) => (
+          Array.map(comments, (comment) => (
             <p key={comment.id} className={comment.$synced ? "comment" : "comment pending"}>
               <span className="author">{comment.author}</span>
               {comment.body}

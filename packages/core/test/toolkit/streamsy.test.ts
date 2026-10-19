@@ -3,7 +3,7 @@ import { expect, it as baseIt, layer } from "@effect/vitest";
 import { Storage } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { ForeignOwner, isForeignOwner } from "../../src/internal/owner.ts";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Array, Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy, StreamId, StreamAddress, MemoryStorage } from "../../src/index.ts";
 
 class Notes extends Streamsy.json<Notes>()("Notes", "notes/:user", {
@@ -38,7 +38,7 @@ layer(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Notes, Counts)
       yield* notes.append({ user: "ann" }, [{ text: "hello" }]);
       yield* notes.fork({ user: "copy" }, { user: "ann" });
       const batches = yield* Stream.runCollect(notes.read({ user: "copy" }));
-      expect(batches.flatMap((batch) => batch.items)).toEqual([{ text: "hello" }]);
+      expect(Array.flatMap(batches, (batch) => batch.items)).toEqual([{ text: "hello" }]);
       expect((yield* notes.head({ user: "ann" })).contentType).toBe("application/json");
       const counts = yield* Counts;
       yield* counts.create({ id: 4 });

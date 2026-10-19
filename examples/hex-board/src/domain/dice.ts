@@ -13,11 +13,16 @@
  * extra attacker dice beyond the defender's count are simply unused.
  */
 
+import { Array, Order } from "effect";
+
 import { RULES } from "./map.ts";
 import type { Rng } from "./rng.ts";
 import { rollDice } from "./rng.ts";
 
 export const descending = (a: number, b: number): number => b - a;
+
+/** `descending` as an `Order`. */
+const descendingOrder: Order.Order<number> = Order.flip(Order.Number);
 
 export interface CombatComparison {
   attackerLosses: number;
@@ -28,8 +33,8 @@ export function compareRolls(
   attackerRolls: readonly number[],
   defenderRolls: readonly number[],
 ): CombatComparison {
-  const attacker = attackerRolls.toSorted(descending);
-  const defender = defenderRolls.toSorted(descending);
+  const attacker = Array.sort(attackerRolls, descendingOrder);
+  const defender = Array.sort(defenderRolls, descendingOrder);
   let attackerLosses = 0;
   let defenderLosses = 0;
   const pairs = Math.min(attacker.length, defender.length);
@@ -54,5 +59,5 @@ export function legalDefenderDice(defendingArmies: number): number {
 
 /** Roll `count` dice through the injected Rng, sorted descending for recording. */
 export function rollSorted(rng: Rng, count: number): number[] {
-  return rollDice(rng, count).toSorted(descending);
+  return Array.sort(rollDice(rng, count), descendingOrder);
 }

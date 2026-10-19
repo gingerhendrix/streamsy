@@ -1,4 +1,4 @@
-import { Record } from "effect";
+import { Array, Option, Record } from "effect";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { transformerTwoslash } from "fumadocs-twoslash";
@@ -40,7 +40,10 @@ export const snippetTwoslashOptions = () => ({
   compilerOptions: snippetCompilerOptions,
   handbookOptions: { noStaticSemanticInfo: true },
   extraFiles: Record.fromEntries(
-    sharedModules.map((name) => [name, readFileSync(join(snippetsPackage, "src", name), "utf8")]),
+    Array.map(sharedModules, (name) => [
+      name,
+      readFileSync(join(snippetsPackage, "src", name), "utf8"),
+    ]),
   ),
 });
 
@@ -114,12 +117,12 @@ const cutLine = (line: string, kind = ""): boolean => line.trim() === `// ---cut
  */
 export const stripTwoslash = (code: string): string => {
   let lines = code.split("\n");
-  const lastCut = lines.findLastIndex((line) => cutLine(line) || cutLine(line, "-before"));
+  const lastCut = Array.findLastIndex(lines, (line) => cutLine(line) || cutLine(line, "-before"));
 
-  if (lastCut !== -1) lines = lines.slice(lastCut + 1);
-  const cutAfter = lines.findIndex((line) => cutLine(line, "-after"));
+  if (Option.isSome(lastCut)) lines = lines.slice(lastCut.value + 1);
+  const cutAfter = Array.findFirstIndex(lines, (line) => cutLine(line, "-after"));
 
-  if (cutAfter !== -1) lines = lines.slice(0, cutAfter);
+  if (Option.isSome(cutAfter)) lines = lines.slice(0, cutAfter.value);
   const shown: Array<string> = [];
   let hidden = 0;
 
@@ -129,7 +132,7 @@ export const stripTwoslash = (code: string): string => {
     else if (hidden === 0 && !flagLine.test(line) && !queryLine.test(line)) shown.push(line);
   }
 
-  return shown.join("\n");
+  return Array.join(shown, "\n");
 };
 
 /**

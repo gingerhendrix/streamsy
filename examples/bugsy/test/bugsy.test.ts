@@ -5,7 +5,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import { Layer } from "effect";
 
 import { expect, test } from "vitest";
-import { Effect, Option } from "effect";
+import { Array, Effect, Option } from "effect";
 import { CheckpointStore } from "@streamsy/projection";
 import { commandView } from "../server/command-view.ts";
 import { SqlClient } from "effect/sql";
@@ -110,7 +110,13 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
 
             expect(named.event).toMatchObject({ status: "done", sequence: 7 });
             const { items } = yield* events.collect({ workspaceId: "live" });
-            expect(items.map((item) => item.eventId)).toEqual(["e1", "c1", "c2", "c4", "c5"]);
+            expect(Array.map(items, (item) => item.eventId)).toEqual([
+              "e1",
+              "c1",
+              "c2",
+              "c4",
+              "c5",
+            ]);
           }).pipe(Effect.provideContext(runtime));
         }),
     );

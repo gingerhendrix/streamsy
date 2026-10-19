@@ -1,7 +1,7 @@
-import { Effect, Record, type Schedule } from "effect";
+import { Array, Effect, Order, Record, type Schedule } from "effect";
 import { DurableState, type OffsetMismatch } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { newestStorySort, type HnStory } from "../../state-schema.ts";
+import { newestStoryOrder, type HnStory } from "../../state-schema.ts";
 import { applyChange, newestRows, type StoryRows } from "../newest-rows.ts";
 import { storiesAddress, type StoryChange } from "../stories.ts";
 
@@ -28,7 +28,7 @@ export const reconcileNewest = (
       const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
 
       return Effect.succeed({
-        value: { rows: events.reduce(applyChange, rows), changes },
+        value: { rows: Array.reduce(events, rows, applyChange), changes },
         items: events,
       });
     },
@@ -40,22 +40,27 @@ export const reconcileNewest = (
 
 /** Keep known rows on item-fetch failures while their ids remain in the newest set. */
 export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly StoryChange[] {
-  const removed = Record.values(previous)
-    .filter((story) => !fetched.newestIds.has(story.id))
-    .toSorted((a, b) => a.id - b.id);
+  const removed = Array.sort(
+    Array.filter(Record.values(previous), (story) => !fetched.newestIds.has(story.id)),
+    Order.mapInput(Order.Number, (story: HnStory) => story.id),
+  );
 
-  const changed = fetched.stories
-    .filter(
+  const changed = Array.sort(
+    Array.filter(
+      fetched.stories,
       (story) =>
         fetched.newestIds.has(story.id) &&
         (previous[String(story.id)] === undefined ||
           !storyEquals(previous[String(story.id)], story)),
-    )
-    .toSorted(newestStorySort);
+    ),
+    newestStoryOrder,
+  );
 
   return [
-    ...removed.map((story) => DurableState.remove("hn-story", story.id, { oldValue: story })),
-    ...changed.map((story) => DurableState.upsert("hn-story", story)),
+    ...Array.map(removed, (story) =>
+      DurableState.remove("hn-story", story.id, { oldValue: story }),
+    ),
+    ...Array.map(changed, (story) => DurableState.upsert("hn-story", story)),
   ];
 }
 

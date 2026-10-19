@@ -1,3 +1,4 @@
+import { Array, Option, Order } from "effect";
 import { existsSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join, normalize } from "node:path";
@@ -46,16 +47,20 @@ const isElision = (line: string): boolean => line.trim().startsWith("// ...");
 export const excerptSegments = (body: string): ReadonlyArray<ReadonlyArray<string>> => {
   const segments: Array<Array<string>> = [[]];
 
-  for (const line of body.split("\n").map((text) => text.trimEnd())) {
+  for (const line of Array.map(body.split("\n"), (text) => text.trimEnd())) {
     if (isElision(line)) segments.push([]);
     else segments.at(-1)?.push(line);
   }
 
-  return segments.flatMap((segment) => {
-    const first = segment.findIndex((line) => line !== "");
-    const last = segment.findLastIndex((line) => line !== "");
+  return Array.flatMap(segments, (segment) => {
+    const first = Array.findFirstIndex(segment, (line) => line !== "");
 
-    return first === -1 ? [] : [segment.slice(first, last + 1)];
+    const last = Option.getOrElse(
+      Array.findLastIndex(segment, (line) => line !== ""),
+      () => -1,
+    );
+
+    return Option.isNone(first) ? [] : [segment.slice(first.value, last + 1)];
   });
 };
 
@@ -119,12 +124,15 @@ const leadingSpaces = (line: string): number => line.length - line.trimStart().l
  * must still match.
  */
 export const firstMissingLine = (body: string, source: string): string | undefined => {
-  const sourceLines = source.split("\n").map((line) => line.trimEnd());
+  const sourceLines = Array.map(source.split("\n"), (line) => line.trimEnd());
   const segments = excerptSegments(body);
   const unshifted = missingWithIndent(segments, sourceLines, "");
 
   if (unshifted === undefined) return undefined;
-  const shifts = new Set(sourceLines.map(leadingSpaces).filter((spaces) => spaces > 0));
+
+  const shifts = new Set(
+    Array.filter(Array.map(sourceLines, leadingSpaces), (spaces) => spaces > 0),
+  );
 
   for (const shift of shifts) {
     if (missingWithIndent(segments, sourceLines, " ".repeat(shift)) === undefined) return undefined;
@@ -184,11 +192,14 @@ export const resolveTitle = (
   title: string,
 ): { readonly folder: string; readonly path: string } => {
   const [head, ...rest] = normalize(title).split("/");
-  const quoted = folders.slice(1).find((folder) => basename(folder) === head);
+
+  const quoted = Option.getOrUndefined(
+    Array.findFirst(folders.slice(1), (folder) => basename(folder) === head),
+  );
 
   return quoted === undefined || rest.length === 0
     ? { folder: folders[0], path: title }
-    : { folder: quoted, path: rest.join("/") };
+    : { folder: quoted, path: Array.join(rest, "/") };
 };
 
 const exampleReader =
@@ -207,10 +218,13 @@ export const checkDemoExcerpts = async (): Promise<void> => {
     if (!existsSync(join(repo, example))) failures.push(`missing example folder ${example}`);
   }
 
-  const pages = (await readdir(demos))
-    .filter((name) => name.endsWith(".mdx"))
-    .map((name) => name.slice(0, -".mdx".length))
-    .toSorted();
+  const pages = Array.sort(
+    Array.map(
+      Array.filter(await readdir(demos), (name) => name.endsWith(".mdx")),
+      (name) => name.slice(0, -".mdx".length),
+    ),
+    Order.String,
+  );
 
   for (const page of pages) {
     if (page === "index") continue;
@@ -225,7 +239,7 @@ export const checkDemoExcerpts = async (): Promise<void> => {
     const problems = checkDemoPage(text, exampleReader(folders));
 
     if (problems.length === 0) {
-      console.log(`ok demo excerpts ${page} ← ${folders.join(", ")}`);
+      console.log(`ok demo excerpts ${page} ← ${Array.join(folders, ", ")}`);
       continue;
     }
 

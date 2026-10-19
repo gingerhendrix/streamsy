@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
+import { Array, Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { jitterDeadline, sse } from "../../src/http/sse.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/tags.ts";
@@ -93,7 +93,7 @@ it("each SSE chunk is one whole batch that ends with its control event", () =>
 
       yield* control.snapshot;
       yield* writer.append(id, { contentType: json, data: encoder.encode('[{"n":3}]') });
-      const chunks = (yield* Fiber.join(fiber)).map((chunk) => decoder.decode(chunk));
+      const chunks = Array.map(yield* Fiber.join(fiber), (chunk) => decoder.decode(chunk));
       expect(chunks).toHaveLength(2);
 
       for (const chunk of chunks) {

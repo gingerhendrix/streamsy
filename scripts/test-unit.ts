@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Array, Order, Schema } from "effect";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,14 +14,19 @@ const rootManifest = Schema.decodeSync(
   ),
 )(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
-const workspaceDirs = rootManifest.workspaces.packages.flatMap((pattern) => {
+const workspaceDirs = Array.flatMap(rootManifest.workspaces.packages, (pattern) => {
   if (!pattern.endsWith("/*")) throw new Error(`Unsupported workspace pattern: ${pattern}`);
   const parent = pattern.slice(0, -2);
 
-  return readdirSync(join(repoRoot, parent), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => `${parent}/${entry.name}`)
-    .toSorted();
+  return Array.sort(
+    Array.map(
+      Array.filter(readdirSync(join(repoRoot, parent), { withFileTypes: true }), (entry) =>
+        entry.isDirectory(),
+      ),
+      (entry) => `${parent}/${entry.name}`,
+    ),
+    Order.String,
+  );
 });
 
 for (const dir of workspaceDirs) {

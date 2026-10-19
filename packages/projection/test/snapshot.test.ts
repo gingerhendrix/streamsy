@@ -3,7 +3,7 @@ import { layer } from "@effect/vitest";
 import { Commit, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect } from "vitest";
-import { Effect, FileSystem, Path, Layer, Option, Schema } from "effect";
+import { Array, Effect, FileSystem, Path, Layer, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StorageFault, type StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
@@ -130,7 +130,7 @@ for (const [name, host] of hosts) {
 
                 return [
                   count + batch.input.items.length,
-                  { doubled: batch.input.items.map((n) => n * 2) },
+                  { doubled: Array.map(batch.input.items, (n) => n * 2) },
                 ] as const;
               }),
           }).at({ start: 10 });

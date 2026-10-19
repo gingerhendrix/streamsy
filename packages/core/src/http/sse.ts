@@ -1,5 +1,5 @@
 import type { StreamsFault } from "../fault.ts";
-import { Clock, Effect, Random, Record, Stream } from "effect";
+import { Array, Clock, Effect, Random, Record, Stream } from "effect";
 import { HttpServerResponse } from "effect/http";
 import type { Reader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
@@ -71,7 +71,7 @@ export function sse(
         // One chunk per batch: the deadline merge below can then end the body only
         // between batches, never between a data event and the control event that
         // moves the client's offset past it.
-        const frame = concatBytes(chunks.map((data) => ({ data })));
+        const frame = concatBytes(Array.map(chunks, (data) => ({ data })));
 
         return { frames: [frame], done: result.closed };
       }).pipe(

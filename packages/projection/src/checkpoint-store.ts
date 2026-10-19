@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Record, Schema, Semaphore } from "effect";
+import { Array, Context, Effect, Layer, Option, Record, Schema, Semaphore } from "effect";
 import { CommitBoundary, ZERO_OFFSET, type StorageFault } from "@streamsy/core";
 import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
 import type { InputMap, Slice } from "./batch.ts";
@@ -246,7 +246,7 @@ export interface Identity {
 
 const identityOf = (inputs: InputMap): Record<string, string> =>
   Record.fromEntries(
-    Record.toEntries(inputs).map(([name, address]) => [
+    Array.map(Record.toEntries(inputs), ([name, address]) => [
       name,
       encodeKey([address.id, address.contentType]),
     ]),
@@ -255,7 +255,7 @@ const identityOf = (inputs: InputMap): Record<string, string> =>
 const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boolean => {
   const keys = Record.keys(a);
 
-  return keys.length === Record.keys(b).length && keys.every((k) => a[k] === b[k]);
+  return keys.length === Record.keys(b).length && Array.every(keys, (k) => a[k] === b[k]);
 };
 
 /** The stored record, or the unstored initial record for a fresh key. */
@@ -269,7 +269,9 @@ export const restore = Effect.fn("Projection.restore")(function* <R>(
   if (Option.isNone(loaded.record)) {
     const record: CheckpointRecord = {
       identity,
-      inputs: Record.fromEntries(Record.keys(projection.inputs).map((name) => [name, ZERO_OFFSET])),
+      inputs: Record.fromEntries(
+        Array.map(Record.keys(projection.inputs), (name) => [name, ZERO_OFFSET]),
+      ),
       adapters: {},
     };
 
@@ -302,13 +304,17 @@ export const advance = (
   ranges: Record<string, { readonly nextOffset: string }>,
 ): Record<string, string> =>
   Record.fromEntries(
-    Record.toEntries(inputs).map(([name, offset]) => [name, ranges[name]?.nextOffset ?? offset]),
+    Array.map(Record.toEntries(inputs), ([name, offset]) => [
+      name,
+      ranges[name]?.nextOffset ?? offset,
+    ]),
   );
 
 /** Only the inputs that contributed items; the unit key and any pin come from these. */
 export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string, Range> =>
   Record.fromEntries(
-    Record.toEntries(slices)
-      .filter(([, slice]) => slice.items.length > 0)
-      .map(([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }]),
+    Array.map(
+      Array.filter(Record.toEntries(slices), ([, slice]) => slice.items.length > 0),
+      ([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }],
+    ),
   );

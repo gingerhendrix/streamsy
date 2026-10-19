@@ -35,7 +35,7 @@ describe("digests", () => {
   });
 });
 
-import { Record, Schema } from "effect";
+import { Array, Record, Schema } from "effect";
 import { PublicErrorSchema } from "../src/errors.ts";
 import { decodePublicError, type PublicError } from "../src/contract.ts";
 
@@ -90,7 +90,7 @@ test("S-4 server Schema and browser decoder agree on the wire JSON domain", () =
 
     for (const key of Record.keys<string, unknown>(error)) {
       const missing = Record.fromEntries(
-        Record.toEntries<string, unknown>(error).filter(([name]) => name !== key),
+        Array.filter(Record.toEntries<string, unknown>(error), ([name]) => name !== key),
       );
 
       candidates.push(missing);

@@ -1,5 +1,5 @@
 import { StorageFault } from "@streamsy/core";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Array, Effect, FileSystem, Path, Schema } from "effect";
 import { inspectFormat, newerVersionFault } from "./migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
@@ -55,7 +55,8 @@ const decodeVersions = Schema.decodeUnknownSync(
 
 const readFormat = (reader: SqliteFileReader) => {
   const names = new Set(
-    decodeTableNames(reader.all("SELECT name FROM sqlite_master WHERE type='table'")).map(
+    Array.map(
+      decodeTableNames(reader.all("SELECT name FROM sqlite_master WHERE type='table'")),
       ({ name }) => name,
     ),
   );

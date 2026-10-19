@@ -6,12 +6,14 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  Array,
   Cause,
   Context,
   Effect,
   Exit,
   Layer,
   Option,
+  Order,
   Predicate,
   Scope,
   type Scope as ScopeType,
@@ -187,7 +189,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             const full = yield* storage.messages(StreamId.make("bounded"), {}).pipe(Effect.exit);
 
             return {
-              included: included.map(({ offset }) => offset),
+              included: Array.map(included, ({ offset }) => offset),
               zero,
               fullDefected: died(full),
             };
@@ -245,7 +247,10 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             const fault = yield* storage.record(StreamId.make("race")).pipe(Effect.exit);
 
             return {
-              tags: outcomes.map(({ _tag }) => _tag).toSorted(),
+              tags: Array.sort(
+                Array.map(outcomes, ({ _tag }) => _tag),
+                Order.String,
+              ),
               typedFault: Exit.isFailure(fault)
                 ? !Cause.hasDies(fault.cause) &&
                   Option.match(Cause.findErrorOption(fault.cause), {
@@ -378,8 +383,14 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             );
 
             return {
-              ids: records.map(Option.map(({ id }) => id)),
-              seqs: producers.map(Option.map(({ lastSeq }) => lastSeq)),
+              ids: Array.map(
+                records,
+                Option.map(({ id }) => id),
+              ),
+              seqs: Array.map(
+                producers,
+                Option.map(({ lastSeq }) => lastSeq),
+              ),
               counts: [
                 yield* count(sql, "streamsy_streams"),
                 yield* count(sql, "streamsy_producers"),
@@ -400,7 +411,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
   const tableNames = (sql: SqlClient.SqlClient) =>
     sql
       .unsafe<{ readonly name: string }>(dialect.tables)
-      .pipe(Effect.map((rows) => rows.map(({ name }) => name)));
+      .pipe(Effect.map((rows) => Array.map(rows, ({ name }) => name)));
 
   describe(`${dialect.name} migrations`, () => {
     test("reopens a nonempty current-format database", async () => {
@@ -487,12 +498,12 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
         // MySQL commits DDL by itself, so only its version table outlives the failure.
         tables: dialect.name === "mysql" ? [STORAGE_VERSION_TABLE] : [],
         versions: 0,
-        rerun: [...STORAGE_TABLES, STORAGE_VERSION_TABLE].toSorted(),
+        rerun: Array.sort([...STORAGE_TABLES, STORAGE_VERSION_TABLE], Order.String),
       });
     });
 
     test("legacy and too-new schemas reject without changes", async () => {
-      const outcomes: Array<unknown> = [];
+      const outcomes: globalThis.Array<unknown> = [];
 
       for (const { kind, table, version } of [
         { kind: "legacy", table: "streamsy_schema_version", version: 3 },
@@ -554,10 +565,11 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
             return {
               left: yield* left.record(StreamId.make("x")),
               right: yield* right.record(StreamId.make("x")),
-              versions: (yield* sql<{
-                readonly version: unknown;
-              }>`SELECT version FROM ${sql(STORAGE_VERSION_TABLE)}`).map(({ version }) =>
-                Number(version),
+              versions: Array.map(
+                yield* sql<{
+                  readonly version: unknown;
+                }>`SELECT version FROM ${sql(STORAGE_VERSION_TABLE)}`,
+                ({ version }) => Number(version),
               ),
             };
           }),

@@ -7,13 +7,13 @@ import { Layer } from "effect";
 import { it as baseIt } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import { resumeSession, SessionId, startSession, type LogEntry } from "@humanlayer/fold-core";
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 import { exampleAgent } from "../src/agent.ts";
 import { memoryLayer } from "../src/storage.ts";
 import { readFoldLog, streamsyEventLog } from "../src/streamsy-event-log.ts";
 import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model.ts";
 
-const tags = (entries: ReadonlyArray<LogEntry>) => entries.map((entry) => entry._tag);
+const tags = (entries: ReadonlyArray<LogEntry>) => Array.map(entries, (entry) => entry._tag);
 
 describe("Fold session over a Streamsy durable log", () => {
   baseIt.live(
@@ -53,8 +53,8 @@ describe("Fold session over a Streamsy durable log", () => {
         expect(tags(firstRun.entries).slice(0, 2)).toEqual(["session_started", "agent_started"]);
         expect(tags(firstRun.entries)).toContain("tool-result");
 
-        const firstSeqs = firstRun.entries.map((entry) => entry.seq);
-        expect(firstSeqs).toEqual(firstSeqs.map((_, index) => index));
+        const firstSeqs = Array.map(firstRun.entries, (entry) => entry.seq);
+        expect(firstSeqs).toEqual(Array.map(firstSeqs, (_, index) => index));
 
         // --- new session scope; the store Layer remains alive ---
         const secondRun = yield* Effect.scoped(
@@ -74,15 +74,17 @@ describe("Fold session over a Streamsy durable log", () => {
 
         // Identity is adopted from the log, not minted again.
         expect(secondRun.sessionId).toBe(sessionId);
-        expect(secondRun.entries.filter((entry) => entry._tag === "session_started")).toHaveLength(
-          1,
-        );
+        expect(
+          Array.filter(secondRun.entries, (entry) => entry._tag === "session_started"),
+        ).toHaveLength(1);
         expect(secondRun.entries.length).toBeGreaterThan(firstRun.entries.length);
 
         // --- inspect the stored history without a Fold session ---
         const durable = yield* readFoldLog(sessionId).pipe(Effect.provideContext(store));
 
-        expect(durable.map((entry) => entry.seq)).toEqual(durable.map((_, index) => index));
+        expect(Array.map(durable, (entry) => entry.seq)).toEqual(
+          Array.map(durable, (_, index) => index),
+        );
         expect(tags(durable)).toEqual(tags(secondRun.entries));
       }),
     30_000,

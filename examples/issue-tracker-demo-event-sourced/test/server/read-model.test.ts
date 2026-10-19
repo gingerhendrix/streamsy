@@ -1,7 +1,7 @@
 import { Projection } from "@streamsy/projection";
 import { it } from "@effect/vitest";
 import { expect, test } from "vitest";
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 import { mainWorkspaceSeed } from "../../server/decide.ts";
 import { WorkspaceEvent } from "../../server/events.ts";
 import { project, readModel } from "../../server/read-model.ts";
@@ -83,7 +83,7 @@ it.live("the projection writes the base app's rows to the State stream, once", (
       return { first: once, again: yield* stateChanges(workspaceId) };
     }).pipe(withLayer(MemoryHost));
 
-    expect(first.map((change) => change.type)).toEqual([
+    expect(Array.map(first, (change) => change.type)).toEqual([
       "project",
       "project",
       "issue",
@@ -96,13 +96,13 @@ it.live("the projection writes the base app's rows to the State stream, once", (
       "issue",
       "issue",
     ]);
-    expect(first.every((change) => change.headers.operation === "upsert")).toBe(true);
-    const edits = first.filter((change) => change.headers.txid === editTxid);
-    expect(edits.map((change) => ("value" in change ? change.value : undefined))).toEqual([
+    expect(Array.every(first, (change) => change.headers.operation === "upsert")).toBe(true);
+    const edits = Array.filter(first, (change) => change.headers.txid === editTxid);
+    expect(Array.map(edits, (change) => ("value" in change ? change.value : undefined))).toEqual([
       expect.objectContaining({ id: "issue_a", title: "Second", status: "open" }),
       expect.objectContaining({ id: "issue_a", title: "Second", status: "done", updatedAt: later }),
     ]);
-    expect(edits.every((change) => change.headers.timestamp === later)).toBe(true);
+    expect(Array.every(edits, (change) => change.headers.timestamp === later)).toBe(true);
     expect(again).toHaveLength(first.length);
   }),
 );

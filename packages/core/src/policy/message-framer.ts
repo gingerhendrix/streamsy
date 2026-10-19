@@ -1,3 +1,5 @@
+import { Array } from "effect";
+
 /**
  * Body framing for the durable streams protocol.
  *
@@ -24,7 +26,7 @@ export function frameMessages(data: Uint8Array, contentType: string): Uint8Array
   if (Array.isArray(parsed))
     return parsed.length === 0
       ? []
-      : parsed.map((item) => new TextEncoder().encode(JSON.stringify(item)));
+      : Array.map(parsed, (item) => new TextEncoder().encode(JSON.stringify(item)));
 
   return [new TextEncoder().encode(JSON.stringify(parsed))];
 }

@@ -1,3 +1,4 @@
+import { Array, Order } from "effect";
 import type {
   ProducerId,
   ProducerState,
@@ -62,25 +63,30 @@ export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRec
 }
 
 export function indexDeadlines(state: State): void {
-  state.deadlines = [...state.entries.values()]
-    .flatMap(({ record }) =>
+  state.deadlines = Array.sort(
+    Array.flatMap([...state.entries.values()], ({ record }) =>
       record.lifecycle.softDeleted || record.lifecycle.expiresAtMs === undefined
         ? []
         : [{ at: record.lifecycle.expiresAtMs, streamId: record.id }],
-    )
-    .toSorted((a, b) => a.at - b.at || a.streamId.localeCompare(b.streamId));
+    ),
+    Order.make((a: { at: number; streamId: StreamId }, b: { at: number; streamId: StreamId }) => {
+      const compared = a.at - b.at || a.streamId.localeCompare(b.streamId);
+
+      return compared < 0 ? -1 : compared > 0 ? 1 : 0;
+    }),
+  );
 }
 
 /** A private transaction draft; no mutable stream data aliases the committed state. */
 export const copyState = (state: State): State => ({
   entries: new Map(
-    [...state.entries].map(([id, entry]) => [
+    Array.map([...state.entries], ([id, entry]) => [
       id,
       {
         record: copyRecord(entry.record),
-        messages: entry.messages.map(copyMessage),
+        messages: Array.map(entry.messages, copyMessage),
         producers: new Map(
-          [...entry.producers].map(([producerId, producer]) => [
+          Array.map([...entry.producers], ([producerId, producer]) => [
             producerId,
             { epoch: producer.epoch, lastSeq: producer.lastSeq },
           ]),
@@ -88,6 +94,6 @@ export const copyState = (state: State): State => ({
       },
     ]),
   ),
-  children: new Map([...state.children].map(([id, children]) => [id, new Set(children)])),
-  deadlines: state.deadlines.map((deadline) => ({ ...deadline })),
+  children: new Map(Array.map([...state.children], ([id, children]) => [id, new Set(children)])),
+  deadlines: Array.map(state.deadlines, (deadline) => ({ ...deadline })),
 });

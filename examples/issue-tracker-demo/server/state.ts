@@ -1,5 +1,5 @@
 import { DurableState } from "@streamsy/core";
-import { Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import {
   anonymousAuthor,
   wipLimit,
@@ -275,8 +275,8 @@ export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
   ];
 
   return [
-    ...projects.map((project) => projectUpsert(project, stamp)),
-    ...issues.map((issue) => issueUpsert(issue, stamp)),
-    ...comments.map((comment) => commentUpsert(comment, stamp)),
+    ...Array.map(projects, (project) => projectUpsert(project, stamp)),
+    ...Array.map(issues, (issue) => issueUpsert(issue, stamp)),
+    ...Array.map(comments, (comment) => commentUpsert(comment, stamp)),
   ];
 }

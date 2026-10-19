@@ -1,6 +1,9 @@
+import { Array } from "effect";
+
 /** Release language inventory. Kept outside the site so the scanner scans its own scope honestly. */
 export const staleTerms = [
-  ...["http-client", "state", "streams", "tanstack-db", "sinks", "core/json", "derive"].map(
+  ...Array.map(
+    ["http-client", "state", "streams", "tanstack-db", "sinks", "core/json", "derive"],
     (name) => `@streamsy/${name}`,
   ),
   "StateProjection",

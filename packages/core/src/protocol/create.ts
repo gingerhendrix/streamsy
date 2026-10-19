@@ -1,4 +1,4 @@
-import { Clock, Effect, Predicate, Option } from "effect";
+import { Array, Clock, Effect, Predicate, Option } from "effect";
 import type { StorageFault } from "../fault.ts";
 import type { Storage } from "../storage/storage.ts";
 import { StreamId, Offset, type StreamConfig, type StreamRecord } from "../schema/index.ts";
@@ -115,9 +115,10 @@ export const create = Effect.fn("Protocol.create")(function* (
     const record = newRecord(id, type, options, now);
     let offset = record.currentOffset;
 
-    const initialMessages = (
-      options.initialData ? frameMessages(options.initialData, type) : []
-    ).map((data) => ({ data, offset: (offset = next(offset)), timestamp: now }));
+    const initialMessages = Array.map(
+      options.initialData ? frameMessages(options.initialData, type) : [],
+      (data) => ({ data, offset: (offset = next(offset)), timestamp: now }),
+    );
 
     plan = Operations.Create({
       record: {

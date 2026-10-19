@@ -2,6 +2,7 @@
 import type { SqlError } from "effect/sql";
 import { describe, expect, it } from "vitest";
 import {
+  Array,
   Predicate,
   Cause,
   Context,
@@ -348,7 +349,7 @@ export const StorageContract = {
 
           yield* mutate(
             append({
-              messages: [four, one, three, two].map((offset) => ({
+              messages: Array.map([four, one, three, two], (offset) => ({
                 offset,
                 data: encode(offset),
                 timestamp: 0,
@@ -357,17 +358,18 @@ export const StorageContract = {
             }),
           );
           const storage = yield* Storage;
-          expect((yield* storage.messages(id, {})).map((m) => m.offset)).toEqual([
+          expect(Array.map(yield* storage.messages(id, {}), (m) => m.offset)).toEqual([
             one,
             two,
             three,
             four,
           ]);
           expect(
-            (yield* storage.messages(id, { after: one, until: three })).map((m) => m.offset),
+            Array.map(yield* storage.messages(id, { after: one, until: three }), (m) => m.offset),
           ).toEqual([two, three]);
           expect(
-            (yield* storage.messages(id, { after: one, until: four, limit: 1 })).map(
+            Array.map(
+              yield* storage.messages(id, { after: one, until: four, limit: 1 }),
               (m) => m.offset,
             ),
           ).toEqual([two]);
@@ -639,7 +641,7 @@ export const StorageContract = {
           );
           const storage = yield* Storage;
           expect(
-            (yield* storage.messages(child, {})).map((m) => new TextDecoder().decode(m.data)),
+            Array.map(yield* storage.messages(child, {}), (m) => new TextDecoder().decode(m.data)),
           ).toEqual(["a"]);
 
           if (options.expected.fork === "chain")
@@ -861,7 +863,9 @@ export const StorageContract = {
             storage
               .messages(streamId, {})
               .pipe(
-                Effect.map((messages) => messages.map((m) => new TextDecoder().decode(m.data))),
+                Effect.map((messages) =>
+                  Array.map(messages, (m) => new TextDecoder().decode(m.data)),
+                ),
               );
 
           expect(yield* texts(grandchild)).toEqual(["a", "child"]);
@@ -911,11 +915,11 @@ export const StorageContract = {
             expect(outcome).toMatchObject({ _tag: "Applied" });
 
             if (Predicate.isTagged(outcome, "Applied"))
-              expect(outcome.results.map(({ _tag: tag }) => tag)).toEqual(
+              expect(Array.map(outcome.results, ({ _tag: tag }) => tag)).toEqual(
                 deleteFirst ? ["SoftDeleted", "Created"] : ["Created", "SoftDeleted"],
               );
             expect((yield* current).lifecycle.softDeleted).toBe(true);
-            expect((yield* storage.messages(child, {})).map((m) => m.offset)).toEqual([one]);
+            expect(Array.map(yield* storage.messages(child, {}), (m) => m.offset)).toEqual([one]);
             yield* mutate(remove(child));
             expect(yield* storage.record(id)).toEqual(Option.none());
           }
@@ -935,7 +939,15 @@ export const StorageContract = {
         expiryIndex: ["indexed", "lazy"],
       })) {
         expect(
-          new Set(configurations.map((c) => Record.toEntries(c).find(([k]) => k === key)?.[1])),
+          new Set(
+            Array.map(
+              configurations,
+              (c) =>
+                Option.getOrUndefined(
+                  Array.findFirst(Record.toEntries(c), ([k]) => k === key),
+                )?.[1],
+            ),
+          ),
         ).toEqual(new Set(expected));
       }
     });

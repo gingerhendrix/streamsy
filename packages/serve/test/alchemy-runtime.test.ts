@@ -15,7 +15,7 @@ import {
   routes as protocolRoutes,
 } from "@streamsy/core/protocol";
 import { expect, it as baseIt } from "@effect/vitest";
-import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Array, Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
 import { StorageFault, MemoryStorage, Streamsy } from "@streamsy/core";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { AlarmSlot } from "../src/cloudflare/alarm.ts";
@@ -88,7 +88,7 @@ baseIt.effect.each(["typed", "defect"])(
         expect(yield* Effect.promise(() => failed.text())).toBe("Storage unavailable");
         expect(releases).toBe(1);
         const responses = yield* Effect.all([fetch, fetch], { concurrency: "unbounded" });
-        expect(responses.map((response) => response.status)).toEqual([204, 204]);
+        expect(Array.map(responses, (response) => response.status)).toEqual([204, 204]);
 
         const missing = yield* handlers.fetch.pipe(
           Effect.provideService(
@@ -407,7 +407,7 @@ baseIt.effect("an outbox wakeup that fills its limit re-arms at once", () =>
       .enqueue(
         draftsFor(
           notes,
-          ["a", "b", "c", "d", "e"].map((id) => ({ id })),
+          Array.map(["a", "b", "c", "d", "e"], (id) => ({ id })),
           0,
         ),
       )
@@ -520,7 +520,9 @@ baseIt.effect("duplicate names, including expiry, defect at acquire", () =>
       const exit = yield* Effect.exit(
         makeWakeups(
           context,
-          names.map((name) => Wakeup.make({ name, next: Effect.succeedNone, run: Effect.void })),
+          Array.map(names, (name) =>
+            Wakeup.make({ name, next: Effect.succeedNone, run: Effect.void }),
+          ),
         ),
       );
 

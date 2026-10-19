@@ -2,6 +2,7 @@ import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/global-fetch, effecttsgo/global-timers -- Bun tests own the real local HTTP boundary and its teardown.
 import { expect, it as baseIt } from "@effect/vitest";
 import {
+  Array,
   Clock,
   Effect,
   Exit,
@@ -63,7 +64,7 @@ const summarize = <A>(batch: Batch<A>) => ({
 });
 
 const batches = <A, E, R>(stream: Stream.Stream<Batch<A>, E, R>) =>
-  Stream.runCollect(stream).pipe(Effect.map((collected) => collected.map(summarize)));
+  Stream.runCollect(stream).pipe(Effect.map((collected) => Array.map(collected, summarize)));
 
 const producer = { producerId: "p", producerEpoch: 0, producerSeq: 0 };
 
@@ -188,9 +189,9 @@ baseIt.live("merges text messages into one payload over the public wire", () =>
 
     const direct = yield* program.pipe(Effect.provideContext(yield* Layer.build(memory())));
     const overHttp = yield* program.pipe(Effect.provideContext(yield* Layer.build(remote)));
-    expect(direct.map((batch) => batch.items.map(asText))).toEqual([["ab", "cd"]]);
+    expect(Array.map(direct, (batch) => Array.map(batch.items, asText))).toEqual([["ab", "cd"]]);
     // A text body is plain concatenation, so the batch carries one merged payload.
-    expect(overHttp.map((batch) => batch.items.map(asText))).toEqual([["abcd"]]);
+    expect(Array.map(overHttp, (batch) => Array.map(batch.items, asText))).toEqual([["abcd"]]);
   }),
 );
 
@@ -371,7 +372,10 @@ baseIt.live("splits a JSON read body into one payload per message", () =>
     );
 
     expect(result).toBeDefined();
-    expect(result.messages.map((message) => asText(message.data))).toEqual(['{"a":1}', '{"b":2}']);
+    expect(Array.map(result.messages, (message) => asText(message.data))).toEqual([
+      '{"a":1}',
+      '{"b":2}',
+    ]);
     expect(result.upToDate).toBe(true);
   }),
 );
@@ -386,7 +390,7 @@ baseIt.live("keeps a non-JSON read body as one merged payload", () =>
     );
 
     expect(result).toBeDefined();
-    expect(result.messages.map((message) => asText(message.data))).toEqual(["abcd"]);
+    expect(Array.map(result.messages, (message) => asText(message.data))).toEqual(["abcd"]);
     expect(result.upToDate).toBe(false);
   }),
 );
@@ -724,7 +728,7 @@ for (const mode of ["direct", "remote"] as const) {
                 expect(final._tag).toBe("Appended");
                 const read = yield* reader.read(id, { offset: first.offset });
                 expect(read).toMatchObject({ nextOffset: final.offset, closed: true });
-                expect(read.messages.map((message) => message.data)).toEqual([data]);
+                expect(Array.map(read.messages, (message) => message.data)).toEqual([data]);
               }).pipe(Effect.provideContext(yield* Layer.build(modeTransport)));
 
               return server;

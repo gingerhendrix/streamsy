@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { expect, test } from "bun:test";
 import {
   checkDemoPage,
@@ -9,15 +10,18 @@ import {
 
 const fence = "\x60\x60\x60";
 
-const source = [
-  'import { Effect } from "effect";',
-  "",
-  "export const run = Effect.gen(function* () {",
-  "  const a = yield* first;",
-  "  const b = yield* second;",
-  "  return a + b;",
-  "});",
-].join("\n");
+const source = Array.join(
+  [
+    'import { Effect } from "effect";',
+    "",
+    "export const run = Effect.gen(function* () {",
+    "  const a = yield* first;",
+    "  const b = yield* second;",
+    "  return a + b;",
+    "});",
+  ],
+  "\n",
+);
 
 const files = new Map([["src/run.ts", source]]);
 

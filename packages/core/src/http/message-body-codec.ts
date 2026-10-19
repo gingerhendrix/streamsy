@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { nodeBufferBase64, toArrayBuffer } from "./bytes.ts";
 
 export interface MessageWithData {
@@ -13,13 +14,16 @@ export function encodeHttpBody(
   const lower = contentType.toLowerCase();
 
   if (lower.startsWith("application/json")) {
-    const items = messages.map((msg) => decoder.decode(msg.data));
+    const items = Array.map(messages, (msg) => decoder.decode(msg.data));
 
-    return `[${items.join(",")}]`;
+    return `[${Array.join(items, ",")}]`;
   }
 
   if (lower.startsWith("text/")) {
-    return messages.map((msg) => decoder.decode(msg.data)).join("");
+    return Array.join(
+      Array.map(messages, (msg) => decoder.decode(msg.data)),
+      "",
+    );
   }
 
   return toArrayBuffer(concatBytes(messages));
@@ -30,7 +34,7 @@ export function emptyBodyForContentType(contentType: string): string | ArrayBuff
 }
 
 export function concatBytes(messages: readonly MessageWithData[]): Uint8Array {
-  const totalLength = messages.reduce((acc, msg) => acc + msg.data.length, 0);
+  const totalLength = Array.reduce(messages, 0, (acc, msg) => acc + msg.data.length);
   const combined = new Uint8Array(totalLength);
   let pos = 0;
 

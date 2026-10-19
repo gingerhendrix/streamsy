@@ -1,6 +1,6 @@
 import { SqlError } from "effect/sql";
 import type { SqlClient } from "effect/sql";
-import { Clock, Effect } from "effect";
+import { Array, Clock, Effect } from "effect";
 import { StorageFault } from "@streamsy/core";
 import { storageDialect, type StorageDialect } from "./dialect.ts";
 import {
@@ -60,8 +60,8 @@ export const inspectFormat = (
   const ownsFormat = tables.has(STORAGE_VERSION_TABLE);
 
   const legacy =
-    LEGACY_VERSION_TABLES.some((name) => tables.has(name)) ||
-    (!ownsFormat && STORAGE_TABLES.some((name) => tables.has(name)));
+    Array.some(LEGACY_VERSION_TABLES, (name) => tables.has(name)) ||
+    (!ownsFormat && Array.some(STORAGE_TABLES, (name) => tables.has(name)));
 
   return legacy
     ? Effect.fail(
@@ -94,7 +94,7 @@ const listTables = (sql: SqlClient.SqlClient, dialect: StorageDialect) =>
         sql<TableRow>`SELECT table_name AS name FROM information_schema.tables
  WHERE table_schema = DATABASE()`,
     }[dialect](),
-  ).pipe(Effect.map((rows) => new Set(rows.map(({ name }) => name))));
+  ).pipe(Effect.map((rows) => new Set(Array.map(rows, ({ name }) => name))));
 
 const migrateVersions = (
   sql: SqlClient.SqlClient,

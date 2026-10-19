@@ -1,4 +1,4 @@
-import { Clock, Effect, Predicate, Option } from "effect";
+import { Array, Clock, Effect, Predicate, Option } from "effect";
 import type { Storage } from "../storage/storage.ts";
 import { ProducerId, type StreamId, type StreamLifecycle } from "../schema/index.ts";
 import { next } from "../offset/index.ts";
@@ -97,7 +97,8 @@ export const append = Effect.fn("Protocol.append")(function* (
     const now = yield* Clock.currentTimeMillis;
     let offset = record.currentOffset;
 
-    const messages = (closeOnly ? [] : frameMessages(options.data, record.config.contentType)).map(
+    const messages = Array.map(
+      closeOnly ? [] : frameMessages(options.data, record.config.contentType),
       (data) => ({ data, offset: (offset = next(offset)), timestamp: now }),
     );
 

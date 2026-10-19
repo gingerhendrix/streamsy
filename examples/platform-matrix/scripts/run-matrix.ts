@@ -28,6 +28,7 @@ import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { SqlStorage } from "@streamsy/storage";
 import {
+  Array,
   Cause,
   Config,
   Console,
@@ -293,7 +294,7 @@ const program = Effect.gen(function* () {
       onNone: () => Effect.succeedNone,
       onSome: (url) => Effect.asSome(connect(dialect, url)),
     }),
-  ).pipe(Effect.map((found) => found.flatMap(Option.toArray)));
+  ).pipe(Effect.map((found) => Array.flatMap(found, Option.toArray)));
 
   /**
    * Makes a fresh database `streamsy_matrix_<owner>_<run id>`, and drops it when
@@ -378,7 +379,10 @@ const program = Effect.gen(function* () {
             LONG_POLL_TIMEOUT_MS: "1500",
             // Only this runtime's databases. An unset URL stays unset, so its cells skip.
             ...EffectRecord.fromEntries(
-              databases.map((database) => [database.dialect.variable, database.url]),
+              Array.map(
+                databases,
+                (database) => [database.dialect.variable, database.url] as const,
+              ),
             ),
           },
           extendEnv: true,
@@ -458,10 +462,11 @@ const program = Effect.gen(function* () {
           ["bun", "run", "smoke:http"],
           path.join(repoDir, "examples/bugsy"),
           EffectRecord.fromEntries(
-            DIALECTS.map((dialect) => [
-              dialect.variable,
-              dialect === server.dialect ? database.url : undefined,
-            ]),
+            Array.map(
+              DIALECTS,
+              (dialect) =>
+                [dialect.variable, dialect === server.dialect ? database.url : undefined] as const,
+            ),
           ),
           `${name}.bugsy.log`,
         );
@@ -537,12 +542,14 @@ const program = Effect.gen(function* () {
     Option.match(runtime.command, {
       onNone: () =>
         Effect.succeed(
-          BACKENDS.map((backend) => skip(runtime, backend, `${runtime.name} is not installed`)),
+          Array.map(BACKENDS, (backend) =>
+            skip(runtime, backend, `${runtime.name} is not installed`),
+          ),
         ),
       onSome: (command) =>
         Effect.scoped(
           Effect.gen(function* () {
-            yield* Console.log(`${runtime.name}: starting ${command.join(" ")}`);
+            yield* Console.log(`${runtime.name}: starting ${Array.join(command, " ")}`);
 
             // Made before the entry starts, so the entry stops before they drop.
             const databases = yield* Effect.forEach(servers, (server) =>
@@ -555,7 +562,7 @@ const program = Effect.gen(function* () {
               const reason = `${runtime.name} entry did not start; see ${runtime.name}.server.log`;
               yield* Console.error(`${reason}\n${Cause.pretty(started.cause)}`);
 
-              return BACKENDS.map((backend) => fail(runtime, backend, reason));
+              return Array.map(BACKENDS, (backend) => fail(runtime, backend, reason));
             }
 
             const { url, health } = started.value;
@@ -566,8 +573,15 @@ const program = Effect.gen(function* () {
                     runtime,
                     url,
                     backend,
-                    databases.find((database) => database.dialect.backend === backend),
-                    servers.find((server) => server.dialect.backend === backend),
+                    Option.getOrUndefined(
+                      Array.findFirst(
+                        databases,
+                        (database) => database.dialect.backend === backend,
+                      ),
+                    ),
+                    Option.getOrUndefined(
+                      Array.findFirst(servers, (server) => server.dialect.backend === backend),
+                    ),
                   )
                 : Effect.succeed(
                     skip(
@@ -590,10 +604,13 @@ const program = Effect.gen(function* () {
     startedAt: stamp,
     backends: BACKENDS,
     databases: EffectRecord.fromEntries(
-      servers.map((server) => [server.dialect.backend, redactUrl(Redacted.value(server.url))]),
+      Array.map(
+        servers,
+        (server) => [server.dialect.backend, redactUrl(Redacted.value(server.url))] as const,
+      ),
     ),
     cells,
-    ok: cells.every((cell) => cell.status !== "fail"),
+    ok: Array.every(cells, (cell) => cell.status !== "fail"),
   };
 
   const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
@@ -634,36 +651,41 @@ const describe = (cell: Cell): string => {
     ...(cell.bugsy === undefined ? [] : [`bugsy ${cell.bugsy.status}`]),
   ];
 
-  return details.length === 0 ? cell.status : `${cell.status} (${details.join("; ")})`;
+  return details.length === 0 ? cell.status : `${cell.status} (${Array.join(details, "; ")})`;
 };
 
 const table = (cells: ReadonlyArray<Cell>): string => {
-  const rows = [...new Set(cells.map((cell) => cell.runtime))];
+  const rows = [...new Set(Array.map(cells, (cell) => cell.runtime))];
   const header = ["runtime", ...BACKENDS];
 
-  const body = rows.map((runtime) => [
+  const body = Array.map(rows, (runtime) => [
     runtime,
-    ...BACKENDS.map((backend) => {
-      const cell = cells.find((c) => c.runtime === runtime && c.backend === backend);
+    ...Array.map(BACKENDS, (backend) => {
+      const cell = Option.getOrUndefined(
+        Array.findFirst(cells, (c) => c.runtime === runtime && c.backend === backend),
+      );
 
       return cell === undefined ? "" : describe(cell);
     }),
   ]);
 
-  const widths = header.map((_, i) =>
-    Math.max(...[header, ...body].map((row) => (row[i] ?? "").length)),
+  const widths = Array.map(header, (_, i) =>
+    Math.max(...Array.map([header, ...body], (row) => (row[i] ?? "").length)),
   );
 
   const line = (row: ReadonlyArray<string>) =>
-    `| ${row.map((value, i) => value.padEnd(widths[i] ?? 0)).join(" | ")} |`;
+    `| ${Array.join(
+      Array.map(row, (value, i) => value.padEnd(widths[i] ?? 0)),
+      " | ",
+    )} |`;
 
-  const notes = cells.flatMap((cell) =>
+  const notes = Array.flatMap(cells, (cell) =>
     cell.reason === undefined
       ? []
       : [`- ${cell.runtime} ${cell.backend}: ${cell.status}, ${cell.reason}`],
   );
 
-  const databases = cells.flatMap((cell) => [
+  const databases = Array.flatMap(cells, (cell) => [
     ...(cell.database === undefined
       ? []
       : [`- ${cell.runtime} ${cell.backend}: database ${cell.database}`]),
@@ -672,16 +694,19 @@ const table = (cells: ReadonlyArray<Cell>): string => {
       : [`- ${cell.runtime} ${cell.backend}: Bugsy database ${cell.bugsy.database}`]),
   ]);
 
-  return [
-    line(header),
-    line(widths.map((width) => "-".repeat(width))),
-    ...body.map(line),
-    "",
-    "Counts are the official suite. Smoke is the memory-server HTTP smoke.",
-    "Bugsy is the Bugsy HTTP smoke, on the Bun pg and mysql cells.",
-    ...notes,
-    ...databases,
-  ].join("\n");
+  return Array.join(
+    [
+      line(header),
+      line(Array.map(widths, (width) => "-".repeat(width))),
+      ...Array.map(body, line),
+      "",
+      "Counts are the official suite. Smoke is the memory-server HTTP smoke.",
+      "Bugsy is the Bugsy HTTP smoke, on the Bun pg and mysql cells.",
+      ...notes,
+      ...databases,
+    ],
+    "\n",
+  );
 };
 
 program.pipe(

@@ -2,7 +2,7 @@ import { Layer } from "effect";
 import { it as baseIt } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, ConfigProvider, Console, Effect, Exit, Option } from "effect";
+import { Array, Cause, ConfigProvider, Console, Effect, Exit, Option } from "effect";
 import { Command } from "effect/cli";
 import { cli } from "../src/cli.ts";
 import { DatabasePath, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
@@ -21,8 +21,9 @@ const runCommand = (args: ReadonlyArray<string>) =>
 
     const console: Console.Console = {
       ...globalThis.console,
-      log: (...parts: ReadonlyArray<unknown>) => stdout.push(parts.join(" ")),
-      error: (...parts: ReadonlyArray<unknown>) => stderr.push(parts.join(" ")),
+      // The CLI logs strings; `Console` types the arguments as `any`.
+      log: (...parts: ReadonlyArray<string>) => stdout.push(Array.join(parts, " ")),
+      error: (...parts: ReadonlyArray<string>) => stderr.push(Array.join(parts, " ")),
     };
 
     const exit = yield* Command.runWith(cli, { version: "test" })(args).pipe(
@@ -34,7 +35,7 @@ const runCommand = (args: ReadonlyArray<string>) =>
 
     const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
 
-    return { exit, failure, stdout: stdout.join("\n"), stderr: stderr.join("\n") };
+    return { exit, failure, stdout: Array.join(stdout, "\n"), stderr: Array.join(stderr, "\n") };
   });
 
 describe("Fold CLI parsing and rendering", () => {

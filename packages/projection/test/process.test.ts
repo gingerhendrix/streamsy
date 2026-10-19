@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the SQLite runtime and transaction instrumentation. */
 import { expect, test } from "vitest";
-import { Cause, Effect, Exit, Schema } from "effect";
+import { Array, Cause, Effect, Exit, Schema } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
@@ -30,7 +30,7 @@ test("prepare runs outside the transaction and passes its result into process", 
             expect(inside).toBe(false);
             preparedKey = unit.key;
 
-            return batch.input.items.reduce((sum, n) => sum + n, 0);
+            return Array.reduce(batch.input.items, 0, (sum, n) => sum + n);
           }),
         process: (_batch, unit, prepared) =>
           Effect.sync(() => {

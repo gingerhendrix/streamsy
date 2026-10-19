@@ -1,6 +1,6 @@
 import { Protocol } from "@streamsy/core/protocol";
 import { expect, layer } from "@effect/vitest";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Array, Effect, Layer, Schema, Stream } from "effect";
 import { Streamsy, MemoryStorage } from "../../src/index.ts";
 
 class Drafts extends Streamsy.json<Drafts>()("Bindings/Drafts", "drafts/:user", {
@@ -27,10 +27,10 @@ layer(MemoryStorage.layer(Streamsy.group(Drafts, Journal, Streamsy.Wildcard)))((
         yield* journal.append({ user: "ann" }, ["entry"]);
         yield* journal.fork({ user: "copy" }, { user: "ann" });
         expect(
-          (yield* Stream.runCollect(journal.read({ user: "copy" }))).flatMap((b) => b.items),
+          Array.flatMap(yield* Stream.runCollect(journal.read({ user: "copy" })), (b) => b.items),
         ).toEqual(["entry"]);
         expect(
-          (yield* Stream.runCollect(drafts.read({ user: "ann" }))).flatMap((b) => b.items),
+          Array.flatMap(yield* Stream.runCollect(drafts.read({ user: "ann" })), (b) => b.items),
         ).toEqual(["draft"]);
         expect(yield* any.head({ id: Drafts.at({ user: "ann" }).id })).toEqual(
           yield* drafts.head({ user: "ann" }),
@@ -41,7 +41,10 @@ layer(MemoryStorage.layer(Streamsy.group(Drafts, Journal, Streamsy.Wildcard)))((
         );
         yield* any.append({ id: "arbitrary/path" }, [new TextEncoder().encode("hello")]);
         expect(
-          (yield* Stream.runCollect(any.read({ id: "arbitrary/path" }))).flatMap((b) => b.items),
+          Array.flatMap(
+            yield* Stream.runCollect(any.read({ id: "arbitrary/path" })),
+            (b) => b.items,
+          ),
         ).toEqual([new TextEncoder().encode("hello")]);
       }),
   );
@@ -63,9 +66,10 @@ for (const familyFirst of [true, false]) {
           const any = yield* Streamsy.Wildcard;
           const batches = yield* Stream.runCollect(any.read({ id: Drafts.at({ user: "ann" }).id }));
 
-          return batches
-            .flatMap((batch) => batch.items)
-            .map((item) => new TextDecoder().decode(item));
+          return Array.map(
+            Array.flatMap(batches, (batch) => batch.items),
+            (item) => new TextDecoder().decode(item),
+          );
         }).pipe(
           Effect.map((values) => {
             expect(values).toEqual(['"draft"']);

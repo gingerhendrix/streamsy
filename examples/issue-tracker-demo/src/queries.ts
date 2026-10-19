@@ -1,4 +1,5 @@
 import { count, eq, useLiveQuery } from "@tanstack/react-db";
+import { Array } from "effect";
 import { useMemo } from "react";
 import type { Comment, IssueStatus } from "@streamsy/issue-tracker-demo-contract/types";
 import type { IssueDb } from "./db.ts";
@@ -31,7 +32,10 @@ export function useIssueCountByProject(db: IssueDb) {
       .select(({ issue }) => ({ projectId: issue.projectId, issues: count(issue.id) })),
   );
 
-  return useMemo(() => new Map((data ?? []).map((row) => [row.projectId, row.issues])), [data]);
+  return useMemo(
+    () => new Map(Array.map(data ?? [], (row) => [row.projectId, row.issues] as const)),
+    [data],
+  );
 }
 
 /** The issues of one project that pass the filter, last updated first. */
@@ -84,7 +88,7 @@ export function useCommentsByIssue(db: IssueDb) {
   );
 
   return useMemo(() => {
-    const grouped = new Map<string, Array<Comment & { readonly $synced: boolean }>>();
+    const grouped = new Map<string, globalThis.Array<Comment & { readonly $synced: boolean }>>();
 
     for (const comment of data ?? []) {
       grouped.set(comment.issueId, [...(grouped.get(comment.issueId) ?? []), comment]);

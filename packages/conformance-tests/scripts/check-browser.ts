@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 
 const modules = new Set<string>();
 
@@ -23,18 +23,19 @@ const result = await Bun.build({
 
 if (!result.success) throw new AggregateError(result.logs, "Browser build failed");
 
-const forbidden = [...modules].filter((path) =>
+const forbidden = Array.filter([...modules], (path) =>
   /(?:\/effect(?:\/|@)|\/@streamsy\/core(?:\/|@)|\/packages\/core\/)/.test(path),
 );
 
-if (forbidden.length) throw new Error(`Forbidden browser dependencies:\n${forbidden.join("\n")}`);
+if (forbidden.length)
+  throw new Error(`Forbidden browser dependencies:\n${Array.join(forbidden, "\n")}`);
 
 for (const name of ["client", "state"]) {
-  if (![...modules].some((path) => path.includes(`/@durable-streams/${name}/`)))
+  if (!Array.some([...modules], (path) => path.includes(`/@durable-streams/${name}/`)))
     throw new Error(`Missing official ${name} package from proof`);
 }
 
-const bytes = result.outputs.reduce((sum, output) => sum + output.size, 0);
+const bytes = Array.reduce(result.outputs, 0, (sum, output) => sum + output.size);
 
 let gzip = 0;
 

@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- These tests own the real local workerd boundary. */
 import { afterEach, expect, test } from "vitest";
-import { Clock, DateTime, Effect } from "effect";
+import { Array, Clock, DateTime, Effect, Option } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { request as httpRequest } from "./support/http.ts";
 import { testHost } from "./support/scoped-host.ts";
@@ -46,17 +46,17 @@ const append = (harness: Harness, path: string, body: string, contentType = "tex
 const head = async (harness: Harness, path: string) => dispatch(harness, path, { method: "HEAD" });
 
 const rowFor = (observation: ProbeResult, streamId: string) =>
-  observation.rows.find((row) => row[0] === streamId);
+  Option.getOrUndefined(Array.findFirst(observation.rows, (row) => row[0] === streamId));
 
 const messageRowsFor = (observation: ProbeResult, streamId: string) =>
-  observation.messages.filter((row) => row[0] === streamId);
+  Array.filter(observation.messages, (row) => row[0] === streamId);
 
 const zeroOffset = "0000000000000000_0000000000000000";
 
 const twoOffset = "0000000000000000_0000000000000002";
 
 const largeJson = (prefix: string) =>
-  JSON.stringify(Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
+  JSON.stringify(globalThis.Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
 
 const observe = async (response: Response) => {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? null;
@@ -175,7 +175,7 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
   );
   await pairedSource(
     "large-json",
-    JSON.stringify(Array.from({ length: 10_001 }, (_, index) => index)),
+    JSON.stringify(globalThis.Array.from({ length: 10_001 }, (_, index) => index)),
     "application/json",
     "large-json-child",
     {
@@ -529,7 +529,7 @@ test(
       put(harness, "/streams/t1/y", second, "application/json"),
     ]);
 
-    expect(concurrent.map((response) => response.status)).toEqual([201, 201]);
+    expect(Array.map(concurrent, (response) => response.status)).toEqual([201, 201]);
     const stream = await probe(harness, "t1");
     expect(messageRowsFor(stream, "t1/x")).toHaveLength(3_000);
     expect(messageRowsFor(stream, "t1/y")).toHaveLength(3_000);

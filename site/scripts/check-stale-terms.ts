@@ -1,3 +1,4 @@
+import { Array, Order } from "effect";
 import { z } from "zod";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
@@ -106,17 +107,18 @@ for (const entry of await readdir(join(repo, "packages"), { withFileTypes: true 
 const docsIndex = await readFile(join(site, "content", "docs", "index.mdx"), "utf8");
 
 // The package list is a list item (`- \`@streamsy/x\`:`) or a table row (`| \`@streamsy/x\` |`).
-const documentedPackages = [
-  ...docsIndex.matchAll(/^(?:- `(@streamsy\/[^`]+)`:|\| `(@streamsy\/[^`]+)` +\|)/gm),
-].map((match) => match[1] ?? match[2]);
+const documentedPackages = Array.map(
+  [...docsIndex.matchAll(/^(?:- `(@streamsy\/[^`]+)`:|\| `(@streamsy\/[^`]+)` +\|)/gm)],
+  (match) => match[1] ?? match[2],
+);
 
-const expectedPackages = packageNames.toSorted();
+const expectedPackages = Array.sort(packageNames, Order.String);
 
-const actualPackages = documentedPackages.toSorted();
+const actualPackages = Array.sort(documentedPackages, Order.String);
 
 if (JSON.stringify(actualPackages) !== JSON.stringify(expectedPackages)) {
   console.error(
-    `content/docs/index.mdx: package set ${actualPackages.join(", ")} does not match manifests ${expectedPackages.join(", ")}`,
+    `content/docs/index.mdx: package set ${Array.join(actualPackages, ", ")} does not match manifests ${Array.join(expectedPackages, ", ")}`,
   );
   hits++;
 }

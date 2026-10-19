@@ -9,6 +9,7 @@ import {
   type OffsetMismatch,
 } from "@streamsy/core";
 import {
+  Array,
   Context,
   Crypto,
   DateTime,
@@ -114,7 +115,7 @@ const view = (state: MaterializedState): WorkspaceState => ({
   getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
   hasProjects: () => state.getType("project").size > 0,
   countInProgress: (projectId: string) =>
-    [...state.getType("issue").keys()].filter((issueId) => {
+    Array.filter([...state.getType("issue").keys()], (issueId) => {
       const issue = state.get<Issue>("issue", issueId);
 
       return issue?.projectId === projectId && issue.status === "in_progress";
@@ -190,7 +191,12 @@ export const IssueTrackerLive = Layer.effect(
 
     const create = Effect.gen(function* () {
       const bytes = yield* crypto.randomBytes(10);
-      const workspaceId = Array.from(bytes, (byte) => (byte % 36).toString(36)).join("");
+
+      const workspaceId = Array.join(
+        Array.map(Array.fromIterable(bytes), (byte) => (byte % 36).toString(36)),
+        "",
+      );
+
       yield* workspaces.create({ workspaceId });
       const starter = yield* stamp("proj");
       yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);

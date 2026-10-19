@@ -3,8 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createHnDb, type HnDb } from "./db.ts";
 import { useLiveQuery } from "@tanstack/react-db";
-import { Option, Schema } from "effect";
-import { ApiStatus, type HnStory } from "../state-schema.ts";
+import { Array, Option, Schema } from "effect";
+import { ApiStatus, newestStoryOrder, type HnStory } from "../state-schema.ts";
 import "./styles.css";
 
 function formatAge(unixSeconds: number): string {
@@ -80,7 +80,7 @@ function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
 
   const stories = useMemo(
-    () => (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || b.id - a.id),
+    () => Array.sort(storiesQuery.data ?? [], newestStoryOrder),
     [storiesQuery.data],
   );
 
@@ -127,7 +127,7 @@ function HnApp({ db }: { db: HnDb }) {
         {stories.length === 0 ? (
           <div className="empty">Waiting for the first poll…</div>
         ) : (
-          stories.map((story) => <StoryRow key={story.id} story={story} />)
+          Array.map(stories, (story) => <StoryRow key={story.id} story={story} />)
         )}
       </section>
     </Shell>

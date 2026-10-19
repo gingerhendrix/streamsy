@@ -1,5 +1,5 @@
 import { expect, it as baseIt, layer } from "@effect/vitest";
-import { Cause, Effect, Exit, Schedule, Schema } from "effect";
+import { Array, Cause, Effect, Exit, Schedule, Schema } from "effect";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import { MemoryStorage } from "../../src/index.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
@@ -52,7 +52,7 @@ layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
 
       const next = yield* Streams.fold(
         address,
-        () => first.items.map((item) => item.n),
+        () => Array.map(first.items, (item) => item.n),
         (seen, item) => [...seen, item.n],
         { offset: first.offset },
       );
@@ -263,7 +263,7 @@ layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
           }),
       });
 
-      expect(seen.map(({ total }) => total)).toEqual([6, 16]);
+      expect(Array.map(seen, ({ total }) => total)).toEqual([6, 16]);
       expect(seen[1]?.offset).not.toBe(seen[0]?.offset);
       expect(initials).toBe(1);
       // Three items on the first read, then only the rival's item.
@@ -273,7 +273,9 @@ layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
         offset: (yield* Streams.head(address)).nextOffset,
         appended: true,
       });
-      expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 2, 3, 10, 16]);
+      expect(Array.map((yield* Streams.collect(address)).items, ({ n }) => n)).toEqual([
+        1, 2, 3, 10, 16,
+      ]);
     }),
   );
 });
@@ -301,7 +303,7 @@ layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
       expect(offsets).toHaveLength(3);
       expect(failure).toBeInstanceOf(OffsetMismatch);
       expect(failure).toMatchObject({ expected: offsets[2] });
-      expect((yield* Streams.collect(address)).items.map(({ n }) => n)).toEqual([1, 1, 1]);
+      expect(Array.map((yield* Streams.collect(address)).items, ({ n }) => n)).toEqual([1, 1, 1]);
     }),
   );
 });

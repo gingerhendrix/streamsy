@@ -49,7 +49,7 @@ layer(host)((it) => {
           inputs: { input: Source.at(params) },
           process: (batch) =>
             Effect.gen(function* () {
-              const doubled = batch.input.items.map((n) => n * 2);
+              const doubled = Array.map(batch.input.items, (n) => n * 2);
 
               if (Array.isReadonlyArrayNonEmpty(doubled)) yield* output.append(params, doubled);
             }),
@@ -58,7 +58,7 @@ layer(host)((it) => {
         const first = yield* Projection.run(projection);
         expect(first.items).toBe(3);
         expect(
-          (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
+          Array.flatMap(yield* Stream.runCollect(output.read(params)), (batch) => batch.items),
         ).toEqual([2, 4, 6]);
         expect((yield* Projection.run(projection)).items).toBe(0);
       }),
@@ -147,7 +147,7 @@ baseIt.effect("a custom stream wire cannot establish the owner of an transaction
       }
 
       expect(
-        (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
+        Array.flatMap(yield* Stream.runCollect(output.read(params)), (batch) => batch.items),
       ).toEqual([]);
       expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
     }).pipe(Effect.provideContext(yield* Layer.build(unownedHost)));

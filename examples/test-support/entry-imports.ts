@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- The walker reads built files synchronously so a test can call it outside Effect. */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { Array, Order } from "effect";
 
 const transpiler = new Bun.Transpiler({ loader: "js" });
 
@@ -33,4 +34,7 @@ export const entryImports = (entry: string): ReadonlySet<string> => {
 
 /** The modules in `imports` whose names start with one of `prefixes`. */
 export const matching = (imports: ReadonlySet<string>, prefixes: ReadonlyArray<string>) =>
-  [...imports].filter((name) => prefixes.some((prefix) => name.startsWith(prefix))).toSorted();
+  Array.sort(
+    Array.filter(imports, (name) => Array.some(prefixes, (prefix) => name.startsWith(prefix))),
+    Order.String,
+  );

@@ -22,7 +22,7 @@ import {
   type AppendFailure,
   type CreateFailure,
 } from "@streamsy/core";
-import { Context, Effect, Layer, Match, Schema, Semaphore, Stream } from "effect";
+import { Array, Context, Effect, Layer, Match, Schema, Semaphore, Stream } from "effect";
 import {
   Sessions,
   corrupt,
@@ -140,7 +140,9 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
       Stream.unwrap(
         readHistory(params).pipe(
           Effect.flatMap((log) => decodeLog(log.items)),
-          Effect.map((log) => Stream.fromIterable(log.filter((entry) => entry.seq >= fromSeq))),
+          Effect.map((log) =>
+            Stream.fromIterable(Array.filter(log, (entry) => entry.seq >= fromSeq)),
+          ),
           Effect.mapError(toFoldError),
           Effect.provideService(Sessions, sessions),
         ),

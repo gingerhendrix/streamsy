@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { mdxFromMarkdown } from "mdast-util-mdx";
 import { mdxjs } from "micromark-extension-mdxjs";
@@ -28,7 +29,7 @@ export const codeFences = (text: string): ReadonlyArray<CodeFence> => {
   const found: Array<Code> = [];
   visit(tree, found);
 
-  return found.map((node) => ({
+  return Array.map(found, (node) => ({
     lang: node.lang ?? null,
     meta: node.meta ?? null,
     value: node.value,

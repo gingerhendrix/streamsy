@@ -7,7 +7,7 @@
  * fact that caused it, and delivery is a separate, resumable pass over what was
  * written.
  */
-import { Context, Effect, Layer, Option } from "effect";
+import { Array, Context, Effect, Layer, Option, Order } from "effect";
 import { OutboxUnavailable, type DeadLetterReason } from "./errors.ts";
 
 export type OutboxEntryState = "pending" | "delivered" | "dead";
@@ -125,7 +125,10 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
   };
 
   const ordered = (): readonly OutboxEntry[] =>
-    [...entries.values()].toSorted((left, right) => left.id - right.id);
+    Array.sort(
+      [...entries.values()],
+      Order.mapInput(Order.Number, (entry: OutboxEntry) => entry.id),
+    );
 
   return {
     enqueue: (drafts) =>
@@ -168,7 +171,8 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
       }),
     nextDue: (sink, partitionId, inOrder = false) =>
       Effect.sync(() => {
-        const pending = ordered().filter(
+        const pending = Array.filter(
+          ordered(),
           (entry) =>
             entry.sink === sink &&
             entry.state === "pending" &&
@@ -182,20 +186,21 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
           : Option.some(
               inOrder
                 ? first.nextAttemptAtMs
-                : pending.reduce((at, entry) => Math.min(at, entry.nextAttemptAtMs), Infinity),
+                : Array.reduce(pending, Infinity, (at, entry) =>
+                    Math.min(at, entry.nextAttemptAtMs),
+                  ),
             );
       }),
     claimDue: (sink, partitionId, nowMs, limit, inOrder = false) =>
       Effect.sync(() =>
-        ordered()
-          .filter(
-            (entry) =>
-              entry.sink === sink &&
-              entry.state === "pending" &&
-              (inOrder || entry.nextAttemptAtMs <= nowMs) &&
-              (partitionId === undefined || entry.partitionId === partitionId),
-          )
-          .slice(0, limit),
+        Array.filter(
+          ordered(),
+          (entry) =>
+            entry.sink === sink &&
+            entry.state === "pending" &&
+            (inOrder || entry.nextAttemptAtMs <= nowMs) &&
+            (partitionId === undefined || entry.partitionId === partitionId),
+        ).slice(0, limit),
       ),
     markDelivered: (id, attempts, atMs) =>
       Effect.sync(() => {
@@ -217,7 +222,8 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
       }),
     list: (sink, partitionId) =>
       Effect.sync(() =>
-        ordered().filter(
+        Array.filter(
+          ordered(),
           (entry) =>
             entry.sink === sink && (partitionId === undefined || entry.partitionId === partitionId),
         ),

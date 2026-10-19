@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Array, Data } from "effect";
 /** Fork-side validation and plan building. */
 
 import { Operations, type Operation } from "../storage/mutation.ts";
@@ -203,7 +203,7 @@ export class ForkPlanBuilder {
           errorMessage: "Stream-Fork-Sub-Offset exceeds source message count",
         });
 
-      return ForkPrefix.Prefix({ messages: tail.slice(0, subOffset).map((m) => m.data) });
+      return ForkPrefix.Prefix({ messages: Array.map(tail.slice(0, subOffset), (m) => m.data) });
     }
 
     const first = tail[0];
@@ -231,7 +231,7 @@ export class ForkPlanBuilder {
     let offset = previousOffset;
     const now = this.deps.clock.now();
 
-    return framed.map((data) => {
+    return Array.map(framed, (data) => {
       offset = next(offset);
 
       return { data, offset, timestamp: now };

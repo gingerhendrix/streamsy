@@ -1,6 +1,6 @@
 import { ProjectionRetry } from "./retry.ts";
 import type { Executable } from "./executable.ts";
-import { Schema, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
+import { Array, Schema, Schedule, Effect, Ref, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -116,7 +116,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
 
   const wake = (result: Progress<Inputs>) =>
     Effect.raceAllFirst(
-      inputEntries(projection.inputs).map(([name, address]) =>
+      Array.map(inputEntries(projection.inputs), ([name, address]) =>
         hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval, cursors),
       ),
     );

@@ -1,4 +1,4 @@
-import { Context, Effect, type Function, Layer, Option, Predicate, Stream } from "effect";
+import { Array, Context, Effect, type Function, Layer, Option, Predicate, Stream } from "effect";
 import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
 import { StreamId } from "../schema/index.ts";
@@ -39,7 +39,7 @@ const templateOf = (route: Route.Matcher): string | undefined => {
 
 /** Template streams must have disjoint id grammars. Custom routes use declaration order. */
 function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
-  const templates = routes.flatMap((route) => {
+  const templates = Array.flatMap(routes, (route) => {
     const template = templateOf(route);
 
     return template === undefined ? [] : [template];
@@ -396,7 +396,7 @@ export function checkStreams(keys: ReadonlyArray<Any>): void {
       throw new RangeError("Wildcard must be last");
   }
 
-  checkNoOverlap(keys.map((key) => declaration(key).route));
+  checkNoOverlap(Array.map(keys, (key) => declaration(key).route));
 }
 
 /** Bind streams to their owning protocol graph. */

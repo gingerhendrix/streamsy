@@ -1,17 +1,20 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Console, Effect, Layer } from "effect";
+import { Array, Console, Effect, Layer } from "effect";
 import { liveHttp, liveIdentity, liveOperations, livePaths, liveReports } from "./live.ts";
 import { runEvidence } from "./run.ts";
 
-const usage = [
-  "streamsy deployed e2e",
-  "",
-  "Deploys the conformance Worker to a new workers.dev stage with Alchemy,",
-  "runs the official Durable Streams suite against it, then destroys it.",
-  "Build the worker first: bun run --cwd ../packages/conformance-tests build:worker",
-  "Needs a Cloudflare login in the default Alchemy profile.",
-  "The report is written to reports/<stage>.json.",
-].join("\n");
+const usage = Array.join(
+  [
+    "streamsy deployed e2e",
+    "",
+    "Deploys the conformance Worker to a new workers.dev stage with Alchemy,",
+    "runs the official Durable Streams suite against it, then destroys it.",
+    "Build the worker first: bun run --cwd ../packages/conformance-tests build:worker",
+    "Needs a Cloudflare login in the default Alchemy profile.",
+    "The report is written to reports/<stage>.json.",
+  ],
+  "\n",
+);
 
 const paths = livePaths(new URL("..", import.meta.url).pathname.replace(/\/$/, ""));
 

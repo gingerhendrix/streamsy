@@ -2,7 +2,7 @@ import { it as baseIt } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { expect } from "vitest";
-import { Context, Deferred, Effect, Layer, Ref, Result, Stream } from "effect";
+import { Array, Context, Deferred, Effect, Layer, Order, pipe, Ref, Result, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
 import {
   createIssue,
@@ -55,11 +55,14 @@ const seeded = Effect.gen(function* () {
 const issueKeys = Effect.gen(function* () {
   const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
 
-  return batches
-    .flatMap((batch) => batch.items)
-    .filter((event) => event.type === "issue")
-    .map((event) => event.key)
-    .toSorted();
+  const keys = pipe(
+    batches,
+    Array.flatMap((batch) => batch.items),
+    Array.filter((event) => event.type === "issue"),
+    Array.map((event) => event.key),
+  );
+
+  return Array.sort(keys, Order.String);
 });
 
 const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
@@ -132,7 +135,7 @@ baseIt.live("two concurrent writers land without a lost update", () =>
     );
 
     expect(attempts).toBe(3);
-    expect(written.map(({ value }) => value.id)).toEqual(["issue_a", "issue_b"]);
+    expect(Array.map(written, ({ value }) => value.id)).toEqual(["issue_a", "issue_b"]);
     expect(keys).toEqual(["issue_a", "issue_b"]);
   }),
 );
@@ -174,8 +177,12 @@ baseIt.live(
         }),
       );
 
-      const failures = results.filter(Result.isFailure).map((result) => result.failure);
-      expect(results.filter(Result.isSuccess)).toHaveLength(1);
+      const failures = Array.map(
+        Array.filter(results, Result.isFailure),
+        (result) => result.failure,
+      );
+
+      expect(Array.filter(results, Result.isSuccess)).toHaveLength(1);
       expect(failures).toEqual([
         expect.objectContaining({ _tag: "TooManyInProgress", projectId: project.id, limit: 3 }),
       ]);

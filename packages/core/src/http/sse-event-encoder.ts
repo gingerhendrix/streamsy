@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import * as MessageBody from "./message-body-codec.ts";
 import type { MessageWithData } from "./message-body-codec.ts";
 
@@ -28,7 +29,7 @@ export function dataEvent(
     const combined = MessageBody.concatBytes(messages);
     chunks.push(encode(`data:${MessageBody.bytesToBase64(combined)}\n`));
   } else if (options.isJson) {
-    const items = messages.map((msg) => decoder.decode(msg.data));
+    const items = Array.map(messages, (msg) => decoder.decode(msg.data));
     chunks.push(encode("data:[\n"));
 
     for (let i = 0; i < items.length; i++) {
@@ -38,7 +39,10 @@ export function dataEvent(
 
     chunks.push(encode("data:]\n"));
   } else {
-    const text = messages.map((msg) => decoder.decode(msg.data)).join("");
+    const text = Array.join(
+      Array.map(messages, (msg) => decoder.decode(msg.data)),
+      "",
+    );
 
     for (const line of text.split(/\r\n|\r|\n/)) {
       chunks.push(encode(`data:${line}\n`));

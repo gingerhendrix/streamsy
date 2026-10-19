@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  Array,
   Cause,
   Deferred,
   Effect,
@@ -54,7 +55,7 @@ it("refs are inert and layerMemory supplies real tags", () =>
           _tag: "Appended",
         });
         const batches = yield* Streams.read(address).pipe(Stream.runCollect);
-        expect(batches.map((batch) => batch.items)).toEqual([[{ n: 1 }], [{ n: 2 }]]);
+        expect(Array.map(batches, (batch) => batch.items)).toEqual([[{ n: 1 }], [{ n: 2 }]]);
         expect(yield* Streams.read(address).pipe(Streams.items, Stream.runCollect)).toEqual([
           { n: 1 },
           { n: 2 },
@@ -236,7 +237,11 @@ it("follow echoes the cursor from each live read on the next live read", () =>
       yield* control.snapshot;
       yield* Streams.append(address, [{ n: 3 }]);
       const batches = yield* Fiber.join(fiber);
-      expect(batches.flatMap((batch) => batch.items)).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+      expect(Array.flatMap(batches, (batch) => batch.items)).toEqual([
+        { n: 1 },
+        { n: 2 },
+        { n: 3 },
+      ]);
       // The catch-up read has no cursor, so the first live read sends none.
       expect(sent[0]).toBeUndefined();
       expect(sent.length).toBeGreaterThanOrEqual(2);

@@ -1,4 +1,4 @@
-import { Record } from "effect";
+import { Array, Record } from "effect";
 import { expect, test } from "vitest";
 import {
   applyEvent,
@@ -11,7 +11,7 @@ import { mainWorkspaceSeed } from "../../server/decide.ts";
 import { WorkspaceEvent } from "../../server/events.ts";
 import { fixtureTxid, later, stamp } from "../support.ts";
 
-const seeded = mainWorkspaceSeed(stamp("seed")).reduce(applyEvent, emptyView);
+const seeded = Array.reduce(mainWorkspaceSeed(stamp("seed")), emptyView, applyEvent);
 
 test("the seed folds into the base app's main workspace", () => {
   expect(seeded.projectIds).toEqual(["proj_streamsy", "proj_docs"]);

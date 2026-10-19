@@ -1,11 +1,18 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns true process fixtures. */
 import { expect, test } from "vitest";
-import { Clock, Config, Effect, Schema } from "effect";
+import { Array, Clock, Config, Effect, Order, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
+
+/** The native `localeCompare` order of the string forms. */
+const byLocale = Order.make<unknown>((left, right) => {
+  const comparison = String(left).localeCompare(String(right));
+
+  return comparison < 0 ? -1 : comparison > 0 ? 1 : 0;
+});
 
 const worker = new URL("./support/protocol-process-worker.ts", import.meta.url).pathname;
 
@@ -82,9 +89,10 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   ]);
 
   expect(
-    concurrentCreates
-      .map(({ _tag }) => _tag)
-      .toSorted((left, right) => String(left).localeCompare(String(right))),
+    Array.sort(
+      Array.map(concurrentCreates, ({ _tag }) => _tag),
+      byLocale,
+    ),
   ).toEqual(["Created", "Exists"]);
   expect(await run(["multi-fail", filename, "must-not-exist", "create-race"])).toMatchObject({
     result: { _tag: "MutationRejected", index: 1, reason: "exists" },
@@ -116,9 +124,10 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   ]);
 
   expect(
-    race
-      .map(({ _tag }) => _tag)
-      .toSorted((left, right) => String(left).localeCompare(String(right))),
+    Array.sort(
+      Array.map(race, ({ _tag }) => _tag),
+      byLocale,
+    ),
   ).toEqual(["Appended", "OffsetMismatch"]);
   const raceRead = await run(["read", filename, "race"]);
   expect(raceRead.messages).toHaveLength(1);
@@ -169,7 +178,7 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   const child = await run(["read", filename, "child"]);
   expect(child).toMatchObject({ upToDate: true });
   const childMessages = child.messages ?? [];
-  expect(childMessages.map(({ text }) => text)).toEqual(["ab", "d"]);
+  expect(Array.map(childMessages, ({ text }) => text)).toEqual(["ab", "d"]);
   expect(await run(["head", filename, "child"])).toMatchObject({ ttlSeconds: 60 });
 
   expect(

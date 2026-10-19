@@ -8,7 +8,7 @@
  * so the pacing is asserted instead of waited for.
  */
 import { describe, expect, test } from "vitest";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Array, Effect, Layer, ManagedRuntime } from "effect";
 import { TestClock } from "effect/testing";
 import { defineActionSink } from "@streamsy/serve/action";
 import type { OutboxUnavailable } from "@streamsy/serve/action/errors";
@@ -115,7 +115,7 @@ const runWithOutbox = <A>(
 };
 
 const states = (outbox: OutboxBacking): readonly Pick<OutboxEntry, "idempotencyKey" | "state">[] =>
-  runOutbox(outbox.list(sink.name, undefined)).map((entry) => ({
+  Array.map(runOutbox(outbox.list(sink.name, undefined)), (entry) => ({
     idempotencyKey: entry.idempotencyKey,
     state: entry.state,
   }));
@@ -139,7 +139,7 @@ describe("draining an action sink", () => {
           retried: 0,
           deadLettered: 0,
         });
-        expect(log.deliveries.map((delivery) => delivery.payload.id)).toEqual(["a", "b"]);
+        expect(Array.map(log.deliveries, (delivery) => delivery.payload.id)).toEqual(["a", "b"]);
         expect(states(outbox)).toEqual([
           { idempotencyKey: "a", state: "delivered" },
           { idempotencyKey: "b", state: "delivered" },
@@ -245,7 +245,7 @@ describe("draining an action sink", () => {
           { idempotencyKey: "also-good", state: "delivered" },
         ]);
         // Serialized, in enqueue order — never concurrent, never reordered.
-        expect(log.deliveries.map((delivery) => delivery.payload.id)).toEqual([
+        expect(Array.map(log.deliveries, (delivery) => delivery.payload.id)).toEqual([
           "bad",
           "good",
           "also-good",
@@ -304,7 +304,7 @@ describe("draining an action sink", () => {
           state: "dead",
           deadLetterReason: "payload-poison",
         });
-        expect(log.deliveries.map((delivery) => delivery.payload.id)).toEqual(["healthy"]);
+        expect(Array.map(log.deliveries, (delivery) => delivery.payload.id)).toEqual(["healthy"]);
       }),
     );
   });

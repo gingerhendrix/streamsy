@@ -1,6 +1,18 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Console, Effect, Fiber, FileSystem, Layer, Path, Result, Schedule, Schema } from "effect";
+import {
+  Array,
+  Console,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Result,
+  Schedule,
+  Schema,
+} from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { IssueTrackerApi } from "@streamsy/issue-tracker-demo-contract/api";
@@ -105,11 +117,14 @@ const readUntil = (streamUrl: string, waitingFor: string, ready: (read: StreamRe
 const hasTxids =
   (...txids: ReadonlyArray<string>) =>
   ({ events }: StreamRead) =>
-    txids.every((txid) => events.some((event) => event.headers.txid === txid));
+    Array.every(txids, (txid) => Array.some(events, (event) => event.headers.txid === txid));
 
 const findEvent = (events: StateEvent[], type: string, key: string, operation: string) => {
-  const match = events.find(
-    (event) => event.type === type && event.key === key && event.headers.operation === operation,
+  const match = Option.getOrUndefined(
+    Array.findFirst(
+      events,
+      (event) => event.type === type && event.key === key && event.headers.operation === operation,
+    ),
   );
 
   return match === undefined
@@ -151,17 +166,18 @@ const smoke = Effect.gen(function* () {
   const seed = yield* readUntil(
     mainStreamUrl,
     "the seeded issues",
-    ({ events }) => events.filter((event) => event.type === "issue").length >= 5,
+    ({ events }) => Array.filter(events, (event) => event.type === "issue").length >= 5,
   );
 
   const seededIssues = yield* Effect.forEach(
-    seed.events.filter((event) => event.type === "issue"),
+    Array.filter(seed.events, (event) => event.type === "issue"),
     (event) => Schema.decodeUnknownEffect(Issue)(event.value),
   );
 
   yield* check(seededIssues.length === 5, `main should seed 5 issues, got ${seededIssues.length}`);
   yield* check(
-    seededIssues.filter(
+    Array.filter(
+      seededIssues,
       (issue) => issue.projectId === "proj_streamsy" && issue.status === "in_progress",
     ).length === 2,
     "main should seed 2 issues in progress in Streamsy Demo",
@@ -232,9 +248,12 @@ const smoke = Effect.gen(function* () {
 
   yield* findEvent(events, "issue", issueId, "upsert");
 
-  const issueUpdate = events.findLast(
-    (event) =>
-      event.type === "issue" && event.key === issueId && event.headers.operation === "upsert",
+  const issueUpdate = Option.getOrUndefined(
+    Array.findLast(
+      events,
+      (event) =>
+        event.type === "issue" && event.key === issueId && event.headers.operation === "upsert",
+    ),
   );
 
   yield* check(issueUpdate !== undefined, `expected the updated issue ${issueId} as an upsert`);
@@ -289,7 +308,7 @@ const smoke = Effect.gen(function* () {
   // The project created in main must not appear in the new workspace.
   const isolationRead = yield* readStream(workspaceStreamUrl);
   yield* check(
-    !isolationRead.events.some((event) => event.key === projectId),
+    !Array.some(isolationRead.events, (event) => event.key === projectId),
     "project created in main must not appear in the shared workspace stream",
   );
 
@@ -373,7 +392,7 @@ const smoke = Effect.gen(function* () {
   const contentionCount = 10;
 
   const contentionResults = yield* Effect.all(
-    Array.from({ length: contentionCount }, (_, index) =>
+    globalThis.Array.from({ length: contentionCount }, (_, index) =>
       api.issues.create({
         params: main,
         payload: { projectId, title: `Contention issue ${index + 1}` },
@@ -382,7 +401,7 @@ const smoke = Effect.gen(function* () {
     { concurrency: "unbounded" },
   );
 
-  const contentionIds = contentionResults.map((result) => result.issue.id);
+  const contentionIds = Array.map(contentionResults, (result) => result.issue.id);
   yield* check(
     new Set(contentionIds).size === contentionCount,
     "contended issue creates should produce unique issues",
@@ -391,7 +410,7 @@ const smoke = Effect.gen(function* () {
   const after = yield* readUntil(
     mainStreamUrl,
     "the contended issues",
-    hasTxids(...contentionResults.map((result) => result.txid)),
+    hasTxids(...Array.map(contentionResults, (result) => result.txid)),
   );
 
   yield* check(
@@ -440,12 +459,12 @@ const smoke = Effect.gen(function* () {
     { concurrency: "unbounded" },
   );
 
-  const refused = raced.filter(Result.isFailure).map((result) => result.failure);
+  const refused = Array.map(Array.filter(raced, Result.isFailure), (result) => result.failure);
   yield* check(
-    raced.filter(Result.isSuccess).length === 1 &&
+    Array.filter(raced, Result.isSuccess).length === 1 &&
       refused.length === 1 &&
       Schema.is(WipLimitReached)(refused[0]),
-    `the race should give one success and one WipLimitReached, got ${refused.map(String).join(", ")}`,
+    `the race should give one success and one WipLimitReached, got ${Array.join(Array.map(refused, String), ", ")}`,
   );
 
   // === 8. Raw stream writes cannot bypass domain validation ===

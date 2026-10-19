@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import type { ProducerOptions } from "../protocol/options.ts";
 
 const MAX_SAFE_PRODUCER_INT = Number.MAX_SAFE_INTEGER;
@@ -14,7 +15,7 @@ export function parse(request: { readonly headers: Headers }): ProducerHeaderRes
   const epoch = request.headers.get("producer-epoch");
   const seq = request.headers.get("producer-seq");
 
-  const present = [id, epoch, seq].filter((v) => v !== null).length;
+  const present = Array.filter([id, epoch, seq], (v) => v !== null).length;
 
   if (present === 0) return { kind: "absent" };
 

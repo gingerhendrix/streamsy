@@ -3,7 +3,7 @@ import { StorageFault } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { it } from "@effect/vitest";
 import { afterAll, describe, expect } from "vitest";
-import { Effect, Exit, Layer, Schedule, Schema, Scope } from "effect";
+import { Array, Effect, Exit, Layer, Schedule, Schema, Scope } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive, ApiNotFoundLive } from "../../server/api.ts";
 import { BootLive, IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
@@ -88,7 +88,7 @@ const sendError = (method: string, path: string, body?: string) =>
 const awaitTxid = (workspaceId: string, txid: string) =>
   request(new Request(`http://localhost/streams/workspace/${workspaceId}?offset=-1`)).pipe(
     Effect.flatMap(({ body }) => Schema.decodeUnknownEffect(StateChanges)(body)),
-    Effect.map((changes) => changes.filter((change) => change.headers.txid === txid)),
+    Effect.map((changes) => Array.filter(changes, (change) => change.headers.txid === txid)),
     Effect.filterOrFail(
       (found) => found.length > 0,
       () => new NoTxid({ workspaceId, txid }),

@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { it } from "@effect/vitest";
 import { expect } from "vitest";
-import { Deferred, Effect, Exit, FileSystem, Path, Ref, Result } from "effect";
+import { Array, Deferred, Effect, Exit, FileSystem, Path, Ref, Result } from "effect";
 import type { CommandView } from "../../server/command-view.ts";
 import { createIssue, mainWorkspaceSeed, updateIssue, type Decision } from "../../server/decide.ts";
 import { WorkspaceEvent } from "../../server/events.ts";
@@ -92,7 +92,8 @@ it.live("two writers race for the last in-progress place: the loser's retry brea
 
         const { items } = yield* (yield* WorkspaceEvents).collect({ workspaceId });
 
-        const inProgress = items.filter(
+        const inProgress = Array.filter(
+          items,
           (event) =>
             WorkspaceEvent.guards.IssueStatusChanged(event) && event.status === "in_progress",
         );
@@ -101,8 +102,13 @@ it.live("two writers race for the last in-progress place: the loser's retry brea
       }),
     );
 
-    expect(outcome.results.filter(Result.isSuccess)).toHaveLength(1);
-    const refused = outcome.results.filter(Result.isFailure).map((result) => result.failure);
+    expect(Array.filter(outcome.results, Result.isSuccess)).toHaveLength(1);
+
+    const refused = Array.map(
+      Array.filter(outcome.results, Result.isFailure),
+      (result) => result.failure,
+    );
+
     expect(refused).toEqual([expect.objectContaining({ _tag: "TooManyInProgress", limit: 3 })]);
     // Only the winner's event is in the log.
     expect(outcome.inProgress).toHaveLength(1);
@@ -197,7 +203,7 @@ it.live("boot seeds main once and the watcher writes its rows", () =>
     );
 
     expect(events).toHaveLength(mainWorkspaceSeed(stamp("seed")).length);
-    expect(rows.map((row) => row.key)).toContain("comment_welcome");
+    expect(Array.map(rows, (row) => row.key)).toContain("comment_welcome");
   }),
 );
 
@@ -221,7 +227,9 @@ it.live("a new workspace is registered, starts with its project and gets a watch
       }),
     );
 
-    expect(created.registered.map((record) => record.workspaceId)).toEqual([created.workspaceId]);
+    expect(Array.map(created.registered, (record) => record.workspaceId)).toEqual([
+      created.workspaceId,
+    ]);
     expect(created.rows).toEqual([
       expect.objectContaining({
         type: "project",
@@ -279,7 +287,7 @@ it.live("with a database file, a restart resumes the read model of a shared work
     );
 
     // The starter project and both issues, each once: the runner resumed from its checkpoint.
-    expect(after.map((change) => change.key)).toEqual([
+    expect(Array.map(after, (change) => change.key)).toEqual([
       before.projectId,
       "issue_before",
       "issue_after",

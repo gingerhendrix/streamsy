@@ -1,7 +1,18 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid -- Bun owns retained SQLite edge fixtures. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { expect, test } from "vitest";
-import { Cause, Config, Context, Effect, Exit, Layer, Option, Predicate } from "effect";
+import {
+  Array,
+  Cause,
+  Config,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Order,
+  Predicate,
+} from "effect";
 import {
   Offset,
   ProducerId,
@@ -145,7 +156,7 @@ test("message SQL excludes rows outside the window and performs no row read for 
         const full = yield* storage.messages(StreamId.make("bounded"), {}).pipe(Effect.exit);
 
         return {
-          included: included.map(({ offset }) => offset),
+          included: Array.map(included, ({ offset }) => offset),
           zero,
           fullDefected: died(full),
         };
@@ -210,7 +221,10 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
         const fault = yield* storage.record(StreamId.make("race")).pipe(Effect.exit);
 
         return {
-          tags: outcomes.map(({ _tag }) => _tag).toSorted(),
+          tags: Array.sort(
+            Array.map(outcomes, ({ _tag }) => _tag),
+            Order.String,
+          ),
           typedFault: Exit.isFailure(fault)
             ? !Cause.hasDies(fault.cause) &&
               Option.match(Cause.findErrorOption(fault.cause), {

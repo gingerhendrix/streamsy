@@ -9,7 +9,7 @@ import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import { MemoryStorage, type StorageFault, Streamsy } from "@streamsy/core";
 import { SqlStorage } from "@streamsy/storage";
-import { Config, Effect, Layer, Option, type Scope } from "effect";
+import { Array, Config, Effect, Layer, Option, type Scope } from "effect";
 import type { Reactivity } from "effect/reactivity";
 import type { SqlClient, SqlError } from "effect/sql";
 
@@ -124,7 +124,7 @@ export const select = (drivers: Drivers) =>
     const backends = yield* Effect.all(definitions(drivers));
 
     return {
-      mounted: backends.filter(isMounted),
-      unmounted: backends.filter((backend): backend is Unmounted => !isMounted(backend)),
+      mounted: Array.filter(backends, isMounted),
+      unmounted: Array.filter(backends, (backend): backend is Unmounted => !isMounted(backend)),
     } satisfies Selection;
   });

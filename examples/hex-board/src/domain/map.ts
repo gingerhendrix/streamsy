@@ -12,7 +12,7 @@
 import type { Axial } from "./hex.ts";
 import { hexDistance, parseHexId } from "./hex.ts";
 import type { Rng } from "./rng.ts";
-import { Schema } from "effect";
+import { Array, Option, Schema } from "effect";
 
 export const MAP_VERSION = "procedural-hex-v1";
 
@@ -164,7 +164,9 @@ export const MAP_PROFILES: readonly MapProfile[] = [
 ];
 
 export function mapProfileFor(playerCount: number): MapProfile {
-  const profile = MAP_PROFILES.find((p) => p.players === playerCount);
+  const profile = Option.getOrUndefined(
+    Array.findFirst(MAP_PROFILES, (p) => p.players === playerCount),
+  );
 
   if (!profile) {
     throw new Error(
@@ -246,10 +248,10 @@ export interface MapIndex {
 export function indexMap(map: GeneratedMap): MapIndex {
   return {
     map,
-    territoryById: new Map(map.territories.map((t) => [t.id, t])),
-    continentById: new Map(map.continents.map((c) => [c.id, c])),
-    tileById: new Map(map.tiles.map((t) => [t.id, t])),
-    territoryIds: map.territories.map((t) => t.id),
+    territoryById: new Map(Array.map(map.territories, (t) => [t.id, t] as const)),
+    continentById: new Map(Array.map(map.continents, (c) => [c.id, c] as const)),
+    tileById: new Map(Array.map(map.tiles, (t) => [t.id, t] as const)),
+    territoryIds: Array.map(map.territories, (t) => t.id),
   };
 }
 

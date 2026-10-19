@@ -1,4 +1,4 @@
-import { type Array, Data, Predicate, Record, type Types } from "effect";
+import { Array, Data, Predicate, Record, type Types } from "effect";
 import type {
   Collections,
   CollectionsChange,
@@ -98,7 +98,7 @@ export function changes<C extends Collections, RD, RE>(
 ): ReadonlyArray<CollectionsChange<C>> {
   const { offset } = options;
 
-  return entries.map((entry, index): CollectionsChange<C> => {
+  return Array.map(entries, (entry, index): CollectionsChange<C> => {
     const collection = Record.has(address.collections, entry.type)
       ? address.collections[entry.type]
       : undefined;

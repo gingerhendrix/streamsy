@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { useState, type FormEvent } from "react";
 import type { Project } from "@streamsy/issue-tracker-demo-contract/types";
 
@@ -37,7 +38,7 @@ export function ProjectsPanel({
         {projects.length === 0 ? (
           <p className="project-empty">No projects yet</p>
         ) : (
-          projects.map((project) => (
+          Array.map(projects, (project) => (
             <button
               key={project.id}
               type="button"

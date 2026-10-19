@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Stream } from "effect";
+import { Array, Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { ZERO_OFFSET } from "../../../src/offset/index.ts";
 import { createNotifier, type Notifier } from "../../../src/storage/memory/notifier.ts";
@@ -8,7 +8,7 @@ import type { State } from "../../../src/storage/memory/state.ts";
 import { StreamId } from "../../../src/schema/index.ts";
 
 const pending = (bus: Notifier) =>
-  [...bus.queues].reduce((n, queue) => n + Queue.sizeUnsafe(queue), 0);
+  Array.reduce([...bus.queues], 0, (n, queue) => n + Queue.sizeUnsafe(queue));
 
 for (const push of [true, false]) {
   it(`interruption releases ${push ? "push subscription" : "polling reads"} while the owner stays alive`, () =>

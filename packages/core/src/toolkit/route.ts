@@ -6,7 +6,7 @@
  * a stated invariant at the assertion site.
  */
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This module is the checked boundary between an author's codec record and the decoded parameter set; every widening below is guarded by the invariant in its own comment. */
-import { Data, Option, Record as EffectRecord, Schema } from "effect";
+import { Array, Data, Option, Record as EffectRecord, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 import * as StreamAddress from "./address.ts";
 import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-internal.ts";
@@ -159,7 +159,7 @@ function buildId<Codecs extends ParamCodecs>(
 ): StreamId {
   const record: Readonly<Record<string, unknown>> = params;
 
-  const built = segments.map((segment) => {
+  const built = Array.map(segments, (segment) => {
     if (segment.kind === "literal") return segment.value;
     const codec = codecs[segment.name];
     const value = record[segment.name];
@@ -183,7 +183,7 @@ function buildId<Codecs extends ParamCodecs>(
     return text;
   });
 
-  return StreamId.make(built.join("/"));
+  return StreamId.make(Array.join(built, "/"));
 }
 
 /**

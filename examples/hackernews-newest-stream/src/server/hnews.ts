@@ -1,6 +1,6 @@
 import { Array, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { HackerNewsItem, HackerNewsStory, newestStorySort } from "../state-schema.ts";
+import { HackerNewsItem, HackerNewsStory, newestStoryOrder } from "../state-schema.ts";
 import { DemoConfig } from "./config.ts";
 import { HackerNewsApi, pollFailure } from "./poller/contract.ts";
 import { errorMessage } from "./util.ts";
@@ -68,7 +68,7 @@ export const hackerNewsApiLayer = Layer.effect(
       ) {
         const stories = yield* Effect.forEach(ids, fetchStory, { concurrency: "unbounded" });
 
-        return Array.getSomes(stories).toSorted(newestStorySort);
+        return Array.sort(Array.getSomes(stories), newestStoryOrder);
       }),
     });
   }),

@@ -12,14 +12,17 @@ import {
   type AgentDefinition,
   type FoldModel,
 } from "@humanlayer/fold-core";
-import { Config, Effect, Layer, Option, Schema } from "effect";
+import { Array, Config, Effect, Layer, Option, Schema } from "effect";
 import { FetchHttpClient, type HttpClient } from "effect/http";
 import { scriptedModel, textTurn, toolCallTurn } from "./scripted-model.ts";
 
-export const SYSTEM_PROMPT = [
-  "You are the Streamsy Fold example agent.",
-  "Answer briefly. When the user asks about text, use the text_stats tool rather than counting yourself.",
-].join(" ");
+export const SYSTEM_PROMPT = Array.join(
+  [
+    "You are the Streamsy Fold example agent.",
+    "Answer briefly. When the user asks about text, use the text_stats tool rather than counting yourself.",
+  ],
+  " ",
+);
 
 /**
  * A harmless, deterministic tool. It exists to prove that a tool call and its
@@ -96,7 +99,7 @@ const scriptedFromJson = (fixture: string) =>
     ),
     Effect.flatMap((commands) =>
       scriptedModel(
-        commands.map((command) =>
+        Array.map(commands, (command) =>
           command.type === "text"
             ? textTurn(command.text)
             : toolCallTurn(command.id, command.name, command.params),

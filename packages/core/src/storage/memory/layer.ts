@@ -1,4 +1,4 @@
-import { Context, Predicate, Effect, Layer, Option } from "effect";
+import { Array, Context, Predicate, Effect, Layer, Option } from "effect";
 import { attachOwner, ownerOf } from "../../internal/owner.ts";
 import { Storage } from "../storage.ts";
 import {
@@ -126,7 +126,7 @@ export const layer = (
           const record = copyRecord(operation.record);
           state.entries.set(record.id, {
             record,
-            messages: operation.initialMessages.map(copyMessage),
+            messages: Array.map(operation.initialMessages, copyMessage),
             producers: new Map(),
           });
 
@@ -148,7 +148,7 @@ export const layer = (
               results.push(OperationResults.Created({ record: copyRecord(entry.record) }));
             },
             Append: (append) => {
-              entry.messages.push(...append.messages.map(copyMessage));
+              entry.messages.push(...Array.map(append.messages, copyMessage));
               entry.record = patchRecord(entry.record, append.patch);
 
               if (append.producer)
@@ -189,14 +189,15 @@ export const layer = (
         ),
         messages: Effect.fn("Memory.messages")((id, window) =>
           owner.access((state) =>
-            composeMessages(state, id, chain)
-              .filter(
+            Array.map(
+              Array.filter(
+                composeMessages(state, id, chain),
                 (message) =>
                   (window.after === undefined || message.offset > window.after) &&
                   (window.until === undefined || message.offset <= window.until),
-              )
-              .slice(0, window.limit === undefined ? undefined : Math.max(0, window.limit))
-              .map(copyMessage),
+              ).slice(0, window.limit === undefined ? undefined : Math.max(0, window.limit)),
+              copyMessage,
+            ),
           ),
         ),
         producer: Effect.fn("Memory.producer")((id, producerId) =>
@@ -207,7 +208,7 @@ export const layer = (
           ),
         ),
         mutate: Effect.fn("Memory.mutate")(function* (mutation) {
-          const ids = mutation.operations.map((operation) =>
+          const ids = Array.map(mutation.operations, (operation) =>
             Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId,
           );
 

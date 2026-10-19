@@ -25,7 +25,7 @@
  * intermediate `fortify` phase, but it is not a player decision boundary.
  */
 
-import { Record as EffectRecord } from "effect";
+import { Array, Option, Order, Record as EffectRecord } from "effect";
 import { compareRolls } from "./dice.ts";
 import type { DefenseResolutionSource, GameEvent, PlayerController } from "./events.ts";
 import type { ContinentDef, GeneratedMap, MapIndex } from "./map.ts";
@@ -179,19 +179,22 @@ export function currentTurnId(state: AggregateState): string | undefined {
 }
 
 export function ownedBy(state: AggregateState, playerId: string): string[] {
-  return EffectRecord.values(state.territories)
-    .filter((t) => t.ownerId === playerId)
-    .map((t) => t.id)
-    .toSorted();
+  return Array.sort(
+    Array.map(
+      Array.filter(EffectRecord.values(state.territories), (t) => t.ownerId === playerId),
+      (t) => t.id,
+    ),
+    Order.String,
+  );
 }
 
 export function player(state: AggregateState, playerId: string): PlayerState | undefined {
-  return state.players.find((p) => p.id === playerId);
+  return Option.getOrUndefined(Array.findFirst(state.players, (p) => p.id === playerId));
 }
 
 /** Non-eliminated players in `turnOrder`, preserving order. */
 function activePlayers(state: AggregateState): string[] {
-  return state.turnOrder.filter((id) => !player(state, id)?.eliminated);
+  return Array.filter(state.turnOrder, (id) => !player(state, id)?.eliminated);
 }
 
 /** Continents whose every territory is currently owned by `playerId`. */
@@ -201,8 +204,8 @@ export function controlledContinents(
 ): readonly ContinentDef[] {
   if (!state.map) return [];
 
-  return state.map.continents.filter((continent) =>
-    continent.territoryIds.every((id) => state.territories[id]?.ownerId === playerId),
+  return Array.filter(state.map.continents, (continent) =>
+    Array.every(continent.territoryIds, (id) => state.territories[id]?.ownerId === playerId),
   );
 }
 
@@ -216,12 +219,12 @@ export function controlledContinents(
 export function computeReinforcement(state: AggregateState, playerId: string): ReinforcementState {
   const base = baseReinforcement(ownedBy(state, playerId).length);
 
-  const continents = controlledContinents(state, playerId).map((continent) => ({
+  const continents = Array.map(controlledContinents(state, playerId), (continent) => ({
     continentId: continent.id,
     bonus: continent.reinforcementBonus,
   }));
 
-  const total = continents.reduce((sum, c) => sum + c.bonus, base);
+  const total = Array.reduce(continents, base, (sum, c) => sum + c.bonus);
 
   return { base, continents, total, remaining: total };
 }
@@ -280,14 +283,18 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
     }
 
     case "PlayerControllerChanged": {
-      const currentPlayer = state.players.find((candidate) => candidate.id === event.playerId);
+      const currentPlayer = Option.getOrUndefined(
+        Array.findFirst(state.players, (candidate) => candidate.id === event.playerId),
+      );
 
       if (currentPlayer) currentPlayer.controller = event.controller;
       break;
     }
 
     case "PlayerRenamed": {
-      const renamed = state.players.find((candidate) => candidate.id === event.playerId);
+      const renamed = Option.getOrUndefined(
+        Array.findFirst(state.players, (candidate) => candidate.id === event.playerId),
+      );
 
       if (renamed) renamed.name = event.name;
       break;
@@ -296,7 +303,7 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
     case "PlayerLeft": {
       // Lobby-only, so there is no turn order or territory to repair: the seat is
       // simply no longer on the roster the game will start with.
-      state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
+      state.players = Array.filter(state.players, (candidate) => candidate.id !== event.playerId);
       break;
     }
 
@@ -360,7 +367,7 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       // declaration; a divergence would silently rewrite a recorded throw.
       const sameRolls =
         pending.attackerRolls.length === event.attackerRolls.length &&
-        pending.attackerRolls.every((roll, i) => roll === event.attackerRolls[i]);
+        Array.every(pending.attackerRolls, (roll, i) => roll === event.attackerRolls[i]);
 
       if (
         !sameRolls ||
@@ -520,7 +527,7 @@ export function friendlyReachable(state: AggregateState, playerId: string, from:
     }
   }
 
-  return reachable.toSorted();
+  return Array.sort(reachable, Order.String);
 }
 
 /** Re-export the pure comparison so consumers do not reach past the aggregate. */

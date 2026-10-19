@@ -1,7 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Array, Console, Effect, Layer, Schema } from "effect";
+import { Array, Console, Effect, Layer, Option, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { SqlClient } from "effect/sql";
 import recording from "./recordings/acme.json";
@@ -96,19 +96,23 @@ const app = Effect.gen(function* () {
   const baseUrl = server.url;
   const acme = yield* readBoard(baseUrl, "acme");
   yield* check(
-    acme.rows.find((row) => row.issueId === "acme-1")?.status === "done",
+    Option.getOrUndefined(Array.findFirst(acme.rows, (row) => row.issueId === "acme-1"))?.status ===
+      "done",
     "older sequence overwrote acme-1",
   );
   yield* check(
-    acme.rows.find((row) => row.issueId === "acme-2")?.assigneeId === "grace",
+    Option.getOrUndefined(Array.findFirst(acme.rows, (row) => row.issueId === "acme-2"))
+      ?.assigneeId === "grace",
     "assignment missing",
   );
   yield* check(
-    acme.rows.find((row) => row.issueId === "acme-2")?.labelIds.length === 2,
+    Option.getOrUndefined(Array.findFirst(acme.rows, (row) => row.issueId === "acme-2"))?.labelIds
+      .length === 2,
     "labels missing",
   );
   yield* check(
-    acme.rows.find((row) => row.issueId === "acme-1")?.labelIds.length === 0,
+    Option.getOrUndefined(Array.findFirst(acme.rows, (row) => row.issueId === "acme-1"))?.labelIds
+      .length === 0,
     "detached label remained on acme-1",
   );
 

@@ -1,5 +1,15 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context -- Wakeup.run deliberately accepts arbitrary app failures; the alarm isolates their causes. */
-import { Clock, Context, Duration, Effect, Exit, Option, Predicate, Semaphore } from "effect";
+import {
+  Array,
+  Clock,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Option,
+  Predicate,
+  Semaphore,
+} from "effect";
 import { Storage, type StorageFault } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { AlarmSlot } from "./alarm.ts";
@@ -97,7 +107,7 @@ export const makeWakeups = <R>(
   definitions: ReadonlyArray<Wakeup<Storage | Wakeups | R>> = [],
 ) =>
   Effect.gen(function* () {
-    const wakeups = [expiry, ...definitions].map(Wakeup.make);
+    const wakeups = Array.map([expiry, ...definitions], (wakeup) => Wakeup.make(wakeup));
     const names = new Set<string>();
 
     for (const wakeup of wakeups) {
@@ -106,11 +116,11 @@ export const makeWakeups = <R>(
       names.add(wakeup.name);
     }
 
-    const permits = new Map(wakeups.map((wakeup) => [wakeup.name, Semaphore.makeUnsafe(1)]));
+    const permits = new Map(Array.map(wakeups, (wakeup) => [wakeup.name, Semaphore.makeUnsafe(1)]));
     const reconcilePermit = yield* Semaphore.make(1);
     const turnPermit = yield* Semaphore.make(1);
 
-    const states = wakeups.map((wakeup) => ({
+    const states = Array.map(wakeups, (wakeup) => ({
       wakeup,
       failures: 0,
       floor: 0,

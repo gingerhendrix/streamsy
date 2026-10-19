@@ -13,7 +13,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Exit, ManagedRuntime, Option } from "effect";
+import { Array, Effect, Exit, ManagedRuntime, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import {
@@ -90,7 +90,7 @@ for (const [name, run] of cases) {
             absorbed: 1,
           });
           expect(
-            (yield* outbox.list("test.sink", undefined)).map((entry) => entry.idempotencyKey),
+            Array.map(yield* outbox.list("test.sink", undefined), (entry) => entry.idempotencyKey),
           ).toEqual(["a", "b", "c"]);
         }),
       ));
@@ -111,16 +111,21 @@ for (const [name, run] of cases) {
         Effect.gen(function* () {
           yield* outbox.enqueue([draft("a"), draft("b"), draft("c")]);
           expect(
-            (yield* outbox.claimDue("test.sink", undefined, 1_000, 2)).map((entry) => entry.id),
+            Array.map(
+              yield* outbox.claimDue("test.sink", undefined, 1_000, 2),
+              (entry) => entry.id,
+            ),
           ).toEqual([1, 2]);
           yield* outbox.reschedule(1, 1, 5_000, "not yet");
           expect(
-            (yield* outbox.claimDue("test.sink", undefined, 1_000, 10)).map(
+            Array.map(
+              yield* outbox.claimDue("test.sink", undefined, 1_000, 10),
               (entry) => entry.idempotencyKey,
             ),
           ).toEqual(["b", "c"]);
           expect(
-            (yield* outbox.claimDue("test.sink", undefined, 5_000, 10)).map(
+            Array.map(
+              yield* outbox.claimDue("test.sink", undefined, 5_000, 10),
               (entry) => entry.idempotencyKey,
             ),
           ).toEqual(["a", "b", "c"]);
@@ -132,12 +137,13 @@ for (const [name, run] of cases) {
         Effect.gen(function* () {
           yield* outbox.enqueue([draft("a", "left"), draft("b", "right")]);
           expect(
-            (yield* outbox.claimDue("test.sink", "right", 1_000, 10)).map(
+            Array.map(
+              yield* outbox.claimDue("test.sink", "right", 1_000, 10),
               (entry) => entry.idempotencyKey,
             ),
           ).toEqual(["b"]);
           expect(
-            (yield* outbox.list("test.sink", "left")).map((entry) => entry.idempotencyKey),
+            Array.map(yield* outbox.list("test.sink", "left"), (entry) => entry.idempotencyKey),
           ).toEqual(["a"]);
         }),
       ));

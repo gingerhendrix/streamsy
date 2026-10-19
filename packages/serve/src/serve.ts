@@ -1,4 +1,4 @@
-import { Effect, Record, Schema } from "effect";
+import { Array, Effect, Order, Record, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Http, Offset, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { StreamsReader, type StreamRoute } from "@streamsy/core/protocol";
@@ -149,7 +149,7 @@ function collectionDescriptor(value: unknown) {
     );
 
     return Record.fromEntries(
-      Record.toEntries(collections).map(([type, collection]) => [type, collection.key]),
+      Array.map(Record.toEntries(collections), ([type, collection]) => [type, collection.key]),
     );
   });
 }
@@ -183,11 +183,13 @@ const read = Effect.fn("Serve.read")(function* <A, K, RD, RE>(
     source,
     id: address.id,
     collections,
-    params: path
-      .split("/")
-      .filter((segment) => segment.startsWith(":"))
-      .map((segment) => segment.slice(1))
-      .toSorted(),
+    params: Array.sort(
+      Array.map(
+        Array.filter(path.split("/"), (segment) => segment.startsWith(":")),
+        (segment) => segment.slice(1),
+      ),
+      Order.String,
+    ),
     version: 1,
     recovery: "replay-from-start",
     contract: options.contract ?? null,
@@ -347,9 +349,14 @@ export const value = Effect.fn("Serve.value")(function* <
   const etag = Contract.valueEtag(canonical);
   const responseHeaders = { ...headers, "cache-control": cacheControl, etag };
 
-  const conditional = request.headers["if-none-match"]
-    ?.split(",")
-    .some((tag) => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag);
+  const ifNoneMatch = request.headers["if-none-match"];
+
+  const conditional =
+    ifNoneMatch !== undefined &&
+    Array.some(
+      ifNoneMatch.split(","),
+      (tag) => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag,
+    );
 
   if (conditional) return HttpServerResponse.empty({ status: 304, headers: responseHeaders });
 

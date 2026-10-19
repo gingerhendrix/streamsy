@@ -12,6 +12,8 @@
  * string id and never a locale-sensitive comparison.
  */
 
+import { Array, Order } from "effect";
+
 /** The six axial neighbour offsets, in canonical order. */
 export const AXIAL_NEIGHBORS = [
   [1, 0],
@@ -51,7 +53,7 @@ export function parseHexId(id: string): Axial {
 
 /** The six coordinate neighbours of `(q, r)`, in `AXIAL_NEIGHBORS` order. */
 export function neighborsOf(q: number, r: number): Axial[] {
-  return AXIAL_NEIGHBORS.map(([dq, dr]) => ({ q: q + dq, r: r + dr }));
+  return Array.map(AXIAL_NEIGHBORS, ([dq, dr]) => ({ q: q + dq, r: r + dr }));
 }
 
 /** Canonical coordinate ordering: `q` ascending, then `r` ascending. */
@@ -59,9 +61,15 @@ export function compareAxial(a: Axial, b: Axial): number {
   return a.q - b.q || a.r - b.r;
 }
 
+/** `compareAxial` as an `Order`: `q` ascending, then `r` ascending. */
+const axialOrder: Order.Order<Axial> = Order.combine(
+  Order.mapInput(Order.Number, (hex: Axial) => hex.q),
+  Order.mapInput(Order.Number, (hex: Axial) => hex.r),
+);
+
 /** Sort hex ids into canonical coordinate order. Returns a new array. */
 export function sortHexIds(ids: readonly string[]): string[] {
-  return ids.toSorted((a, b) => compareAxial(parseHexId(a), parseHexId(b)));
+  return Array.sort(ids, Order.mapInput(axialOrder, parseHexId));
 }
 
 /** Hex (cube) distance between two axial coordinates. */
@@ -105,5 +113,5 @@ export function hexesWithinRadius(radius: number): Axial[] {
     for (let r = lo; r <= hi; r += 1) out.push({ q, r });
   }
 
-  return out.toSorted(compareAxial);
+  return Array.sort(out, axialOrder);
 }

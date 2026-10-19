@@ -1,5 +1,5 @@
 import type { SqlClient, SqlError } from "effect/sql";
-import { Effect, Option, Predicate, Schema } from "effect";
+import { Array, Effect, Option, Predicate, Schema } from "effect";
 import type { DeadLetterReason } from "./errors.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import type {
@@ -127,7 +127,7 @@ const mysqlIndexes = (sql: SqlClient.SqlClient) =>
     readonly name: string;
   }>`SELECT DISTINCT index_name AS name FROM information_schema.statistics
  WHERE table_schema = DATABASE() AND table_name = ${TABLE}`.pipe(
-    Effect.map((rows) => new Set(rows.map(({ name }) => name))),
+    Effect.map((rows) => new Set(Array.map(rows, ({ name }) => name))),
   );
 
 /** MySQL has no `CREATE INDEX IF NOT EXISTS`. A concurrent migration may win the create. */
@@ -162,7 +162,7 @@ const migrateMysql = (
 export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, OutboxUnavailable> {
   const statements = (dialect: "sqlite" | "pg"): Effect.Effect<void, SqlError.SqlError> =>
     Effect.forEach(
-      [CREATE_TABLE[dialect], ...INDEXES.map((index) => createIndex(index, true))],
+      [CREATE_TABLE[dialect], ...Array.map(INDEXES, (index) => createIndex(index, true))],
       (statement) => sql.unsafe<Record<string, never>>(statement),
       { discard: true },
     );
@@ -184,7 +184,7 @@ export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, Out
  */
 const mysqlReady = (sql: SqlClient.SqlClient) =>
   Effect.flatMap(mysqlIndexes(sql), (names) =>
-    INDEXES.every((index) => names.has(index.name))
+    Array.every(INDEXES, (index) => names.has(index.name))
       ? Effect.void
       : Effect.fail(
           new OutboxUnavailable({
@@ -241,7 +241,10 @@ export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking 
   const rows = (
     operation: string,
     statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError.SqlError>,
-  ) => run(operation, statement).pipe(Effect.map((found) => found.map(decodeRow)));
+  ) =>
+    run(operation, statement).pipe(
+      Effect.map((found) => Array.map(found, (row) => decodeRow(row))),
+    );
 
   /** Whether the draft was new. A draft with a known sink and key changes nothing. */
   const insert = (draft: OutboxDraft) => {

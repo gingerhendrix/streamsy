@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- This internal binding implementation erases the handler and prepared-value types already checked by the constructor overloads. */
 /* oxlint-disable typescript/no-explicit-any, anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Declarations are the checked bridge between stream declarations and their mapped projection inputs; each assertion is documented at its use. */
-import { Option, Record, Schema, type Effect } from "effect";
+import { Array, Option, Record, Schema, type Effect } from "effect";
 import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
@@ -91,7 +91,7 @@ const encodeParams = <C extends StreamRoute.ParamCodecs>(
   const values: Readonly<Record<string, unknown>> = params;
 
   return Record.fromEntries(
-    Record.toEntries(codecs).map(([name, codec]) => {
+    Array.map(Record.toEntries(codecs), ([name, codec]) => {
       const encoded = Schema.encodeOption(codec)(values[name]);
 
       if (Option.isNone(encoded))
@@ -104,7 +104,7 @@ const encodeParams = <C extends StreamRoute.ParamCodecs>(
 
 export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams): Addresses<I> => {
   const built: unknown = Record.fromEntries(
-    Record.toEntries(inputs).map(([name, input]) => [
+    Array.map(Record.toEntries(inputs), ([name, input]) => [
       name,
       isDeclaration(input) ? input.at(params) : input,
     ]),

@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -16,20 +17,23 @@ test("plain ts fences are checked, titled and opted-out fences are not", () => {
 });
 
 test("stripTwoslash keeps only the code that readers see", () => {
-  const code = [
-    "// @filename: streams.ts",
-    'export * from "./shop-streams.ts";',
-    "// @filename: index.ts",
-    "// ---cut---",
-    'import { Orders } from "./streams.ts";',
-    "// ---cut-start---",
-    "declare const hidden: number;",
-    "// ---cut-end---",
-    "const shown = Orders;",
-    "//    ^?",
-    "// ---cut-after---",
-    "const assertion: true = true;",
-  ].join("\n");
+  const code = Array.join(
+    [
+      "// @filename: streams.ts",
+      'export * from "./shop-streams.ts";',
+      "// @filename: index.ts",
+      "// ---cut---",
+      'import { Orders } from "./streams.ts";',
+      "// ---cut-start---",
+      "declare const hidden: number;",
+      "// ---cut-end---",
+      "const shown = Orders;",
+      "//    ^?",
+      "// ---cut-after---",
+      "const assertion: true = true;",
+    ],
+    "\n",
+  );
 
   expect(stripTwoslash(code)).toBe('import { Orders } from "./streams.ts";\nconst shown = Orders;');
 });

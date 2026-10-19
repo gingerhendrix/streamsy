@@ -9,7 +9,7 @@
  */
 import { Http } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
-import { Effect, Layer, Record } from "effect";
+import { Array, Effect, Layer, Record } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Backends from "./backends.ts";
 
@@ -82,9 +82,9 @@ export const routes = (options: Options) =>
 
       const health = HttpServerResponse.jsonUnsafe({
         runtime: options.runtime,
-        backends: selection.mounted.map((backend) => backend.name),
+        backends: Array.map(selection.mounted, (backend) => backend.name),
         unmounted: Record.fromEntries(
-          selection.unmounted.map((backend) => [backend.name, backend.reason]),
+          Array.map(selection.unmounted, (backend) => [backend.name, backend.reason] as const),
         ),
       });
 

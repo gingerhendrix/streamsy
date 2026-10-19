@@ -11,7 +11,7 @@
  * These are change-detection identities, not security digests.
  */
 
-import { Record } from "effect";
+import { Array, Order, Record } from "effect";
 
 export type CanonicalValue =
   | string
@@ -23,7 +23,11 @@ export type CanonicalValue =
 
 /** Encode a value with object keys sorted, recursively. Array order is preserved. */
 export function canonicalJson(value: CanonicalValue): string {
-  if (isCanonicalArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  if (isCanonicalArray(value))
+    return `[${Array.join(
+      Array.map(value, (item) => canonicalJson(item)),
+      ",",
+    )}]`;
 
   if (value === null) return "null";
 
@@ -46,20 +50,14 @@ function isCanonicalArray(value: CanonicalValue): value is readonly CanonicalVal
 function canonicalObject(value: { readonly [key: string]: CanonicalValue }): string {
   const entries: string[] = [];
 
-  for (const key of Record.keys(value).toSorted(compareKeys)) {
+  for (const key of Array.sort(Record.keys(value), Order.String)) {
     const member = value[key];
 
     if (member === undefined) continue;
     entries.push(`${JSON.stringify(key)}:${canonicalJson(member)}`);
   }
 
-  return `{${entries.join(",")}}`;
-}
-
-function compareKeys(left: string, right: string): number {
-  if (left === right) return 0;
-
-  return left < right ? -1 : 1;
+  return `{${Array.join(entries, ",")}}`;
 }
 
 /** Eight lowercase hex characters of FNV-1a over the canonical encoding's UTF-16 code units. */

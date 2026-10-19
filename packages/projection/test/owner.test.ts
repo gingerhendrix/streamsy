@@ -2,7 +2,7 @@ import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect } from "vitest";
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Array, Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault, Transaction } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
@@ -82,7 +82,9 @@ for (const sameOwner of [true, false]) {
             ? (yield* Local).read({ id: "b" })
             : (yield* Foreign).read(params);
 
-          expect((yield* Stream.runCollect(target)).flatMap((batch) => batch.items)).toEqual([3]);
+          expect(Array.flatMap(yield* Stream.runCollect(target), (batch) => batch.items)).toEqual([
+            3,
+          ]);
         }),
     );
   });
@@ -153,10 +155,10 @@ for (const method of [
             });
           expect((yield* checkpoints.load(projection)).token).toBe("0");
           expect(
-            (yield* Stream.runCollect(own.read(params))).flatMap((batch) => batch.items),
+            Array.flatMap(yield* Stream.runCollect(own.read(params)), (batch) => batch.items),
           ).toEqual([]);
           expect(
-            (yield* Stream.runCollect(other.read(params))).flatMap((batch) => batch.items),
+            Array.flatMap(yield* Stream.runCollect(other.read(params)), (batch) => batch.items),
           ).toEqual([]);
           expect((yield* other.head({ id: "b" }).pipe(Effect.result))._tag).toBe("Failure");
           // Scope restoration: a normal foreign write remains usable after the failed pass.
@@ -230,7 +232,10 @@ layer(host)((it) => {
         expect(failure._tag).toBe("Failure");
         yield* Projection.run(projection);
         expect(
-          (yield* Stream.runCollect(foreignOutput.read(params))).flatMap((batch) => batch.items),
+          Array.flatMap(
+            yield* Stream.runCollect(foreignOutput.read(params)),
+            (batch) => batch.items,
+          ),
         ).toEqual([9]);
         expect(Option.getOrThrow((yield* store.load(projection)).record).pending).toBeUndefined();
       }).pipe(

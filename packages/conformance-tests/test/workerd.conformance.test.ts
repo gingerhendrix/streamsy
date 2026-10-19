@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Array, Effect } from "effect";
 /* oxlint-disable typescript/consistent-return -- The cleanup boundary returns Effect-style failure exits while successful branches complete with void. */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ const lifecycle = createWorkerdRunnerLifecycle<WorkerdDisposable & Miniflare>({
   inspect: (miniflare) =>
     miniflare.listDurableObjectIds("STREAMS").then((ids) => {
       process.stderr.write(
-        `workerd conformance profile=single-object-chain instantiated-objects=${ids.length} ids=${ids.join(",")}\n`,
+        `workerd conformance profile=single-object-chain instantiated-objects=${ids.length} ids=${Array.join(ids, ",")}\n`,
       );
 
       if (ids.length !== 1)

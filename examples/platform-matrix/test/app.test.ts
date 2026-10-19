@@ -2,14 +2,14 @@
 import { afterEach, expect, test } from "vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Http } from "@streamsy/core";
-import { ConfigProvider, Layer } from "effect";
+import { Array, ConfigProvider, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import * as App from "../src/app.ts";
 
 const edges: Array<{ readonly dispose: () => Promise<void> }> = [];
 
 afterEach(async () => {
-  await Promise.all(edges.splice(0).map((edge) => edge.dispose()));
+  await Promise.all(Array.map(edges.splice(0), (edge) => edge.dispose()));
 });
 
 /** The app as one web handler, with config from `env` only. */

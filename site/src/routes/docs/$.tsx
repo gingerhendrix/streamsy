@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { createServerFn } from "@tanstack/react-start";
@@ -14,14 +15,19 @@ import { useMDXComponents } from "#/components/mdx";
 export const Route = createFileRoute("/docs/$")({
   component: Page,
   beforeLoad: ({ params }) => {
-    const moved = movedPages.get(params["_splat"]?.split("/").filter(Boolean).join("/") ?? "");
+    const splat = params["_splat"];
+
+    const moved = movedPages.get(
+      splat === undefined ? "" : Array.join(Array.filter(splat.split("/"), Boolean), "/"),
+    );
 
     if (moved !== undefined) {
       throw redirect({ to: "/docs/$", params: { _splat: moved }, statusCode: 308 });
     }
   },
   loader: async ({ params }) => {
-    const slugs = params["_splat"]?.split("/").filter(Boolean) ?? [];
+    const splat = params["_splat"];
+    const slugs = splat === undefined ? [] : Array.filter(splat.split("/"), Boolean);
     const data = await serverLoader({ data: slugs });
     await clientLoader.preload(data.path);
 

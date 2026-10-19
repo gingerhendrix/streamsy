@@ -10,7 +10,7 @@ import { describe, expect } from "vitest";
 
 import { Path } from "effect";
 import { SessionId, startSession } from "@humanlayer/fold-core";
-import { Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import { exampleAgent } from "../src/agent.ts";
 import { sessionStreamId } from "../src/session-log.ts";
 import { sqliteLayer } from "../src/storage.ts";
@@ -225,7 +225,8 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
 
             expect(failure.message).toContain("Fenced: another writer advanced the log");
             expect(
-              (yield* readFoldLog(session).pipe(Effect.provideContext(store))).map(
+              Array.map(
+                yield* readFoldLog(session).pipe(Effect.provideContext(store)),
                 (row) => row.seq,
               ),
             ).toEqual([0, 1]);

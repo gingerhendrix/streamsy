@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- The proof composes protocol services over the supplied SQL host. */
 /* oxlint-disable eslint/no-underscore-dangle -- Test results use the public tagged-outcome `_tag`. */
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Scope, Stream } from "effect";
+import { Array, Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Scope, Stream } from "effect";
 import {
   CommitBoundary,
   Offset,
@@ -53,7 +53,7 @@ const drain = <A, E, R>(pull: Effect.Effect<ReadonlyArray<A>, E, R>) =>
 const turns = Effect.forEach([1, 2, 3, 4, 5], () => Effect.yieldNow, { discard: true });
 
 const retainedWakes = (probe: BoundaryTestProbe) =>
-  [...probe.queues].map((queue) => Queue.sizeUnsafe(queue));
+  Array.map([...probe.queues], (queue) => Queue.sizeUnsafe(queue));
 
 /** Complete full-Storage version of the accepted Batch A ownership/lifetime schedules. */
 export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
@@ -82,8 +82,8 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
         );
 
         return {
-          output: output.messages.map((message) => new TextDecoder().decode(message.data)),
-          records: rows.map((row) => [row.id, row.value]),
+          output: Array.map(output.messages, (message) => new TextDecoder().decode(message.data)),
+          records: Array.map(rows, (row) => [row.id, row.value]),
         };
       });
 
@@ -418,7 +418,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       ttlOnlyRetainedWakes,
       ttlOnlySnapshotPresent: ttlOnlySnapshot.present,
       ttlOnlyExpiresAtMs: ttlRecord.lifecycle.expiresAtMs,
-      initialRaceSnapshots: [...initialRaceSnapshots].map(({ present }) => present),
+      initialRaceSnapshots: Array.map([...initialRaceSnapshots], ({ present }) => present),
       subscriberCleanupCounts,
     };
   });

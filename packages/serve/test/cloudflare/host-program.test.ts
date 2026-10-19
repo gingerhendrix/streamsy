@@ -1,5 +1,5 @@
 import { expect, it as baseIt, layer } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Logger, Stream } from "effect";
+import { Array, Deferred, Effect, Fiber, Layer, Logger, Stream } from "effect";
 import { Storage, StorageFault } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
 import { withMutationReconciliation } from "../../src/cloudflare/host-program.ts";
@@ -81,7 +81,7 @@ baseIt.effect("a reconciliation failure after a mutation is logged", () =>
         Logger.CurrentLoggers,
         new Set([
           Logger.make((options) => {
-            messages.push(...[options.message].flat().map(String));
+            messages.push(...Array.map([options.message].flat(), String));
           }),
         ]),
       ),

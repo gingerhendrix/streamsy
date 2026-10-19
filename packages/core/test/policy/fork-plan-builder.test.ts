@@ -1,4 +1,4 @@
-import { Predicate } from "effect";
+import { Array, Predicate } from "effect";
 import { describe, expect, it } from "vitest";
 import type { CreateOptions } from "../../src/policy/options.ts";
 import { Offset, StreamId, type StoredMessage, type StreamRecord } from "../../src/schema/index.ts";
@@ -16,7 +16,7 @@ const enc = (value: string) => new TextEncoder().encode(value);
 const dec = (value: Uint8Array) => new TextDecoder().decode(value);
 
 function tailMessages(items: string[]): StoredMessage[] {
-  return items.map((value, i) => ({
+  return Array.map(items, (value, i) => ({
     data: enc(value),
     offset: formatCounter(i + 1),
     timestamp: 1,
@@ -86,7 +86,9 @@ describe("ForkPlanBuilder", () => {
     });
     expect(decision.plan.record.id).toBe(StreamId.make("child"));
     expect(decision.plan.record.lifecycle.forkedFrom).toBe(StreamId.make("source"));
-    expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([formatCounter(3)]);
+    expect(Array.map(decision.plan.initialMessages ?? [], (m) => m.offset)).toEqual([
+      formatCounter(3),
+    ]);
     // The source has a 20 second TTL and the clock reads 1_000.
     expect(decision.plan.record.config.ttlSeconds).toBe(20);
     expect(decision.plan.record.lifecycle.expiresAtMs).toBe(21_000);
@@ -105,9 +107,11 @@ describe("ForkPlanBuilder", () => {
       );
 
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
-      expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel"]);
+      expect(Array.map(decision.plan.initialMessages ?? [], (m) => dec(m.data))).toEqual(["hel"]);
       expect(decision.plan.record.lifecycle.forkSubOffset).toBe(3);
-      expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([formatCounter(1)]);
+      expect(Array.map(decision.plan.initialMessages ?? [], (m) => m.offset)).toEqual([
+        formatCounter(1),
+      ]);
     });
 
     it("materializes whole JSON messages by flattened count", () => {
@@ -120,7 +124,7 @@ describe("ForkPlanBuilder", () => {
       );
 
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
-      expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual([
+      expect(Array.map(decision.plan.initialMessages ?? [], (m) => dec(m.data))).toEqual([
         '{"a":1}',
         '{"b":2}',
       ]);
@@ -141,7 +145,10 @@ describe("ForkPlanBuilder", () => {
       );
 
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
-      expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel", "XY"]);
+      expect(Array.map(decision.plan.initialMessages ?? [], (m) => dec(m.data))).toEqual([
+        "hel",
+        "XY",
+      ]);
     });
 
     it("treats sub-offset 0 as absent (no prefix, not recorded)", () => {
@@ -204,7 +211,7 @@ describe("ForkPlanBuilder", () => {
       );
 
       if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
-      expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hello"]);
+      expect(Array.map(decision.plan.initialMessages ?? [], (m) => dec(m.data))).toEqual(["hello"]);
     });
   });
 });

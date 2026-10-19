@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestUrl } from "@tanstack/react-start/server";
@@ -63,23 +64,26 @@ function Home() {
           </a>
         </div>
         <section className="mt-16 grid gap-6 sm:grid-cols-3" aria-label="Packages">
-          {[
+          {Array.map(
             [
-              "@streamsy/core",
-              "Typed stream declarations, HTTP routes, storage contract and memory Layer.",
+              [
+                "@streamsy/core",
+                "Typed stream declarations, HTTP routes, storage contract and memory Layer.",
+              ],
+              ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
+              ["@streamsy/projection", "Checkpointed projections over one or more streams."],
+              [
+                "@streamsy/serve",
+                "HttpRouter routes, Bun and Cloudflare hosts, and action delivery.",
+              ],
             ],
-            ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
-            ["@streamsy/projection", "Checkpointed projections over one or more streams."],
-            [
-              "@streamsy/serve",
-              "HttpRouter routes, Bun and Cloudflare hosts, and action delivery.",
-            ],
-          ].map(([name, detail]) => (
-            <div key={name} className="rounded-xl border p-6">
-              <h2 className="font-mono text-lg font-semibold">{name}</h2>
-              <p className="mt-3 leading-7 text-fd-muted-foreground">{detail}</p>
-            </div>
-          ))}
+            ([name, detail]) => (
+              <div key={name} className="rounded-xl border p-6">
+                <h2 className="font-mono text-lg font-semibold">{name}</h2>
+                <p className="mt-3 leading-7 text-fd-muted-foreground">{detail}</p>
+              </div>
+            ),
+          )}
         </section>
         <section className="mt-12 max-w-3xl border-t pt-8">
           <h2 className="text-2xl font-semibold">Start locally, with explicit lifetimes.</h2>

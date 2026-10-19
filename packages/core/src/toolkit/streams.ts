@@ -131,7 +131,7 @@ export const append = Effect.fn("Streams.append")(function* <
         // a malformed append on every transport, so it must not carry the close.
         new Uint8Array()
       : Predicate.isTagged(address, "Json")
-        ? new TextEncoder().encode(`[${encoded.join(",")}]`)
+        ? new TextEncoder().encode(`[${Array.join(Array.map(encoded, String), ",")}]`)
         : concatBytes(encoded);
 
   const possible = (error: AppendError | StreamsFault): error is AppendErrorFor<O> | StreamsFault =>
@@ -147,11 +147,11 @@ export const append = Effect.fn("Streams.append")(function* <
 });
 
 function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
-  const arrays = parts.map((part) =>
+  const arrays = Array.map(parts, (part) =>
     Predicate.isString(part) ? new TextEncoder().encode(part) : part,
   );
 
-  const result = new Uint8Array(arrays.reduce((size, part) => size + part.byteLength, 0));
+  const result = new Uint8Array(Array.reduce(arrays, 0, (size, part) => size + part.byteLength));
   let offset = 0;
 
   for (const part of arrays) {

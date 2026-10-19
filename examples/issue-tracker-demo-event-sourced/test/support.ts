@@ -2,7 +2,7 @@ import { BunCrypto } from "@effect/platform-bun";
 import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Array, Effect, Layer, Schedule, Schema } from "effect";
 import type { Stamp } from "../server/decide.ts";
 import { IssueTrackerLive } from "../server/issue-tracker.ts";
 import { streams, Workspaces } from "../server/streams.ts";
@@ -70,7 +70,8 @@ export const stateChanges = (workspaceId: string) =>
 export const awaitTxids = (workspaceId: string, ...txids: ReadonlyArray<string>) =>
   stateChanges(workspaceId).pipe(
     Effect.filterOrFail(
-      (items) => txids.every((txid) => items.some((item) => item.headers.txid === txid)),
+      (items) =>
+        Array.every(txids, (txid) => Array.some(items, (item) => item.headers.txid === txid)),
       () => new NotYet(),
     ),
     Effect.retry({ while: Schema.is(NotYet), schedule: Schedule.spaced("10 millis"), times: 300 }),

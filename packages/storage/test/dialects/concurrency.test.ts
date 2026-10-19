@@ -6,7 +6,17 @@
  * Add a dialect to `dialects` to run the same races on it.
  */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Layer, Option, Predicate, Result, type Scope } from "effect";
+import {
+  Array,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Order,
+  Predicate,
+  Result,
+  type Scope,
+} from "effect";
 import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
 import { SqlClient } from "effect/sql";
@@ -127,16 +137,16 @@ for (const dialect of dialects) {
                   Effect.retry({ while: Predicate.isTagged("StreamBusy") }),
                 );
 
-              const indexes = Array.from({ length: APPENDS }, (_, index) => index);
+              const indexes = globalThis.Array.from({ length: APPENDS }, (_, index) => index);
               yield* Effect.all(
                 [
                   Effect.forEach(
-                    indexes.filter((index) => index % 2 === 0),
+                    Array.filter(indexes, (index) => index % 2 === 0),
                     (index) => append(left.writer, index),
                     { concurrency: POOL_SIZE, discard: true },
                   ),
                   Effect.forEach(
-                    indexes.filter((index) => index % 2 === 1),
+                    Array.filter(indexes, (index) => index % 2 === 1),
                     (index) => append(right.writer, index),
                     { concurrency: POOL_SIZE, discard: true },
                   ),
@@ -146,7 +156,8 @@ for (const dialect of dialects) {
               const messages = yield* left.storage.messages(id, {});
               const record = Option.getOrThrow(yield* left.storage.record(id));
 
-              const gapFree = messages.every(
+              const gapFree = Array.every(
+                messages,
                 ({ offset }, index) => offset === nthOffset(index + 1),
               );
 
@@ -154,11 +165,14 @@ for (const dialect of dialects) {
 
               return {
                 count: messages.length,
-                unique: new Set(messages.map(({ offset }) => offset)).size,
+                unique: new Set(Array.map(messages, ({ offset }) => offset)).size,
                 gapFree,
                 tail: record.currentOffset === messages.at(-1)?.offset,
-                bytes: messages.reduce((total, { data }) => total + data.byteLength, 0),
-                payloads: messages.map(({ data }) => decoder.decode(data)).toSorted(),
+                bytes: Array.reduce(messages, 0, (total, { data }) => total + data.byteLength),
+                payloads: Array.sort(
+                  Array.map(messages, ({ data }) => decoder.decode(data)),
+                  Order.String,
+                ),
                 busy,
               };
             }),
@@ -166,14 +180,17 @@ for (const dialect of dialects) {
         );
 
         console.log(`${dialect.name} appends: ${APPENDS}, StreamBusy retries: ${result.busy}`);
-        const sent = Array.from({ length: APPENDS }, (_, index) => payload(index));
+        const sent = globalThis.Array.from({ length: APPENDS }, (_, index) => payload(index));
         expect({ ...result, busy: undefined }).toEqual({
           count: APPENDS,
           unique: APPENDS,
           gapFree: true,
           tail: true,
-          bytes: sent.reduce((total, data) => total + data.byteLength, 0),
-          payloads: sent.map((data) => new TextDecoder().decode(data)).toSorted(),
+          bytes: Array.reduce(sent, 0, (total, data) => total + data.byteLength),
+          payloads: Array.sort(
+            Array.map(sent, (data) => new TextDecoder().decode(data)),
+            Order.String,
+          ),
           busy: undefined,
         });
       },
@@ -210,8 +227,8 @@ for (const dialect of dialects) {
 
               return {
                 outcome: tagOf(outcome),
-                offsets: messages.map(({ offset }) => String(offset)),
-                payloads: messages.map(({ data }) => decoder.decode(data)),
+                offsets: Array.map(messages, ({ offset }) => String(offset)),
+                payloads: Array.map(messages, ({ data }) => decoder.decode(data)),
                 tail: String(record.currentOffset),
               };
             }),
@@ -236,7 +253,7 @@ for (const dialect of dialects) {
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
-              const outcomes: Array<string> = [];
+              const outcomes: globalThis.Array<string> = [];
 
               for (let race = 0; race < RACES; race++) {
                 const parent = StreamId.make(`fork-race/${race}/parent`);
@@ -261,17 +278,19 @@ SELECT c.stream_id FROM streamsy_streams c
  LEFT JOIN streamsy_streams p ON p.stream_id = c.forked_from
  WHERE c.forked_from IS NOT NULL AND p.stream_id IS NULL`;
 
-              return { outcomes, orphans: orphans.map(({ stream_id }) => stream_id) };
+              return { outcomes, orphans: Array.map(orphans, ({ stream_id }) => stream_id) };
             }),
           ),
         );
 
-        console.log(`${dialect.name} fork-and-delete outcomes: ${result.outcomes.join(", ")}`);
+        console.log(
+          `${dialect.name} fork-and-delete outcomes: ${Array.join(result.outcomes, ", ")}`,
+        );
         expect(result.orphans).toEqual([]);
         // Either the fork wins and the delete soft-deletes the source, or the delete wins
         // and the fork finds no source.
         expect(
-          result.outcomes.every((outcome) =>
+          Array.every(result.outcomes, (outcome) =>
             ["fork:ok remove:ok", "fork:ForkSourceNotFound remove:ok"].includes(outcome),
           ),
         ).toBe(true);
@@ -287,7 +306,7 @@ SELECT c.stream_id FROM streamsy_streams c
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
-              const kept: Array<string> = [];
+              const kept: globalThis.Array<string> = [];
 
               for (let race = 0; race < RACES; race++) {
                 const parent = StreamId.make(`purge-race/${race}/parent`);
@@ -328,8 +347,8 @@ SELECT c.stream_id FROM streamsy_streams c
         const result = await Effect.runPromise(
           withHosts(dialect, url, (left, right) =>
             Effect.gen(function* () {
-              const same: Array<string> = [];
-              const distinct: Array<string> = [];
+              const same: globalThis.Array<string> = [];
+              const distinct: globalThis.Array<string> = [];
 
               for (let race = 0; race < RACES; race++) {
                 // On MySQL, the lock on an id that does not exist yet is a gap lock.
@@ -344,13 +363,14 @@ SELECT c.stream_id FROM streamsy_streams c
                   { concurrency: 4 },
                 );
 
-                same.push([a, b].toSorted().join(" "));
+                same.push(Array.join(Array.sort([a, b], Order.String), " "));
                 distinct.push(`${c} ${d}`);
               }
 
-              const retries = [left.probe, right.probe].reduce(
-                (total, probe) => total + probe.transactionAttempts - probe.completedMutations,
+              const retries = Array.reduce(
+                [left.probe, right.probe],
                 0,
+                (total, probe) => total + probe.transactionAttempts - probe.completedMutations,
               );
 
               const rows = yield* left.sql<{
@@ -366,8 +386,8 @@ SELECT c.stream_id FROM streamsy_streams c
           `${dialect.name} create races: ${RACES * 4}, transaction retries: ${result.retries}`,
         );
         expect({ ...result, retries: undefined }).toEqual({
-          same: Array.from({ length: RACES }, () => "Applied rejected:exists"),
-          distinct: Array.from({ length: RACES }, () => "Applied Applied"),
+          same: globalThis.Array.from({ length: RACES }, () => "Applied rejected:exists"),
+          distinct: globalThis.Array.from({ length: RACES }, () => "Applied Applied"),
           retries: undefined,
           rows: RACES * 3,
         });

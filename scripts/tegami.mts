@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { tegami } from "tegami";
 import type { TegamiPlugin } from "tegami";
 import { runCli } from "tegami/cli";
@@ -23,7 +24,7 @@ const sharedReleaseTag = (): TegamiPlugin => ({
 
     if (versions.size > 1) {
       throw new Error(
-        `Streamsy release packages have mismatched versions: ${[...versions].join(", ")}`,
+        `Streamsy release packages have mismatched versions: ${Array.join([...versions], ", ")}`,
       );
     }
   },

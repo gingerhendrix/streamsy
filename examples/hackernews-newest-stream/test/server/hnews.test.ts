@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest tests own the runtime lifetime. */
 import { expect, test } from "vitest";
-import { Effect, Layer, Logger, LogLevel, References } from "effect";
+import { Array, Effect, Layer, Logger, LogLevel, References } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { hackerNewsApiLayer } from "../../src/server/hnews.ts";
 import { HackerNewsApi } from "../../src/server/poller/contract.ts";
@@ -32,10 +32,13 @@ const fakeHackerNews = Layer.succeed(
 );
 
 const fetchStories = (ids: readonly number[]) => {
-  const logs: Array<{ readonly level: LogLevel.LogLevel; readonly message: string }> = [];
+  const logs: { readonly level: LogLevel.LogLevel; readonly message: string }[] = [];
 
   const logger = Logger.make((options) => {
-    logs.push({ level: options.logLevel, message: [options.message].flat().map(String).join(" ") });
+    logs.push({
+      level: options.logLevel,
+      message: Array.join(Array.map([options.message].flat(), String), " "),
+    });
   });
 
   return Effect.gen(function* () {
@@ -55,7 +58,7 @@ const fetchStories = (ids: readonly number[]) => {
 test("a story without a title is skipped at debug level", async () => {
   const { stories, logs } = await fetchStories([1, 2]);
 
-  expect(stories.map((story) => story.id)).toEqual([1]);
+  expect(Array.map(stories, (story) => story.id)).toEqual([1]);
   expect(logs).toEqual([{ level: "Debug", message: "HN story 2 is not complete yet" }]);
 });
 

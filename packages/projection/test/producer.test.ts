@@ -3,7 +3,18 @@ import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { expect } from "vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Option, Record, Schema, Stream } from "effect";
+import {
+  Array,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Record,
+  Schema,
+  Stream,
+} from "effect";
 import { StorageFault, StreamAddress, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {
   Protocol,
@@ -103,7 +114,7 @@ const withCheckpointStore = <A, E, R>(
 
 /** Records the producer tuple of every append; the append itself goes through. */
 const recordingAppends = () => {
-  const positions: Array<{ readonly epoch?: number; readonly seq?: number }> = [];
+  const positions: globalThis.Array<{ readonly epoch?: number; readonly seq?: number }> = [];
 
   const patch = (writer: Writer<StreamsFault>): Partial<Writer<StreamsFault>> => ({
     append: (id, options) =>
@@ -122,7 +133,7 @@ const appendFault = new StorageFault({ operation: "append", message: "lost", ret
 
 /** Fails the first `count` appends; later appends go through and their outcomes are recorded. */
 const failingAppends = (count: number) => {
-  const outcomes: Array<string> = [];
+  const outcomes: globalThis.Array<string> = [];
   let failures = 0;
 
   const patch = (writer: Writer<StreamsFault>): Partial<Writer<StreamsFault>> => ({
@@ -147,7 +158,7 @@ const failingAppends = (count: number) => {
 const scenario = (name: string, version = 1) => {
   const input = In.at({ name });
   const output = Out.at({ name });
-  const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
+  const seen: globalThis.Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
 
   const definition = {
     id: `doubled-${name}`,
@@ -165,7 +176,7 @@ const scenario = (name: string, version = 1) => {
       Effect.sync(() => {
         seen.push({ items: batch.input.items, unit });
 
-        return [null, { output: batch.input.items.map((n) => String(n * 2)) }] as const;
+        return [null, { output: Array.map(batch.input.items, (n) => String(n * 2)) }] as const;
       }),
   }).at({});
 
@@ -237,12 +248,12 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
         expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
         expect(after.token).toBe("2");
         // The retry processed exactly the pinned range under the same unit key and version.
-        expect(s.seen.map((entry) => entry.items)).toEqual([
+        expect(Array.map(s.seen, (entry) => entry.items)).toEqual([
           [1, 2, 3],
           [1, 2, 3],
         ]);
         expect(s.seen[1]?.unit.key).toBe(s.seen[0]?.unit.key ?? "");
-        expect(s.seen.map((entry) => entry.unit.version)).toEqual([7, 7]);
+        expect(Array.map(s.seen, (entry) => entry.unit.version)).toEqual([7, 7]);
       }),
   );
 });
@@ -506,7 +517,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
           // Both runners load the pin before either appends; the gate fixes the append order.
           const loaded = yield* Deferred.make<void>();
           const gate = yield* Deferred.make<void>();
-          const outcomes: Array<string> = [];
+          const outcomes: globalThis.Array<string> = [];
 
           const runner = (name: string, role: "leads" | "follows") =>
             withWriter(
@@ -542,7 +553,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
           });
 
           expect(outcomes).toEqual([`${leads}:Appended`, `${follows}:Duplicate`]);
-          const failed = [a, b].filter((r) => r._tag === "Failure");
+          const failed = Array.filter([a, b], (r) => r._tag === "Failure");
           expect(failed.length).toBe(1);
           const failure = fault(failed[0] ?? a);
           expect(failure.phase).toBe("checkpoint");
@@ -630,7 +641,7 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
       const b = In.at({ name: "pair-b" });
       const output = Out.at({ name: "pair" });
 
-      const seen: Array<{
+      const seen: globalThis.Array<{
         readonly a: ReadonlyArray<number>;
         readonly b: ReadonlyArray<number>;
         readonly unit: Unit;
@@ -650,7 +661,10 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
             return [
               null,
               {
-                output: Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
+                output: Array.map(
+                  Projection.items(batch),
+                  (entry) => `${entry.input}:${entry.item}`,
+                ),
               },
             ] as const;
           }),

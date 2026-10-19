@@ -4,7 +4,7 @@ import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- These integration tests own the managed runtime and Web handler boundary. */
 import { expect, test } from "vitest";
-import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
+import { Array, Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Streams } from "@streamsy/core/protocol";
 import { Projection } from "@streamsy/projection";
@@ -44,7 +44,7 @@ const tracker = Projection.mapAccumBatch({
   state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
   mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
-      const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      const total = state.total + Array.reduce(batch.numbers.items, 0, (sum, n) => sum + n);
 
       return [
         { total },

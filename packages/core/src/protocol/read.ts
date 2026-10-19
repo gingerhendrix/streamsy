@@ -1,4 +1,4 @@
-import { Clock, Effect, Option, Random, Stream } from "effect";
+import { Array, Clock, Effect, Option, Random, Stream } from "effect";
 import type { StorageFault } from "../fault.ts";
 import type { StreamId, StreamRecord } from "../schema/index.ts";
 import { Offset } from "../schema/index.ts";
@@ -58,7 +58,7 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
 
   return {
     contentType: record.config.contentType,
-    messages: messages.map((message) => ({ data: message.data })),
+    messages: Array.map(messages, (message) => ({ data: message.data })),
     nextOffset,
     upToDate,
     closed: record.lifecycle.closed && upToDate,

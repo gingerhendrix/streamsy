@@ -3,6 +3,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Bun's build executable uses Node-compatible path helpers at its platform edge.
 import { join, relative } from "node:path";
+import { Array, pipe } from "effect";
 
 const projectRoot = join(import.meta.dir, "..");
 
@@ -31,13 +32,19 @@ if (!result.success) {
   process.exit(1);
 }
 
-const scripts = result.outputs
-  .filter((output) => output.path.endsWith(".js"))
-  .map((output) => `    <script type="module" src="/${relative(distDir, output.path)}"></script>`);
+const scripts = pipe(
+  result.outputs,
+  Array.filter((output) => output.path.endsWith(".js")),
+  Array.map(
+    (output) => `    <script type="module" src="/${relative(distDir, output.path)}"></script>`,
+  ),
+);
 
-const styles = result.outputs
-  .filter((output) => output.path.endsWith(".css"))
-  .map((output) => `    <link rel="stylesheet" href="/${relative(distDir, output.path)}" />`);
+const styles = pipe(
+  result.outputs,
+  Array.filter((output) => output.path.endsWith(".css")),
+  Array.map((output) => `    <link rel="stylesheet" href="/${relative(distDir, output.path)}" />`),
+);
 
 if (scripts.length === 0) {
   console.error("Bun build did not produce a browser JavaScript entrypoint");
@@ -50,11 +57,11 @@ const html = `<!doctype html>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Streamsy Hacker News Newest Demo</title>
-${styles.join("\n")}
+${Array.join(styles, "\n")}
   </head>
   <body>
     <div id="root"></div>
-${scripts.join("\n")}
+${Array.join(scripts, "\n")}
   </body>
 </html>
 `;

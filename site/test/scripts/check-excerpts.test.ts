@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { test, expect } from "bun:test";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -165,16 +166,19 @@ test("hung excerpt descendants and owned state are reaped before root removal", 
   const pidFile = join(probeRoot, "child.pid");
   await writeFile(
     source,
-    [
-      'import { writeFileSync } from "node:fs";',
-      'import { spawn } from "node:child_process";',
-      "const root = process.env.STREAMSY_EXCERPT_ROOT;",
-      "const pidFile = process.env.PROBE_PID_FILE;",
-      'writeFileSync(`${root}/state`, "owned");',
-      'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-      "writeFileSync(pidFile, String(child.pid));",
-      "setInterval(() => {}, 1000);",
-    ].join("\n"),
+    Array.join(
+      [
+        'import { writeFileSync } from "node:fs";',
+        'import { spawn } from "node:child_process";',
+        "const root = process.env.STREAMSY_EXCERPT_ROOT;",
+        "const pidFile = process.env.PROBE_PID_FILE;",
+        'writeFileSync(`${root}/state`, "owned");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        "writeFileSync(pidFile, String(child.pid));",
+        "setInterval(() => {}, 1000);",
+      ],
+      "\n",
+    ),
   );
 
   let ownedRoot = "";
@@ -207,21 +211,24 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
   const readyFile = join(probeRoot, "child.ready");
   await writeFile(
     source,
-    [
-      'import { writeFileSync } from "node:fs";',
-      'import { spawn } from "node:child_process";',
-      "const root = process.env.STREAMSY_EXCERPT_ROOT;",
-      "const pidFile = process.env.PROBE_PID_FILE;",
-      "const readyFile = process.env.PROBE_READY_FILE;",
-      "const child = spawn(process.execPath, [\"-e\", `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(process.env.PROBE_READY_FILE, 'ready'); setInterval(() => {}, 1000);`], {",
-      "  env: { ...process.env, PROBE_READY_FILE: readyFile },",
-      '  stdio: "ignore",',
-      "});",
-      "writeFileSync(pidFile, String(child.pid));",
-      'process.on("SIGTERM", () => process.exit(0));',
-      'writeFileSync(`${root}/state`, "owned");',
-      "setInterval(() => {}, 1000);",
-    ].join("\n"),
+    Array.join(
+      [
+        'import { writeFileSync } from "node:fs";',
+        'import { spawn } from "node:child_process";',
+        "const root = process.env.STREAMSY_EXCERPT_ROOT;",
+        "const pidFile = process.env.PROBE_PID_FILE;",
+        "const readyFile = process.env.PROBE_READY_FILE;",
+        "const child = spawn(process.execPath, [\"-e\", `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(process.env.PROBE_READY_FILE, 'ready'); setInterval(() => {}, 1000);`], {",
+        "  env: { ...process.env, PROBE_READY_FILE: readyFile },",
+        '  stdio: "ignore",',
+        "});",
+        "writeFileSync(pidFile, String(child.pid));",
+        'process.on("SIGTERM", () => process.exit(0));',
+        'writeFileSync(`${root}/state`, "owned");',
+        "setInterval(() => {}, 1000);",
+      ],
+      "\n",
+    ),
   );
 
   let ownedRoot = "";

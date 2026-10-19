@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { spawn } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -31,7 +32,8 @@ async function inventory(directory: string, prefix: string): Promise<void> {
         if (page === "..." || page.startsWith("---") || page.startsWith("!")) continue;
 
         if (
-          !entries.some(
+          !Array.some(
+            entries,
             (candidate) =>
               candidate.name === page ||
               candidate.name === `${page}.mdx` ||
@@ -109,7 +111,7 @@ const decode = (value: string) =>
     );
 
 const attributes = (html: string, attribute: string): string[] =>
-  [...html.matchAll(new RegExp(`\\b${attribute}=["']([^"']*)["']`, "g"))].map((match) =>
+  Array.map([...html.matchAll(new RegExp(`\\b${attribute}=["']([^"']*)["']`, "g"))], (match) =>
     decode(match[1]),
   );
 

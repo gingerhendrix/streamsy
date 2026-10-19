@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- The public constructor overloads retain exact E, R and prepared types; this adapter is their internal erased implementation. */
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The constructor signatures check each adapter before this internal runtime boundary erases its mapped types. */
 import { Folded } from "./commit.ts";
-import { Effect, Record } from "effect";
+import { Array, Effect, Record } from "effect";
 import type { InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint-store.ts";
 import { items } from "./read.ts";
@@ -36,7 +36,7 @@ export const adapt = (
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
 
     const buffers: Record<string, unknown[]> = Record.fromEntries(
-      Record.keys(streams).map((name) => [name, []]),
+      Array.map(Record.keys(streams), (name) => [name, []]),
     );
 
     const steps = kind === "mapAccumBatch" ? [batch] : items(batch);
@@ -55,7 +55,7 @@ export const adapt = (
     }
 
     const batchOutputs = Record.fromEntries(
-      Record.toEntries(streams).map(([name, address]) => [
+      Array.map(Record.toEntries(streams), ([name, address]) => [
         name,
         { address, items: buffers[name] ?? [] },
       ]),

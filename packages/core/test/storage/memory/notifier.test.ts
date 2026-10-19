@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { Effect, Exit, Queue, Scope, Stream } from "effect";
+import { Array, Effect, Exit, Queue, Scope, Stream } from "effect";
 import { ZERO_OFFSET } from "../../../src/offset/index.ts";
 import { StreamId } from "../../../src/schema/index.ts";
 import { changes } from "../../../src/storage/memory/changes.ts";
@@ -32,7 +32,7 @@ for (const sameId of [false, true]) {
           const ids = [StreamId.make("a"), StreamId.make(sameId ? "a" : "b")];
 
           const state: State = {
-            entries: new Map(ids.map((id) => [id, entry(id)])),
+            entries: new Map(Array.map(ids, (id) => [id, entry(id)])),
             children: new Map(),
             deadlines: [],
           };
@@ -58,7 +58,7 @@ for (const sameId of [false, true]) {
           state.entries.set(fastId, entry(fastId, true));
 
           for (let i = 0; i < 1000; i++) yield* bus.publish;
-          expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([1, 1]);
+          expect(Array.map([...bus.queues], Queue.sizeUnsafe)).toEqual([1, 1]);
           expect((yield* fast)[0]).toMatchObject({ present: true, closed: true });
           // No subsequent publication is needed to deliver the close or deletion.
           state.entries.delete(fastId);
@@ -129,7 +129,7 @@ it("a commit between taking a wake and reading is visible and leaves its next wa
       class RacingEntries extends Map<StreamId, Entry> {
         override get(key: StreamId) {
           if (++reads === 2) {
-            expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([0]);
+            expect(Array.map([...bus.queues], Queue.sizeUnsafe)).toEqual([0]);
             this.set(key, entry(key, true));
 
             for (const queue of bus.queues) Queue.offerUnsafe(queue, undefined);
@@ -149,8 +149,8 @@ it("a commit between taking a wake and reading is visible and leaves its next wa
       expect((yield* pull)[0]).toMatchObject({ closed: false });
       yield* bus.publish;
       expect((yield* pull)[0]).toMatchObject({ closed: true });
-      expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([1]);
+      expect(Array.map([...bus.queues], Queue.sizeUnsafe)).toEqual([1]);
       expect((yield* pull)[0]).toMatchObject({ closed: true });
-      expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([0]);
+      expect(Array.map([...bus.queues], Queue.sizeUnsafe)).toEqual([0]);
     }),
   ));

@@ -1,4 +1,4 @@
-import { Effect, type Layer } from "effect";
+import { Array, Effect, type Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { checkStreams, type Any, type Identifiers } from "../toolkit/streamsy.ts";
@@ -39,7 +39,7 @@ export function routes<const Keys extends ReadonlyArray<Any>>(
   options: RoutesOptions,
 ): RouteLayer<Identifiers<Keys>>;
 export function routes(group: Group.Group, options: RoutesOptions) {
-  const entries: ReadonlyArray<Access> = group.streams.map((stream) => ({
+  const entries: ReadonlyArray<Access> = Array.map(group.streams, (stream) => ({
     stream,
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed host policy is a literal or a callback, not external input.
     access: typeof options.access === "function" ? options.access(stream) : options.access,
@@ -54,13 +54,16 @@ export function routes(group: Group.Group, options: RoutesOptions) {
 
   const path = streamPath(prefix);
   const program = app({ ...settings, pathPrefix: prefix });
-  checkStreams(entries.map((entry) => entry.stream));
+  checkStreams(Array.map(entries, (entry) => entry.stream));
 
   const handler = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = requestUrl(request);
     const id = url === undefined ? undefined : path.strip(url.pathname);
-    const entry = entries.find(({ stream }) => id !== undefined && stream.match(id));
+
+    const entry = Option.getOrUndefined(
+      Array.findFirst(entries, ({ stream }) => id !== undefined && stream.match(id)),
+    );
 
     if (entry === undefined) {
       yield* discardRequestBody(request);

@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-object-parameters -- Private symbol metadata accepts opaque Commit and Pending identities, without erasing their generic types. */
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
-import { Effect, Option, Record } from "effect";
+import { Array, Effect, Option, Record } from "effect";
 import type { StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, Writer } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
@@ -54,7 +54,7 @@ export const beforeRecord = (pending: Pending<unknown, unknown>): CheckpointReco
   Option.getOrElse(pending.loaded.record, () => ({
     ...pending.next,
     inputs: Record.fromEntries(
-      Record.toEntries(pending.next.inputs).map(([name, offset]) => [
+      Array.map(Record.toEntries(pending.next.inputs), ([name, offset]) => [
         name,
         pending.unit.ranges[name]?.from ?? offset,
       ]),

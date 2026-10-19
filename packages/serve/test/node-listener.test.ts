@@ -1,4 +1,5 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test drives a real Node child process over HTTP.
+import { Array, Option } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 
@@ -28,9 +29,9 @@ const spawnHost = () => {
   /** Reads stdout until a line starts with `prefix`, and returns that line. */
   const line = async (prefix: string): Promise<string> => {
     for (;;) {
-      const found = buffered.split("\n").find((entry) => entry.startsWith(prefix));
+      const found = Array.findFirst(buffered.split("\n"), (entry) => entry.startsWith(prefix));
 
-      if (found !== undefined) return found;
+      if (Option.isSome(found)) return found.value;
       const { value, done } = await reader.read();
 
       if (done) throw new Error(`node exited before "${prefix}": ${buffered}`);

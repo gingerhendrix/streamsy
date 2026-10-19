@@ -1,5 +1,5 @@
 import { browserCrypto } from "../utils/crypto.ts";
-import { DateTime, Effect } from "effect";
+import { Array, DateTime, Effect, Option } from "effect";
 import { useState } from "react";
 import { anonymousAuthor } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import type {
@@ -41,7 +41,9 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
   const projects = useProjects(db);
 
   const selectedProject =
-    projects.find((project) => project.id === selectedProjectId) ?? projects[0];
+    Option.getOrUndefined(
+      Array.findFirst(projects, (project) => project.id === selectedProjectId),
+    ) ?? projects[0];
 
   const projectId = selectedProject?.id ?? "";
   const issueCountByProject = useIssueCountByProject(db);

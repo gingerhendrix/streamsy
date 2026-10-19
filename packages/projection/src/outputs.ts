@@ -1,5 +1,5 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
-import { type Array, Effect, Predicate, Record, type Schema } from "effect";
+import { Array, Effect, Predicate, Record, type Schema } from "effect";
 import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -23,16 +23,16 @@ export type Services<O extends RoutedMap> = {
 /** Resolve routes just like inputs, retaining the route codec and collection names. */
 export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs: InputMap) => {
   const streams = addressesOf(outputs, params);
-  const ids = Record.values(streams).map((address) => address.id);
+  const ids = Array.map(Record.values(streams), (address) => address.id);
 
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
-  const inputIds = new Set(Record.values(inputs).map((address) => address.id));
+  const inputIds = new Set(Array.map(Record.values(inputs), (address) => address.id));
 
-  if (ids.some((id) => inputIds.has(id)))
+  if (Array.some(ids, (id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
 
-  if (Record.values(streams).some((address) => !Predicate.isTagged(address, "Json")))
+  if (Array.some(Record.values(streams), (address) => !Predicate.isTagged(address, "Json")))
     throw new RangeError("Projection outputs require JSON or state routes");
 
   return streams;
@@ -47,7 +47,11 @@ export const collect = (
     for (const [name, entries] of Record.toEntries(emitted)) {
       const output = outputs[name];
 
-      if (!Record.has(outputs, name) || output === undefined || !globalThis.Array.isArray(entries))
+      if (
+        !Record.has(outputs, name) ||
+        output === undefined ||
+        !Array.isArray<typeof entries>(entries)
+      )
         return yield* new ProjectionFault({
           phase: "process",
           reason: "invalid-output",

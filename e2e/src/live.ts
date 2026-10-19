@@ -7,7 +7,7 @@
  * CLI with the local `.alchemy/` state store. The official suite runs
  * `packages/conformance-tests` `test:deployed` against the Worker URL.
  */
-import { Clock, Crypto, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Array, Clock, Crypto, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { Hex } from "effect/encoding";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
@@ -188,7 +188,8 @@ export const liveOperations = (paths: LivePaths) =>
             if (!(yield* fs.exists(directory))) return { complete: true, workers: [] };
             const entries = yield* fs.readDirectory(directory);
 
-            const resources = entries.filter(
+            const resources = Array.filter(
+              entries,
               (entry) => entry.endsWith(".json") && entry !== STACK_OUTPUT_FILE,
             );
 

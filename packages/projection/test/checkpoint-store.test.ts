@@ -1,6 +1,6 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Layer, Option, Result } from "effect";
+import { Array, Effect, Layer, Option, Order, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
@@ -41,7 +41,10 @@ layer(CheckpointStore.layerMemory)((it) => {
         );
 
         expect(
-          results.map((result) => (Result.isSuccess(result) ? "Success" : "Failure")).toSorted(),
+          Array.sort(
+            Array.map(results, (result) => (Result.isSuccess(result) ? "Success" : "Failure")),
+            Order.String,
+          ),
         ).toEqual(["Failure", "Success"]);
         expect((yield* store.load(key)).token).toBe("1");
         yield* store.remove(key);

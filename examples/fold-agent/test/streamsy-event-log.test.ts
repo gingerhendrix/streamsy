@@ -20,6 +20,7 @@ import {
   PlatformError,
   Scope,
   Context,
+  Array,
   Cause,
   Deferred,
   Effect,
@@ -173,12 +174,12 @@ const registerEventLogContract = (
             );
 
             const decoded = yield* Effect.forEach(stored, (value) => decodeStoredLogEntry(value));
-            expect(decoded.map((entry) => entry._tag)).toEqual([
+            expect(Array.map(decoded, (entry) => entry._tag)).toEqual([
               "session_started",
               "session_title",
             ]);
-            expect(decoded.map((entry) => entry.seq)).toEqual([0, 1]);
-            expect(decoded.every((entry) => entry.version === 1)).toBe(true);
+            expect(Array.map(decoded, (entry) => entry.seq)).toEqual([0, 1]);
+            expect(Array.every(decoded, (entry) => entry.version === 1)).toBe(true);
           }),
         ).pipe(Effect.asVoid),
     );
@@ -197,7 +198,7 @@ const registerEventLogContract = (
             }),
           ).pipe(Effect.provideContext(store));
 
-          expect(entries.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
+          expect(Array.map(entries, (entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
         }),
       ).pipe(Effect.asVoid),
     );
@@ -222,7 +223,7 @@ const registerEventLogContract = (
             }),
           ).pipe(Effect.provideContext(store));
 
-          expect(replayed.map((entry: LogEntry) => entry.seq)).toEqual([1, 2]);
+          expect(Array.map(replayed, (entry: LogEntry) => entry.seq)).toEqual([1, 2]);
         }),
       ).pipe(Effect.asVoid),
     );
@@ -369,8 +370,8 @@ const registerEventLogContract = (
               }),
             ).pipe(Effect.provideContext(store));
 
-            expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
-            expect(collected.map((entry: LogEntry) => entry._tag)).toEqual([
+            expect(Array.map(collected, (entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
+            expect(Array.map(collected, (entry: LogEntry) => entry._tag)).toEqual([
               "session_started",
               "session_title",
               "session_title",
@@ -396,7 +397,7 @@ const registerEventLogContract = (
               }),
             ).pipe(Effect.provideContext(store));
 
-            expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([2]);
+            expect(Array.map(collected, (entry: LogEntry) => entry.seq)).toEqual([2]);
           }),
         ).pipe(Effect.asVoid),
       20_000,

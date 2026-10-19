@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Exit } from "effect";
+import { Array, Effect, Exit } from "effect";
 import { applyEvent, emptyView } from "../../server/command-view.ts";
 import {
   createComment,
@@ -11,7 +11,7 @@ import {
 import { WorkspaceEvent } from "../../server/events.ts";
 import { createdAt, later, stamp } from "../support.ts";
 
-const view = mainWorkspaceSeed(stamp("seed")).reduce(applyEvent, emptyView);
+const view = Array.reduce(mainWorkspaceSeed(stamp("seed")), emptyView, applyEvent);
 
 const decide = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(Effect.exit(effect));
 
@@ -66,7 +66,7 @@ describe("createIssue", () => {
       createIssue({ projectId: "proj_streamsy", status: "in_progress" }, stamp("i3"))(view),
     );
 
-    const full = third.events.reduce(applyEvent, view);
+    const full = Array.reduce(third.events, view, applyEvent);
     expect(
       String(
         failure(
@@ -89,7 +89,7 @@ describe("updateIssue", () => {
       expect.objectContaining({ _tag: "IssueRenamed", title: "Names" }),
       expect.objectContaining({ _tag: "IssueStatusChanged", status: "done" }),
     ]);
-    expect(events.every((event) => event.txid === at.txid && event.at === later)).toBe(true);
+    expect(Array.every(events, (event) => event.txid === at.txid && event.at === later)).toBe(true);
     expect(value).toMatchObject({
       id: "issue_names",
       title: "Names",
@@ -117,7 +117,7 @@ describe("updateIssue", () => {
       updateIssue("issue_names", { status: "in_progress" }, stamp("x"))(view),
     );
 
-    const full = third.events.reduce(applyEvent, view);
+    const full = Array.reduce(third.events, view, applyEvent);
     expect(
       String(failure(updateIssue("issue_bootstrap", { status: "in_progress" }, stamp("y"))(full))),
     ).toContain("TooManyInProgress");
@@ -135,7 +135,7 @@ describe("updateIssue", () => {
       updateIssue("issue_names", { status: "in_progress" }, stamp("x"))(view),
     );
 
-    const full = third.events.reduce(applyEvent, view);
+    const full = Array.reduce(third.events, view, applyEvent);
 
     const exit = decide(
       updateIssue("issue_bootstrap", { title: "Lost", status: "in_progress" }, stamp("y"))(full),
@@ -172,7 +172,7 @@ test("the seed is the base app's main workspace as events", () => {
   const events = mainWorkspaceSeed(stamp("seed"));
 
   const count = (tag: "ProjectCreated" | "IssueCreated" | "CommentAdded") =>
-    events.filter(WorkspaceEvent.isAnyOf([tag])).length;
+    Array.filter(events, WorkspaceEvent.isAnyOf([tag])).length;
 
   expect([count("ProjectCreated"), count("IssueCreated"), count("CommentAdded")]).toEqual([
     2, 5, 1,

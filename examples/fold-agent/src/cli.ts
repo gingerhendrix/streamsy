@@ -12,7 +12,7 @@
  */
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { resumeSession, SessionId, startSession, type FoldSession } from "@humanlayer/fold-core";
-import { Console, Effect, Option } from "effect";
+import { Array, Console, Effect, Option } from "effect";
 import { Argument, CliError, Command } from "effect/cli";
 import packageJson from "../package.json" with { type: "json" };
 import { configuredModel, exampleAgent } from "./agent.ts";
@@ -34,7 +34,7 @@ const streamId = Argument.String("stream-id").pipe(
 const promptArgument = Argument.String("prompt").pipe(
   Argument.withDescription("The user message for this turn"),
   Argument.atLeast(1),
-  Argument.map((parts) => parts.join(" ").trim()),
+  Argument.map((parts) => Array.join(parts, " ").trim()),
   Argument.filter(
     (text) => text !== "",
     () => "a non-empty prompt",
@@ -123,16 +123,19 @@ const inspect = Command.make("inspect", { session: streamId }, ({ session }) =>
 
 export const cli = Command.make("fold-agent").pipe(
   Command.withDescription(
-    [
-      "A Fold Core agent whose session log lives in a Streamsy stream.",
-      "",
-      "Environment:",
-      "  FOLD_AGENT_DB      SQLite path (default: examples/fold-agent/.data/agent.sqlite)",
-      "  OPENAI_API_KEY     use an OpenAI-compatible provider (first choice)",
-      "  ANTHROPIC_API_KEY  use Anthropic when no OpenAI key is set",
-      "  FOLD_AGENT_MODEL   override the provider model id",
-      "  FOLD_AGENT_SCRIPT  deterministic JSON turns for provider-free verification",
-    ].join("\n"),
+    Array.join(
+      [
+        "A Fold Core agent whose session log lives in a Streamsy stream.",
+        "",
+        "Environment:",
+        "  FOLD_AGENT_DB      SQLite path (default: examples/fold-agent/.data/agent.sqlite)",
+        "  OPENAI_API_KEY     use an OpenAI-compatible provider (first choice)",
+        "  ANTHROPIC_API_KEY  use Anthropic when no OpenAI key is set",
+        "  FOLD_AGENT_MODEL   override the provider model id",
+        "  FOLD_AGENT_SCRIPT  deterministic JSON turns for provider-free verification",
+      ],
+      "\n",
+    ),
   ),
   Command.withSubcommands([start, resume, inspect]),
 );

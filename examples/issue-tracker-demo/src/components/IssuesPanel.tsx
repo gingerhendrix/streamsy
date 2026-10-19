@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { useState, type FormEvent } from "react";
 import { wipLimit } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import type {
@@ -79,7 +80,7 @@ export function IssuesPanel({
           </form>
 
           <div className="filter-row" role="group" aria-label="Filter issues by status">
-            {filters.map(({ value, label }) => (
+            {Array.map(filters, ({ value, label }) => (
               <button
                 key={value}
                 type="button"
@@ -110,7 +111,7 @@ export function IssuesPanel({
         {!selectedProject ? (
           <div className="empty-state">Create a project to start tracking issues.</div>
         ) : null}
-        {visibleIssues.map((issue) => (
+        {Array.map(visibleIssues, (issue) => (
           <IssueRow
             key={issue.id}
             issue={issue}

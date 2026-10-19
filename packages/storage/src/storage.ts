@@ -1,5 +1,15 @@
 import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
-import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
+import {
+  Array,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Order,
+  Predicate,
+  Schema,
+  type Stream,
+} from "effect";
 import {
   type Streamsy,
   ChangeSnapshot,
@@ -266,7 +276,7 @@ const oversizedKey = (mutation: Mutation): Option.Option<StorageFault> => {
  * Sorted ids give every writer one lock order. SQLite already has one writer.
  */
 const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => {
-  const sorted = [...new Set(ids)].toSorted();
+  const sorted = Array.sort(new Set(ids), Order.String);
 
   return sql.onDialectOrElse({
     sqlite: () => Effect.void,
@@ -309,7 +319,7 @@ const planningLock = (sql: SqlClient.SqlClient) =>
   );
 
 const lockIds = (mutation: Mutation): ReadonlyArray<StreamId> =>
-  mutation.operations.flatMap((operation) =>
+  Array.flatMap(mutation.operations, (operation) =>
     Predicate.isTagged(operation, "Create")
       ? operation.forkSource === undefined
         ? [operation.record.id]
@@ -568,7 +578,7 @@ const applyMutation = (
     yield* lockStreams(sql, lockIds(mutation));
     yield* preflight(sql, mutation);
     const records = new Map<StreamId, StreamRecord>();
-    const results: Array<OperationResult> = [];
+    const results: globalThis.Array<OperationResult> = [];
 
     // Creation first preserves a fork edge when source deletion appears first.
     for (const operation of mutation.operations) {
@@ -648,7 +658,7 @@ const readMessages = (sql: SqlClient.SqlClient, id: StreamId, window: MessageWin
 
     if (remaining === 0) return [];
     const visited = new Set<StreamId>();
-    const chain: Array<{ readonly id: StreamId; readonly until?: Offset }> = [];
+    const chain: globalThis.Array<{ readonly id: StreamId; readonly until?: Offset }> = [];
     let cursor: StreamId | undefined = id;
     let until: Offset | undefined;
 
@@ -663,9 +673,9 @@ const readMessages = (sql: SqlClient.SqlClient, id: StreamId, window: MessageWin
       until = record.value.lifecycle.forkOffset;
     }
 
-    const messages: Array<StoredMessage> = [];
+    const messages: globalThis.Array<StoredMessage> = [];
 
-    for (const segment of chain.toReversed()) {
+    for (const segment of Array.reverse(chain)) {
       if (remaining === 0) break;
 
       const upper =
@@ -728,7 +738,7 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
       ),
     ),
     mutate: Effect.fn("SqlStorage.mutate")((mutation) => {
-      const ids = mutation.operations.map((operation) =>
+      const ids = Array.map(mutation.operations, (operation) =>
         Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId,
       );
 

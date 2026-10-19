@@ -1,6 +1,6 @@
 import { it as baseIt } from "@effect/vitest";
 import { expect } from "vitest";
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Match } from "effect";
+import { Array, Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Match } from "effect";
 import { TestClock } from "effect/testing";
 import { ContractError, type EvidenceReport, type RunIdentity } from "../src/contract.ts";
 import { HttpOperation } from "../src/measurement.ts";
@@ -185,9 +185,11 @@ baseIt.live("first destroy failure does not short-circuit destroy two or exact a
     expect(services.report?.destroyFirst.status).toBe("failure");
     expect(services.report?.destroySecond.status).toBe("success");
     expect(services.report?.audit.status).toBe("success");
-    expect(services.report?.cleanupFailures.some((failure) => failure.includes("destroy #1"))).toBe(
-      true,
-    );
+    expect(
+      services.report === undefined
+        ? undefined
+        : Array.some(services.report.cleanupFailures, (failure) => failure.includes("destroy #1")),
+    ).toBe(true);
   }),
 );
 
@@ -575,7 +577,9 @@ baseIt.live("synchronous cleanup throws do not skip later cleanup or reporting",
       "audit",
     ]);
     expect(services.report).toBeDefined();
-    expect(services.report?.cleanupFailures.join(" ")).toContain("destroy #1");
+    expect(
+      services.report === undefined ? undefined : Array.join(services.report.cleanupFailures, " "),
+    ).toContain("destroy #1");
   }),
 );
 

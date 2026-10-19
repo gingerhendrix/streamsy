@@ -152,7 +152,10 @@ test("a write to the second input wakes a two-input follower", () =>
         inputs: { a, b },
         process: (batch) =>
           Effect.gen(function* () {
-            const entries = Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
+            const entries = Array.map(
+              Projection.items(batch),
+              (entry) => `${entry.input}:${entry.item}`,
+            );
 
             if (Array.isReadonlyArrayNonEmpty(entries)) yield* Streams.append(target, entries);
 
@@ -218,7 +221,10 @@ test("a closed and drained input beside an open one does not wake every cycle", 
         inputs: { a, b },
         process: (batch) =>
           Effect.gen(function* () {
-            const entries = Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
+            const entries = Array.map(
+              Projection.items(batch),
+              (entry) => `${entry.input}:${entry.item}`,
+            );
 
             if (Array.isReadonlyArrayNonEmpty(entries)) yield* Streams.append(target, entries);
           }),

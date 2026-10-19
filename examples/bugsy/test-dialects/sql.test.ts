@@ -14,7 +14,17 @@ import { PgClient } from "@effect/sql-pg";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
-import { Config, Context, Effect, Layer, Option, Random, Redacted, type Scope } from "effect";
+import {
+  Array,
+  Config,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Random,
+  Redacted,
+  type Scope,
+} from "effect";
 import type { Reactivity } from "effect/reactivity";
 import { SqlClient, type SqlError } from "effect/sql";
 import type { IssueEvent, IssueLabelEvent, IssueStatus } from "../domain/issue.ts";
@@ -177,13 +187,13 @@ const scenario = Effect.gen(function* () {
     readonly event_id: string;
   }>`SELECT event_id FROM issue_changes ORDER BY id`;
 
-  expect(changes.map((row) => row.event_id)).toEqual(["e1", "e2", "e3"]);
+  expect(Array.map(changes, (row) => row.event_id)).toEqual(["e1", "e2", "e3"]);
 
   const drafts = yield* sql<{
     readonly assignee_id: string;
   }>`SELECT assignee_id FROM notification_drafts`;
 
-  expect(drafts.map((row) => row.assignee_id)).toEqual(["ada"]);
+  expect(Array.map(drafts, (row) => row.assignee_id)).toEqual(["ada"]);
 
   const memberships = yield* sql<{
     readonly membership_id: string;
@@ -191,12 +201,12 @@ const scenario = Effect.gen(function* () {
     readonly sequence: number;
   }>`SELECT membership_id, attached, sequence FROM issue_labels ORDER BY membership_id`;
 
-  expect(memberships.map((row) => [row.membership_id, row.attached, row.sequence])).toEqual([
+  expect(Array.map(memberships, (row) => [row.membership_id, row.attached, row.sequence])).toEqual([
     ["i1.bug", 1, 2],
     ["i1.ui", 0, 3],
   ]);
   const stored = yield* sql<{ readonly value: string }>`SELECT value FROM users`;
-  expect(stored.map((row) => JSON.parse(row.value).name)).toEqual(["Ada L."]);
+  expect(Array.map(stored, (row) => JSON.parse(row.value).name)).toEqual(["Ada L."]);
 
   yield* (yield* Users).append(
     { workspaceId: "live" },

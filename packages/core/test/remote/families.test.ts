@@ -1,5 +1,5 @@
 import { expect, it as baseIt } from "@effect/vitest";
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Array, Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpRouter } from "effect/http";
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
@@ -20,7 +20,7 @@ const program = Effect.gen(function* () {
   const batches = yield* Stream.runCollect(notes.read(params));
   yield* notes.remove(params);
 
-  return batches.flatMap((batch) => batch.items);
+  return Array.flatMap(batches, (batch) => batch.items);
 });
 
 baseIt.live("one application program runs unchanged on memory and remote streams", () =>

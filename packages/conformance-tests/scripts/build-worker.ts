@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { NodePath } from "@effect/platform-node";
-import { Context, DateTime, Effect, Layer, Path, Record, Schema } from "effect";
+import { Array, Context, DateTime, Effect, Layer, Option, Path, Record, Schema } from "effect";
 
 const { dirname, isAbsolute, join, relative, resolve } = Context.get(
   Effect.runSync(Effect.scoped(Layer.build(NodePath.layer))),
@@ -145,11 +145,11 @@ const inspectUploadDirectory = (): number => {
 let outputRootValidated = false;
 
 const outputFile = (outputs: Array<Bun.BuildArtifact>, label: string): Bun.BuildArtifact => {
-  const output = outputs.find((candidate) => candidate.path.endsWith("worker.js"));
+  const output = Array.findFirst(outputs, (candidate) => candidate.path.endsWith("worker.js"));
 
-  if (output === undefined) throw new Error(`${label} build did not produce worker.js`);
+  if (Option.isNone(output)) throw new Error(`${label} build did not produce worker.js`);
 
-  return output;
+  return output.value;
 };
 
 const readBytes = (path: string) =>
@@ -178,7 +178,8 @@ const spawnBytes = (command: Array<string>, input?: Uint8Array, cwd: string = re
       { concurrency: "unbounded" },
     );
 
-    if (exitCode !== 0) throw new Error(`${command.join(" ")} failed with ${exitCode}: ${stderr}`);
+    if (exitCode !== 0)
+      throw new Error(`${Array.join(command, " ")} failed with ${exitCode}: ${stderr}`);
 
     return stdout;
   });
@@ -220,7 +221,7 @@ const build = () =>
     );
 
     if (!minified.success || minified.metafile === undefined) {
-      throw new Error(`Worker build failed: ${minified.logs.map(String).join("; ")}`);
+      throw new Error(`Worker build failed: ${Array.join(Array.map(minified.logs, String), "; ")}`);
     }
 
     const minifiedOutput = outputFile(minified.outputs, "Minified");
@@ -239,7 +240,7 @@ const build = () =>
     );
 
     if (!raw.success)
-      throw new Error(`Raw worker build failed: ${raw.logs.map(String).join("; ")}`);
+      throw new Error(`Raw worker build failed: ${Array.join(Array.map(raw.logs, String), "; ")}`);
     const rawOutput = outputFile(raw.outputs, "Raw");
     const minifiedBytes = yield* readBytes(minifiedOutput.path);
     const rawBytes = (yield* readBytes(rawOutput.path)).byteLength;

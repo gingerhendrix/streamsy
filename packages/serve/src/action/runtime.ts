@@ -17,7 +17,7 @@
  * decodes — is recorded against the entry and the pass keeps going, so a broken
  * handler can never fail the caller that asked for a drain.
  */
-import { Cause, Clock, Effect, Exit, Semaphore } from "effect";
+import { Array, Cause, Clock, Effect, Exit, Option, Semaphore } from "effect";
 import { backoffAfter, type CheckedActionSink, type ActionSinkRelation } from "./contract.ts";
 import {
   ActionSinkDeliveryFailure,
@@ -114,7 +114,7 @@ export function draftsFor<Payload, From extends ActionSinkRelation>(
   payloads: readonly Payload[],
   enqueuedAtMs: number,
 ): readonly OutboxDraft[] {
-  return payloads.map((payload) => ({
+  return Array.map(payloads, (payload) => ({
     sink: sink.name,
     partitionId: sink.partitionBy(payload),
     idempotencyKey: sink.idempotencyKey(payload),
@@ -278,9 +278,9 @@ function failureOf<Payload, From extends ActionSinkRelation>(
   entry: OutboxEntry,
   cause: Cause.Cause<ActionSinkDeliveryFailure>,
 ): ActionSinkDeliveryFailure {
-  const declared = cause.reasons.find(Cause.isFailReason);
+  const declared = Array.findFirst(cause.reasons, Cause.isFailReason);
 
-  if (declared !== undefined) return declared.error;
+  if (Option.isSome(declared)) return declared.value.error;
 
   return ActionSinkDeliveryFailure.retryable(
     sink.handler.name,

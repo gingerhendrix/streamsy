@@ -2,7 +2,7 @@
 import { expect, test } from "vitest";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Context, Deferred, Effect, Fiber } from "effect";
+import { Array, Context, Deferred, Effect, Fiber } from "effect";
 import { diffNewest } from "../../src/server/poller/reconcile.ts";
 import { makeNewestStoriesPoller } from "../../src/server/poller/poller.ts";
 import type { HackerNewsApiService } from "../../src/server/poller/contract.ts";
@@ -171,7 +171,7 @@ for (const exhaust of [false, true]) {
           expect(stats.lastPollError).toBeUndefined();
           expect(stats).toMatchObject({ lastUpserts: 1, lastDeletes: 1, lastStoryCount: 1 });
           const events = await h.read();
-          expect(events.map((event) => [event.key, event.headers.operation])).toEqual([
+          expect(Array.map(events, (event) => [event.key, event.headers.operation])).toEqual([
             ["102", "upsert"],
             ["102", "delete"],
             ["101", "upsert"],

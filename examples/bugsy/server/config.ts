@@ -1,4 +1,4 @@
-import { Config, Effect, Option, type Redacted, Schema } from "effect";
+import { Array, Config, Effect, Option, type Redacted, Schema } from "effect";
 
 /** Runtime settings, read once when the layer graph is built. */
 export const ServerConfig = Config.all({
@@ -14,7 +14,7 @@ export const ServerConfig = Config.all({
   /** Fixed list of workspaces that the server creates and runs at startup. */
   workspaces: Config.String("BUGSY_WORKSPACES").pipe(
     Config.withDefault("acme,live"),
-    Config.map((list) => list.split(",").filter(Boolean)),
+    Config.map((list) => Array.filter(list.split(","), Boolean)),
   ),
 });
 

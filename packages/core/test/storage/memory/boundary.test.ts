@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own their host Layers, including the deliberate foreign-owner case. */
 import { expect, test } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
+import { Array, Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
 import { MemoryStorage } from "../../../src/index.ts";
 import * as Streams from "../../../src/toolkit/streams.ts";
 import * as StreamAddress from "../../../src/toolkit/address.ts";
@@ -28,7 +28,7 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
           const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
 
           return {
-            output: batches.flatMap((batch) => batch.items),
+            output: Array.flatMap(batches, (batch) => batch.items),
             state: Option.getOrThrow(yield* records.read("state")),
             checkpoint: Option.getOrThrow(yield* records.read("checkpoint")),
           };
@@ -175,7 +175,7 @@ test("memory outer owners serialize without losing stream output or records", ()
       yield* Fiber.join(second);
       expect(Option.getOrThrow(yield* records.read("state"))).toBe("second");
       const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
-      expect(batches.flatMap((batch) => batch.items)).toEqual(["first", "second"]);
+      expect(Array.flatMap(batches, (batch) => batch.items)).toEqual(["first", "second"]);
     }).pipe(
       Effect.provide(MemoryStorage.layerProtocol()),
       Effect.scoped,

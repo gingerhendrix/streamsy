@@ -1,6 +1,6 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Schema, Stream } from "effect";
+import { Array, Effect, Schema, Stream } from "effect";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
@@ -55,7 +55,7 @@ for (const commit of [Commit.transaction, Commit.producer]) {
         yield* Projection.run(declaration.at(params));
         yield* Projection.run(declaration.at(params));
         const batches = yield* Stream.runCollect(board.read(params));
-        expect(batches.flatMap((batch) => batch.items)).toEqual([
+        expect(Array.flatMap(batches, (batch) => batch.items)).toEqual([
           {
             type: "card",
             key: "a",

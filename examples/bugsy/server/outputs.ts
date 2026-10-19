@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Array, Schema } from "effect";
 import { DurableState } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
@@ -61,11 +61,18 @@ export const tracker = Projection.mapAccumBatch({
   },
   mapAccumBatch: (previous, batch) =>
     Effect.gen(function* () {
-      const issues = new Map(previous.issues.map((row) => [row.issueId, row]));
-      const memberships = new Map(previous.memberships.map((row) => [row.membershipId, row]));
-      const projects = new Map(previous.projects.map((row) => [row.projectId, row]));
-      const users = new Map(previous.users.map((row) => [row.userId, row]));
-      const labels = new Map(previous.labels.map((row) => [row.labelId, row]));
+      const issues = new Map(Array.map(previous.issues, (row) => [row.issueId, row] as const));
+
+      const memberships = new Map(
+        Array.map(previous.memberships, (row) => [row.membershipId, row] as const),
+      );
+
+      const projects = new Map(
+        Array.map(previous.projects, (row) => [row.projectId, row] as const),
+      );
+
+      const users = new Map(Array.map(previous.users, (row) => [row.userId, row] as const));
+      const labels = new Map(Array.map(previous.labels, (row) => [row.labelId, row] as const));
       const beforeIndex = indexWorkspace(previous);
       const touchedIssues = new Set<string>();
       const touchedLabels = new Set<string>();
@@ -140,7 +147,7 @@ export const tracker = Projection.mapAccumBatch({
       const state: WorkspaceState = {
         workspaceId: previous.workspaceId,
         issueCount: issues.size,
-        doneCount: [...issues.values()].filter((row) => row.status === "done").length,
+        doneCount: Array.filter([...issues.values()], (row) => row.status === "done").length,
         issues: [...issues.values()],
         memberships: [...memberships.values()],
         projects: [...projects.values()],

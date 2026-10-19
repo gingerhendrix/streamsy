@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { expect, test } from "vitest";
 import {
+  Array,
   Cause,
   Config,
   Context,
@@ -12,6 +13,7 @@ import {
   Fiber,
   Layer,
   Option,
+  Order,
   Queue,
   Scope,
   Stream,
@@ -154,12 +156,14 @@ const prepareRollbackFile = (filename: string) => {
 const streamsyTables = (filename: string) => {
   const database = new Database(filename, { readonly: true });
 
-  const tables = database
-    .query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'streamsy_%' ORDER BY name",
-    )
-    .all()
-    .map(({ name }) => name);
+  const tables = Array.map(
+    database
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'streamsy_%' ORDER BY name",
+      )
+      .all(),
+    ({ name }) => name,
+  );
 
   database.close(false);
 
@@ -322,7 +326,7 @@ test("owned retries yield, progress after release, exhaust exactly, and preserve
 
         expect(Option.isNone(yield* storage.record(StreamId.make("exhausted")))).toBe(true);
         expect(pending.pollUnsafe()).toBeUndefined();
-        expect([...probe.queues].map((queue) => Queue.sizeUnsafe(queue))).toEqual([0]);
+        expect(Array.map([...probe.queues], (queue) => Queue.sizeUnsafe(queue))).toEqual([0]);
         yield* Effect.promise(() => held.exited);
         yield* Scope.close(scope, Exit.void);
 
@@ -515,7 +519,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
     body: "blocked",
   });
 
-  const samples: Array<number> = [];
+  const samples: globalThis.Array<number> = [];
 
   for (let index = 0; index < 40; index++) {
     const sampleStarted = performance.now();
@@ -526,7 +530,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
 
   const blocked = await appendPending;
   expect(blocked.status).toBe(500);
-  const ordered = samples.toSorted((left, right) => left - right);
+  const ordered = Array.sort(samples, Order.Number);
   const p95 = ordered[Math.ceil(ordered.length * 0.95) - 1];
   const maximum = ordered.at(-1);
   expect(p95).toBeLessThanOrEqual(100);

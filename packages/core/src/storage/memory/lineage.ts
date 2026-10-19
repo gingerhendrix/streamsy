@@ -1,6 +1,7 @@
 /** Synchronous port of cascade-reclaim and chained message composition.
  * Called only inside the memory mutation lock or synchronous read snapshot.
  */
+import { Array, Order } from "effect";
 import type { StoredMessage, StreamId, StreamRecord } from "../../schema/index.ts";
 import type { State } from "./state.ts";
 
@@ -48,10 +49,14 @@ export function composeMessages(state: State, id: StreamId, chain: boolean): Sto
 
   const inherited =
     chain && forkedFrom !== undefined && forkOffset !== undefined
-      ? composeMessages(state, forkedFrom, true).filter((message) => message.offset <= forkOffset)
+      ? Array.filter(
+          composeMessages(state, forkedFrom, true),
+          (message) => message.offset <= forkOffset,
+        )
       : [];
 
-  return [...inherited, ...entry.messages].toSorted((a, b) =>
-    a.offset < b.offset ? -1 : a.offset > b.offset ? 1 : 0,
+  return Array.sort(
+    [...inherited, ...entry.messages],
+    Order.mapInput(Order.String, (message: StoredMessage) => message.offset),
   );
 }

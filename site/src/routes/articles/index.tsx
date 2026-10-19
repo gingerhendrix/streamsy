@@ -1,3 +1,4 @@
+import { Array, Order } from "effect";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
@@ -19,21 +20,31 @@ export const Route = createFileRoute("/articles/")({
   }),
 });
 
+const byDateDescending = Order.make(
+  (a: { readonly date: string }, b: { readonly date: string }) => {
+    const compared = b.date.localeCompare(a.date);
+
+    return compared < 0 ? -1 : compared > 0 ? 1 : 0;
+  },
+);
+
 const loadArticles = createServerFn({ method: "GET" }).handler(() =>
-  articlesSource
-    .getPages()
-    .map((page) => ({
-      slug: page.slugs[0],
-      title: page.data.title,
-      description: page.data.description,
-      date:
-        page.data.date instanceof Date ? page.data.date.toISOString().slice(0, 10) : page.data.date,
-    }))
-    .filter(
+  Array.sort(
+    Array.filter(
+      Array.map(articlesSource.getPages(), (page) => ({
+        slug: page.slugs[0],
+        title: page.data.title,
+        description: page.data.description,
+        date:
+          page.data.date instanceof Date
+            ? page.data.date.toISOString().slice(0, 10)
+            : page.data.date,
+      })),
       (article): article is { slug: string; title: string; description: string; date: string } =>
         article.slug !== undefined,
-    )
-    .toSorted((a, b) => b.date.localeCompare(a.date)),
+    ),
+    byDateDescending,
+  ),
 );
 
 const articleDateFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -66,7 +77,7 @@ function ArticlesIndex() {
         </header>
 
         <section className="mt-14 grid gap-4 border-t pt-8">
-          {articles.map((article) => (
+          {Array.map(articles, (article) => (
             <Link
               key={article.slug}
               to="/articles/$slug"

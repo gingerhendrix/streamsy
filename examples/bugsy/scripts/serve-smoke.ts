@@ -1,7 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Console, Effect, Layer, Schema } from "effect";
+import { Array, Console, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { IssueEvent } from "../domain/issue.ts";
 import { LabelCountRow, WorkspaceSummary } from "../domain/outputs.ts";
@@ -97,7 +97,7 @@ const smoke = Effect.gen(function* () {
         board.rows.length === 1 && board.rows[0]?.status === status,
         "board rows missing",
       );
-      yield* check(board.rows[0]?.labelIds.join() === "keep", "membership missing");
+      yield* check(Array.join(board.rows[0]?.labelIds ?? [], ",") === "keep", "membership missing");
 
       // This small fixture fits label-counts and transitions in one protocol page.
       const changes = yield* getJson(
@@ -106,7 +106,8 @@ const smoke = Effect.gen(function* () {
       );
 
       yield* check(
-        changes.some(
+        Array.some(
+          changes,
           (change) =>
             change.key === "remove" &&
             change.headers.operation === "delete" &&
@@ -129,8 +130,10 @@ const smoke = Effect.gen(function* () {
       );
 
       yield* check(
-        transitions.map((event) => event.eventId).join() ===
-          (afterRestartCommand ? "serve-1,serve-2,serve-3" : "serve-1,serve-2"),
+        Array.join(
+          Array.map(transitions, (event) => event.eventId),
+          ",",
+        ) === (afterRestartCommand ? "serve-1,serve-2,serve-3" : "serve-1,serve-2"),
         "transitions duplicated or missing",
       );
       const response = yield* HttpClient.get(`${baseUrl}/workspaces/live/summary`);

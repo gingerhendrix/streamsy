@@ -1,3 +1,4 @@
+import { Array, Option } from "effect";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -267,8 +268,10 @@ const isExactCitationParagraph = (node: Root["children"][number], source: string
   if (visible?.type !== "text" || visible.value !== source) return false;
   const destination = link.url;
 
-  const repositorySourcePrefix = repositorySourcePrefixes.find((sourcePrefix) =>
-    destination.startsWith(sourcePrefix),
+  const repositorySourcePrefix = Option.getOrUndefined(
+    Array.findFirst(repositorySourcePrefixes, (sourcePrefix) =>
+      destination.startsWith(sourcePrefix),
+    ),
   );
 
   if (repositorySourcePrefix === undefined) return false;
@@ -289,7 +292,7 @@ const hasRenderedCitation = (text: string, source: string, doc: string): boolean
         })
       : fromMarkdown(text);
 
-    return tree.children.some((node) => isExactCitationParagraph(node, source));
+    return Array.some(tree.children, (node) => isExactCitationParagraph(node, source));
   } catch {
     return false;
   }

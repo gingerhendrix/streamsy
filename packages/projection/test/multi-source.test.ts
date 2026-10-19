@@ -2,7 +2,7 @@ import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect } from "vitest";
-import { Effect, Option, Record, Schema } from "effect";
+import { Array, Effect, Option, Record, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 import {
@@ -29,7 +29,7 @@ const setup = Effect.gen(function* () {
 
 /** Records every tagged item the handler saw, in order, with the unit it arrived in. */
 const recorder = (inputs: Inputs, id = "multi") => {
-  const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
+  const seen: globalThis.Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
 
   const projection = Projection.process({
     commit: Commit.atLeastOnce,
@@ -47,7 +47,7 @@ const recorder = (inputs: Inputs, id = "multi") => {
 };
 
 const tags = (seen: ReadonlyArray<{ readonly entry: Entry<Inputs> }>) =>
-  seen.map(({ entry }) => `${entry.input}:${String(entry.item)}#${entry.index}`);
+  Array.map(seen, ({ entry }) => `${entry.input}:${String(entry.item)}#${entry.index}`);
 
 layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
   it.effect("two inputs interleave in declaration order", () =>
@@ -91,8 +91,9 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
       yield* setup;
       yield* Streams.append(a, [], { close: true });
 
-      const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
-        [];
+      const batches: globalThis.Array<
+        Record<string, { readonly closed: boolean; readonly items: number }>
+      > = [];
 
       const projection = Projection.process({
         commit: Commit.atLeastOnce,
@@ -150,7 +151,7 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
   it.effect("items keeps declaration order and each runs one entry at a time", () =>
     Effect.gen(function* () {
       yield* setup;
-      const order: Array<string> = [];
+      const order: globalThis.Array<string> = [];
       let active = 0;
       let overlapped = false;
 
@@ -161,7 +162,7 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
         inputs: { b, a },
         process: (batch, unit) =>
           Effect.gen(function* () {
-            expect(Projection.items(batch).map((entry) => entry.input)).toEqual([
+            expect(Array.map(Projection.items(batch), (entry) => entry.input)).toEqual([
               "b",
               "a",
               "a",

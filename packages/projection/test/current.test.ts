@@ -3,7 +3,7 @@ import { CommitBoundary, StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { expect, layer } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
+import { Array, Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
 import * as Families from "./support/families.ts";
 import { memoryHost } from "./support/memory-host.ts";
 
@@ -103,7 +103,7 @@ for (const [name, host] of hosts) {
           commit: Commit.producer,
           state: { schema: Schema.Finite, initial: 0 },
           mapAccumBatch: (sum, slices) =>
-            [sum + slices.input.items.reduce((a, b) => a + b, 0), { output: [99] }] as const,
+            [sum + Array.reduce(slices.input.items, 0, (a, b) => a + b), { output: [99] }] as const,
         }).at({});
 
         expect((yield* Projection.current(batch)).state).toBe(5);
@@ -119,7 +119,7 @@ for (const [name, host] of hosts) {
         yield* Streams.append(input, [1]);
 
         const results = yield* Effect.forEach(
-          Array.from({ length: 20 }, (_, index) => index),
+          globalThis.Array.from({ length: 20 }, (_, index) => index),
           () =>
             Projection.decide(total, {
               input: "input",
@@ -135,7 +135,7 @@ for (const [name, host] of hosts) {
 
         const fresh = yield* Streams.collect(input);
         expect((yield* Projection.current(total)).state).toBe(
-          fresh.items.reduce((a, b) => a + b, 0),
+          Array.reduce(fresh.items, 0, (a, b) => a + b),
         );
         expect((yield* (yield* CheckpointStore).load(total)).record).toEqual(Option.none());
       }),
@@ -218,7 +218,7 @@ for (const [name, host] of hosts) {
           }),
         );
         yield* Effect.forEach(
-          Array.from({ length: 19 }),
+          globalThis.Array.from({ length: 19 }),
           () =>
             boundary.withTransaction(
               Projection.decide(total, {

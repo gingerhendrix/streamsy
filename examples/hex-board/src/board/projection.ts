@@ -21,7 +21,7 @@
  *    offset *is* the projection's notion of time.
  */
 
-import { Result, Schema } from "effect";
+import { Array, Option, Order, pipe, Result, Schema } from "effect";
 import type {
   AttackRecord,
   ContinentBonus,
@@ -225,14 +225,14 @@ export function initialProjection(gameId = ""): ProjectionState {
 }
 
 function findPlayer(state: ProjectionState, id: string): ProjectedPlayer | undefined {
-  return state.players.find((p) => p.id === id);
+  return Option.getOrUndefined(Array.findFirst(state.players, (p) => p.id === id));
 }
 
 function findTerritory(
   state: ProjectionState,
   id: string,
 ): Result.Result<ProjectedTerritory, ProjectionIntegrityError> {
-  const territory = state.territories.find((t) => t.id === id);
+  const territory = Option.getOrUndefined(Array.findFirst(state.territories, (t) => t.id === id));
 
   if (!territory)
     return Result.fail(new ProjectionIntegrityError({ message: `unknown territory ${id}` }));
@@ -243,14 +243,18 @@ function findTerritory(
 /** Recompute the roster totals and continent controllers after any ownership change. */
 function refreshDerivedTotals(state: ProjectionState): void {
   for (const player of state.players) {
-    const owned = state.territories.filter((t) => t.ownerId === player.id);
+    const owned = Array.filter(state.territories, (t) => t.ownerId === player.id);
     player.territoryCount = owned.length;
-    player.armyCount = owned.reduce((sum, t) => sum + t.armies, 0);
+    player.armyCount = Array.reduce(owned, 0, (sum, t) => sum + t.armies);
   }
 
   for (const continent of state.continents) {
     const owners = new Set(
-      continent.territoryIds.map((id) => state.territories.find((t) => t.id === id)?.ownerId),
+      Array.map(
+        continent.territoryIds,
+        (id) =>
+          Option.getOrUndefined(Array.findFirst(state.territories, (t) => t.id === id))?.ownerId,
+      ),
     );
 
     const [only] = [...owners];
@@ -267,13 +271,17 @@ function refreshDerivedTotals(state: ProjectionState): void {
  * nothing until the player's next reinforcement phase.
  */
 function reinforcementFor(state: ProjectionState, playerId: string): ReinforcementState {
-  const base = baseReinforcement(state.territories.filter((t) => t.ownerId === playerId).length);
+  const base = baseReinforcement(
+    Array.filter(state.territories, (t) => t.ownerId === playerId).length,
+  );
 
-  const continents: ContinentBonus[] = state.continents
-    .filter((continent) => continent.controllerId === playerId)
-    .map((continent) => ({ continentId: continent.id, bonus: continent.reinforcementBonus }));
+  const continents: ContinentBonus[] = pipe(
+    state.continents,
+    Array.filter((continent) => continent.controllerId === playerId),
+    Array.map((continent) => ({ continentId: continent.id, bonus: continent.reinforcementBonus })),
+  );
 
-  const total = continents.reduce((sum, c) => sum + c.bonus, base);
+  const total = Array.reduce(continents, base, (sum, c) => sum + c.bonus);
 
   return { base, continents, total, remaining: total };
 }
@@ -358,14 +366,18 @@ function applyEvent(
       }
 
       case "PlayerControllerChanged": {
-        const player = state.players.find((candidate) => candidate.id === event.playerId);
+        const player = Option.getOrUndefined(
+          Array.findFirst(state.players, (candidate) => candidate.id === event.playerId),
+        );
 
         if (player) player.controller = event.controller;
         break;
       }
 
       case "PlayerRenamed": {
-        const player = state.players.find((candidate) => candidate.id === event.playerId);
+        const player = Option.getOrUndefined(
+          Array.findFirst(state.players, (candidate) => candidate.id === event.playerId),
+        );
 
         if (player) player.name = event.name;
         break;
@@ -373,7 +385,7 @@ function applyEvent(
 
       case "PlayerLeft": {
         // Drop the seat from `players`. The move feed keeps its name (see `moveDetail`).
-        state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
+        state.players = Array.filter(state.players, (candidate) => candidate.id !== event.playerId);
         break;
       }
 
@@ -381,7 +393,10 @@ function applyEvent(
         state.game.status = "playing";
         state.game.round = event.round;
         insertMapRows(state, event.map);
-        const armiesById = new Map(event.initialTerritories.map((t) => [t.territoryId, t]));
+
+        const armiesById = new Map(
+          Array.map(event.initialTerritories, (t) => [t.territoryId, t] as const),
+        );
 
         for (const territory of state.territories) {
           const initial = armiesById.get(territory.id);
@@ -558,7 +573,7 @@ function assertResolutionMatches(
 ): Result.Result<void, ProjectionIntegrityError> {
   const sameRolls =
     combat.attackerRolls.length === event.attackerRolls.length &&
-    combat.attackerRolls.every((roll, i) => roll === event.attackerRolls[i]);
+    Array.every(combat.attackerRolls, (roll, i) => roll === event.attackerRolls[i]);
 
   const { attackerLosses, defenderLosses } = compareRolls(event.attackerRolls, event.defenderRolls);
 
@@ -585,14 +600,14 @@ function assertResolutionMatches(
 
 /** Static map rows, taken verbatim from the canonical `GameStarted` snapshot. */
 function insertMapRows(state: ProjectionState, map: GeneratedMap): void {
-  state.hexes = map.tiles.map((tile) => ({
+  state.hexes = Array.map(map.tiles, (tile) => ({
     id: tile.id,
     q: tile.q,
     r: tile.r,
     territoryId: tile.territoryId,
     terrain: tile.terrain,
   }));
-  state.territories = map.territories.map((territory) => ({
+  state.territories = Array.map(map.territories, (territory) => ({
     id: territory.id,
     name: territory.name,
     continentId: territory.continentId,
@@ -601,7 +616,7 @@ function insertMapRows(state: ProjectionState, map: GeneratedMap): void {
     adjacentTerritoryIds: [...territory.adjacentTerritoryIds],
     labelAnchor: { ...territory.labelAnchor },
   }));
-  state.continents = map.continents.map((continent) => ({
+  state.continents = Array.map(map.continents, (continent) => ({
     id: continent.id,
     name: continent.name,
     territoryIds: [...continent.territoryIds],
@@ -635,7 +650,9 @@ function moveDetail(event: GameEvent, before: ProjectionState): Partial<Projecte
     case "PlayerRenamed":
       return { name: event.name };
     case "PlayerLeft": {
-      const departing = before.players.find((player) => player.id === event.playerId);
+      const departing = Option.getOrUndefined(
+        Array.findFirst(before.players, (player) => player.id === event.playerId),
+      );
 
       return departing ? { name: departing.name } : {};
     }
@@ -785,7 +802,12 @@ export interface BoardView {
   pending?: PendingInteraction;
 }
 
-const byId = (a: { id: string }, b: { id: string }): number => a.id.localeCompare(b.id);
+/** Sorts by `id` with `localeCompare`, normalised to an `Order` result. */
+const byId: Order.Order<{ id: string }> = Order.make((a, b) => {
+  const compared = a.id.localeCompare(b.id);
+
+  return compared < 0 ? -1 : compared > 0 ? 1 : 0;
+});
 
 const EMPTY_REINFORCEMENT: ReinforcementState = {
   base: 0,
@@ -813,7 +835,7 @@ function continentControllerOf(
   territoryIds: readonly string[],
   ownerOf: (id: string) => string | undefined,
 ): string | undefined {
-  const owners = new Set(territoryIds.map(ownerOf));
+  const owners = new Set(Array.map(territoryIds, ownerOf));
   const [only] = [...owners];
 
   return owners.size === 1 && only ? only : undefined;
@@ -832,26 +854,33 @@ export function aggregateBoardView(state: AggregateViewSource): BoardView {
         : undefined,
     round: state.round,
     winnerId: state.winnerId,
-    players: state.players
-      .map((p) => ({ id: p.id, controller: p.controller, eliminated: p.eliminated }))
-      .toSorted(byId),
-    territories: (state.map?.territories ?? [])
-      .map((territory) => ({
+    players: Array.sort(
+      Array.map(state.players, (p) => ({
+        id: p.id,
+        controller: p.controller,
+        eliminated: p.eliminated,
+      })),
+      byId,
+    ),
+    territories: Array.sort(
+      Array.map(state.map?.territories ?? [], (territory) => ({
         id: territory.id,
         ownerId: ownerOf(territory.id),
         armies: state.territories[territory.id]?.armies ?? 0,
         continentId: territory.continentId,
         adjacentTerritoryIds: [...territory.adjacentTerritoryIds],
-      }))
-      .toSorted(byId),
-    continents: (state.map?.continents ?? [])
-      .map((continent) => ({
+      })),
+      byId,
+    ),
+    continents: Array.sort(
+      Array.map(state.map?.continents ?? [], (continent) => ({
         id: continent.id,
         territoryIds: [...continent.territoryIds],
         reinforcementBonus: continent.reinforcementBonus,
         controllerId: continentControllerOf(continent.territoryIds, ownerOf),
-      }))
-      .toSorted(byId),
+      })),
+      byId,
+    ),
     reinforcement: state.reinforcement,
     pending: state.pendingInteraction,
   };
@@ -904,26 +933,33 @@ export function projectionBoardView(state: ProjectionState): BoardView {
     turnId: state.game.status === "playing" && state.turn ? state.turn.turnId : undefined,
     round: state.game.round,
     winnerId: state.game.winnerId,
-    players: state.players
-      .map((p) => ({ id: p.id, controller: p.controller, eliminated: p.eliminated }))
-      .toSorted(byId),
-    territories: state.territories
-      .map((t) => ({
+    players: Array.sort(
+      Array.map(state.players, (p) => ({
+        id: p.id,
+        controller: p.controller,
+        eliminated: p.eliminated,
+      })),
+      byId,
+    ),
+    territories: Array.sort(
+      Array.map(state.territories, (t) => ({
         id: t.id,
         ownerId: t.ownerId,
         armies: t.armies,
         continentId: t.continentId,
         adjacentTerritoryIds: [...t.adjacentTerritoryIds],
-      }))
-      .toSorted(byId),
-    continents: state.continents
-      .map((c) => ({
+      })),
+      byId,
+    ),
+    continents: Array.sort(
+      Array.map(state.continents, (c) => ({
         id: c.id,
         territoryIds: [...c.territoryIds],
         reinforcementBonus: c.reinforcementBonus,
         controllerId: c.controllerId,
-      }))
-      .toSorted(byId),
+      })),
+      byId,
+    ),
     reinforcement: state.turn?.reinforcement ?? EMPTY_REINFORCEMENT,
     pending,
   };

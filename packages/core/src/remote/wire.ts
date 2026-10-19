@@ -6,7 +6,7 @@
  * media type, response header, or envelope. Where a public response cannot carry
  * a field the direct Layer returns, the decoder reports what the wire has.
  */
-import { Effect, Schema, Stream } from "effect";
+import { Array, Effect, Schema, Stream } from "effect";
 import type { HttpClientResponse } from "effect/http";
 import { TransportFault } from "../fault.ts";
 import type { ReadMessage } from "../protocol/results.ts";
@@ -148,7 +148,7 @@ export const body = (
   response.stream.pipe(
     Stream.runCollect,
     Effect.map((chunks) => {
-      const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
+      const bytes = new Uint8Array(Array.reduce(chunks, 0, (size, chunk) => size + chunk.length));
       let position = 0;
 
       for (const chunk of chunks) {
@@ -236,6 +236,6 @@ const jsonMessages = (
       failure(operation, "decode", "Read body is not a JSON array", cause),
     ),
     Effect.map((items) =>
-      items.map((item) => ({ data: new TextEncoder().encode(JSON.stringify(item)) })),
+      Array.map(items, (item) => ({ data: new TextEncoder().encode(JSON.stringify(item)) })),
     ),
   );

@@ -1,4 +1,4 @@
-import { DateTime, Option } from "effect";
+import { Array, DateTime, Option } from "effect";
 import { CreateResult } from "../protocol/results.ts";
 import { streamPath } from "./stream-path-service.ts";
 import * as Responses from "./responses.ts";

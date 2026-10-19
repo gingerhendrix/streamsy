@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Result, Schema } from "effect";
+import { Array, Option, Result, Schema } from "effect";
 import { BoardState } from "../../src/board/fold.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import { fullGame, longGame } from "../fixtures.ts";
@@ -36,14 +36,14 @@ describe("Hex Domination board projection reducer", () => {
 
         if (event.type === "GameStarted") {
           expect(board.hexes).toEqual([...event.map.tiles]);
-          expect(board.territories.map((t) => t.adjacentTerritoryIds)).toEqual(
-            event.map.territories.map((t) => [...t.adjacentTerritoryIds]),
+          expect(Array.map(board.territories, (t) => t.adjacentTerritoryIds)).toEqual(
+            Array.map(event.map.territories, (t) => [...t.adjacentTerritoryIds]),
           );
-          expect(board.territories.map((t) => t.labelAnchor)).toEqual(
-            event.map.territories.map((t) => t.labelAnchor),
+          expect(Array.map(board.territories, (t) => t.labelAnchor)).toEqual(
+            Array.map(event.map.territories, (t) => t.labelAnchor),
           );
-          expect(board.continents.map((c) => c.territoryIds)).toEqual(
-            event.map.continents.map((c) => [...c.territoryIds]),
+          expect(Array.map(board.continents, (c) => c.territoryIds)).toEqual(
+            Array.map(event.map.continents, (c) => [...c.territoryIds]),
           );
         }
 
@@ -91,8 +91,12 @@ describe("Hex Domination board projection reducer", () => {
       if (event.type === "AttackResolved" && event.territoryCaptured) {
         captures += 1;
 
-        const declaration = fullGame.find(
-          (declared) => declared.type === "AttackDeclared" && declared.attackId === event.attackId,
+        const declaration = Option.getOrUndefined(
+          Array.findFirst(
+            fullGame,
+            (declared) =>
+              declared.type === "AttackDeclared" && declared.attackId === event.attackId,
+          ),
         );
 
         if (declaration?.type !== "AttackDeclared") throw new Error("capture has no declaration");
@@ -100,14 +104,19 @@ describe("Hex Domination board projection reducer", () => {
           status: "awaiting-occupation",
           territoryCaptured: true,
           minArmies: declaration.attackerDice,
-          maxArmies: board.territories.find((t) => t.id === event.from)!.armies - 1,
+          maxArmies:
+            Option.getOrUndefined(Array.findFirst(board.territories, (t) => t.id === event.from))!
+              .armies - 1,
         });
       }
 
       if (event.type === "TerritoryOccupied") {
         expect(board.combat).toBeNull();
         expect(board.turn?.captures).toBe(captures);
-        expect(board.territories.find((t) => t.id === event.to)?.ownerId).toBe(event.playerId);
+        expect(
+          Option.getOrUndefined(Array.findFirst(board.territories, (t) => t.id === event.to))
+            ?.ownerId,
+        ).toBe(event.playerId);
       }
     }
 
@@ -128,7 +137,7 @@ describe("Hex Domination board projection reducer", () => {
       if (!turn) continue;
       expect(turn.reinforcement.total).toBe(
         turn.reinforcement.base +
-          turn.reinforcement.continents.reduce((sum, c) => sum + c.bonus, 0),
+          Array.reduce(turn.reinforcement.continents, 0, (sum, c) => sum + c.bonus),
       );
 
       if (event.type === "ArmiesReinforced") {
@@ -151,29 +160,30 @@ describe("Hex Domination board projection reducer", () => {
   });
 
   it("gives each event of a multi-event command a distinct move key", () => {
-    const board = fullGame.reduce(
-      (state, event, index) => Result.getOrThrow(projectEvent(state, event, "one-boundary", index)),
-      initialProjection("game"),
+    const board = Array.reduce(fullGame, initialProjection("game"), (state, event, index) =>
+      Result.getOrThrow(projectEvent(state, event, "one-boundary", index)),
     );
 
-    expect(board.moves.map((move) => move.id)).toEqual(fullGame.map((_, i) => moveId(i)));
-    const events = fullGame.filter((event) => event.commandId === "c-10");
-    expect(events.map((event) => event.type)).toEqual([
+    expect(Array.map(board.moves, (move) => move.id)).toEqual(
+      Array.map(fullGame, (_, i) => moveId(i)),
+    );
+    const events = Array.filter(fullGame, (event) => event.commandId === "c-10");
+    expect(Array.map(events, (event) => event.type)).toEqual([
       "TerritoryOccupied",
       "PlayerEliminated",
       "GameWon",
     ]);
-    const moves = board.moves.filter((move) => move.commandId === "c-10");
-    expect(new Set(moves.map((move) => move.id)).size).toBe(3);
+    const moves = Array.filter(board.moves, (move) => move.commandId === "c-10");
+    expect(new Set(Array.map(moves, (move) => move.id)).size).toBe(3);
     expect(
-      moves.map(({ kind, commandId, playerId, sourceOffset }) => ({
+      Array.map(moves, ({ kind, commandId, playerId, sourceOffset }) => ({
         kind,
         commandId,
         playerId,
         sourceOffset,
       })),
     ).toEqual(
-      events.map((event) => ({
+      Array.map(events, (event) => ({
         kind: event.type,
         commandId: event.commandId,
         playerId: "playerId" in event ? event.playerId : undefined,

@@ -1,4 +1,4 @@
-import { Crypto } from "effect";
+import { Array, Crypto, Order } from "effect";
 import { Clock, Context, Effect, Result } from "effect";
 import {
   CONFORMANCE_LONG_POLL_TIMEOUT_MS,
@@ -75,12 +75,12 @@ export const percentile = (samples: ReadonlyArray<number>, percentileValue: numb
     !Number.isFinite(percentileValue) ||
     percentileValue < 0 ||
     percentileValue > 100 ||
-    samples.some((sample) => !Number.isFinite(sample))
+    Array.some(samples, (sample) => !Number.isFinite(sample))
   ) {
     throw new ContractError({ message: "Percentile requires a nonempty finite sample set" });
   }
 
-  const sorted = samples.toSorted((left, right) => left - right);
+  const sorted = Array.sort(samples, Order.Number);
   const index = Math.max(0, Math.ceil((percentileValue * sorted.length) / 100) - 1);
   const value = sorted[index];
 
@@ -90,7 +90,7 @@ export const percentile = (samples: ReadonlyArray<number>, percentileValue: numb
 };
 
 export const summarize = (samples: ReadonlyArray<number>): Summary => {
-  if (samples.length === 0 || samples.some((sample) => !Number.isFinite(sample))) {
+  if (samples.length === 0 || Array.some(samples, (sample) => !Number.isFinite(sample))) {
     throw new ContractError({ message: "Summary requires a nonempty finite sample set" });
   }
 
@@ -98,7 +98,7 @@ export const summarize = (samples: ReadonlyArray<number>): Summary => {
     count: samples.length,
     min: Math.min(...samples),
     max: Math.max(...samples),
-    mean: samples.reduce((total, sample) => total + sample, 0) / samples.length,
+    mean: Array.reduce(samples, 0, (total, sample) => total + sample) / samples.length,
     p50: percentile(samples, 50),
     p95: percentile(samples, 95),
     p99: percentile(samples, 99),
@@ -127,7 +127,7 @@ const sampleSummary = (
   samples: ReadonlyArray<LatencySample>,
   phase: LatencySample["phase"],
 ): StepResult<Summary> => {
-  const values = samples.flatMap((sample) =>
+  const values = Array.flatMap(samples, (sample) =>
     sample.phase === phase &&
     sample.error === undefined &&
     sample.status !== undefined &&
@@ -138,7 +138,8 @@ const sampleSummary = (
       : [],
   );
 
-  const invalid = samples.some(
+  const invalid = Array.some(
+    samples,
     (sample) =>
       sample.phase === phase &&
       (sample.error !== undefined ||
@@ -147,7 +148,10 @@ const sampleSummary = (
         sample.status >= 300),
   );
 
-  if (invalid || values.length !== samples.filter((sample) => sample.phase === phase).length) {
+  if (
+    invalid ||
+    values.length !== Array.filter(samples, (sample) => sample.phase === phase).length
+  ) {
     return failure(`${phase} request set contained a non-2xx, transport, or body failure`);
   }
 
@@ -169,7 +173,8 @@ export const measureLatency = (
 ): Effect.Effect<LatencyMeasurement, ContractError, HttpOperation> =>
   Effect.gen(function* () {
     const paths =
-      options.paths ?? Array.from({ length: 300 }, (_, index) => `/streams/latency-${index}`);
+      options.paths ??
+      globalThis.Array.from({ length: 300 }, (_, index) => `/streams/latency-${index}`);
 
     const concurrency = options.concurrency ?? 16;
 
@@ -203,7 +208,7 @@ export const measureLatency = (
       { concurrency },
     );
 
-    const pairs = paths.map((path, index) => {
+    const pairs = Array.map(paths, (path, index) => {
       const first = writes[index];
       const warm = warms[index];
 
@@ -237,13 +242,16 @@ export const measureLatency = (
     const warm = sampleSummary(warms, "warm");
     let deltas: StepResult<Summary>;
 
-    if (pairs.every((pair) => pair.firstMinusWarmMs !== undefined && pair.error === undefined)) {
+    if (
+      Array.every(pairs, (pair) => pair.firstMinusWarmMs !== undefined && pair.error === undefined)
+    ) {
       deltas = yield* Effect.try({
         try: () =>
           summarize(
-            pairs
-              .map((pair) => pair.firstMinusWarmMs)
-              .filter((value): value is number => value !== undefined),
+            Array.filter(
+              Array.map(pairs, (pair) => pair.firstMinusWarmMs),
+              (value): value is number => value !== undefined,
+            ),
           ),
         catch: (error) =>
           new ContractError({ message: error instanceof Error ? error.message : String(error) }),
@@ -302,7 +310,7 @@ export const measureThroughput = (
     const concurrency = options.concurrency ?? 16;
 
     const results = yield* Effect.forEach(
-      Array.from({ length: trials }, (_, trial) => trial),
+      globalThis.Array.from({ length: trials }, (_, trial) => trial),
       (trial) =>
         Effect.gen(function* () {
           const http = yield* HttpOperation;
@@ -324,7 +332,7 @@ export const measureThroughput = (
           const start = yield* Clock.currentTimeNanos;
 
           const posts = yield* Effect.forEach(
-            Array.from({ length: postsPerTrial }, (_, index) => index),
+            globalThis.Array.from({ length: postsPerTrial }, (_, index) => index),
             () =>
               Effect.result(
                 http.request({
@@ -361,9 +369,10 @@ export const measureThroughput = (
       { concurrency: 1 },
     );
 
-    const validRates = results
-      .map((trial) => trial.rate)
-      .filter((rate): rate is number => rate !== undefined);
+    const validRates = Array.filter(
+      Array.map(results, (trial) => trial.rate),
+      (rate): rate is number => rate !== undefined,
+    );
 
     return {
       trials: results,

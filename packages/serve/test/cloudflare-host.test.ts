@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- This is the real local workerd boundary test. */
 import { afterEach, expect, test } from "vitest";
-import { Clock, Effect } from "effect";
+import { Array, Clock, Effect } from "effect";
 import {
   cleanupHarnesses,
   direct,
@@ -193,7 +193,9 @@ test("a failed alarm turn recovers without rebuilding the object scope", async (
   expect(failed.activeReads).toBe(1);
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length >= 2, 8_000);
   const retried = await probe(harness, "failing-alarm");
-  expect(retried.alarmInfo.every((info) => !info.isRetry && info.retryCount === 0)).toBe(true);
+  expect(Array.every(retried.alarmInfo, (info) => !info.isRetry && info.retryCount === 0)).toBe(
+    true,
+  );
   expect(retried.rows).toHaveLength(0);
   expect(retried.alarm).toBeNull();
   expect(retried.layerAcquisitions).toBe(1);

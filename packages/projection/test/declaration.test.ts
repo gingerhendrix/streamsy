@@ -2,7 +2,7 @@ import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "vitest";
 import { it as baseIt } from "@effect/vitest";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Array, Effect, Layer, Option, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { producerId } from "../src/commit/producer.ts";
@@ -103,7 +103,7 @@ baseIt.effect("the handler unit carries decoded params and the unit key stays en
       schema: Schema.String,
     }) {}
 
-    const seen: Array<{ readonly id: number; readonly key: string }> = [];
+    const seen: globalThis.Array<{ readonly id: number; readonly key: string }> = [];
 
     const declared = Projection.process({
       commit: Commit.atLeastOnce,
@@ -125,7 +125,7 @@ baseIt.effect("the handler unit carries decoded params and the unit key stays en
 
     const services = yield* Layer.build(host);
     yield* run.pipe(Effect.provideContext(services));
-    expect(seen.map(({ id }) => id)).toEqual([7]);
+    expect(Array.map(seen, ({ id }) => id)).toEqual([7]);
     // The key is a list of encoded parts; its params part holds the string "7".
     expect(
       yield* Schema.decodeEffect(Schema.Array(Schema.String).pipe(Schema.fromJsonString))(

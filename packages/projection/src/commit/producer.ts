@@ -78,16 +78,20 @@ export const producer = pin(
 
         const processed = {
           items: Record.fromEntries(
-            Record.toEntries(result.outputs).map(([name, output]) => [name, output.items]),
+            Array.map(Record.toEntries(result.outputs), ([name, output]) => [name, output.items]),
           ),
         };
 
         const seqs: Record<string, number> =
           pending === undefined
             ? Record.fromEntries(
-                Record.keys(streams)
-                  .filter((name) => (processed.items[name]?.length ?? 0) > 0)
-                  .map((name) => [name, positions[name]?.nextSeq ?? 0]),
+                Array.map(
+                  Array.filter(
+                    Record.keys(streams),
+                    (name) => (processed.items[name]?.length ?? 0) > 0,
+                  ),
+                  (name) => [name, positions[name]?.nextSeq ?? 0],
+                ),
               )
             : (pending.seqs ?? {});
 
@@ -155,7 +159,7 @@ export const producer = pin(
             pending: {
               seqs,
               ranges: Record.fromEntries(
-                Record.toEntries(ranges).map(([name, range]) => [
+                Array.map(Record.toEntries(ranges), ([name, range]) => [
                   name,
                   {
                     from: range.from,

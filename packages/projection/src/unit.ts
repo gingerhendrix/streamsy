@@ -1,4 +1,4 @@
-import { Record, Schema } from "effect";
+import { Array, Order, Record, Schema } from "effect";
 
 /** Length-safe encoding of inert string components; no persistence decoding here. */
 export const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -42,18 +42,17 @@ export interface Unit<P = Record<string, string>> {
 export const canonicalParams = (params: Record<string, string>): string =>
   JSON.stringify(
     Record.fromEntries(
-      Record.keys(params)
-        .toSorted()
-        .map((k) => [k, params[k]]),
+      Array.map(Array.sort(Record.keys(params), Order.String), (k) => [k, params[k]]),
     ),
   );
 
 export const canonicalRanges = (ranges: Record<string, Range>): string =>
   JSON.stringify(
     Record.fromEntries(
-      Record.keys(ranges)
-        .toSorted()
-        .map((k) => [k, { from: ranges[k]?.from, nextOffset: ranges[k]?.nextOffset }]),
+      Array.map(Array.sort(Record.keys(ranges), Order.String), (k) => [
+        k,
+        { from: ranges[k]?.from, nextOffset: ranges[k]?.nextOffset },
+      ]),
     ),
   );
 

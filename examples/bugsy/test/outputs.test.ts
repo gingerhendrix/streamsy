@@ -6,7 +6,7 @@ import * as Addresses from "./support/addresses.ts";
 import { expect } from "vitest";
 import { TransportFault } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Effect, Layer } from "effect";
+import { Array, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
@@ -191,7 +191,7 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
           yield* Projection.run(issueRows.at({ workspaceId: "live" }));
           yield* Projection.run(bound);
           const transitions = yield* Addresses.readOutput(Transitions, "live");
-          expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
+          expect(Array.map(transitions, (event) => event.eventId)).toEqual(["e1", "e2"]);
           const board = yield* Addresses.readOutput(Board, "live");
           expect(board).toHaveLength(2);
           expect(

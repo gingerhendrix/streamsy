@@ -6,33 +6,42 @@ import { Layer } from "effect";
 import * as Addresses from "./support/addresses.ts";
 import { expect } from "vitest";
 import { Projection } from "@streamsy/projection";
-import { Effect, Schema } from "effect";
+import { Array, Effect, Option, Order, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
 import { applicationLayer, createInputs, sqliteStorage } from "../server/host.ts";
 import { tracker, Board, LabelCounts } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels, Projects, Users } from "../server/streams.ts";
 
 const cards = (state: WorkspaceState) =>
-  state.issues.map((issue) => ({
+  Array.map(state.issues, (issue) => ({
     ...issue,
-    labelIds: state.memberships
-      .filter((row) => row.issueId === issue.issueId && row.attached)
-      .map((row) => row.labelId)
-      .toSorted(),
-    projectName: state.projects.find((row) => row.projectId === issue.projectId)?.name ?? null,
-    assigneeName: state.users.find((row) => row.userId === issue.assigneeId)?.name ?? null,
+    labelIds: Array.sort(
+      Array.map(
+        Array.filter(state.memberships, (row) => row.issueId === issue.issueId && row.attached),
+        (row) => row.labelId,
+      ),
+      Order.String,
+    ),
+    projectName:
+      Option.getOrUndefined(
+        Array.findFirst(state.projects, (row) => row.projectId === issue.projectId),
+      )?.name ?? null,
+    assigneeName:
+      Option.getOrUndefined(Array.findFirst(state.users, (row) => row.userId === issue.assigneeId))
+        ?.name ?? null,
   }));
 
 const counts = (state: WorkspaceState) =>
-  state.labels.map((label) => ({
+  Array.map(state.labels, (label) => ({
     workspaceId: state.workspaceId,
     labelId: label.labelId,
     name: label.name,
-    count: state.memberships.filter(
+    count: Array.filter(
+      state.memberships,
       (row) =>
         row.labelId === label.labelId &&
         row.attached &&
-        state.issues.some((issue) => issue.issueId === row.issueId),
+        Array.some(state.issues, (issue) => issue.issueId === row.issueId),
     ).length,
   }));
 
@@ -203,8 +212,13 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
                 Effect.map(({ state }) => state),
               );
 
-              const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
-              const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));
+              const oldCards = new Map(
+                Array.map(cards(previous), (row) => [row.issueId, row] as const),
+              );
+
+              const oldCounts = new Map(
+                Array.map(counts(previous), (row) => [row.labelId, row] as const),
+              );
 
               for (const row of cards(next)) {
                 if (
@@ -245,7 +259,7 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
               }
 
               for (const row of previous.labels) {
-                if (!next.labels.some((candidate) => candidate.labelId === row.labelId))
+                if (!Array.some(next.labels, (candidate) => candidate.labelId === row.labelId))
                   expectedCounts.push(
                     yield* Schema.encodeEffect(countsRef.codec)({
                       type: "labelCounts",
@@ -258,13 +272,13 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
               // Before the first issue, board is correctly absent; label counts already exist.
               if (expectedBoard.length > 0) {
                 const actual = yield* Addresses.readOutput(Board, "live");
-                expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
-                  expectedBoard,
-                );
+                expect(
+                  Array.map(actual, (item) => Schema.encodeSync(boardRef.codec)(item)),
+                ).toEqual(expectedBoard);
               }
 
               const actual = yield* Addresses.readOutput(LabelCounts, "live");
-              expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
+              expect(Array.map(actual, (item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
                 expectedCounts,
               );
               previous = next;

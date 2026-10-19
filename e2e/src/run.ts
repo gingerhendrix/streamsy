@@ -1,5 +1,5 @@
 /* oxlint-disable typescript/consistent-return -- Effect failure branches use return-yield* for never-successful effects; successful probes return their value. */
-import { Cause, Context, Schema, Effect, Exit, Ref, Schedule } from "effect";
+import { Array, Cause, Context, Effect, Exit, Ref, Schedule, Schema } from "effect";
 import {
   ContractError,
   HOSTED_STATUS,
@@ -551,7 +551,7 @@ export const runEvidence = (
           reasons.add(final.report.reportWriteFailure);
 
         if (reasons.size > 0) {
-          const message = [...reasons].join("; ");
+          const message = Array.join([...reasons], "; ");
 
           if (Exit.isFailure(result)) {
             // Keep the original Cause (including interruption) and add the

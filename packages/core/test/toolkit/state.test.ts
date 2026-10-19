@@ -1,5 +1,5 @@
 import { expect, it as baseIt, layer } from "@effect/vitest";
-import { Effect, Schema, Stream } from "effect";
+import { Array, Effect, Schema, Stream } from "effect";
 import * as DurableState from "../../src/toolkit/durable-state.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import { MemoryStorage } from "../../src/index.ts";
@@ -34,7 +34,7 @@ layer(MemoryStorage.layerProtocol())((it) => {
       expect(yield* Streams.read(stories).pipe(Streams.items, Stream.runCollect)).toEqual([
         ...facts,
       ]);
-      expect(facts.map((fact) => fact.headers)).toEqual([
+      expect(Array.map(facts, (fact) => fact.headers)).toEqual([
         { operation: "upsert", offset: "source:4", txid: "source:4:0" },
         { operation: "delete", offset: "source:4", txid: "source:4:1" },
       ]);
@@ -44,7 +44,7 @@ layer(MemoryStorage.layerProtocol())((it) => {
         Stream.runCollect,
       );
 
-      expect(raw.map((item) => new TextDecoder().decode(item))).toEqual([
+      expect(Array.map(raw, (item) => new TextDecoder().decode(item))).toEqual([
         '{"type":"story","key":"7","value":{"id":7,"title":"first"},"headers":{"operation":"upsert","offset":"source:4","txid":"source:4:0"}}',
         '{"type":"story","key":"8","old_value":{"id":8,"title":"second"},"headers":{"operation":"delete","offset":"source:4","txid":"source:4:1"}}',
       ]);
@@ -127,7 +127,7 @@ baseIt("lets a change override txid and add source headers without replacing off
     DurableState.upsert("story", { id: 8, title: "second" }),
   ]);
 
-  expect(facts.map((fact) => fact.headers)).toEqual([
+  expect(Array.map(facts, (fact) => fact.headers)).toEqual([
     {
       operation: "upsert",
       offset: "source:8",
@@ -193,7 +193,7 @@ layer(MemoryStorage.layerProtocol())((it) => {
         DurableState.remove("project", "p1"),
       ]);
 
-      expect(facts.map((fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
+      expect(Array.map(facts, (fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
         ["project", "p1", "upsert"],
         ["story", "7", "upsert"],
         ["project", "p1", "delete"],
@@ -205,7 +205,7 @@ layer(MemoryStorage.layerProtocol())((it) => {
       const items = yield* Streams.read(workspace).pipe(Streams.items, Stream.runCollect);
       expect(items).toEqual([...facts]);
 
-      const names = items.flatMap((item) =>
+      const names = Array.flatMap(items, (item) =>
         item.type === "project" && "value" in item ? [item.value.name] : [],
       );
 

@@ -3,7 +3,7 @@ import { Commit, Transaction } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "vitest";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Array, Effect, Layer, Option, Schema } from "effect";
 import { TransportFault } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -62,7 +62,7 @@ const tracker = Projection.mapAccumBatch({
   state: { schema: Schema.Finite, initial: 0 },
   mapAccumBatch: (state, batch) =>
     Effect.sync(() => {
-      const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      const next = state + Array.reduce(batch.numbers.items, 0, (sum, n) => sum + n);
 
       return [
         next,
@@ -239,7 +239,7 @@ for (const [name, host] of hosts) {
           mapAccumBatch: (state, batch) =>
             Effect.sync(() => {
               states.push(state);
-              const next = state + batch.input.items.reduce((sum, n) => sum + n, 0);
+              const next = state + Array.reduce(batch.input.items, 0, (sum, n) => sum + n);
 
               return [next, { a: [next], b: [next] }] as const;
             }),

@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- Executable Bun process boundary writes its JSON protocol to stdout. */
-import { Clock, Effect, ManagedRuntime, Option } from "effect";
+import { Array, Clock, Effect, ManagedRuntime, Option } from "effect";
 import { ProducerId, Storage, StreamId, ZERO_OFFSET, type ProtocolError } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
@@ -93,7 +93,7 @@ const operation = Effect.gen(function* () {
 
       return {
         ...result,
-        messages: result.messages.map(({ data }) => ({
+        messages: Array.map(result.messages, ({ data }) => ({
           text: new TextDecoder().decode(data),
         })),
       };

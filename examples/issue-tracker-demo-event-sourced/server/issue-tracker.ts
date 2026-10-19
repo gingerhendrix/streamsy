@@ -9,6 +9,7 @@ import type {
 } from "@streamsy/core";
 import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/projection";
 import {
+  Array,
   Context,
   Crypto,
   DateTime,
@@ -144,7 +145,12 @@ export const IssueTrackerLive = Layer.effect(
 
     const create = Effect.gen(function* () {
       const bytes = yield* crypto.randomBytes(10);
-      const workspaceId = Array.from(bytes, (byte) => (byte % 36).toString(36)).join("");
+
+      const workspaceId = Array.join(
+        globalThis.Array.from(bytes, (byte) => (byte % 36).toString(36)),
+        "",
+      );
+
       yield* open(workspaceId);
       const starter = yield* stamp("proj");
       yield* registry.append({}, [{ workspaceId, createdAt: starter.now }]);

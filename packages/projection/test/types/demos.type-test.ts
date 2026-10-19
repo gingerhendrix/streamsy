@@ -1,4 +1,4 @@
-import { Context, Effect, Schema } from "effect";
+import { Array, Context, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState, Streamsy } from "@streamsy/core";
 import {
@@ -58,8 +58,8 @@ const tracker = Projection.mapAccumBatch({
       return [
         { ...previous, count: previous.count + batch.events.items.length },
         {
-          board: batch.events.items.map((row) => DurableState.upsert("board", row)),
-          transitions: batch.events.items.map((e) => e.issueId),
+          board: Array.map(batch.events.items, (row) => DurableState.upsert("board", row)),
+          transitions: Array.map(batch.events.items, (e) => e.issueId),
         },
       ] as const;
     }),

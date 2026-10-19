@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Layer, Option, type Scope } from "effect";
+import { Array, Context, Effect, Layer, Option, type Scope } from "effect";
 import { Offset, Storage, StreamId } from "@streamsy/core";
 import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
@@ -45,8 +45,8 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             const tables = yield* sql.unsafe<{ readonly name: string }>(dialect.tables);
 
             return {
-              versions: versions.map(({ version }) => Number(version)),
-              tables: tables.map(({ name }) => name),
+              versions: Array.map(versions, ({ version }) => Number(version)),
+              tables: Array.map(tables, ({ name }) => name),
             };
           }),
         ),
@@ -111,8 +111,8 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             return {
               created: created.currentOffset,
               current: record.currentOffset,
-              all: all.map(({ offset, data }) => [offset, new TextDecoder().decode(data)]),
-              after: after.map(({ offset }) => offset),
+              all: Array.map(all, ({ offset, data }) => [offset, new TextDecoder().decode(data)]),
+              after: Array.map(after, ({ offset }) => offset),
             };
           }),
         ),

@@ -5,7 +5,7 @@ import {
   type Issue,
   type Project,
 } from "@streamsy/issue-tracker-demo-contract/state-schema";
-import { type Array, Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import { countInProgress, findIssue, hasProject, type CommandView } from "./command-view.ts";
 import {
   commentRow,
@@ -184,7 +184,7 @@ function decided(
   events: Array.NonEmptyReadonlyArray<IssueEvent>,
   previous: Issue | undefined,
 ): Effect.Effect<Decision<Issue>> {
-  const issue = events.reduce<Issue | undefined>(issueAfter, previous);
+  const issue = Array.reduce<IssueEvent, Issue | undefined>(events, previous, issueAfter);
 
   return issue === undefined
     ? Effect.die(new Error(`An issue decision gave no row for ${events[0].issueId}`))

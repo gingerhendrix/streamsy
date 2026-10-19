@@ -5,6 +5,7 @@
  * consumer or an operator can observe — the relation key, the handler it is
  * pinned to, the retry budget — are exactly the parts the fingerprint covers.
  */
+import { Array } from "effect";
 import { describe, expect, test } from "vitest";
 import {
   backoffAfter,
@@ -71,7 +72,7 @@ describe("an action-sink declaration", () => {
   });
 
   test("backoff grows exponentially and stays clamped", () => {
-    expect([1, 2, 3, 4, 5].map((attempt) => backoffAfter(delivery, attempt))).toEqual([
+    expect(Array.map([1, 2, 3, 4, 5], (attempt) => backoffAfter(delivery, attempt))).toEqual([
       100, 200, 400, 800, 1_000,
     ]);
 

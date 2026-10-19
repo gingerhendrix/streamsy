@@ -24,7 +24,10 @@ const board = hexBoard.at({ gameId: "game" });
 
 const params = { gameId: "game" };
 
-const split = fullGame.findIndex((event) => event.type === "AttackResolved");
+const split = Option.getOrElse(
+  Array.findFirstIndex(fullGame, (event) => event.type === "AttackResolved"),
+  () => -1,
+);
 
 const resolution = fullGame[split];
 
@@ -102,22 +105,20 @@ const advance = (
     expect((yield* Projection.run(board)).items).toBe(events.length - cut);
     const after = yield* read;
 
-    const pure = events.reduce(
-      (state, event, index) =>
-        Result.getOrThrow(stepBoard(state, event, index < cut ? before.tail : after.tail)),
-      initialBoard({ gameId: "game" }),
+    const pure = Array.reduce(events, initialBoard({ gameId: "game" }), (state, event, index) =>
+      Result.getOrThrow(stepBoard(state, event, index < cut ? before.tail : after.tail)),
     );
 
     expect(after.state).toEqual(pure);
     expect(after.state.ordinal).toBe(events.length);
 
     if (events === fullGame) expect(after.state.board.game.status).toBe("finished");
-    expect(after.state.board.moves.map((move) => move.id)).toEqual(
+    expect(Array.map(after.state.board.moves, (move) => move.id)).toEqual(
       globalThis.Array.from({ length: Math.min(events.length, MOVE_FEED_LIMIT) }, (_, i) =>
         moveId(Math.max(0, events.length - MOVE_FEED_LIMIT) + i),
       ),
     );
-    expect(new Set(after.state.board.moves.map((move) => move.id)).size).toBe(
+    expect(new Set(Array.map(after.state.board.moves, (move) => move.id)).size).toBe(
       after.state.board.moves.length,
     );
     expect((yield* Projection.run(board)).items).toBe(0);
@@ -135,7 +136,7 @@ for (const [name, events, cut] of [
 
       if (events === fullGame) expect(before.state.board.combat?.status).toBe("awaiting-defense");
       else
-        expect(before.state.board.moves.map((move) => move.id)).toEqual(
+        expect(Array.map(before.state.board.moves, (move) => move.id)).toEqual(
           globalThis.Array.from({ length: MOVE_FEED_LIMIT }, (_, i) =>
             moveId(cut - MOVE_FEED_LIMIT + i),
           ),
