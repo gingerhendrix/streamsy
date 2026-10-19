@@ -156,14 +156,15 @@ const make = Effect.gen(function* () {
           ? 0
           : yield* Schema.decodeEffect(CounterJson)(encoded.value);
 
-        const value: File = {
+        const fields = {
           path: normalized,
           version: last + 1,
           hash: body.hash,
           size: body.size,
           author: body.author,
-          text: body.text,
         };
+
+        const value: File = body.text === undefined ? fields : { ...fields, text: body.text };
 
         const head: Head = { version: value.version, hash: value.hash, txid: body.txid };
 
