@@ -1,4 +1,5 @@
 import type { RelationPlan } from "./ir/contracts.ts";
+import { Predicate, Record as Rec } from "effect";
 
 /** Canonical JSON with lexicographically sorted object keys and preserved array order. */
 export function encodePlan(plan: RelationPlan): string {
@@ -40,13 +41,13 @@ function canonical(value: unknown, ancestors: Set<object>, path: string): string
     }
 
     if (
-      Object.getPrototypeOf(value) !== Object.prototype &&
-      Object.getPrototypeOf(value) !== null
+      !Predicate.isObject(value) ||
+      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
     ) {
       throw new TypeError(`${path} contains a non-plain object`);
     }
 
-    return `{${Object.entries(value)
+    return `{${Rec.toEntries(value)
       .toSorted(([left], [right]) => left.localeCompare(right))
       .map(
         ([key, child]) => `${JSON.stringify(key)}:${canonical(child, ancestors, `${path}.${key}`)}`,

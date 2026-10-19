@@ -1,6 +1,7 @@
 import type { Change, JsonObject, JsonValue, ProjectNode } from "../../ir/contracts.ts";
 import { transition } from "../change.ts";
 import { evaluate } from "../expression.ts";
+import { Record as Rec } from "effect";
 
 export function projectChange(
   node: ProjectNode,
@@ -27,7 +28,7 @@ function project(
 ): JsonObject {
   const output: Record<string, JsonValue> = {};
 
-  for (const [name, expression] of Object.entries(node.fields))
+  for (const [name, expression] of Rec.toEntries(node.fields))
     output[name] = evaluate(expression, { row, parameter: parameters });
 
   return decode(output);

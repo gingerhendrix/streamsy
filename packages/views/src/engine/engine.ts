@@ -31,6 +31,7 @@ import {
   type TopPartitionState,
   type TopState,
 } from "./state.ts";
+import { Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort, typescript/consistent-return -- The graph owns all sorted arrays it mutates; assertions bridge the checked JSON-only A1 IR to canonical serialization and exhaustive node dispatch. */
 
@@ -606,7 +607,7 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
       aggregate.groups.some(
         (group) =>
           group.memberCount <= 0 ||
-          Object.values(group.maxima).some((values) => values.some((entry) => entry.count <= 0)),
+          Rec.values(group.maxima).some((values) => values.some((entry) => entry.count <= 0)),
       )
     )
       throw fault(plan, undefined, "restore", `aggregate ${aggregate.nodeId} has corrupt counts`);

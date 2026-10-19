@@ -10,6 +10,7 @@ import { compareValues, evaluate, evaluateOptional, isMissing } from "../express
 import { asRowKey, canonicalJson, encodeRowKey } from "../key.ts";
 import type { AggregateGroupState } from "../state.ts";
 import type { StateRow } from "../state.ts";
+import { Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, unicorn/no-array-sort -- Aggregate operands are validated at this pure runtime boundary; open JSON rows are the A1 contract, and the one mutable sort orders a newly owned result array. */
 
@@ -67,7 +68,7 @@ export function aggregateChange(
       .sort((left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)))
       .map(frozen),
     changes,
-    operations: (change.kind === "update" ? 2 : 1) * Object.keys(node.aggregates).length,
+    operations: (change.kind === "update" ? 2 : 1) * Rec.keys(node.aggregates).length,
   };
 }
 
@@ -113,7 +114,7 @@ function contribute(
 
   group.memberCount += difference;
 
-  for (const [name, aggregate] of Object.entries(node.aggregates)) {
+  for (const [name, aggregate] of Rec.toEntries(node.aggregates)) {
     if (aggregate.function === "count") continue;
     const expression = aggregate.expression;
 
@@ -166,7 +167,7 @@ function groupIdentity(
   const group: Record<string, JsonValue> = {};
   const values: JsonValue[] = [];
 
-  for (const [name, expression] of Object.entries(node.groupBy)) {
+  for (const [name, expression] of Rec.toEntries(node.groupBy)) {
     const value = evaluate(expression, { row, parameter: parameters });
     group[name] = value;
     values.push(value);
@@ -180,7 +181,7 @@ function groupIdentity(
 function derive(node: GroupedAggregateNode, group: MutableGroup): JsonObject {
   const row: Record<string, JsonValue> = { ...group.group };
 
-  for (const [name, aggregate] of Object.entries(node.aggregates)) {
+  for (const [name, aggregate] of Rec.toEntries(node.aggregates)) {
     switch (aggregate.function) {
       case "count":
         row[name] = group.memberCount;
@@ -213,8 +214,8 @@ function mutable(group: AggregateGroupState): MutableGroup {
     memberCount: group.memberCount,
     sums: { ...group.sums },
     conditionalCounts: { ...group.conditionalCounts },
-    maxima: Object.fromEntries(
-      Object.entries(group.maxima).map(([name, values]) => [
+    maxima: Rec.fromEntries(
+      Rec.toEntries(group.maxima).map(([name, values]) => [
         name,
         new Map(values.map((entry) => [canonicalJson(entry.value), { ...entry }])),
       ]),
@@ -229,8 +230,8 @@ function frozen(group: MutableGroup): AggregateGroupState {
     memberCount: group.memberCount,
     sums: group.sums,
     conditionalCounts: group.conditionalCounts,
-    maxima: Object.fromEntries(
-      Object.entries(group.maxima).map(([name, values]) => [
+    maxima: Rec.fromEntries(
+      Rec.toEntries(group.maxima).map(([name, values]) => [
         name,
         [...values.values()].toSorted((left, right) => compareValues(left.value, right.value)),
       ]),

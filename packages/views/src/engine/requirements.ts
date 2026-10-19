@@ -6,6 +6,7 @@ import type {
   ReferenceScope,
 } from "../ir/contracts.ts";
 import { canonicalJson } from "./key.ts";
+import { Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- Requirements canonicalize already-checked JSON-only A1 expression trees and return named public descriptor fields; sorting mutates only fresh field arrays. */
 
@@ -54,7 +55,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
       inputFields[node.sourceId] = union(requirement.inputFields[node.sourceId] ?? [], output);
     } else if (node.kind === "project") {
       const selected = output.has("*")
-        ? Object.values(node.fields)
+        ? Rec.values(node.fields)
         : [...output].flatMap((path) => {
             const expression = node.fields[path.split(".")[0] ?? path];
 
@@ -121,7 +122,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       inputFields[node.input] = fields([node.predicate], "row");
       break;
     case "project":
-      inputFields[node.input] = fields(Object.values(node.fields), "row");
+      inputFields[node.input] = fields(Rec.values(node.fields), "row");
       break;
     case "key":
       inputFields[node.input] = fields([node.key], "row");
@@ -143,8 +144,8 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
     case "grouped-aggregate":
       inputFields[node.input] = fields(
         [
-          ...Object.values(node.groupBy),
-          ...Object.values(node.aggregates).flatMap((aggregate) =>
+          ...Rec.values(node.groupBy),
+          ...Rec.values(node.aggregates).flatMap((aggregate) =>
             aggregate.expression === undefined ? [] : [aggregate.expression],
           ),
         ],
@@ -197,7 +198,7 @@ function arrangement(
 function aggregateRequirements(node: GroupedAggregateNode): readonly AccumulatorRequirement[] {
   return [
     { name: "$members", kind: "count" },
-    ...Object.entries(node.aggregates).map(([name, aggregate]) => ({
+    ...Rec.toEntries(node.aggregates).map(([name, aggregate]) => ({
       name,
       kind: aggregate.function,
     })),

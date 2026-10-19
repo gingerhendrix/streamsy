@@ -1,4 +1,5 @@
 import type { JsonValue, RowKey, RowKeyPart } from "../ir/contracts.ts";
+import { Array as Arr, Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- The canonical key codec is the runtime boundary that validates discriminated JSON scalar representations. */
 
@@ -37,9 +38,9 @@ function isPart(value: JsonValue): value is RowKeyPart {
 export function canonicalJson(value: JsonValue): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
 
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (Arr.isArray<typeof value>(value)) return `[${value.map(canonicalJson).join(",")}]`;
 
-  return `{${Object.entries(value)
+  return `{${Rec.toEntries(value)
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
     .join(",")}}`;

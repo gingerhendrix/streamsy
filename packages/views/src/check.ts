@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Record as Rec } from "effect";
 import type {
   Expression,
   ReferenceScope,
@@ -158,7 +158,7 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
     }
 
     if (node.kind === "grouped-aggregate") {
-      if (Object.keys(node.groupBy).length === 0 || Object.keys(node.aggregates).length === 0) {
+      if (Rec.keys(node.groupBy).length === 0 || Rec.keys(node.aggregates).length === 0) {
         add(
           "aggregate-shape-mismatch",
           path,
@@ -167,7 +167,7 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
         );
       }
 
-      for (const name of Object.keys(node.aggregates)) {
+      for (const name of Rec.keys(node.aggregates)) {
         const aggregate = node.aggregates[name];
 
         if (aggregate === undefined) continue;
@@ -230,7 +230,7 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
     case "filter":
       return [["predicate", node.predicate]];
     case "project":
-      return Object.entries(node.fields).map(([key, value]) => [`fields.${key}`, value]);
+      return Rec.toEntries(node.fields).map(([key, value]) => [`fields.${key}`, value]);
     case "key":
       return [["key", node.key]];
     case "inner-join":
@@ -238,8 +238,8 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
       return [["on", node.on]];
     case "grouped-aggregate":
       return [
-        ...Object.entries(node.groupBy).map(([key, value]) => [`groupBy.${key}`, value] as const),
-        ...Object.entries(node.aggregates).flatMap(([key, value]) =>
+        ...Rec.toEntries(node.groupBy).map(([key, value]) => [`groupBy.${key}`, value] as const),
+        ...Rec.toEntries(node.aggregates).flatMap(([key, value]) =>
           value.expression === undefined
             ? []
             : [[`aggregates.${key}.expression`, value.expression] as const],

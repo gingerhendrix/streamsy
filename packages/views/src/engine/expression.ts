@@ -1,4 +1,5 @@
 import { isJsonObject, type Expression, type JsonObject, type JsonValue } from "../ir/contracts.ts";
+import { Array as Arr, Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, typescript/consistent-return -- This module is the pure runtime parser for JSON expression results; its guards establish each operator's scalar contract, and assertions only recover array/object evidence erased by indexed JSON access. */
 
@@ -160,7 +161,7 @@ function equal(left: JsonValue, right: JsonValue): boolean {
   if (left === null || right === null || typeof left !== "object" || typeof right !== "object")
     return false;
 
-  if (Array.isArray(left) || Array.isArray(right)) {
+  if (Arr.isArray<typeof left>(left) || Arr.isArray<typeof right>(right)) {
     return (
       Array.isArray(left) &&
       Array.isArray(right) &&
@@ -169,8 +170,8 @@ function equal(left: JsonValue, right: JsonValue): boolean {
     );
   }
 
-  const leftEntries = Object.entries(left);
-  const rightEntries = Object.entries(right);
+  const leftEntries = Rec.toEntries(left);
+  const rightEntries = Rec.toEntries(right);
 
   return (
     leftEntries.length === rightEntries.length &&

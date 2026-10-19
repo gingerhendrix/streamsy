@@ -1,4 +1,4 @@
-import type { Schema } from "effect";
+import { Record as Rec, type Schema } from "effect";
 import type {
   AggregateExpression,
   DescriptorRef,
@@ -119,9 +119,9 @@ export const reducer = <State extends Schema.Top, Input extends Schema.Top, D ex
 ): ReducerDeclaration<State, Input> => {
   const evolve: Record<string, EvolveBranch> = {};
 
-  for (const [tag, build] of Object.entries(spec.evolve)) {
+  for (const [tag, build] of Rec.toEntries<string, unknown>(spec.evolve)) {
     const x = selectors<unknown, unknown, unknown>();
-    // SAFETY: Object.entries erases the mapped tag, but every value is a builder and builders only emit references.
+    // SAFETY: Record.toEntries erases the mapped tag, but every value is a builder and builders only emit references.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion
     const branch = build as EvolveBranchBuilder<unknown, unknown>;
     evolve[tag] = deepFreeze(branch({ event: x.event, state: x.state }));
@@ -454,7 +454,7 @@ export const defineView = <
 }): ViewDeclaration<S, Key> => {
   const values: Record<string, TypedExpression<unknown>> = {};
 
-  for (const name of Object.keys(spec.params)) values[name] = parameterReference(name);
+  for (const name of Rec.keys(spec.params)) values[name] = parameterReference(name);
   // SAFETY: values is built from exactly the keys of P, and each reference carries that parameter's decoded type only at compile time.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-known-value-widening
   const expression = spec.query(values as ParameterValues<P>).expression;
@@ -625,7 +625,7 @@ export function compilePlan(
   const output = walk(expression);
   const parameterDescriptors: Record<string, ParameterDescriptor> = {};
 
-  for (const [key, value] of Object.entries(parameters)) {
+  for (const [key, value] of Rec.toEntries(parameters)) {
     parameterDescriptors[key] =
       value.maximum === undefined
         ? { schema: value.schemaRef }
@@ -639,7 +639,7 @@ export function compilePlan(
     output,
   } as const;
 
-  return Object.keys(parameterDescriptors).length === 0
+  return Rec.keys(parameterDescriptors).length === 0
     ? deepFreeze(plan)
     : deepFreeze({ ...plan, parameters: parameterDescriptors });
 }
@@ -683,7 +683,7 @@ function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.freeze(value);
 
-  for (const child of Object.values(value)) deepFreeze(child);
+  for (const child of Rec.values(value)) deepFreeze(child);
 
   return value;
 }

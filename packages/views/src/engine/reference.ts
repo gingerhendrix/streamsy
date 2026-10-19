@@ -12,6 +12,7 @@ import { compareValues, evaluate, evaluateOptional, isMissing } from "./expressi
 import { asRowKey, canonicalJson, encodeRowKey } from "./key.ts";
 import type { OrderedPartition } from "./operators/top.ts";
 import type { StateRow } from "./state.ts";
+import { Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
 
@@ -63,7 +64,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
           rows(relations, node.input).map((entry) => {
             const row: Record<string, JsonValue> = {};
 
-            for (const [name, expression] of Object.entries(node.fields))
+            for (const [name, expression] of Rec.toEntries(node.fields))
               row[name] = evaluate(expression, { row: entry.row, parameter: parameters });
 
             return {
@@ -163,7 +164,7 @@ function recomputeAggregate(
     const group: Record<string, JsonValue> = {};
     const values: JsonValue[] = [];
 
-    for (const [name, expression] of Object.entries(node.groupBy)) {
+    for (const [name, expression] of Rec.toEntries(node.groupBy)) {
       const value = evaluate(expression, { row: entry.row, parameter: parameters });
       group[name] = value;
       values.push(value);
@@ -180,7 +181,7 @@ function recomputeAggregate(
     [...groups.values()].map((bucket) => {
       const row: Record<string, JsonValue> = { ...bucket.group };
 
-      for (const [name, aggregate] of Object.entries(node.aggregates)) {
+      for (const [name, aggregate] of Rec.toEntries(node.aggregates)) {
         if (aggregate.function === "count") {
           row[name] = bucket.members.length;
           continue;
