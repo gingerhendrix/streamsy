@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";

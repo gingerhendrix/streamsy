@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "bun run build:web && bun --hot server/index.ts",
     "start": "bun run build:web && bun server/index.ts",
-    "test": "bun run build:web && bun run build:worker && bun run test:unit",
-    "test:unit": "bun test test",
+    "test": "bun run test:unit",
+    "test:unit": "bun --bun vitest run --dir test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "smoke:http": "bun run build:web && bun scripts/http-smoke.ts",
     "sync": "bun sync/index.ts",
@@ -16,7 +16,7 @@
     "smoke:worker": "bun run build:web && bun run build:worker && bun scripts/worker-smoke.ts",
     "build:worker": "bun scripts/build-worker.ts",
     "dev:worker": "bun run build:web && bun run build:worker && bun scripts/local-worker.ts",
-    "test:worker": "bun run build:web && bun run build:worker && bun test test/worker test/agent/worker.test.ts && FOLDER_SYNC_TEST_WORKER=true bun test test/sync/integration.test.ts"
+    "test:worker": "bun --bun vitest run test/worker test/agent/worker.test.ts && FOLDER_SYNC_TEST_WORKER=true bun --bun vitest run test/sync/integration.test.ts"
   },
   "dependencies": {
     "@better-fs-tools/fs": "0.1.0",

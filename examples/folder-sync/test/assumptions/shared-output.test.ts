@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { Effect, Layer, Result } from "effect";
 import { emitted, Files, host, Shared, temp } from "./fixtures.ts";

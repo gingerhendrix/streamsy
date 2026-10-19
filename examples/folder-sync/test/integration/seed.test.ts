@@ -1,5 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { spawnServer } from "@streamsy/test-support/server";
 import { Effect, FileSystem, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
@@ -19,7 +20,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
       yield* fs.writeFileString(`${directory}/docs/streams/read.mdx`, "# Read");
 
       const server = yield* spawnServer({
-        cwd: `${import.meta.dir}/../..`,
+        cwd: `${import.meta.dirname}/../..`,
         entry: "server/index.ts",
       });
 

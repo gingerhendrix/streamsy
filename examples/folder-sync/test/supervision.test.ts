@@ -1,4 +1,5 @@
-import { expect, it } from "@streamsy/effect-test";
+import { it } from "@effect/vitest";
+import { expect } from "vitest";
 import { Deferred, Effect, Fiber, Logger } from "effect";
 import { TestClock } from "effect/testing";
 import { supervise } from "../server/file-index.ts";

@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/new-promise -- These browser regression fixtures exercise native delayed promises and AbortSignals. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { draftReads } from "../../src/draft-reads.ts";
 
 test("a delayed clean refresh keeps keystrokes and the opened save base", async () => {

@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Commit, Projection } from "@streamsy/projection";
 import { Deferred, Effect, Fiber, Scope } from "effect";
 import { emitted, Files, host, Registry, Shared } from "./fixtures.ts";

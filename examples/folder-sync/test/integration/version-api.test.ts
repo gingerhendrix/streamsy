@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Offset, StreamAddress } from "@streamsy/core";
 import { spawnServer } from "@streamsy/test-support/server";
 import { Effect, Layer, Schedule, Schema } from "effect";
@@ -34,7 +35,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
                     (runtime) => Effect.promise(runtime.stop),
                   )
                 : yield* spawnServer({
-                    cwd: `${import.meta.dir}/../..`,
+                    cwd: `${import.meta.dirname}/../..`,
                     entry: "server/index.ts",
                     env: { FOLDER_SYNC_DB: mode === "sqlite" ? `${directory}/files.sqlite` : "" },
                   });

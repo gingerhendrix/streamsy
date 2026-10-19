@@ -5,5 +5,14 @@
     "types": ["bun-types"],
     "jsx": "react-jsx"
   },
-  "include": ["agent", "server", "test", "scripts", "sync", "src", "vite.config.ts"]
+  "include": [
+    "agent",
+    "server",
+    "test",
+    "scripts",
+    "sync",
+    "src",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }

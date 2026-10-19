@@ -1,6 +1,7 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { OffsetMismatch, StorageFault, StreamId } from "@streamsy/core";
-import { afterAll, expect, it } from "@streamsy/effect-test";
+import { it } from "@effect/vitest";
+import { afterAll, expect } from "vitest";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive } from "../server/api.ts";

@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/global-fetch, effecttsgo/global-fetch-in-effect -- Exercise the adapter standard Request transport against workerd. */
 import { BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Schema } from "effect";
 import { createAgentFileSystem } from "../../agent/index.ts";
 import { CreateFolder } from "../../server/domain.ts";

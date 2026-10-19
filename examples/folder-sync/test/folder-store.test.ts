@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 import { InvalidFile, MissingFile } from "../server/domain.ts";

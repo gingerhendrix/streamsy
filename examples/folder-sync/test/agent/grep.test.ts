@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Exercise the just-bash command Promise compatibility edge. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { createCommandContext } from "just-bash";
 import { FolderHttpFileSystem, justBashFileSystem, searchGrep } from "../../agent/index.ts";
 

@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect } from "effect";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 

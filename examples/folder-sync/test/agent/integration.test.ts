@@ -1,6 +1,5 @@
-/* oxlint-disable typescript/await-thenable -- Bun Promise rejection matchers execute asynchronously despite their void declarations. */
 /* oxlint-disable effecttsgo/async-function -- External filesystem conformance and just-bash Promise harness. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { runFileSystemConformance, runWritableFileSystemConformance } from "@better-fs-tools/fs";
 import { createAgentFileSystem } from "../../agent/index.ts";
 import { agentHost } from "./host.ts";

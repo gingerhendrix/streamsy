@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
 import { Effect, Option, Result, Schema } from "effect";
 import { SqlClient } from "effect/sql";

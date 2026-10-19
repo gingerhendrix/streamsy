@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -61,7 +62,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
                 "wrong-token",
               ],
               {
-                cwd: `${import.meta.dir}/../..`,
+                cwd: `${import.meta.dirname}/../..`,
                 env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
               },
             ),
@@ -105,7 +106,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
                 "docs",
               ],
               {
-                cwd: `${import.meta.dir}/../..`,
+                cwd: `${import.meta.dirname}/../..`,
                 env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
               },
             ),

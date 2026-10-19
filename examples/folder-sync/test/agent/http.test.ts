@@ -1,6 +1,5 @@
-/* oxlint-disable typescript/await-thenable -- Bun Promise rejection matchers execute asynchronously despite their void declarations. */
 /* oxlint-disable effecttsgo/async-function -- Promise filesystem HTTP boundary tests. */
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { betterFileSystem, FileSystemError, FolderHttpFileSystem } from "../../agent/index.ts";
 
 const core = (transport: (request: Request) => Promise<Response>) =>

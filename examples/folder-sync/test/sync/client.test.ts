@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Layer, Match, Result, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";

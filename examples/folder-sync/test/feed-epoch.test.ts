@@ -1,4 +1,5 @@
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect } from "effect";
 import { feedEpoch, rotateFeedEpoch } from "../server/feed-epoch.ts";
 import { sqliteHost } from "../server/storage.ts";

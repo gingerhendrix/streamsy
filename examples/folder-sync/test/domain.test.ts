@@ -1,5 +1,6 @@
 import { BunCrypto } from "@effect/platform-bun";
-import { expect, it as baseIt, layer } from "@streamsy/effect-test";
+import { it as baseIt, layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { Effect, Result, Schema } from "effect";
 import {
   FILE_LIMIT,

@@ -1,5 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { expect, layer } from "@streamsy/effect-test";
+import { layer } from "@effect/vitest";
+import { expect } from "vitest";
 import { spawnServer, token } from "./host.ts";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -109,7 +110,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const a = `${directory}/a`;
         const b = `${directory}/b`;
         const database = `${directory}/server.sqlite`;
-        const cwd = `${import.meta.dir}/../..`;
+        const cwd = `${import.meta.dirname}/../..`;
 
         const server = yield* spawnServer({
           cwd,
@@ -267,7 +268,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -385,7 +386,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const http = yield* HttpClient.HttpClient;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -491,7 +492,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const fs = yield* FileSystem.FileSystem;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -542,7 +543,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const fs = yield* FileSystem.FileSystem;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -613,7 +614,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const fs = yield* FileSystem.FileSystem;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -653,7 +654,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
 
         const listing = yield* spawner.string(
           ChildProcess.make("bun", ["sync/index.ts", "rejected", "--dir", mirror], {
-            cwd: `${import.meta.dir}/../..`,
+            cwd: `${import.meta.dirname}/../..`,
           }),
         );
 
@@ -674,7 +675,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const fs = yield* FileSystem.FileSystem;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -698,7 +699,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
               "--write",
               "daily/demo",
             ],
-            { cwd: `${import.meta.dir}/../..` },
+            { cwd: `${import.meta.dirname}/../..` },
           ),
         );
 
@@ -736,7 +737,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -815,7 +816,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
           env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
         });
@@ -886,7 +887,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         yield* server.stop;
 
         const replacement = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
           port: server.port,
           env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
@@ -939,7 +940,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
 
           const server = yield* spawnServer({
-            cwd: `${import.meta.dir}/../..`,
+            cwd: `${import.meta.dirname}/../..`,
             entry: "server/index.ts",
             env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
           });
@@ -1009,7 +1010,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           yield* server.stop;
 
           const replacement = yield* spawnServer({
-            cwd: `${import.meta.dir}/../..`,
+            cwd: `${import.meta.dirname}/../..`,
             entry: "server/index.ts",
             port: server.port,
             env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
@@ -1115,7 +1116,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
         const fs = yield* FileSystem.FileSystem;
 
         const server = yield* spawnServer({
-          cwd: `${import.meta.dir}/../..`,
+          cwd: `${import.meta.dirname}/../..`,
           entry: "server/index.ts",
         });
 
@@ -1186,7 +1187,7 @@ layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
           const mirror = `${directory}/mirror`;
           const data = `${directory}/server`;
           const backup = `${directory}/backup`;
-          const cwd = `${import.meta.dir}/../..`;
+          const cwd = `${import.meta.dirname}/../..`;
           const env = { FOLDER_SYNC_DB: `${data}/files.sqlite` };
 
           const options = {
