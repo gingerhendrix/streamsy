@@ -1,36 +1,46 @@
-name: Publish to npm
+name: Release
 
-# A `v*` tag runs the full gate, publishes the packages and creates the
-# GitHub release. A manual run (workflow_dispatch) runs the same gate on the
-# chosen branch and skips every step that publishes, so the gate can be
-# checked before a tag is pushed.
+# Every push to main runs the full gate, then `tegami ci`. When .tegami/ holds
+# release notes, Tegami opens or updates the Version Packages pull request.
+# When that pull request merges, Tegami publishes the four public packages
+# through npm trusted publishing, creates the shared v<version> tag and the
+# GitHub release. A manual run (workflow_dispatch) does the same on main.
+#
+# Keep the file name publish.yml: npm trusted publishing is tied to it.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  id-token: write
   contents: write
+  id-token: write
+  pull-requests: write
 
 jobs:
-  publish:
+  release:
+    name: Version and publish
     runs-on: ubuntu-latest
-    env:
-      IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
 
-      - uses: actions/setup-node@v4
+      # Tegami needs Node 24.
+      - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      # npm trusted publishing needs npm 11.5.1 or newer.
       - run: npm install -g npm@11.11.0
 
       - run: bun install --frozen-lockfile
@@ -68,67 +78,7 @@ jobs:
       - name: Package dry runs
         run: bun run pack:dry-run
 
-      - name: Read version from root package.json
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Verify tag and package versions match root package.json
-        if: env.IS_RELEASE == 'true'
-        run: |
-          if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
-            echo "Error: tag $GITHUB_REF_NAME but root package.json has version $VERSION" >&2
-            exit 1
-          fi
-
-          PACKAGES=(
-            packages/core
-            packages/storage
-            packages/projection
-            packages/serve
-          )
-
-          for pkg in "${PACKAGES[@]}"; do
-            PKG_NAME=$(node -p "require('./${pkg}/package.json').name")
-            PKG_VERSION=$(node -p "require('./${pkg}/package.json').version")
-            if [[ "$PKG_VERSION" != "$VERSION" ]]; then
-              echo "Error: root package.json has version $VERSION but $PKG_NAME has version $PKG_VERSION" >&2
-              exit 1
-            fi
-          done
-
-      - name: Pack and publish packages
-        if: env.IS_RELEASE == 'true'
-        run: |
-          # Dependency order: storage, projection and serve depend on core.
-          PACKAGES=(
-            packages/core
-            packages/storage
-            packages/projection
-            packages/serve
-          )
-
-          for pkg in "${PACKAGES[@]}"; do
-            echo "Publishing $pkg..."
-            cd "$pkg"
-
-            # Skip if already published (partial-publish recovery)
-            PKG_NAME=$(node -p "require('./package.json').name")
-            if npm view "$PKG_NAME@$VERSION" version &>/dev/null; then
-              echo "  $PKG_NAME@$VERSION already published, skipping"
-              cd "$GITHUB_WORKSPACE"
-              continue
-            fi
-
-            bun pm pack --quiet
-            TARBALL=$(ls *.tgz)
-            npm publish "$TARBALL" --provenance --access public
-            rm -f "$TARBALL"
-            cd "$GITHUB_WORKSPACE"
-          done
-
-      - name: Create GitHub Release
-        if: env.IS_RELEASE == 'true'
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+      - name: Version or publish packages
+        run: bun run tegami ci
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}

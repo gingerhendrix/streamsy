@@ -15,7 +15,8 @@ Documentation: [streamsy.dev](https://streamsy.dev)
 | [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
 | [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, action delivery                 |
 
-All packages are version `0.4.0` and require `effect@4.0.1`.
+All four packages share one version. `effect` 4 is a peer dependency. See
+[docs/releasing.md](docs/releasing.md) for the release process.
 
 ## Quick start
 
