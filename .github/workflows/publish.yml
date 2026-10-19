@@ -1,9 +1,14 @@
 name: Publish to npm
 
+# A `v*` tag runs the full gate, publishes the packages and creates the
+# GitHub release. A manual run (workflow_dispatch) runs the same gate on the
+# chosen branch and skips every step that publishes, so the gate can be
+# checked before a tag is pushed.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -12,10 +17,14 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
 
       - uses: actions/setup-node@v4
         with:
@@ -25,6 +34,11 @@ jobs:
       - run: npm install -g npm@11.11.0
 
       - run: bun install --frozen-lockfile
+
+      - name: Install site and e2e dependencies
+        run: |
+          bun install --frozen-lockfile --cwd site
+          bun install --frozen-lockfile --cwd e2e
 
       - run: bun run build
 
@@ -36,7 +50,20 @@ jobs:
 
       - run: bun run test:unit
 
-      - run: bun run test:conformance
+      # The conformance steps match ci.yml. The workerd script retries a known
+      # transient failure twice before it reports.
+      - run: bun run test:conformance:memory
+
+      - run: bun run --cwd packages/conformance-tests test:memory:wildcard
+
+      - run: bun run test:conformance:sqlite
+
+      - run: bun run test:conformance:remote
+
+      - run: bun run test:conformance:workerd
+
+      - name: E2E package checks
+        run: bun run e2e:check
 
       - name: Package dry runs
         run: bun run pack:dry-run
@@ -47,6 +74,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Verify tag and package versions match root package.json
+        if: env.IS_RELEASE == 'true'
         run: |
           if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
             echo "Error: tag $GITHUB_REF_NAME but root package.json has version $VERSION" >&2
@@ -56,6 +84,7 @@ jobs:
           PACKAGES=(
             packages/core
             packages/storage
+            packages/projection
             packages/serve
           )
 
@@ -69,10 +98,13 @@ jobs:
           done
 
       - name: Pack and publish packages
+        if: env.IS_RELEASE == 'true'
         run: |
+          # Dependency order: storage, projection and serve depend on core.
           PACKAGES=(
             packages/core
             packages/storage
+            packages/projection
             packages/serve
           )
 
@@ -96,6 +128,7 @@ jobs:
           done
 
       - name: Create GitHub Release
+        if: env.IS_RELEASE == 'true'
         run: gh release create "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
