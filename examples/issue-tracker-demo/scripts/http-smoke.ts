@@ -17,12 +17,17 @@ import {
   type StateEvent,
 } from "@streamsy/issue-tracker-demo-contract/state-schema";
 
-class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
-  message: Schema.String,
-}) {}
+class SmokeFailure extends Schema.TaggedError<SmokeFailure, { readonly brand: unique symbol }>()(
+  "SmokeFailure",
+  {
+    message: Schema.String,
+  },
+) {}
 
 /** A read that does not hold the rows the smoke waits for yet. */
-class NotYet extends Schema.TaggedError<NotYet>()("NotYet", { waitingFor: Schema.String }) {}
+class NotYet extends Schema.TaggedError<NotYet, { readonly brand: unique symbol }>()("NotYet", {
+  waitingFor: Schema.String,
+}) {}
 
 const check = (condition: boolean, message: string) =>
   condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));

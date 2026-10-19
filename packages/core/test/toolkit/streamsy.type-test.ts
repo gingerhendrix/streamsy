@@ -53,7 +53,10 @@ class DecodeService extends Context.Service<DecodeService, {}>()("DecodeService"
 
 class EncodeService extends Context.Service<EncodeService, {}>()("EncodeService") {}
 
-class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
+class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()(
+  "Refused",
+  {},
+) {}
 
 declare const api: Streamsy.Api<{ group: string }, { n: number }, DecodeService, EncodeService>;
 

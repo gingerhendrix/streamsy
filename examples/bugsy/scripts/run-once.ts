@@ -5,7 +5,9 @@ import { applicationLayer, sqliteStorage } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
 
-class Usage extends Schema.TaggedError<Usage>()("Usage", { message: Schema.String }) {}
+class Usage extends Schema.TaggedError<Usage, { readonly brand: unique symbol }>()("Usage", {
+  message: Schema.String,
+}) {}
 
 const program = Effect.gen(function* () {
   const workspaceId = yield* Effect.fromNullishOr(Bun.argv[2]).pipe(

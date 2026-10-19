@@ -51,7 +51,10 @@ export const trackerOn = <E>(host: Layer.Layer<Layer.Success<typeof MemoryHost>,
 /** Every service that a tracker test can use. */
 export type TrackerServices = Layer.Success<ReturnType<typeof trackerOn>>;
 
-class NotYet extends Schema.TaggedError<NotYet>()("NotYet", {}) {}
+class NotYet extends Schema.TaggedError<NotYet, { readonly brand: unique symbol }>()(
+  "NotYet",
+  {},
+) {}
 
 /** The State changes of one workspace, read once. */
 export const stateChanges = (workspaceId: string) =>

@@ -120,7 +120,10 @@ const byLength = (sum: number, value: string) => sum + value.length;
 export const wrongItems = Streams.fold(address, () => 0, byLength);
 
 // `decide` keeps its own error, the lost race, and every read and append rejection.
-class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
+class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()(
+  "Refused",
+  {},
+) {}
 
 const decided = Streams.decide(address, {
   initial: () => 0,

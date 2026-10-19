@@ -30,13 +30,16 @@ import { mainWorkspaceId } from "./config.ts";
 import { ProjectionWatchers } from "./watchers.ts";
 import { WorkspaceEvents, WorkspaceRegistry, Workspaces } from "./streams.ts";
 
-export class WorkspaceNotFound extends Schema.TaggedError<WorkspaceNotFound>()(
-  "WorkspaceNotFound",
-  { workspaceId: Schema.String },
-) {}
+export class WorkspaceNotFound extends Schema.TaggedError<
+  WorkspaceNotFound,
+  { readonly brand: unique symbol }
+>()("WorkspaceNotFound", { workspaceId: Schema.String }) {}
 
 /** The CAS append still lost after three retries. */
-export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {
+export class WriteConflict extends Schema.TaggedError<
+  WriteConflict,
+  { readonly brand: unique symbol }
+>()("WriteConflict", {
   workspaceId: Schema.String,
 }) {}
 

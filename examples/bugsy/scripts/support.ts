@@ -4,7 +4,10 @@ import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { ProjectBoardCard } from "../domain/outputs.ts";
 import { ServerConfig, storageChoice, type StorageChoice } from "../server/config.ts";
 
-export class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
+export class SmokeFailure extends Schema.TaggedError<
+  SmokeFailure,
+  { readonly brand: unique symbol }
+>()("SmokeFailure", {
   message: Schema.String,
 }) {}
 

@@ -3,10 +3,10 @@ import type { HnStory } from "../../state-schema.ts";
 import { errorMessage } from "../util.ts";
 
 /** Expected operational failure from one poll pass boundary. */
-export class PollFailure extends Schema.TaggedError<PollFailure>()(
-  "NewestStoriesPoller.PollFailure",
-  { operation: Schema.String, reason: Schema.String },
-) {}
+export class PollFailure extends Schema.TaggedError<
+  PollFailure,
+  { readonly brand: unique symbol }
+>()("NewestStoriesPoller.PollFailure", { operation: Schema.String, reason: Schema.String }) {}
 
 export const pollFailure = (operation: string) => (cause: unknown) =>
   new PollFailure({ operation, reason: errorMessage(cause) });

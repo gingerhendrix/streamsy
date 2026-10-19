@@ -27,12 +27,17 @@ import { storiesAddress } from "../src/server/stories.ts";
 // Offline vertical smoke: fixture -> poller CAS append -> served State -> TanStack DB,
 // including a departure during downtime and restart on the same SQLite file.
 
-class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
-  message: Schema.String,
-}) {}
+class SmokeFailure extends Schema.TaggedError<SmokeFailure, { readonly brand: unique symbol }>()(
+  "SmokeFailure",
+  {
+    message: Schema.String,
+  },
+) {}
 
 /** A condition that has not converged yet; `eventually` retries it. */
-class Pending extends Schema.TaggedError<Pending>()("Pending", { message: Schema.String }) {}
+class Pending extends Schema.TaggedError<Pending, { readonly brand: unique symbol }>()("Pending", {
+  message: Schema.String,
+}) {}
 
 const check = (condition: boolean, message: string) =>
   condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));

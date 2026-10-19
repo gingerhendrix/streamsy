@@ -1,9 +1,9 @@
 import { Effect, Schema } from "effect";
 
-export class CatalogWorkspaceMismatch extends Schema.TaggedError<CatalogWorkspaceMismatch>()(
-  "CatalogWorkspaceMismatch",
-  { message: Schema.String },
-) {}
+export class CatalogWorkspaceMismatch extends Schema.TaggedError<
+  CatalogWorkspaceMismatch,
+  { readonly brand: unique symbol }
+>()("CatalogWorkspaceMismatch", { message: Schema.String }) {}
 
 export const checkCatalogWorkspace = (
   addressWorkspace: string,

@@ -38,10 +38,16 @@ export const outputRoutes = Layer.mergeAll(
 );
 
 /** The route names a workspace that this server does not run. */
-class UnknownWorkspace extends Schema.TaggedError<UnknownWorkspace>()("UnknownWorkspace", {}) {}
+class UnknownWorkspace extends Schema.TaggedError<
+  UnknownWorkspace,
+  { readonly brand: unique symbol }
+>()("UnknownWorkspace", {}) {}
 
 /** The command body does not decode. */
-class InvalidCommand extends Schema.TaggedError<InvalidCommand>()("InvalidCommand", {}) {}
+class InvalidCommand extends Schema.TaggedError<
+  InvalidCommand,
+  { readonly brand: unique symbol }
+>()("InvalidCommand", {}) {}
 
 const json = HttpServerResponse.jsonUnsafe;
 

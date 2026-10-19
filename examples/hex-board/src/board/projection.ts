@@ -205,10 +205,10 @@ export interface ProjectionState {
  * error channel, so `Projection.run` fails with it and the checkpoint stays at the
  * previous cut: a corrupt stream must not fold into a plausible-looking board.
  */
-export class ProjectionIntegrityError extends Schema.TaggedError<ProjectionIntegrityError>()(
-  "ProjectionIntegrityError",
-  { message: Schema.String },
-) {}
+export class ProjectionIntegrityError extends Schema.TaggedError<
+  ProjectionIntegrityError,
+  { readonly brand: unique symbol }
+>()("ProjectionIntegrityError", { message: Schema.String }) {}
 
 export function initialProjection(gameId = ""): ProjectionState {
   return {

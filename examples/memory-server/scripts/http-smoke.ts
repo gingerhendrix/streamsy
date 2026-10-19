@@ -21,9 +21,12 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
-class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
-  message: Schema.String,
-}) {}
+class SmokeFailure extends Schema.TaggedError<SmokeFailure, { readonly brand: unique symbol }>()(
+  "SmokeFailure",
+  {
+    message: Schema.String,
+  },
+) {}
 
 const check = (condition: boolean, message: string) =>
   condition ? Effect.void : Effect.fail(new SmokeFailure({ message }));

@@ -5,7 +5,10 @@ import type { IssueEvent } from "../domain/issue.ts";
 import { commandView } from "./command-view.ts";
 
 /** A command names an issue that the workspace does not have. */
-export class UnknownIssue extends Schema.TaggedError<UnknownIssue>()("UnknownIssue", {}) {}
+export class UnknownIssue extends Schema.TaggedError<
+  UnknownIssue,
+  { readonly brand: unique symbol }
+>()("UnknownIssue", {}) {}
 
 export const transact = (workspaceId: string, command: CommandRequest) =>
   Projection.decide(commandView.at({ workspaceId }), {

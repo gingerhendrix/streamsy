@@ -47,9 +47,12 @@ export type IssueDb = StreamDB<typeof issueTrackerState> & {
 };
 
 /** A write the server refused, with the `error` message from its body. */
-export class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
-  message: Schema.String,
-}) {}
+export class ApiError extends Schema.TaggedError<ApiError, { readonly brand: unique symbol }>()(
+  "ApiError",
+  {
+    message: Schema.String,
+  },
+) {}
 
 const ErrorBody = Schema.Struct({ error: Schema.String });
 

@@ -17,7 +17,10 @@ class Events extends Streamsy.json<Events>()("demos/Events", "events/:workspaceI
   schema: Schema.Struct({ issueId: Schema.String }),
 }) {}
 
-class CatalogMismatch extends Schema.TaggedError<CatalogMismatch>()("CatalogMismatch", {}) {}
+class CatalogMismatch extends Schema.TaggedError<
+  CatalogMismatch,
+  { readonly brand: unique symbol }
+>()("CatalogMismatch", {}) {}
 
 class Catalog extends Context.Service<
   Catalog,

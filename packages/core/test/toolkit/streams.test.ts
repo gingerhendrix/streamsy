@@ -359,7 +359,9 @@ layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
   );
 });
 
-class Refused extends Schema.TaggedError<Refused>()("Refused", { total: Schema.Finite }) {}
+class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()("Refused", {
+  total: Schema.Finite,
+}) {}
 
 layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
   it.effect("decide passes its own failure through without an append or a retry", () =>

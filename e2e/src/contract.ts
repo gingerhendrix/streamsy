@@ -12,7 +12,10 @@ export const CONFORMANCE_LONG_POLL_TIMEOUT_MS = 1_500;
 export const HOSTED_STATUS =
   "Deployed e2e run: the prebuilt conformance Worker on a throwaway workers.dev stage, the official suite, then destroy. Cloudflare metadata is not queried. The audit reads Alchemy local state for the stage.";
 
-export class ContractError extends Schema.TaggedError<ContractError>()("ContractError", {
+export class ContractError extends Schema.TaggedError<
+  ContractError,
+  { readonly brand: unique symbol }
+>()("ContractError", {
   message: Schema.String,
 }) {}
 

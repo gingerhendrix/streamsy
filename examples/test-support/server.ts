@@ -4,12 +4,18 @@ import { HttpClient, HttpServer } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 /** The server process exited, or its port did not answer, before it was ready. */
-export class ServerStartError extends Schema.TaggedError<ServerStartError>()("ServerStartError", {
+export class ServerStartError extends Schema.TaggedError<
+  ServerStartError,
+  { readonly brand: unique symbol }
+>()("ServerStartError", {
   message: Schema.String,
 }) {}
 
 /** The server did not stop cleanly: its exit code was not 0, or it wrote to stderr. */
-export class UncleanStop extends Schema.TaggedError<UncleanStop>()("UncleanStop", {
+export class UncleanStop extends Schema.TaggedError<
+  UncleanStop,
+  { readonly brand: unique symbol }
+>()("UncleanStop", {
   message: Schema.String,
   exitCode: Schema.NullOr(Schema.Int),
   stderr: Schema.String,

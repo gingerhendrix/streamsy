@@ -396,7 +396,10 @@ layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
     Effect.gen(function* () {
       yield* initialize;
 
-      class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
+      class Boom extends Schema.TaggedError<Boom, { readonly brand: unique symbol }>()(
+        "Boom",
+        {},
+      ) {}
 
       const failing = Projection.process({
         commit: Commit.transaction,

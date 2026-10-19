@@ -50,7 +50,7 @@ const StateChanges = Schema.Array(
   }),
 );
 
-class NoTxid extends Schema.TaggedError<NoTxid>()("NoTxid", {
+class NoTxid extends Schema.TaggedError<NoTxid, { readonly brand: unique symbol }>()("NoTxid", {
   workspaceId: Schema.String,
   txid: Schema.String,
 }) {}

@@ -34,20 +34,26 @@ export interface Mutation<A> {
   readonly value: A;
 }
 
-export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
+export class UnknownReference extends Schema.TaggedError<
+  UnknownReference,
+  { readonly brand: unique symbol }
+>()("UnknownReference", {
   field: Schema.Literals(["projectId", "issueId"]),
   id: Schema.String,
 }) {}
 
-export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()("IssueNotFound", {
+export class IssueNotFound extends Schema.TaggedError<
+  IssueNotFound,
+  { readonly brand: unique symbol }
+>()("IssueNotFound", {
   issueId: Schema.String,
 }) {}
 
 /** The project already has `limit` issues in progress. */
-export class TooManyInProgress extends Schema.TaggedError<TooManyInProgress>()(
-  "TooManyInProgress",
-  { projectId: Schema.String, limit: Schema.Finite },
-) {}
+export class TooManyInProgress extends Schema.TaggedError<
+  TooManyInProgress,
+  { readonly brand: unique symbol }
+>()("TooManyInProgress", { projectId: Schema.String, limit: Schema.Finite }) {}
 
 const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });
 

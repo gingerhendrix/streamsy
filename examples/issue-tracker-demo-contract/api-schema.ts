@@ -53,19 +53,19 @@ export const CommentWritten = Written.mapFields(Struct.assign({ comment: Comment
 export const WorkspaceCreated = Schema.Struct({ id: WorkspaceId });
 
 /** Error bodies keep the `{ "error": string }` field the browser shows. */
-export class BadRequest extends Schema.TaggedError<BadRequest>()(
+export class BadRequest extends Schema.TaggedError<BadRequest, { readonly brand: unique symbol }>()(
   "BadRequest",
   { error: Schema.String },
   { httpApiStatus: 400 },
 ) {}
 
-export class NotFound extends Schema.TaggedError<NotFound>()(
+export class NotFound extends Schema.TaggedError<NotFound, { readonly brand: unique symbol }>()(
   "NotFound",
   { error: Schema.String },
   { httpApiStatus: 404 },
 ) {}
 
-export class Conflict extends Schema.TaggedError<Conflict>()(
+export class Conflict extends Schema.TaggedError<Conflict, { readonly brand: unique symbol }>()(
   "Conflict",
   { error: Schema.String },
   { httpApiStatus: 409 },
@@ -75,14 +75,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()(
  * A business rule refused the write. Unlike `Conflict`, a retry gives the same
  * answer until the workspace changes.
  */
-export class WipLimitReached extends Schema.TaggedError<WipLimitReached>()(
-  "WipLimitReached",
-  { error: Schema.String },
-  { httpApiStatus: 422 },
-) {}
+export class WipLimitReached extends Schema.TaggedError<
+  WipLimitReached,
+  { readonly brand: unique symbol }
+>()("WipLimitReached", { error: Schema.String }, { httpApiStatus: 422 }) {}
 
-export class InternalServerError extends Schema.TaggedError<InternalServerError>()(
-  "InternalServerError",
-  { error: Schema.String },
-  { httpApiStatus: 500 },
-) {}
+export class InternalServerError extends Schema.TaggedError<
+  InternalServerError,
+  { readonly brand: unique symbol }
+>()("InternalServerError", { error: Schema.String }, { httpApiStatus: 500 }) {}

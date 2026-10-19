@@ -19,10 +19,10 @@ export const ServerConfig = Config.all({
 });
 
 /** Both database URLs are set, so the server cannot pick one. */
-export class StorageConfigConflict extends Schema.TaggedError<StorageConfigConflict>()(
-  "StorageConfigConflict",
-  { message: Schema.String },
-) {}
+export class StorageConfigConflict extends Schema.TaggedError<
+  StorageConfigConflict,
+  { readonly brand: unique symbol }
+>()("StorageConfigConflict", { message: Schema.String }) {}
 
 /** Where the server keeps its data. */
 export type StorageChoice =

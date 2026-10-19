@@ -52,10 +52,10 @@ export const exampleAgent = (model: FoldModel): AgentDefinition =>
     tools: [textStatsTool],
   });
 
-export class MissingCredentialsError extends Schema.TaggedError<MissingCredentialsError>()(
-  "MissingCredentialsError",
-  { message: Schema.String },
-) {}
+export class MissingCredentialsError extends Schema.TaggedError<
+  MissingCredentialsError,
+  { readonly brand: unique symbol }
+>()("MissingCredentialsError", { message: Schema.String }) {}
 
 const missingCredentials = () =>
   new MissingCredentialsError({

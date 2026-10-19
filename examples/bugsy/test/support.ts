@@ -39,4 +39,7 @@ export const waitForServer = (baseUrl: string) =>
 export const post = (baseUrl: string, path: string, body: Parameters<typeof postUrl>[1]) =>
   postUrl(`${baseUrl}${path}`, body);
 
-class ServerStarting extends Schema.TaggedError<ServerStarting>()("ServerStarting", {}) {}
+class ServerStarting extends Schema.TaggedError<
+  ServerStarting,
+  { readonly brand: unique symbol }
+>()("ServerStarting", {}) {}

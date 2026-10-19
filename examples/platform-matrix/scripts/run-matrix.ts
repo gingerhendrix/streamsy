@@ -164,11 +164,17 @@ const errorMessage = (error: SqlError.SqlError): string => {
   return `${error.message}${detail}`;
 };
 
-class DatabaseError extends Schema.TaggedError<DatabaseError>()("DatabaseError", {
-  message: Schema.String,
-}) {}
+class DatabaseError extends Schema.TaggedError<DatabaseError, { readonly brand: unique symbol }>()(
+  "DatabaseError",
+  {
+    message: Schema.String,
+  },
+) {}
 
-class EntryStartError extends Schema.TaggedError<EntryStartError>()("EntryStartError", {
+class EntryStartError extends Schema.TaggedError<
+  EntryStartError,
+  { readonly brand: unique symbol }
+>()("EntryStartError", {
   message: Schema.String,
 }) {}
 
@@ -601,9 +607,12 @@ const program = Effect.gen(function* () {
     : Effect.fail(new MatrixFailed({ message: "one or more matrix cells failed" }));
 });
 
-class MatrixFailed extends Schema.TaggedError<MatrixFailed>()("MatrixFailed", {
-  message: Schema.String,
-}) {}
+class MatrixFailed extends Schema.TaggedError<MatrixFailed, { readonly brand: unique symbol }>()(
+  "MatrixFailed",
+  {
+    message: Schema.String,
+  },
+) {}
 
 /**
  * A cell for the table, for example `pass (332 passed, 6 skipped; smoke pass)`,
