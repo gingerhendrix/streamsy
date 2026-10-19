@@ -1,0 +1,40 @@
+core:changelogs:
+  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Streamsy 0.4: a new library, written in Effect\n\nStreamsy 0.4 is a complete rewrite in [Effect](https://effect.website) 4. It shares only the name and the Durable Streams protocol with the 0.2 releases. No code or API carries over, so treat it as a new library and not as an upgrade.\n\nFour packages ship together and share one version:\n\n- `@streamsy/core` has the protocol, typed stream refs, stream services, a memory Layer, the HTTP app and a remote client.\n- `@streamsy/storage` is new. It stores streams in SQLite on Bun and in Durable Objects.\n- `@streamsy/projection` is new. It runs checkpointed projections with named stream, rows and value outputs.\n- `@streamsy/serve` is new. It has HttpRouter routes, the Bun and Cloudflare hosts and action delivery.\n\n`effect` is now a peer dependency (`^4.0.5`), so install it beside Streamsy:\n\n```sh\nbun add @streamsy/core effect\n```\n\nThe guides and API reference are at [streamsy.dev](https://streamsy.dev).\n"
+    filename: effect-rewrite.md
+    v: 0.0.0
+core:packages:
+  - changelogIds:
+      - effect-rewrite.md
+    id: npm:@streamsy/core
+    updated: true
+  - changelogIds:
+      - effect-rewrite.md
+    id: npm:@streamsy/projection
+    updated: true
+  - changelogIds:
+      - effect-rewrite.md
+    id: npm:@streamsy/serve
+    updated: true
+  - changelogIds:
+      - effect-rewrite.md
+    id: npm:@streamsy/storage
+    updated: true
+npm:mark-latest:
+  - id: npm:@streamsy/projection
+  - id: npm:@streamsy/serve
+  - id: npm:@streamsy/storage
+npm:packages:
+  - id: npm:@streamsy/core
+  - id: npm:@streamsy/projection
+  - id: npm:@streamsy/serve
+  - id: npm:@streamsy/storage
+  - id: npm:bugsy
+  - id: npm:fold-agent-example
+  - id: npm:hackernews-newest-stream
+  - id: npm:hex-board
+  - id: npm:issue-tracker-demo
+  - id: npm:issue-tracker-demo-event-sourced
+  - id: npm:platform-matrix
+  - id: npm:@streamsy/conformance-tests
+  - id: npm:@streamsy/docs-snippets
+  - id: npm:memory-server
