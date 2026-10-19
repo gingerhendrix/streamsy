@@ -40,7 +40,10 @@ export const PlanIssue = Schema.Struct({
 
 export type PlanIssue = typeof PlanIssue.Type;
 
-export class PlanCheckFailed extends Schema.TaggedError<PlanCheckFailed>()("PlanCheckFailed", {
+export class PlanCheckFailed extends Schema.TaggedError<
+  PlanCheckFailed,
+  { readonly brand: unique symbol }
+>()("PlanCheckFailed", {
   issues: Schema.Array(PlanIssue),
 }) {}
 
