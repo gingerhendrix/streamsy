@@ -3,6 +3,11 @@
   "version": "0.4.0",
   "description": "Effect HttpRouter routes, Bun, Node, Deno and Cloudflare hosts, and durable action delivery.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/serve"
+  },
   "files": [
     "dist",
     "README.md",
