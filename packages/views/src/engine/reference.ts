@@ -12,7 +12,7 @@ import { compareValues, evaluate, evaluateOptional, isMissing } from "./expressi
 import { asRowKey, canonicalJson, encodeRowKey } from "./key.ts";
 import type { OrderedPartition } from "./operators/top.ts";
 import type { StateRow } from "./state.ts";
-import { Record as Rec } from "effect";
+import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
 
@@ -49,7 +49,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
       case "filter":
         relations.set(
           node.id,
-          rows(relations, node.input).filter((entry) => {
+          Arr.filter(rows(relations, node.input), (entry) => {
             const result = evaluate(node.predicate, { row: entry.row, parameter: parameters });
 
             if (typeof result !== "boolean") throw new TypeError("filter predicate is not Boolean");
@@ -61,7 +61,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
       case "project":
         relations.set(
           node.id,
-          rows(relations, node.input).map((entry) => {
+          Arr.map(rows(relations, node.input), (entry) => {
             const row: Record<string, JsonValue> = {};
 
             for (const [name, expression] of Rec.toEntries(node.fields))
@@ -77,7 +77,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
       case "key":
         relations.set(
           node.id,
-          rows(relations, node.input).map((entry) => ({
+          Arr.map(rows(relations, node.input), (entry) => ({
             key: asRowKey(evaluate(node.key, { row: entry.row, parameter: parameters })),
             row: entry.row,
           })),
@@ -178,7 +178,7 @@ function recomputeAggregate(
   }
 
   return sortRows(
-    [...groups.values()].map((bucket) => {
+    Arr.map([...groups.values()], (bucket) => {
       const row: Record<string, JsonValue> = { ...bucket.group };
 
       for (const [name, aggregate] of Rec.toEntries(node.aggregates)) {
@@ -189,30 +189,30 @@ function recomputeAggregate(
 
         if (aggregate.expression === undefined) throw new TypeError("aggregate operand is absent");
 
-        const values = bucket.members.map((member) =>
+        const values = Arr.map(bucket.members, (member) =>
           evaluateOptional(aggregate.expression!, { row: member, parameter: parameters }),
         );
 
         if (aggregate.function === "count-where") {
-          row[name] = values.filter((value) => {
+          row[name] = Arr.filter(values, (value) => {
             if (isMissing(value) || typeof value !== "boolean")
               throw new TypeError("count-where requires Booleans");
 
             return value;
           }).length;
         } else if (aggregate.function === "sum") {
-          row[name] = values.reduce<number>((sum, value) => {
+          row[name] = Arr.reduce(values, 0, (sum, value) => {
             if (isMissing(value)) return sum;
 
             if (typeof value !== "number" || !Number.isFinite(value))
               throw new TypeError("sum requires finite numbers");
 
             return sum + value;
-          }, 0);
+          });
         } else {
-          const present = values.filter((value): value is JsonValue => !isMissing(value));
+          const present = Arr.filter(values, (value): value is JsonValue => !isMissing(value));
 
-          if (present.length > 0) row[name] = present.toSorted(compareValues).at(-1)!;
+          if (present.length > 0) row[name] = present.sort(compareValues).at(-1)!;
         }
       }
 
@@ -238,7 +238,7 @@ function recomputeTop(
 
   for (const entry of input) {
     const key = asRowKey(
-      (node.partitionBy ?? []).map((expression) =>
+      Arr.map(node.partitionBy ?? [], (expression) =>
         evaluate(expression, { row: entry.row, parameter: parameters }),
       ),
     );
@@ -247,7 +247,7 @@ function recomputeTop(
     const partition = partitions.get(identity) ?? { key, rows: [] };
     partition.rows.push({
       entry,
-      sort: node.orderBy.map((term) =>
+      sort: Arr.map(node.orderBy, (term) =>
         evaluate(term.expression, { row: entry.row, parameter: parameters }),
       ),
     });
@@ -260,8 +260,8 @@ function recomputeTop(
   for (const partition of [...partitions.values()].sort((left, right) =>
     encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)),
   )) {
-    const selected = partition.rows
-      .toSorted((left, right) => {
+    const selected = [...partition.rows]
+      .sort((left, right) => {
         for (const [index, term] of node.orderBy.entries()) {
           const comparison = compareValues(left.sort[index]!, right.sort[index]!);
 
@@ -272,10 +272,10 @@ function recomputeTop(
       })
       .slice(0, limit);
 
-    winners.push(...selected.map((candidate) => candidate.entry));
+    winners.push(...Arr.map(selected, (candidate) => candidate.entry));
     ordered.push({
       partition: partition.key,
-      keys: selected.map((candidate) => candidate.entry.key),
+      keys: Arr.map(selected, (candidate) => candidate.entry.key),
     });
   }
 

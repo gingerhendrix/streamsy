@@ -10,6 +10,7 @@ import { maintainGraph, OperatorFault } from "@streamsy/views/engine";
 import { fullRecompute } from "@streamsy/views/engine/conformance";
 import { planRequirements } from "../../src/engine/requirements.ts";
 import type { OperatorStateSnapshot } from "../../src/engine/state.ts";
+import { Array as Arr, Option } from "effect";
 
 const schema = { name: "test.Row", version: 1 } as const;
 
@@ -138,13 +139,18 @@ describe("stateless transformations and graph routing", () => {
       { kind: "exit", key: "i1", before: { id: "i1", title: "One" } },
     ]);
     const requirements = planRequirements(graph);
-    expect(requirements.find((item) => item.nodeId === "filter")?.intrinsicState).toBe("none");
-    expect(requirements.find((item) => item.nodeId === "project")?.intrinsicState).toBe("none");
-    expect(requirements.find((item) => item.nodeId === "filter")?.inputFields["issues"]).toEqual([
-      "id",
-      "status",
-      "title",
-    ]);
+    expect(
+      Option.getOrUndefined(Arr.findFirst(requirements, (item) => item.nodeId === "filter"))
+        ?.intrinsicState,
+    ).toBe("none");
+    expect(
+      Option.getOrUndefined(Arr.findFirst(requirements, (item) => item.nodeId === "project"))
+        ?.intrinsicState,
+    ).toBe("none");
+    expect(
+      Option.getOrUndefined(Arr.findFirst(requirements, (item) => item.nodeId === "filter"))
+        ?.inputFields["issues"],
+    ).toEqual(["id", "status", "title"]);
   });
 
   it("reports predicate and restore failures with typed graph context", () => {
@@ -265,7 +271,7 @@ describe("inner and left joins", () => {
 
     state = enteredIssues.state;
     expect(
-      enteredIssues.patch.operatorIndexes.some((mutation) => mutation.operation === "put"),
+      Arr.some(enteredIssues.patch.operatorIndexes, (mutation) => mutation.operation === "put"),
     ).toBe(true);
     const i1 = { id: "i1", projectId: "p1", title: "First" };
     const i2 = { id: "i2", projectId: "p1", title: "Second" };
@@ -285,7 +291,7 @@ describe("inner and left joins", () => {
     });
 
     expect(result.rows).toHaveLength(2);
-    expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
+    expect(Arr.map(result.changes, (item) => item.kind)).toEqual(["exit", "enter"]);
     expect(result.operations.indexLookups).toBeLessThanOrEqual(2);
     expect(JSON.parse(JSON.stringify(result.state))).toEqual(result.state);
   });
@@ -306,32 +312,35 @@ describe("inner and left joins", () => {
       state: result.state,
       inputs: [{ sourceId: "projects", changes: [change("p1", undefined, project)] }],
     });
-    expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
+    expect(Arr.map(result.changes, (item) => item.kind)).toEqual(["exit", "enter"]);
     result = maintainGraph({
       plan: graph,
       state: result.state,
       inputs: [{ sourceId: "projects", changes: [change("p1", project, undefined)] }],
     });
     expect(result.rows[0]?.key).toEqual(["unmatched", "s2:i1"]);
-    expect(result.patch.operatorIndexes.some((mutation) => mutation.operation === "delete")).toBe(
-      true,
-    );
+    expect(
+      Arr.some(result.patch.operatorIndexes, (mutation) => mutation.operation === "delete"),
+    ).toBe(true);
   });
 
   it("shares compatible arrangements and retains only declared join fields", () => {
     const requirements = planRequirements(join("left-join"));
-    const arrangements = requirements.flatMap((item) => item.arrangements);
-    expect(arrangements.map((item) => item.retainedFields)).toEqual([["projectId"], ["id"]]);
-    expect(new Set(arrangements.map((item) => item.id)).size).toBe(2);
+    const arrangements = Arr.flatMap(requirements, (item) => item.arrangements);
+    expect(Arr.map(arrangements, (item) => item.retainedFields)).toEqual([["projectId"], ["id"]]);
+    expect(new Set(Arr.map(arrangements, (item) => item.id)).size).toBe(2);
   });
 
   it("rejects non-equality join plans and corrupt arrangement snapshots contextually", () => {
     const unsupported = join("inner-join");
-    const node = unsupported.nodes.find((candidate) => candidate.kind === "inner-join")!;
+
+    const node = Option.getOrUndefined(
+      Arr.findFirst(unsupported.nodes, (candidate) => candidate.kind === "inner-join"),
+    )!;
 
     const bad = {
       ...unsupported,
-      nodes: unsupported.nodes.map((candidate) =>
+      nodes: Arr.map(unsupported.nodes, (candidate) =>
         candidate === node ? { ...node, on: literal(true) } : candidate,
       ),
     };
@@ -421,9 +430,13 @@ describe("inner and left joins", () => {
       ],
     });
 
-    expect(planRequirements(graph).flatMap((item) => item.arrangements)).toHaveLength(4);
+    expect(Arr.flatMap(planRequirements(graph), (item) => item.arrangements)).toHaveLength(4);
     expect(result.state.arrangements).toHaveLength(3);
-    expect(result.state.arrangements.find((item) => item.relationId === "issues")).toMatchObject({
+    expect(
+      Option.getOrUndefined(
+        Arr.findFirst(result.state.arrangements, (item) => item.relationId === "issues"),
+      ),
+    ).toMatchObject({
       retainedFields: ["projectId"],
       entries: [{ value: "p1", rowKeys: ["i1"] }],
     });
@@ -478,11 +491,11 @@ describe("grouped aggregates and exact top", () => {
       state: result.state,
       inputs: [{ sourceId: "issues", changes: [change("i2", low, { ...low, status: "closed" })] }],
     });
-    expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
+    expect(Arr.map(result.changes, (item) => item.kind)).toEqual(["exit", "enter"]);
     expect(result.state.aggregates[0]?.groups[0]).not.toHaveProperty("members");
-    expect(result.state.relations.some((relation) => relation.relationId === "aggregate")).toBe(
-      false,
-    );
+    expect(
+      Arr.some(result.state.relations, (relation) => relation.relationId === "aggregate"),
+    ).toBe(false);
   });
 
   it("rejects non-finite aggregate input contextually", () => {
@@ -551,7 +564,7 @@ describe("grouped aggregates and exact top", () => {
       inputs: [{ sourceId: "issues", changes: [change("c", c, promoted)] }],
     });
     expect(result.ordered[0]?.keys).toEqual(["c", "a"]);
-    expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
+    expect(Arr.map(result.changes, (item) => item.kind)).toEqual(["exit", "enter"]);
     const tied = { ...promoted, score: 3 };
     result = maintainGraph({
       plan: top,
@@ -567,13 +580,15 @@ describe("grouped aggregates and exact top", () => {
     });
     expect(result.ordered).toHaveLength(2);
     expect(result.state.tops[0]).not.toHaveProperty("ordered");
-    expect(result.state.relations.some((relation) => relation.relationId === "top")).toBe(false);
+    expect(Arr.some(result.state.relations, (relation) => relation.relationId === "top")).toBe(
+      false,
+    );
   });
 
   it("rejects invalid limits and incomparable sort values contextually", () => {
     const invalid = {
       ...top,
-      nodes: top.nodes.map((node) =>
+      nodes: Arr.map(top.nodes, (node) =>
         node.kind === "top-n" ? { ...node, limit: literal(0) } : node,
       ),
     };

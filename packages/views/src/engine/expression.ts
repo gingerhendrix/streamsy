@@ -131,10 +131,10 @@ function variadic(
   expression: Extract<Expression, { readonly kind: "variadic" }>,
   scopes: ExpressionScopes,
 ): Evaluated {
-  const operands = expression.operands.map((operand) => evaluateOptional(operand, scopes));
+  const operands = Arr.map(expression.operands, (operand) => evaluateOptional(operand, scopes));
 
   if (expression.operator === "key") {
-    if (operands.some((value) => value === Missing)) return Missing;
+    if (Arr.some(operands, (value) => value === Missing)) return Missing;
 
     return operands as JsonValue[];
   }
@@ -145,14 +145,14 @@ function variadic(
     return (
       subject !== undefined &&
       subject !== Missing &&
-      candidates.some((candidate) => candidate !== Missing && equal(subject, candidate))
+      Arr.some(candidates, (candidate) => candidate !== Missing && equal(subject, candidate))
     );
   }
 
-  if (operands.some((value) => value === Missing || typeof value !== "boolean"))
+  if (Arr.some(operands, (value) => value === Missing || typeof value !== "boolean"))
     throw new ExpressionFault(expression, `${expression.operator} requires present Booleans`);
 
-  return expression.operator === "and" ? operands.every(Boolean) : operands.some(Boolean);
+  return expression.operator === "and" ? Arr.every(operands, Boolean) : Arr.some(operands, Boolean);
 }
 
 function equal(left: JsonValue, right: JsonValue): boolean {
@@ -163,10 +163,10 @@ function equal(left: JsonValue, right: JsonValue): boolean {
 
   if (Arr.isArray<typeof left>(left) || Arr.isArray<typeof right>(right)) {
     return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
+      Arr.isArray<typeof left>(left) &&
+      Arr.isArray<typeof right>(right) &&
       left.length === right.length &&
-      left.every((value, index) => equal(value, right[index] as JsonValue))
+      Arr.every(left, (value, index) => equal(value, right[index] as JsonValue))
     );
   }
 
@@ -176,7 +176,7 @@ function equal(left: JsonValue, right: JsonValue): boolean {
   return (
     leftEntries.length === rightEntries.length &&
     isJsonObject(right) &&
-    leftEntries.every(([key, value]) => key in right && equal(value, right[key] as JsonValue))
+    Arr.every(leftEntries, ([key, value]) => key in right && equal(value, right[key] as JsonValue))
   );
 }
 

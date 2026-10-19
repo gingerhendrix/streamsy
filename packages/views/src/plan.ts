@@ -1,5 +1,5 @@
 import type { RelationPlan } from "./ir/contracts.ts";
-import { Predicate, Record as Rec } from "effect";
+import { Predicate, Record as Rec, Array as Arr } from "effect";
 
 /** Canonical JSON with lexicographically sorted object keys and preserved array order. */
 export function encodePlan(plan: RelationPlan): string {
@@ -36,8 +36,11 @@ function canonical(value: unknown, ancestors: Set<object>, path: string): string
   ancestors.add(value);
 
   try {
-    if (Array.isArray(value)) {
-      return `[${value.map((child, index) => canonical(child, ancestors, `${path}[${index}]`)).join(",")}]`;
+    if (Arr.isArray(value)) {
+      return `[${Arr.join(
+        Arr.map(value, (child, index) => canonical(child, ancestors, `${path}[${index}]`)),
+        ",",
+      )}]`;
     }
 
     if (
@@ -47,12 +50,16 @@ function canonical(value: unknown, ancestors: Set<object>, path: string): string
       throw new TypeError(`${path} contains a non-plain object`);
     }
 
-    return `{${Rec.toEntries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(
+    const entries = Rec.toEntries(value);
+    entries.sort(([left], [right]) => left.localeCompare(right));
+
+    return `{${Arr.join(
+      Arr.map(
+        entries,
         ([key, child]) => `${JSON.stringify(key)}:${canonical(child, ancestors, `${path}.${key}`)}`,
-      )
-      .join(",")}}`;
+      ),
+      ",",
+    )}}`;
   } finally {
     ancestors.delete(value);
   }

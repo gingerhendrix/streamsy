@@ -3,6 +3,7 @@ import { transition } from "../change.ts";
 import { compareValues, evaluate } from "../expression.ts";
 import { asRowKey, encodeRowKey } from "../key.ts";
 import type { TopCandidate, TopPartitionState } from "../state.ts";
+import { Array as Arr, Option } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, unicorn/no-array-sort -- Top limit evaluation is the runtime validation boundary; candidate arrays are newly owned and intentionally maintained in place. */
 
@@ -27,7 +28,7 @@ export function topChange(
   const limit = topLimit(node, parameters);
 
   const partitions = new Map(
-    current.map((partition) => [
+    Arr.map(current, (partition) => [
       encodeRowKey(partition.key),
       { key: partition.key, candidates: [...partition.candidates] },
     ]),
@@ -61,10 +62,13 @@ export function topChange(
     const after = (partitions.get(encoded)?.candidates ?? []).slice(0, limit);
 
     const beforeRows = new Map(
-      item.before.map((candidate) => [encodeRowKey(candidate.key), candidate]),
+      Arr.map(item.before, (candidate) => [encodeRowKey(candidate.key), candidate]),
     );
 
-    const afterRows = new Map(after.map((candidate) => [encodeRowKey(candidate.key), candidate]));
+    const afterRows = new Map(
+      Arr.map(after, (candidate) => [encodeRowKey(candidate.key), candidate]),
+    );
+
     const keys = new Set([...beforeRows.keys(), ...afterRows.keys()]);
 
     for (const key of [...keys].sort()) {
@@ -76,22 +80,24 @@ export function topChange(
     }
   }
 
-  const result = [...partitions.values()]
-    .filter((partition) => partition.candidates.length > 0)
-    .sort((left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)))
-    .map((partition) => ({
+  const result = Arr.map(
+    Arr.filter([...partitions.values()], (partition) => partition.candidates.length > 0).sort(
+      (left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)),
+    ),
+    (partition) => ({
       key: partition.key,
-      candidates: partition.candidates.toSorted((left, right) =>
+      candidates: [...partition.candidates].sort((left, right) =>
         compareCandidates(node, left, right),
       ),
-    }));
+    }),
+  );
 
   return {
     partitions: result,
     changes,
-    ordered: result.map((partition) => ({
+    ordered: Arr.map(result, (partition) => ({
       partition: partition.key,
-      keys: partition.candidates.slice(0, limit).map((candidate) => candidate.key),
+      keys: Arr.map(partition.candidates.slice(0, limit), (candidate) => candidate.key),
     })),
     operations: affected.size * Math.max(1, Math.ceil(Math.log2(Math.max(2, current.length + 1)))),
   };
@@ -104,9 +110,9 @@ export function orderedTop(
 ): readonly OrderedPartition[] {
   const limit = topLimit(node, parameters);
 
-  return current.map((partition) => ({
+  return Arr.map(current, (partition) => ({
     partition: partition.key,
-    keys: partition.candidates.slice(0, limit).map((candidate) => candidate.key),
+    keys: Arr.map(partition.candidates.slice(0, limit), (candidate) => candidate.key),
   }));
 }
 
@@ -121,10 +127,10 @@ function addCandidate(
   const encoded = encodeRowKey(partition);
   const state = partitions.get(encoded) ?? { key: partition, candidates: [] };
 
-  if (state.candidates.some((candidate) => encodeRowKey(candidate.key) === encodeRowKey(key)))
+  if (Arr.some(state.candidates, (candidate) => encodeRowKey(candidate.key) === encodeRowKey(key)))
     throw new TypeError("top candidate enter duplicates an existing row key");
 
-  const sortValues = node.orderBy.map((term) =>
+  const sortValues = Arr.map(node.orderBy, (term) =>
     evaluate(term.expression, { row, parameter: parameters }),
   );
 
@@ -151,8 +157,12 @@ function removeCandidate(
 
   if (state === undefined) throw new TypeError("top retraction references an absent partition");
 
-  const index = state.candidates.findIndex(
-    (candidate) => encodeRowKey(candidate.key) === encodeRowKey(key),
+  const index = Option.getOrElse(
+    Arr.findFirstIndex(
+      state.candidates,
+      (candidate) => encodeRowKey(candidate.key) === encodeRowKey(key),
+    ),
+    () => -1,
   );
 
   if (index < 0) throw new TypeError("top retraction references an absent candidate");
@@ -173,7 +183,7 @@ function compareCandidates(node: TopNNode, left: TopCandidate, right: TopCandida
 
 function partitionKey(node: TopNNode, row: JsonObject, parameters: JsonObject): RowKey {
   return asRowKey(
-    (node.partitionBy ?? []).map((expression) =>
+    Arr.map(node.partitionBy ?? [], (expression) =>
       evaluate(expression, { row, parameter: parameters }),
     ),
   );

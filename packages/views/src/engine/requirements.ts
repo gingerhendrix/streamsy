@@ -6,7 +6,7 @@ import type {
   ReferenceScope,
 } from "../ir/contracts.ts";
 import { canonicalJson } from "./key.ts";
-import { Record as Rec } from "effect";
+import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- Requirements canonicalize already-checked JSON-only A1 expression trees and return named public descriptor fields; sorting mutates only fresh field arrays. */
 
@@ -35,7 +35,7 @@ export interface OperatorRequirements {
 
 /** Inspectable physical requirements; it never changes the public IR. */
 export function planRequirements(plan: RelationPlan): readonly OperatorRequirements[] {
-  const local = new Map(plan.nodes.map((node) => [node.id, requirementsFor(node)]));
+  const local = new Map(Arr.map(plan.nodes, (node) => [node.id, requirementsFor(node)]));
   const downstream = new Map<string, Set<string>>([[plan.output, new Set(["*"])]]);
   const resolved = new Map<string, OperatorRequirements>();
 
@@ -46,7 +46,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
     downstream.set(relationId, demand);
   };
 
-  for (const node of plan.nodes.toReversed()) {
+  for (const node of Arr.reverse(plan.nodes)) {
     const requirement = local.get(node.id)!;
     const output = downstream.get(node.id) ?? new Set<string>();
     const inputFields: Record<string, readonly string[]> = {};
@@ -56,7 +56,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
     } else if (node.kind === "project") {
       const selected = output.has("*")
         ? Rec.values(node.fields)
-        : [...output].flatMap((path) => {
+        : Arr.flatMap([...output], (path) => {
             const expression = node.fields[path.split(".")[0] ?? path];
 
             return expression === undefined ? [] : [expression];
@@ -100,7 +100,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
     resolved.set(node.id, { ...requirement, inputFields });
   }
 
-  return plan.nodes.map((node) => resolved.get(node.id)!);
+  return Arr.map(plan.nodes, (node) => resolved.get(node.id)!);
 }
 
 function union(left: Iterable<string>, right: Iterable<string>): readonly string[] {
@@ -145,7 +145,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       inputFields[node.input] = fields(
         [
           ...Rec.values(node.groupBy),
-          ...Rec.values(node.aggregates).flatMap((aggregate) =>
+          ...Arr.flatMap(Rec.values(node.aggregates), (aggregate) =>
             aggregate.expression === undefined ? [] : [aggregate.expression],
           ),
         ],
@@ -156,7 +156,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       break;
     case "top-n":
       inputFields[node.input] = fields(
-        [...node.orderBy.map((term) => term.expression), ...(node.partitionBy ?? [])],
+        [...Arr.map(node.orderBy, (term) => term.expression), ...(node.partitionBy ?? [])],
         "row",
       );
       intrinsicState = "candidate-index";
@@ -198,7 +198,7 @@ function arrangement(
 function aggregateRequirements(node: GroupedAggregateNode): readonly AccumulatorRequirement[] {
   return [
     { name: "$members", kind: "count" },
-    ...Rec.toEntries(node.aggregates).map(([name, aggregate]) => ({
+    ...Arr.map(Rec.toEntries(node.aggregates), ([name, aggregate]) => ({
       name,
       kind: aggregate.function,
     })),
@@ -223,7 +223,7 @@ function fields(expressions: readonly Expression[], scope: ReferenceScope): read
 function collect(expression: Expression, scope: ReferenceScope, paths: Set<string>): void {
   if (expression.kind === "reference") {
     if (expression.scope === scope && expression.path.length > 0)
-      paths.add(expression.path.join("."));
+      paths.add(Arr.join(expression.path, "."));
 
     return;
   }

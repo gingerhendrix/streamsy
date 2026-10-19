@@ -1,5 +1,6 @@
 import type { Change, JsonObject, RowKey } from "../ir/contracts.ts";
 import { canonicalJson, encodeRowKey } from "./key.ts";
+import { Array as Arr } from "effect";
 
 export const sameRow = (left: JsonObject, right: JsonObject): boolean =>
   canonicalJson(left) === canonicalJson(right);
@@ -34,7 +35,7 @@ export function coalesceChanges(
     item.after = change.kind === "exit" ? undefined : change.after;
   }
 
-  return [...touched.values()].flatMap((item) => {
+  return Arr.flatMap([...touched.values()], (item) => {
     const result = transition(item.key, item.before, item.after);
 
     return result === undefined ? [] : [result];

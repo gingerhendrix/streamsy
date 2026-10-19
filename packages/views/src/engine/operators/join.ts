@@ -11,6 +11,7 @@ import { transition } from "../change.ts";
 import { evaluate, evaluateOptional, isMissing } from "../expression.ts";
 import { encodeRowKey } from "../key.ts";
 import { equalitySides } from "../requirements.ts";
+import { Array as Arr, Option } from "effect";
 
 export interface KeyedRow {
   readonly key: RowKey;
@@ -60,16 +61,17 @@ export function joinChange(
     const encodedLeft = encodeRowKey(leftKey);
 
     const before = new Map(
-      currentOutput
-        .filter((entry) => outputBelongsTo(entry.key, encodedLeft))
-        .map((entry) => [encodeRowKey(entry.key), entry]),
+      Arr.map(
+        Arr.filter(currentOutput, (entry) => outputBelongsTo(entry.key, encodedLeft)),
+        (entry) => [encodeRowKey(entry.key), entry],
+      ),
     );
 
     const desired = new Map<string, KeyedRow>();
 
-    const left = access
-      .relation(node.left)
-      .find((entry) => encodeRowKey(entry.key) === encodedLeft);
+    const left = Option.getOrUndefined(
+      Arr.findFirst(access.relation(node.left), (entry) => encodeRowKey(entry.key) === encodedLeft),
+    );
 
     if (left !== undefined) {
       const value = evaluateOptional(equality.left, {
@@ -134,5 +136,5 @@ function collectMatchingLeft(
 }
 
 function outputBelongsTo(key: RowKey, encodedLeft: string): boolean {
-  return Array.isArray(key) && key[1] === encodedLeft;
+  return Arr.isArray(key) && key[1] === encodedLeft;
 }

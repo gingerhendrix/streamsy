@@ -1,3 +1,5 @@
+import { Array as Arr } from "effect";
+
 /** JSON-only contracts shared by declaration compilers and view engines. */
 export type JsonScalar = null | boolean | number | string;
 
@@ -13,7 +15,7 @@ export type RowKey = RowKeyPart | readonly RowKeyPart[];
 
 export function isJsonObject(value: JsonValue): value is JsonObject {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JsonValue has an undiscriminated object arm, and this guard is its parse boundary.
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Arr.isArray(value);
 }
 
 export type Change<Row, Key extends RowKey = RowKey> =

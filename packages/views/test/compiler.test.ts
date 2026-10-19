@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Array as Arr } from "effect";
 import { describe, expect, it } from "bun:test";
 import type { RelationPlan } from "@streamsy/views/ir";
 import type { ReducerDeclaration } from "@streamsy/views";
@@ -44,14 +44,14 @@ describe("relation compilation", () => {
         .top({ by: [x.row.score.desc(), x.row.id.asc()], limit: 10 }),
     );
 
-    expect(declaration.plan.nodes.map((node) => node.kind)).toEqual([
+    expect(Arr.map(declaration.plan.nodes, (node) => node.kind)).toEqual([
       "source",
       "filter",
       "project",
       "key",
       "top-n",
     ]);
-    expect(declaration.plan.nodes.map((node) => node.id)).toEqual([
+    expect(Arr.map(declaration.plan.nodes, (node) => node.id)).toEqual([
       "example.rows",
       "example.ranked/filter/0",
       "example.ranked/project/1",
@@ -170,7 +170,7 @@ describe("checking and canonical identity", () => {
 
   it("collects independent issues and fails once through Effect", () => {
     const issues = collectPlanIssues(raw());
-    expect(issues.map((issue) => issue.code)).toEqual([
+    expect(Arr.map(issues, (issue) => issue.code)).toEqual([
       "invalid-output-key",
       "unknown-input",
       "invalid-top-limit",

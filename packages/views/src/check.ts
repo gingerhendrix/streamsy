@@ -1,4 +1,4 @@
-import { Effect, Schema, Record as Rec } from "effect";
+import { Effect, Schema, Record as Rec, Array as Arr } from "effect";
 import type {
   Expression,
   ReferenceScope,
@@ -72,7 +72,7 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
 
   if (plan.version !== 3)
     add("unsupported-plan-version", "version", `unsupported plan version ${String(plan.version)}`);
-  const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
+  const nodes = Arr.isArray(plan.nodes) ? plan.nodes : [];
   const ids = new Set<string>();
   const sourceNames = new Set<string>();
 
@@ -187,13 +187,13 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
     if (node.kind === "top-n") checkTop(node, path, plan, add);
   }
 
-  return Object.freeze(
-    issues.toSorted((left, right) =>
-      `${left.nodeId ?? ""}|${left.path}|${left.code}`.localeCompare(
-        `${right.nodeId ?? ""}|${right.path}|${right.code}`,
-      ),
+  issues.sort((left, right) =>
+    `${left.nodeId ?? ""}|${left.path}|${left.code}`.localeCompare(
+      `${right.nodeId ?? ""}|${right.path}|${right.code}`,
     ),
   );
+
+  return Object.freeze(issues);
 }
 
 export const checkPlan = (input: CheckInput): Effect.Effect<CheckedPlan, PlanCheckFailed> => {
@@ -230,7 +230,7 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
     case "filter":
       return [["predicate", node.predicate]];
     case "project":
-      return Rec.toEntries(node.fields).map(([key, value]) => [`fields.${key}`, value]);
+      return Arr.map(Rec.toEntries(node.fields), ([key, value]) => [`fields.${key}`, value]);
     case "key":
       return [["key", node.key]];
     case "inner-join":
@@ -238,8 +238,11 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
       return [["on", node.on]];
     case "grouped-aggregate":
       return [
-        ...Rec.toEntries(node.groupBy).map(([key, value]) => [`groupBy.${key}`, value] as const),
-        ...Rec.toEntries(node.aggregates).flatMap(([key, value]) =>
+        ...Arr.map(
+          Rec.toEntries(node.groupBy),
+          ([key, value]) => [`groupBy.${key}`, value] as const,
+        ),
+        ...Arr.flatMap(Rec.toEntries(node.aggregates), ([key, value]) =>
           value.expression === undefined
             ? []
             : [[`aggregates.${key}.expression`, value.expression] as const],
@@ -248,8 +251,9 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
     case "top-n":
       return [
         ["limit", node.limit],
-        ...node.orderBy.map((term, index) => [`orderBy[${index}]`, term.expression] as const),
-        ...(node.partitionBy ?? []).map(
+        ...Arr.map(node.orderBy, (term, index) => [`orderBy[${index}]`, term.expression] as const),
+        ...Arr.map(
+          node.partitionBy ?? [],
           (expression, index) => [`partitionBy[${index}]`, expression] as const,
         ),
       ];
@@ -310,7 +314,7 @@ function checkExpression(
   }
 
   if (expression.kind === "variadic") {
-    expression.operands.forEach((operand, index) =>
+    Arr.forEach(expression.operands, (operand, index) =>
       checkExpression(operand, scopes, `${path}.operands[${index}]`, plan, add, nodeId),
     );
   }

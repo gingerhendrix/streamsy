@@ -11,6 +11,7 @@ import { canonicalJson } from "../../src/engine/key.ts";
 import { fullRecompute } from "@streamsy/views/engine/conformance";
 import type { MaintainGraphResult } from "@streamsy/views/engine";
 import type { StateRow } from "../../src/engine/state.ts";
+import { Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- Generated fixtures are constructed from the closed issue helper below; assertions recover its known string id and adapt JSON-only results to the canonical test encoder. */
 
@@ -151,7 +152,7 @@ describe("deterministic generated issue-tracker conformance", () => {
           ...preload,
           {
             sourceId: "issues",
-            changes: enters(rows.map((row) => ({ key: row.id as string, row }))),
+            changes: enters(Arr.map(rows, (row) => ({ key: row.id as string, row }))),
           },
         ],
       });
@@ -217,7 +218,7 @@ function runSeed(seed: number): void {
       const expected = fullRecompute({
         plan,
         sources: {
-          issues: [...issues].map(([key, row]) => ({ key, row })),
+          issues: Arr.map([...issues], ([key, row]) => ({ key, row })),
           projects: projectRows,
         },
       });
@@ -242,14 +243,18 @@ function rebuild(plan: RelationPlan, rows: readonly JsonObject[]): MaintainGraph
       ...(plan === leftJoinPlan ? [{ sourceId: "projects", changes: enters(projectRows) }] : []),
       {
         sourceId: "issues",
-        changes: rows.map((row) => ({ kind: "enter" as const, key: row.id as string, after: row })),
+        changes: Arr.map(rows, (row) => ({
+          kind: "enter" as const,
+          key: row.id as string,
+          after: row,
+        })),
       },
     ],
   });
 }
 
 function enters(rows: readonly StateRow[]): readonly Change<JsonObject>[] {
-  return rows.map((entry) => ({ kind: "enter", key: entry.key, after: entry.row }));
+  return Arr.map(rows, (entry) => ({ kind: "enter", key: entry.key, after: entry.row }));
 }
 
 function normalize(result: MaintainGraphResult): string {

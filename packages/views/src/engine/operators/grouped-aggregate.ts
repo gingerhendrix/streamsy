@@ -10,9 +10,9 @@ import { compareValues, evaluate, evaluateOptional, isMissing } from "../express
 import { asRowKey, canonicalJson, encodeRowKey } from "../key.ts";
 import type { AggregateGroupState } from "../state.ts";
 import type { StateRow } from "../state.ts";
-import { Record as Rec } from "effect";
+import { Record as Rec, Array as Arr } from "effect";
 
-/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, unicorn/no-array-sort -- Aggregate operands are validated at this pure runtime boundary; open JSON rows are the A1 contract, and the one mutable sort orders a newly owned result array. */
+/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, unicorn/no-array-sort -- Aggregate operands are validated at this pure runtime boundary; open JSON rows are the A1 contract, and the mutable sorts only order newly owned arrays. */
 
 export interface AggregateResult {
   readonly groups: readonly AggregateGroupState[];
@@ -26,7 +26,7 @@ export function aggregateChange(
   change: Change<JsonObject>,
   parameters: JsonObject,
 ): AggregateResult {
-  const groups = new Map(current.map((group) => [encodeRowKey(group.key), mutable(group)]));
+  const groups = new Map(Arr.map(current, (group) => [encodeRowKey(group.key), mutable(group)]));
   const affected = new Map<string, { key: RowKey; before?: JsonObject }>();
 
   const remember = (row: JsonObject): void => {
@@ -64,9 +64,12 @@ export function aggregateChange(
   }
 
   return {
-    groups: [...groups.values()]
-      .sort((left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)))
-      .map(frozen),
+    groups: Arr.map(
+      [...groups.values()].sort((left, right) =>
+        encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)),
+      ),
+      frozen,
+    ),
     changes,
     operations: (change.kind === "update" ? 2 : 1) * Rec.keys(node.aggregates).length,
   };
@@ -77,7 +80,7 @@ export function aggregateRows(
   node: GroupedAggregateNode,
   groups: readonly AggregateGroupState[],
 ): readonly StateRow[] {
-  return groups.map((group) => ({ key: group.key, row: derive(node, mutable(group)) }));
+  return Arr.map(groups, (group) => ({ key: group.key, row: derive(node, mutable(group)) }));
 }
 
 interface MutableGroup {
@@ -197,7 +200,7 @@ function derive(node: GroupedAggregateNode, group: MutableGroup): JsonObject {
 
         if (values.length > 0)
           row[name] = values
-            .toSorted((left, right) => compareValues(left.value, right.value))
+            .sort((left, right) => compareValues(left.value, right.value))
             .at(-1)!.value;
         break;
       }
@@ -215,9 +218,9 @@ function mutable(group: AggregateGroupState): MutableGroup {
     sums: { ...group.sums },
     conditionalCounts: { ...group.conditionalCounts },
     maxima: Rec.fromEntries(
-      Rec.toEntries(group.maxima).map(([name, values]) => [
+      Arr.map(Rec.toEntries(group.maxima), ([name, values]) => [
         name,
-        new Map(values.map((entry) => [canonicalJson(entry.value), { ...entry }])),
+        new Map(Arr.map(values, (entry) => [canonicalJson(entry.value), { ...entry }])),
       ]),
     ),
   };
@@ -231,9 +234,9 @@ function frozen(group: MutableGroup): AggregateGroupState {
     sums: group.sums,
     conditionalCounts: group.conditionalCounts,
     maxima: Rec.fromEntries(
-      Rec.toEntries(group.maxima).map(([name, values]) => [
+      Arr.map(Rec.toEntries(group.maxima), ([name, values]) => [
         name,
-        [...values.values()].toSorted((left, right) => compareValues(left.value, right.value)),
+        [...values.values()].sort((left, right) => compareValues(left.value, right.value)),
       ]),
     ),
   };

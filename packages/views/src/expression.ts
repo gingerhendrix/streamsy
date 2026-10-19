@@ -1,3 +1,5 @@
+import { Array as Arr } from "effect";
+
 import type {
   AggregateExpression,
   BinaryOperator,
@@ -157,7 +159,7 @@ function decorate<T>(node: Expression): TypedExpression<T> {
           return (right: LiteralOperand<T>) => binary<boolean>("not-equal", target, operand(right));
         case "in":
           return (...values: readonly LiteralOperand<T>[]) =>
-            variadic<boolean>("in", [target, ...values.map(operand)]);
+            variadic<boolean>("in", [target, ...Arr.map(values, operand)]);
         case "gt":
           return (right: LiteralOperand<T>) =>
             binary<boolean>("greater-than", target, operand(right));
@@ -295,10 +297,10 @@ export type KeyFieldsOf<Row> = (keyof Row & string) | readonly (keyof Row & stri
 export const keyExpression = (declared: DeclaredKey): Expression => {
   const fields = [declared].flat();
 
-  return Array.isArray(declared)
+  return Arr.isArray(declared)
     ? variadic<readonly RowKeyValue[]>(
         "key",
-        fields.map((field) => reference<RowKeyValue>("row", [field])),
+        Arr.map(fields, (field) => reference<RowKeyValue>("row", [field])),
       )
     : reference<unknown>("row", fields);
 };

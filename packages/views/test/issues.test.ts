@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Schema, Array as Arr } from "effect";
 import { describe, expect, it } from "bun:test";
 import type { RelationNode, RelationPlan } from "@streamsy/views/ir";
 import { collectPlanIssues, PlanIssue } from "../src/check.ts";
@@ -30,7 +30,7 @@ const plan = (
 });
 
 const codes = (value: RelationPlan): readonly string[] =>
-  collectPlanIssues(value).map((issue) => issue.code);
+  Arr.map(collectPlanIssues(value), (issue) => issue.code);
 
 describe("plan issue collection", () => {
   it("covers graph identity, schema and output failures", () => {
@@ -147,7 +147,7 @@ describe("plan issue collection", () => {
     });
 
     const issues = collectPlanIssues(nonJson);
-    expect(issues.map((issue) => issue.code)).toContain("non-json-plan-value");
+    expect(Arr.map(issues, (issue) => issue.code)).toContain("non-json-plan-value");
 
     for (const issue of issues) expect(Schema.decodeSync(PlanIssue)(issue)).toEqual(issue);
   });

@@ -31,7 +31,7 @@ import {
   type TopPartitionState,
   type TopState,
 } from "./state.ts";
-import { Record as Rec } from "effect";
+import { Record as Rec, Array as Arr, Option } from "effect";
 
 /* oxlint-disable anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort, typescript/consistent-return -- The graph owns all sorted arrays it mutates; assertions bridge the checked JSON-only A1 IR to canonical serialization and exhaustive node dispatch. */
 
@@ -108,10 +108,13 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
   };
 
   for (const sourceInput of input.inputs) {
-    const source = input.plan.nodes.find(
-      (node): node is Extract<RelationNode, { readonly kind: "source" }> =>
-        node.kind === "source" &&
-        (node.sourceId === sourceInput.sourceId || node.id === sourceInput.sourceId),
+    const source = Option.getOrUndefined(
+      Arr.findFirst(
+        input.plan.nodes,
+        (node): node is Extract<RelationNode, { readonly kind: "source" }> =>
+          node.kind === "source" &&
+          (node.sourceId === sourceInput.sourceId || node.id === sourceInput.sourceId),
+      ),
     );
 
     if (source === undefined)
@@ -173,7 +176,10 @@ export function maintainGraph(input: MaintainGraphInput): MaintainGraphResult {
   }
 
   const state = snapshot(input.plan, prior.revision + 1, runtime);
-  const output = input.plan.nodes.find((node) => node.id === input.plan.output);
+
+  const output = Option.getOrUndefined(
+    Arr.findFirst(input.plan.nodes, (node) => node.id === input.plan.output),
+  );
 
   if (output === undefined) throw fault(input.plan, undefined, "plan", "output node is absent");
   const rows = outputRows(output, runtime, parameters);
@@ -358,14 +364,18 @@ function applyRelationChange(
 
 function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
   const relations = new Map(
-    state.relations.map((relation) => [
+    Arr.map(state.relations, (relation) => [
       relation.relationId,
-      new Map(relation.rows.map((entry) => [encodeRowKey(entry.key), entry])),
+      new Map(Arr.map(relation.rows, (entry) => [encodeRowKey(entry.key), entry])),
     ]),
   );
 
-  const requirements = planRequirements(plan).flatMap((item) => item.arrangements);
-  const saved = new Map(state.arrangements.map((arrangement) => [arrangement.id, arrangement]));
+  const requirements = Arr.flatMap(planRequirements(plan), (item) => item.arrangements);
+
+  const saved = new Map(
+    Arr.map(state.arrangements, (arrangement) => [arrangement.id, arrangement]),
+  );
+
   const arrangements = new Map<string, MutableArrangement>();
 
   for (const requirement of uniqueArrangements(requirements)) {
@@ -376,7 +386,7 @@ function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
       for (const entry of prior.entries)
         mutable.buckets.set(canonicalJson(entry.value), {
           value: entry.value,
-          rows: new Map(entry.rowKeys.map((key) => [encodeRowKey(key), key])),
+          rows: new Map(Arr.map(entry.rowKeys, (key) => [encodeRowKey(key), key])),
         });
     } else {
       for (const entry of relations.get(requirement.relationId)?.values() ?? [])
@@ -388,18 +398,25 @@ function restore(plan: RelationPlan, state: OperatorStateSnapshot): Runtime {
 
   for (const node of plan.nodes) {
     if (node.kind !== "grouped-aggregate" || relations.has(node.id)) continue;
-    const groups = state.aggregates.find((aggregate) => aggregate.nodeId === node.id)?.groups ?? [];
+
+    const groups =
+      Option.getOrUndefined(
+        Arr.findFirst(state.aggregates, (aggregate) => aggregate.nodeId === node.id),
+      )?.groups ?? [];
+
     relations.set(
       node.id,
-      new Map(aggregateRows(node, groups).map((entry) => [encodeRowKey(entry.key), entry])),
+      new Map(Arr.map(aggregateRows(node, groups), (entry) => [encodeRowKey(entry.key), entry])),
     );
   }
 
   return {
     relations,
     arrangements,
-    aggregates: new Map(state.aggregates.map((aggregate) => [aggregate.nodeId, aggregate.groups])),
-    tops: new Map(state.tops.map((top) => [top.nodeId, top.partitions])),
+    aggregates: new Map(
+      Arr.map(state.aggregates, (aggregate) => [aggregate.nodeId, aggregate.groups]),
+    ),
+    tops: new Map(Arr.map(state.tops, (top) => [top.nodeId, top.partitions])),
   };
 }
 
@@ -456,17 +473,20 @@ function lookup(
 ): readonly KeyedRow[] {
   const signature = canonicalJson(expression as never);
 
-  const arrangement = [...runtime.arrangements.values()].find(
-    (candidate) =>
-      candidate.requirement.relationId === relationId &&
-      canonicalJson(candidate.requirement.keyExpression as never) === signature,
+  const arrangement = Option.getOrUndefined(
+    Arr.findFirst(
+      [...runtime.arrangements.values()],
+      (candidate) =>
+        candidate.requirement.relationId === relationId &&
+        canonicalJson(candidate.requirement.keyExpression as never) === signature,
+    ),
   );
 
   if (arrangement === undefined) throw new TypeError(`missing arrangement for ${relationId}`);
   const keys = arrangement.buckets.get(canonicalJson(value))?.rows.values() ?? [];
   const relation = runtime.relations.get(relationId);
 
-  return [...keys].flatMap((key) => {
+  return Arr.flatMap([...keys], (key) => {
     const row = relation?.get(encodeRowKey(key));
 
     return row === undefined ? [] : [row];
@@ -475,33 +495,41 @@ function lookup(
 
 function snapshot(plan: RelationPlan, revision: number, runtime: Runtime): OperatorStateSnapshot {
   const derivedIds = new Set(
-    plan.nodes
-      .filter((node) => node.kind === "top-n" || node.kind === "grouped-aggregate")
-      .map((node) => node.id),
+    Arr.map(
+      Arr.filter(plan.nodes, (node) => node.kind === "top-n" || node.kind === "grouped-aggregate"),
+      (node) => node.id,
+    ),
   );
 
   return {
     version: 1,
     planName: plan.name,
     revision,
-    relations: [...runtime.relations]
-      .filter(([relationId]) => !derivedIds.has(relationId))
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([relationId, rows]) => ({
+    relations: Arr.map(
+      Arr.filter([...runtime.relations], ([relationId]) => !derivedIds.has(relationId)).sort(
+        ([left], [right]) => left.localeCompare(right),
+      ),
+      ([relationId, rows]) => ({
         relationId,
         rows: [...rows.values()].sort((left, right) =>
           encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)),
         ),
-      })),
-    arrangements: [...runtime.arrangements.values()]
-      .sort((left, right) => left.requirement.id.localeCompare(right.requirement.id))
-      .map(arrangementSnapshot),
-    aggregates: [...runtime.aggregates]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([nodeId, groups]): AggregateState => ({ nodeId, groups })),
-    tops: [...runtime.tops]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([nodeId, partitions]): TopState => ({ nodeId, partitions })),
+      }),
+    ),
+    arrangements: Arr.map(
+      [...runtime.arrangements.values()].sort((left, right) =>
+        left.requirement.id.localeCompare(right.requirement.id),
+      ),
+      arrangementSnapshot,
+    ),
+    aggregates: Arr.map(
+      [...runtime.aggregates].sort(([left], [right]) => left.localeCompare(right)),
+      ([nodeId, groups]): AggregateState => ({ nodeId, groups }),
+    ),
+    tops: Arr.map(
+      [...runtime.tops].sort(([left], [right]) => left.localeCompare(right)),
+      ([nodeId, partitions]): TopState => ({ nodeId, partitions }),
+    ),
   };
 }
 
@@ -510,14 +538,17 @@ function arrangementSnapshot(arrangement: MutableArrangement): ArrangementState 
     id: arrangement.requirement.id,
     relationId: arrangement.requirement.relationId,
     retainedFields: arrangement.requirement.retainedFields,
-    entries: [...arrangement.buckets.values()]
-      .sort((left, right) => canonicalJson(left.value).localeCompare(canonicalJson(right.value)))
-      .map((entry) => ({
+    entries: Arr.map(
+      [...arrangement.buckets.values()].sort((left, right) =>
+        canonicalJson(left.value).localeCompare(canonicalJson(right.value)),
+      ),
+      (entry) => ({
         value: entry.value,
         rowKeys: [...entry.rows.values()].sort((left, right) =>
           encodeRowKey(left).localeCompare(encodeRowKey(right)),
         ),
-      })),
+      }),
+    ),
   };
 }
 
@@ -533,16 +564,17 @@ function outputRows(
   const ordered = orderedTop(node, runtime.tops.get(node.id) ?? [], parameters);
 
   const candidates = new Map(
-    (runtime.tops.get(node.id) ?? []).flatMap((partition) =>
-      partition.candidates.map((candidate) => [encodeRowKey(candidate.key), candidate] as const),
+    Arr.flatMap(runtime.tops.get(node.id) ?? [], (partition) =>
+      Arr.map(
+        partition.candidates,
+        (candidate) => [encodeRowKey(candidate.key), candidate] as const,
+      ),
     ),
   );
 
-  return ordered
-    .flatMap((partition) =>
-      partition.keys.map((key) => ({ key, row: candidates.get(encodeRowKey(key))!.row })),
-    )
-    .sort((left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)));
+  return Arr.flatMap(ordered, (partition) =>
+    Arr.map(partition.keys, (key) => ({ key, row: candidates.get(encodeRowKey(key))!.row })),
+  ).sort((left, right) => encodeRowKey(left.key).localeCompare(encodeRowKey(right.key)));
 }
 
 function consumersOf(plan: RelationPlan): Map<string, RelationNode[]> {
@@ -570,7 +602,9 @@ function consumersOf(plan: RelationPlan): Map<string, RelationNode[]> {
 function uniqueArrangements(
   requirements: readonly ArrangementRequirement[],
 ): readonly ArrangementRequirement[] {
-  return [...new Map(requirements.map((requirement) => [requirement.id, requirement])).values()];
+  return [
+    ...new Map(Arr.map(requirements, (requirement) => [requirement.id, requirement])).values(),
+  ];
 }
 
 function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): void {
@@ -581,12 +615,12 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
       "restore",
       "operator-state snapshot is incompatible with the plan",
     );
-  const ids = new Set(plan.nodes.map((node) => node.id));
+  const ids = new Set(Arr.map(plan.nodes, (node) => node.id));
 
   const relationRows = new Map(
-    state.relations.map((relation) => [
+    Arr.map(state.relations, (relation) => [
       relation.relationId,
-      new Set(relation.rows.map((entry) => encodeRowKey(entry.key))),
+      new Set(Arr.map(relation.rows, (entry) => encodeRowKey(entry.key))),
     ]),
   );
 
@@ -604,10 +638,13 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
       throw fault(plan, undefined, "restore", `state references unknown node ${aggregate.nodeId}`);
 
     if (
-      aggregate.groups.some(
+      Arr.some(
+        aggregate.groups,
         (group) =>
           group.memberCount <= 0 ||
-          Rec.values(group.maxima).some((values) => values.some((entry) => entry.count <= 0)),
+          Arr.some(Rec.values(group.maxima), (values) =>
+            Arr.some(values, (entry) => entry.count <= 0),
+          ),
       )
     )
       throw fault(plan, undefined, "restore", `aggregate ${aggregate.nodeId} has corrupt counts`);
@@ -618,9 +655,10 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
       throw fault(plan, undefined, "restore", `state references unknown node ${top.nodeId}`);
 
   const arrangementIds = new Set(
-    planRequirements(plan)
-      .flatMap((requirement) => requirement.arrangements)
-      .map((arrangement) => arrangement.id),
+    Arr.map(
+      Arr.flatMap(planRequirements(plan), (requirement) => requirement.arrangements),
+      (arrangement) => arrangement.id,
+    ),
   );
 
   for (const arrangement of state.arrangements) {
@@ -636,8 +674,8 @@ function validateSnapshot(plan: RelationPlan, state: OperatorStateSnapshot): voi
     if (
       arrangement.entries.length > 0 &&
       (rowKeys === undefined ||
-        arrangement.entries.some((entry) =>
-          entry.rowKeys.some((rowKey) => !rowKeys.has(encodeRowKey(rowKey))),
+        Arr.some(arrangement.entries, (entry) =>
+          Arr.some(entry.rowKeys, (rowKey) => !rowKeys.has(encodeRowKey(rowKey))),
         ))
     )
       throw fault(

@@ -5,7 +5,9 @@ import { Array as Arr, Record as Rec } from "effect";
 
 /** Collision-safe structural identity for public scalar and composite row keys. */
 export function encodeRowKey(key: RowKey): string {
-  return Array.isArray(key) ? `a:${key.map(encodePart).join("")}` : encodePart(key as RowKeyPart);
+  return Arr.isArray<typeof key>(key)
+    ? `a:${Arr.join(Arr.map(key, encodePart), "")}`
+    : encodePart(key);
 }
 
 function encodePart(part: RowKeyPart): string {
@@ -22,7 +24,7 @@ function encodePart(part: RowKeyPart): string {
 export function asRowKey(value: JsonValue): RowKey {
   if (isPart(value)) return value;
 
-  if (Array.isArray(value) && value.every(isPart)) return value;
+  if (Arr.isArray<typeof value>(value) && Arr.every(value, isPart)) return value;
   throw new TypeError("expression did not produce a scalar or composite row key");
 }
 
@@ -38,10 +40,13 @@ function isPart(value: JsonValue): value is RowKeyPart {
 export function canonicalJson(value: JsonValue): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
 
-  if (Arr.isArray<typeof value>(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (Arr.isArray<typeof value>(value)) return `[${Arr.join(Arr.map(value, canonicalJson), ",")}]`;
 
-  return `{${Rec.toEntries(value)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
-    .join(",")}}`;
+  const entries = Rec.toEntries(value);
+  entries.sort(([left], [right]) => left.localeCompare(right));
+
+  return `{${Arr.join(
+    Arr.map(entries, ([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`),
+    ",",
+  )}}`;
 }
