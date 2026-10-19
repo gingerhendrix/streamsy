@@ -3,7 +3,8 @@ import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { BunCrypto } from "@effect/platform-bun";
 import { Effect, Layer, Option } from "effect";
-import { memoryBlobs, sqliteBlobs } from "./blob-store.ts";
+import { memoryBlobs } from "./blob-store.ts";
+import { diskBlobs } from "./disk-blobs.ts";
 import { ServerConfig } from "./config.ts";
 import { streams } from "./streams.ts";
 
@@ -21,10 +22,11 @@ export const memoryHost = Layer.unwrap(
 export const sqliteHost = (filename: string) => {
   const storage = BunStorage.layer(streams, { client: { filename } });
 
-  return Layer.mergeAll(CheckpointStore.layer, Transaction.layer, sqliteBlobs).pipe(
-    Layer.provideMerge(storage),
-    Layer.provideMerge(BunCrypto.layer),
-  );
+  return Layer.mergeAll(
+    CheckpointStore.layer,
+    Transaction.layer,
+    filename === ":memory:" ? memoryBlobs : diskBlobs(`${filename}.blobs`),
+  ).pipe(Layer.provideMerge(storage), Layer.provideMerge(BunCrypto.layer));
 };
 
 export const StorageLive = Layer.unwrap(
