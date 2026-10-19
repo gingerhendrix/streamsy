@@ -1,9 +1,6 @@
----
-packages:
-  "group:streamsy": minor
----
+## @streamsy/storage@0.4.0
 
-## Streamsy 0.4: a new library, written in Effect
+### Streamsy 0.4: a new library, written in Effect
 
 Streamsy 0.4 is a complete rewrite in [Effect](https://effect.website) 4. It shares only the name and the Durable Streams protocol with the 0.2 releases. No code or API carries over, so treat it as a new library and not as an upgrade.
 
