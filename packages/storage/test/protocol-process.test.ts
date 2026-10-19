@@ -71,6 +71,8 @@ const appendArgs = (options: {
   String(options.waitUntil ?? 0),
 ];
 
+// The test spawns 18 Bun processes one after another. On a GitHub runner that
+// takes close to 5 s, the Vitest default, so it has its own limit.
 test("separate protocol processes preserve CAS, producer fencing, restart, lineage and TTL", async () => {
   const filename = `${scratch}/protocol-process-${process.pid}-${crypto.randomUUID()}.sqlite`;
 
@@ -174,4 +176,4 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
     await run(["create", filename, "expired", "old", "-", "2000-01-01T00:00:00Z"]),
   ).toMatchObject({ _tag: "Created" });
   expect(await run(["head", filename, "expired"])).toMatchObject({ _tag: "StreamNotFound" });
-});
+}, 30_000);
