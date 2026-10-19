@@ -82,8 +82,7 @@
     "test:dialects": "bun --bun vitest run test/action/outbox-dialects.test.ts"
   },
   "dependencies": {
-    "@streamsy/core": "workspace:*",
-    "effect": "4.0.5"
+    "@streamsy/core": "workspace:^"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
@@ -97,15 +96,17 @@
     "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.4.3",
     "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "4.0.5",
-    "@effect/platform-deno": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "alchemy": "2.0.0-beta.83"
+    "@effect/platform-bun": "^4.0.5",
+    "@effect/platform-deno": "^4.0.5",
+    "@effect/platform-node": "^4.0.5",
+    "alchemy": "^2.0.0-beta.83",
+    "effect": "^4.0.5"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {

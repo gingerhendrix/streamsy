@@ -42,8 +42,7 @@
     "test:dialects": "bun --bun vitest run test/dialects"
   },
   "dependencies": {
-    "@streamsy/core": "workspace:*",
-    "effect": "4.0.5"
+    "@streamsy/core": "workspace:^"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
@@ -55,14 +54,16 @@
     "@effect/vitest": "catalog:",
     "@streamsy/serve": "workspace:*",
     "@types/bun": "^1.4.3",
+    "effect": "4.0.5",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "4.0.5",
-    "@effect/sql-sqlite-bun": "4.0.5",
-    "@effect/sql-sqlite-do": "4.0.5"
+    "@effect/platform-bun": "^4.0.5",
+    "@effect/sql-sqlite-bun": "^4.0.5",
+    "@effect/sql-sqlite-do": "^4.0.5",
+    "effect": "^4.0.5"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
