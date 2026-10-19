@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/projection",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Checkpointed Effect projections over one or more retained streams.",
   "license": "MIT",
   "repository": {

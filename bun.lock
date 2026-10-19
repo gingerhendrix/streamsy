@@ -19,7 +19,7 @@
     },
     "examples/bugsy": {
       "name": "bugsy",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/platform-bun": "4.0.5",
         "@effect/sql-mysql2": "4.0.5",
@@ -41,7 +41,7 @@
     },
     "examples/fold-agent": {
       "name": "fold-agent-example",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/ai-anthropic": "4.0.5",
         "@effect/ai-openai": "4.0.5",
@@ -60,7 +60,7 @@
     },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.0.5",
@@ -86,7 +86,7 @@
     },
     "examples/hex-board": {
       "name": "hex-board",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/sql-sqlite-bun": "4.0.5",
         "@streamsy/core": "workspace:*",
@@ -103,7 +103,7 @@
     },
     "examples/issue-tracker-demo": {
       "name": "issue-tracker-demo",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.0.5",
@@ -142,7 +142,7 @@
     },
     "examples/issue-tracker-demo-event-sourced": {
       "name": "issue-tracker-demo-event-sourced",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/platform-bun": "4.0.5",
         "@streamsy/core": "workspace:*",
@@ -163,7 +163,7 @@
     },
     "examples/memory-server": {
       "name": "memory-server",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/platform-bun": "4.0.5",
         "@streamsy/core": "workspace:*",
@@ -180,7 +180,7 @@
     },
     "examples/platform-matrix": {
       "name": "platform-matrix",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@effect/platform-bun": "4.0.5",
         "@effect/platform-deno": "4.0.5",
@@ -219,7 +219,7 @@
     },
     "packages/conformance-tests": {
       "name": "@streamsy/conformance-tests",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "dependencies": {
         "@durable-streams/client": "0.2.7",
         "@durable-streams/server-conformance-tests": "^0.3.7",
