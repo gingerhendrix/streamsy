@@ -83,7 +83,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
     input: "events",
     decide: ({ state }) =>
       Effect.gen(function* () {
-        const previous = Object.hasOwn(state.issues, command.issueId)
+        const previous = Record.has(state.issues, command.issueId)
           ? state.issues[command.issueId]
           : undefined;
 
