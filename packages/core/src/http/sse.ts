@@ -1,5 +1,5 @@
 import type { StreamsFault } from "../fault.ts";
-import { Clock, Effect, Random, Stream } from "effect";
+import { Clock, Effect, Random, Record, Stream } from "effect";
 import { HttpServerResponse } from "effect/http";
 import type { Reader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
@@ -106,5 +106,5 @@ export function sse(
   if (encoding.useBase64) headers.set("stream-sse-data-encoding", "base64");
   const body = signal === undefined ? frames : signal.trackStream(frames);
 
-  return HttpServerResponse.stream(body, { headers: Object.fromEntries(headers) });
+  return HttpServerResponse.stream(body, { headers: Record.fromEntries(headers) });
 }

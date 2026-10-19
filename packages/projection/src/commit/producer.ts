@@ -1,6 +1,6 @@
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
-import { Array, Effect, Option } from "effect";
+import { Array, Effect, Option, Record } from "effect";
 import { isStreamsFault } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -12,7 +12,7 @@ import { beforeRecord, detailsOf, load, remove, pin, withState } from "./interna
 
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
 export const producerId = (id: string, version: number, params: Record<string, string>): string =>
-  `${id}/v${version}${Object.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
+  `${id}/v${version}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
 
 /** The pin write is the last save before the append, so its conflict is a pin failure. */
 const asPin = (fault: ProjectionFault): ProjectionFault =>
@@ -40,7 +40,7 @@ export const producer = pin(
               message: "A producer pin must include output sequences",
             });
 
-          for (const [name, position] of Object.entries(
+          for (const [name, position] of Record.toEntries(
             loaded.record.value.adapters.outputs ?? {},
           )) {
             if (position.epoch !== key.generation)
@@ -64,7 +64,7 @@ export const producer = pin(
         const ranges = request.unit.ranges;
         const positions = { ...adapters.outputs };
 
-        for (const [name, position] of Object.entries(positions)) {
+        for (const [name, position] of Record.toEntries(positions)) {
           if (position.epoch !== projection.generation)
             return yield* new ProjectionFault({
               phase: "load",
@@ -77,22 +77,22 @@ export const producer = pin(
         const result = yield* request.run;
 
         const processed = {
-          items: Object.fromEntries(
-            Object.entries(result.outputs).map(([name, output]) => [name, output.items]),
+          items: Record.fromEntries(
+            Record.toEntries(result.outputs).map(([name, output]) => [name, output.items]),
           ),
         };
 
         const seqs: Record<string, number> =
           pending === undefined
-            ? Object.fromEntries(
-                Object.keys(streams)
+            ? Record.fromEntries(
+                Record.keys(streams)
                   .filter((name) => (processed.items[name]?.length ?? 0) > 0)
                   .map((name) => [name, positions[name]?.nextSeq ?? 0]),
               )
             : (pending.seqs ?? {});
 
         // A changed handler may not silently omit a previously pinned output.
-        for (const name of Object.keys(seqs)) {
+        for (const name of Record.keys(seqs)) {
           if (streams[name] === undefined || (processed.items[name]?.length ?? 0) === 0)
             return yield* new ProjectionFault({
               phase: "process",
@@ -102,7 +102,7 @@ export const producer = pin(
         }
 
         if (pending !== undefined) {
-          for (const name of Object.keys(streams)) {
+          for (const name of Record.keys(streams)) {
             if ((processed.items[name]?.length ?? 0) > 0 && seqs[name] === undefined)
               return yield* new ProjectionFault({
                 phase: "process",
@@ -114,8 +114,8 @@ export const producer = pin(
 
         let token = before.token;
 
-        if (pending === undefined && Object.keys(seqs).length > 0) {
-          for (const [name, output] of Object.entries(streams)) {
+        if (pending === undefined && Record.keys(seqs).length > 0) {
+          for (const [name, output] of Record.toEntries(streams)) {
             if (seqs[name] === undefined) continue;
             const { wire, owner: outputOwner } = output.service;
 
@@ -154,8 +154,8 @@ export const producer = pin(
             adapters: { outputs: { ...positions } },
             pending: {
               seqs,
-              ranges: Object.fromEntries(
-                Object.entries(ranges).map(([name, range]) => [
+              ranges: Record.fromEntries(
+                Record.toEntries(ranges).map(([name, range]) => [
                   name,
                   {
                     from: range.from,
@@ -174,7 +174,7 @@ export const producer = pin(
             .pipe(Effect.mapError(asPin));
         }
 
-        for (const [name, output] of Object.entries(streams)) {
+        for (const [name, output] of Record.toEntries(streams)) {
           const seq = seqs[name];
           const items = processed.items[name] ?? [];
 
@@ -191,7 +191,7 @@ export const producer = pin(
         const record: CheckpointRecord = {
           identity,
           inputs: request.next.inputs,
-          adapters: Object.keys(positions).length === 0 ? adapters : { outputs: positions },
+          adapters: Record.keys(positions).length === 0 ? adapters : { outputs: positions },
         };
 
         yield* owner.compareAndSet(

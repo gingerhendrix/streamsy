@@ -2,7 +2,7 @@ import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Cause, Context, Effect, Exit, Fiber, Layer, type Scope } from "effect";
+import { Cause, Context, Effect, Exit, Fiber, Layer, Record, type Scope } from "effect";
 import type { Reactivity } from "effect/reactivity";
 import { SqlClient } from "effect/sql";
 import { tracker, outputStreams } from "./outputs.ts";
@@ -10,7 +10,7 @@ import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { routes } from "./streams.ts";
 
-export const streams = Streamsy.group(...Object.values(routes), ...outputStreams);
+export const streams = Streamsy.group(...Record.values(routes), ...outputStreams);
 
 /** Root Streamsy storage for `streams` over a SQL client: Postgres, MySQL or SQLite. */
 export const sqlStorage = <E>(
@@ -89,7 +89,7 @@ export const applicationLayer = <E>(
 /** Create declared inputs; a mismatched existing config stops startup. */
 export const createInputs = (workspaceId: string) =>
   Effect.gen(function* () {
-    const inputs = yield* Effect.all(Object.values(routes));
+    const inputs = yield* Effect.all(Record.values(routes));
 
     for (const stream of inputs) yield* stream.create({ workspaceId });
   });

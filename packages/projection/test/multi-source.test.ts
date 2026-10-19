@@ -2,7 +2,7 @@ import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect } from "vitest";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Record, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 import {
@@ -61,7 +61,7 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
       const ba = recorder({ b, a }, "ba");
       yield* Projection.run(ba.projection);
       expect(tags(ba.seen)).toEqual(["b:x#0", "a:1#1", "a:2#2", "a:3#3"]);
-      expect(Object.keys(ab.seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
+      expect(Record.keys(ab.seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
       expect(ab.seen[0]?.unit.key).toBe(ba.seen[0]?.unit.key.replace('"ba"', '"ab"'));
     }),
   );
@@ -76,7 +76,7 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 2 })))((it) => {
       expect(first.items).toBe(3);
       expect(tags(seen)).toEqual(["a:1#0", "a:2#1", "b:x#2"]);
       expect(first.offsets.b).not.toBe(ZERO_OFFSET);
-      expect(Object.keys(seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
+      expect(Record.keys(seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
       const second = yield* Projection.pass(projection);
       expect(second.items).toBe(1);
       expect(tags(seen).slice(3)).toEqual(["a:3#0"]);

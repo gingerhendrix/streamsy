@@ -1,5 +1,5 @@
 import { Projection } from "@streamsy/projection";
-import { Schema } from "effect";
+import { Record, Schema } from "effect";
 import { Identifier, IssueStatus } from "../domain/issue.ts";
 import { Events } from "./streams.ts";
 
@@ -17,7 +17,7 @@ export const commandView = Projection.fold({
   inputs: { events: Events },
   state: { schema: CommandView, initial: { issues: {}, nextSequence: 0 } },
   fold: (view, { item: event }) => {
-    const previous = Object.hasOwn(view.issues, event.issueId)
+    const previous = Record.has(view.issues, event.issueId)
       ? view.issues[event.issueId]
       : undefined;
 

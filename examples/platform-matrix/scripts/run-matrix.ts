@@ -41,6 +41,7 @@ import {
   Path,
   Redacted,
   Schedule,
+  Record as EffectRecord,
   Schema,
   type Scope,
   Stream,
@@ -376,7 +377,7 @@ const program = Effect.gen(function* () {
             // The protocol default is 30 s, which makes the suite slow.
             LONG_POLL_TIMEOUT_MS: "1500",
             // Only this runtime's databases. An unset URL stays unset, so its cells skip.
-            ...Object.fromEntries(
+            ...EffectRecord.fromEntries(
               databases.map((database) => [database.dialect.variable, database.url]),
             ),
           },
@@ -456,7 +457,7 @@ const program = Effect.gen(function* () {
         const smoke = yield* check(
           ["bun", "run", "smoke:http"],
           path.join(repoDir, "examples/bugsy"),
-          Object.fromEntries(
+          EffectRecord.fromEntries(
             DIALECTS.map((dialect) => [
               dialect.variable,
               dialect === server.dialect ? database.url : undefined,
@@ -588,7 +589,7 @@ const program = Effect.gen(function* () {
   const result = {
     startedAt: stamp,
     backends: BACKENDS,
-    databases: Object.fromEntries(
+    databases: EffectRecord.fromEntries(
       servers.map((server) => [server.dialect.backend, redactUrl(Redacted.value(server.url))]),
     ),
     cells,

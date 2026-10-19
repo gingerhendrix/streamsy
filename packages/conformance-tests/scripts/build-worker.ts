@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { NodePath } from "@effect/platform-node";
-import { Context, DateTime, Effect, Layer, Path, Schema } from "effect";
+import { Context, DateTime, Effect, Layer, Path, Record, Schema } from "effect";
 
 const { dirname, isAbsolute, join, relative, resolve } = Context.get(
   Effect.runSync(Effect.scoped(Layer.build(NodePath.layer))),
@@ -283,7 +283,7 @@ const build = () =>
       gzipBytesCliFile,
       gzipBytesCliStdin,
       gzipBytesBun,
-      inputModules: Object.keys(minified.metafile.inputs).length,
+      inputModules: Record.keys(minified.metafile.inputs).length,
       outputModules,
       conformanceProfile: "single-object-chain",
       placement: { kind: "byKey", key: "conformance" },

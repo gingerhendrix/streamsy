@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun file/package import boundary. */
 import { expect, test } from "vitest";
-import { Effect } from "effect";
+import { Effect, Record } from "effect";
 import * as DenoHost from "@streamsy/serve/deno";
 import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
 
@@ -25,12 +25,12 @@ test("the Deno SQLite helper leaves node:sqlite able to open a database", async 
 
 test("Cloudflare entries expose wakeups and the slot layer without the raw slot tag", async () => {
   const alchemy = await import("@streamsy/serve/alchemy");
-  expect(Object.keys(alchemy)).toContain("Wakeup");
-  expect(Object.keys(alchemy)).toContain("Wakeups");
-  expect(Object.keys(alchemy)).toContain("alarmSlotLayer");
+  expect(Record.keys(alchemy)).toContain("Wakeup");
+  expect(Record.keys(alchemy)).toContain("Wakeups");
+  expect(Record.keys(alchemy)).toContain("alarmSlotLayer");
 
   for (const name of ["Alarm", "AlarmSlot", "alarmLayer", "alarm", "reconcileAlarm"])
-    expect(Object.keys(alchemy)).not.toContain(name);
+    expect(Record.keys(alchemy)).not.toContain(name);
 
   for (const host of ["alchemy", "cloudflare"])
     expect(
@@ -42,5 +42,5 @@ test("Cloudflare entries expose wakeups and the slot layer without the raw slot 
     ).toEqual([]);
   const runtime = await import("@streamsy/serve/action/runtime");
   expect(runtime.OutboxWakeup.make).toBeTypeOf("function");
-  expect(Object.keys(runtime)).not.toContain("Wakeup");
+  expect(Record.keys(runtime)).not.toContain("Wakeup");
 });

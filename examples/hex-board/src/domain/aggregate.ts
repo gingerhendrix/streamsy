@@ -25,6 +25,7 @@
  * intermediate `fortify` phase, but it is not a player decision boundary.
  */
 
+import { Record as EffectRecord } from "effect";
 import { compareRolls } from "./dice.ts";
 import type { DefenseResolutionSource, GameEvent, PlayerController } from "./events.ts";
 import type { ContinentDef, GeneratedMap, MapIndex } from "./map.ts";
@@ -178,7 +179,7 @@ export function currentTurnId(state: AggregateState): string | undefined {
 }
 
 export function ownedBy(state: AggregateState, playerId: string): string[] {
-  return Object.values(state.territories)
+  return EffectRecord.values(state.territories)
     .filter((t) => t.ownerId === playerId)
     .map((t) => t.id)
     .toSorted();

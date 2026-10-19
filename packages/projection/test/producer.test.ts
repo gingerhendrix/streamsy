@@ -3,7 +3,7 @@ import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
 import { expect } from "vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { Context, Deferred, Effect, Fiber, Layer, Option, Record, Schema, Stream } from "effect";
 import { StorageFault, StreamAddress, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {
   Protocol,
@@ -664,7 +664,7 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
       const failing = failingAppends(1);
       fault(yield* withWriter(Projection.run(pair), failing.patch).pipe(Effect.result));
       const pinned = pinnedRecord((yield* stored(pair)).record);
-      expect(Object.keys(pinned.pending.ranges)).toEqual(["a", "b"]);
+      expect(Record.keys(pinned.pending.ranges)).toEqual(["a", "b"]);
       expect(pinned.pending.ranges.a?.count).toBe(2);
       expect(pinned.pending.ranges.b?.count).toBe(1);
 
@@ -674,7 +674,7 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
       expect(seen[1]?.a).toEqual([1, 2]);
       expect(seen[1]?.b).toEqual([10]);
       expect(seen[1]?.unit.key).toBe(seen[0]?.unit.key ?? "");
-      expect(Object.keys(seen[1]?.unit.ranges ?? {})).toEqual(["a", "b"]);
+      expect(Record.keys(seen[1]?.unit.ranges ?? {})).toEqual(["a", "b"]);
       expect(yield* readAll(output)).toEqual(["a:1", "a:2", "b:10"]);
       const after = yield* stored(pair);
       expect(after.record?.inputs).toEqual({

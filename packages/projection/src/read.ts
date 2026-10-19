@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Schema } from "effect";
+import { Effect, Option, Predicate, Record, Schema } from "effect";
 import {
   Offset,
   compare,
@@ -249,7 +249,7 @@ export const items = <Inputs extends InputMap>(
 ): ReadonlyArray<Entry<Inputs>> => {
   const out: Array<{ readonly input: string; readonly item: unknown; readonly index: number }> = [];
 
-  for (const [input, slice] of Object.entries<Slice<unknown>>(batch)) {
+  for (const [input, slice] of Record.toEntries<string, Slice<unknown>>(batch)) {
     for (const item of slice.items) out.push({ input, item, index: out.length });
   }
 

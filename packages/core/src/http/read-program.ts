@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Record } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { StreamsReader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
@@ -48,7 +48,7 @@ export function read(id: StreamId, options: ReadOptions = {}) {
 
       if (meta.expiresAt) headers.set("stream-expires-at", meta.expiresAt);
 
-      return HttpServerResponse.empty({ status: 200, headers: Object.fromEntries(headers) });
+      return HttpServerResponse.empty({ status: 200, headers: Record.fromEntries(headers) });
     }
 
     const response = yield* readProtocol(

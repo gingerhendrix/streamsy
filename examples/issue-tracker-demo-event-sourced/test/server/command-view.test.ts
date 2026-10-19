@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import { expect, test } from "vitest";
 import {
   applyEvent,
@@ -14,7 +15,7 @@ const seeded = mainWorkspaceSeed(stamp("seed")).reduce(applyEvent, emptyView);
 
 test("the seed folds into the base app's main workspace", () => {
   expect(seeded.projectIds).toEqual(["proj_streamsy", "proj_docs"]);
-  expect(Object.keys(seeded.issues)).toHaveLength(5);
+  expect(Record.keys(seeded.issues)).toHaveLength(5);
   expect(countInProgress(seeded, "proj_streamsy")).toBe(2);
   expect(countInProgress(seeded, "proj_docs")).toBe(0);
 });

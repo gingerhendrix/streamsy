@@ -1,4 +1,4 @@
-import { Data, Schema } from "effect";
+import { Data, Record as EffectRecord, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 
 /** Omit `offset` and `txid` rather than setting them to `undefined`. */
@@ -156,7 +156,7 @@ export function state<const C extends Collections>(
   id: string,
   options: { readonly collections: C & ValidCollections<C> },
 ): StateAddress<C> {
-  const codecs = Object.entries(options.collections).map(([type, collection]) =>
+  const codecs = EffectRecord.toEntries(options.collections).map(([type, collection]) =>
     stateChange({ schema: collection.schema, type }),
   );
 

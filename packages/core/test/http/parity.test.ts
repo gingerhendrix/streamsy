@@ -1,7 +1,7 @@
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- These tests exercise the named Web conversion boundary and consume actual response bytes.
 import { expect, it } from "vitest";
-import { Clock, Effect, Layer } from "effect";
+import { Clock, Effect, Layer, Record as EffectRecord } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";
 import { StreamsReader } from "../../src/protocol/index.ts";
@@ -22,7 +22,7 @@ const expiryFixtures: Readonly<Record<string, ReadonlyArray<WireFixture>>> = fix
 async function assertWire(response: Response, expected: WireFixture, bytes?: Uint8Array) {
   expect(response.status).toBe(expected.status);
   expect(response.statusText).toBe(expected.statusText);
-  expect(expected.headers).toStrictEqual(Object.fromEntries(response.headers));
+  expect(expected.headers).toStrictEqual(EffectRecord.fromEntries(response.headers));
   expect(Array.from(bytes ?? new Uint8Array(await response.arrayBuffer()))).toEqual(
     Array.from(expected.bytes),
   );
@@ -202,7 +202,7 @@ for (const visibility of ["private", "public"] as const) {
         });
 
         expect(conflict.status).toBe(status);
-        expect(Object.fromEntries(conflict.headers)).toMatchObject(expectedHeaders);
+        expect(EffectRecord.fromEntries(conflict.headers)).toMatchObject(expectedHeaders);
       }
 
       await compare("/api.v1/s?offset=-1&live=long-poll");

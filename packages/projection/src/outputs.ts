@@ -1,5 +1,5 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
-import { type Array, Effect, Predicate, type Schema } from "effect";
+import { type Array, Effect, Predicate, Record, type Schema } from "effect";
 import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -23,16 +23,16 @@ export type Services<O extends RoutedMap> = {
 /** Resolve routes just like inputs, retaining the route codec and collection names. */
 export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs: InputMap) => {
   const streams = addressesOf(outputs, params);
-  const ids = Object.values(streams).map((address) => address.id);
+  const ids = Record.values(streams).map((address) => address.id);
 
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
-  const inputIds = new Set(Object.values(inputs).map((address) => address.id));
+  const inputIds = new Set(Record.values(inputs).map((address) => address.id));
 
   if (ids.some((id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
 
-  if (Object.values(streams).some((address) => !Predicate.isTagged(address, "Json")))
+  if (Record.values(streams).some((address) => !Predicate.isTagged(address, "Json")))
     throw new RangeError("Projection outputs require JSON or state routes");
 
   return streams;
@@ -44,14 +44,10 @@ export const collect = (
   emitted: Readonly<Record<string, ReadonlyArray<any>>>,
 ) =>
   Effect.gen(function* () {
-    for (const [name, entries] of Object.entries(emitted)) {
+    for (const [name, entries] of Record.toEntries(emitted)) {
       const output = outputs[name];
 
-      if (
-        !Object.hasOwn(outputs, name) ||
-        output === undefined ||
-        !globalThis.Array.isArray(entries)
-      )
+      if (!Record.has(outputs, name) || output === undefined || !globalThis.Array.isArray(entries))
         return yield* new ProjectionFault({
           phase: "process",
           reason: "invalid-output",

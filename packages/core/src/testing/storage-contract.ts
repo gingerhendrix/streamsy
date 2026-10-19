@@ -13,6 +13,7 @@ import {
   Match,
   Option,
   Queue,
+  Record,
   Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
@@ -927,14 +928,14 @@ export const StorageContract = {
   /** The configured memory suite must exercise each shipped capability value. */
   assertModes(configurations: ReadonlyArray<StorageCapabilities>): void {
     it("configured contract runs cover both shipped capability modes", () => {
-      for (const [key, expected] of Object.entries({
+      for (const [key, expected] of Record.toEntries({
         fork: ["chain", "copy"],
         atomicScope: ["store", "stream"],
         wake: ["push", "poll"],
         expiryIndex: ["indexed", "lazy"],
       })) {
         expect(
-          new Set(configurations.map((c) => Object.entries(c).find(([k]) => k === key)?.[1])),
+          new Set(configurations.map((c) => Record.toEntries(c).find(([k]) => k === key)?.[1])),
         ).toEqual(new Set(expected));
       }
     });

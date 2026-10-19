@@ -2,7 +2,7 @@ import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Record, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { CommandRequest } from "../shared/api.ts";
@@ -122,7 +122,7 @@ const status = (workspaces: ReadonlyArray<string>) =>
 
 export const app = (workspaces: ReadonlyArray<string>) =>
   Layer.mergeAll(
-    Http.routes(Streamsy.group(...Object.values(routes), ...outputStreams), {
+    Http.routes(Streamsy.group(...Record.values(routes), ...outputStreams), {
       prefix: "/streams",
       access: "read",
     }),

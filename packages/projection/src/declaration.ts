@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- This internal binding implementation erases the handler and prepared-value types already checked by the constructor overloads. */
 /* oxlint-disable typescript/no-explicit-any, anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Declarations are the checked bridge between stream declarations and their mapped projection inputs; each assertion is documented at its use. */
-import { Option, Schema, type Effect } from "effect";
+import { Option, Record, Schema, type Effect } from "effect";
 import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
@@ -90,8 +90,8 @@ const encodeParams = <C extends StreamRoute.ParamCodecs>(
 ): Record<string, string> => {
   const values: Readonly<Record<string, unknown>> = params;
 
-  return Object.fromEntries(
-    Object.entries(codecs).map(([name, codec]) => {
+  return Record.fromEntries(
+    Record.toEntries(codecs).map(([name, codec]) => {
       const encoded = Schema.encodeOption(codec)(values[name]);
 
       if (Option.isNone(encoded))
@@ -103,8 +103,8 @@ const encodeParams = <C extends StreamRoute.ParamCodecs>(
 };
 
 export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams): Addresses<I> => {
-  const built: unknown = Object.fromEntries(
-    Object.entries(inputs).map(([name, input]) => [
+  const built: unknown = Record.fromEntries(
+    Record.toEntries(inputs).map(([name, input]) => [
       name,
       isDeclaration(input) ? input.at(params) : input,
     ]),
@@ -147,7 +147,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
         decoded: params,
       }),
     parse: (id) => {
-      for (const input of Object.values<Input>(definition.inputs)) {
+      for (const input of Record.values<string, Input>(definition.inputs)) {
         if (!isDeclaration(input)) continue;
         const parsed = input.parse(id);
 

@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect";
+import { Deferred, Effect, Layer, Option, Predicate, Record, Ref, Schedule } from "effect";
 import type { CheckpointStore } from "@streamsy/projection";
 import type { HackerNewsStories } from "../stories.ts";
 import { nowIso } from "../util.ts";
@@ -64,7 +64,7 @@ export function makeNewestStoriesPoller(
         const { rows, changes, offset } = yield* reconcileNewest(fetched, conflictRetries);
         yield* patchCounters({
           lastOffset: offset,
-          lastStoryCount: Object.keys(rows).length,
+          lastStoryCount: Record.keys(rows).length,
           lastUpserts: changes.filter(Predicate.isTagged("Upsert")).length,
           lastDeletes: changes.filter(Predicate.isTagged("Delete")).length,
         });

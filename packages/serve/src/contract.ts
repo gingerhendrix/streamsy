@@ -11,6 +11,8 @@
  * These are change-detection identities, not security digests.
  */
 
+import { Record } from "effect";
+
 export type CanonicalValue =
   | string
   | number
@@ -44,7 +46,7 @@ function isCanonicalArray(value: CanonicalValue): value is readonly CanonicalVal
 function canonicalObject(value: { readonly [key: string]: CanonicalValue }): string {
   const entries: string[] = [];
 
-  for (const key of Object.keys(value).toSorted(compareKeys)) {
+  for (const key of Record.keys(value).toSorted(compareKeys)) {
     const member = value[key];
 
     if (member === undefined) continue;

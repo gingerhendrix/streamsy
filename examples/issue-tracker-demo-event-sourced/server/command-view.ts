@@ -1,6 +1,6 @@
 import { Issue } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { Projection } from "@streamsy/projection";
-import { Match, Schema } from "effect";
+import { Match, Record, Schema } from "effect";
 import { issueAfter, type IssueEvent, type WorkspaceEvent } from "./events.ts";
 import { WorkspaceEvents } from "./streams.ts";
 
@@ -61,6 +61,6 @@ export const findIssue = (view: CommandView, issueId: string): Issue | undefined
 
 /** How many issues of the project are `in_progress` in this view. */
 export const countInProgress = (view: CommandView, projectId: string): number =>
-  Object.values(view.issues).filter(
+  Record.values(view.issues).filter(
     (issue) => issue.projectId === projectId && issue.status === "in_progress",
   ).length;

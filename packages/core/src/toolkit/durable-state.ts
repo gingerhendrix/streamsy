@@ -1,4 +1,4 @@
-import { type Array, Data, Predicate, type Types } from "effect";
+import { type Array, Data, Predicate, Record, type Types } from "effect";
 import type {
   Collections,
   CollectionsChange,
@@ -99,7 +99,7 @@ export function changes<C extends Collections, RD, RE>(
   const { offset } = options;
 
   return entries.map((entry, index): CollectionsChange<C> => {
-    const collection = Object.hasOwn(address.collections, entry.type)
+    const collection = Record.has(address.collections, entry.type)
       ? address.collections[entry.type]
       : undefined;
 

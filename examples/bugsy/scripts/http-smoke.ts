@@ -1,5 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Console, Effect, Layer, Schema } from "effect";
+import { Console, Effect, Layer, Record, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import {
   check,
@@ -28,7 +28,7 @@ const smoke = Effect.gen(function* () {
     status: "todo",
   });
   const before = yield* getJson(`${baseUrl}/api/workspaces/live/status`, Status);
-  yield* check(Object.keys(before.offsets).length === 5, "checkpoint does not have five inputs");
+  yield* check(Record.keys(before.offsets).length === 5, "checkpoint does not have five inputs");
   yield* check((yield* readBoard(baseUrl, "live")).rows.length === 1, "first row missing");
   yield* server.stop;
   yield* startServer(database, server.port);

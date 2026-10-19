@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import type { StreamAddress, Streamsy } from "@streamsy/core";
 
 /** Declaration order of the map is the read and item order of every pass. */
@@ -41,4 +42,4 @@ export type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["strea
 /** Iteration preserves the union of the declared input stream requirements. */
 export const inputEntries = <Inputs extends InputMap>(inputs: Inputs) =>
   // SAFETY: every iterated address comes from Inputs; its key is in the mapped union.
-  Object.entries(inputs) as Array<[string, Streamsy.Address<unknown, InputServices<Inputs>>]>;
+  Record.toEntries(inputs) as Array<[string, Streamsy.Address<unknown, InputServices<Inputs>>]>;

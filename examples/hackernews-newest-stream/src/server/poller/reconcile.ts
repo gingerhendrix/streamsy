@@ -1,4 +1,4 @@
-import { Effect, type Schedule } from "effect";
+import { Effect, Record, type Schedule } from "effect";
 import { DurableState, type OffsetMismatch } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { newestStorySort, type HnStory } from "../../state-schema.ts";
@@ -40,7 +40,7 @@ export const reconcileNewest = (
 
 /** Keep known rows on item-fetch failures while their ids remain in the newest set. */
 export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly StoryChange[] {
-  const removed = Object.values(previous)
+  const removed = Record.values(previous)
     .filter((story) => !fetched.newestIds.has(story.id))
     .toSorted((a, b) => a.id - b.id);
 

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Record } from "effect";
 import {
   inputEntries,
   emptySlice,
@@ -75,7 +75,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
 
     if (count === 0)
       return {
-        status: Object.values<Slice<unknown>>(batch).every((slice) => slice.closed)
+        status: Record.values<string, Slice<unknown>>(batch).every((slice) => slice.closed)
           ? "source-closed"
           : "caught-up",
         units: 0,
@@ -98,7 +98,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
   const next = { ...record, inputs: advance(record.inputs, ranges) };
   const outputs: Record<string, Details["outputs"][string]> = {};
 
-  for (const [name, address] of Object.entries(projection.streams ?? {})) {
+  for (const [name, address] of Record.toEntries(projection.streams ?? {})) {
     const service = yield* address.stream;
     outputs[name] = { address, service };
   }
@@ -135,8 +135,8 @@ export const pass = Effect.fn("Projection.pass")(function* <
     {
       outputs,
       prepare,
-      ranges: Object.fromEntries(
-        Object.entries(ranges).map(([name, range]) => [
+      ranges: Record.fromEntries(
+        Record.toEntries(ranges).map(([name, range]) => [
           name,
           { from: range.from, nextOffset: range.nextOffset, count: batch[name]?.items.length ?? 0 },
         ]),

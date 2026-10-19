@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import { expect, test } from "vitest";
 import * as Root from "@streamsy/core";
 import * as Protocol from "@streamsy/core/protocol";
@@ -10,7 +11,7 @@ test("public root exposes fault schemas, guards and result matchers", () => {
     "CreateResult",
     "AppendResult",
   ]) {
-    expect(Object.keys(Root)).toContain(name);
+    expect(Record.keys(Root)).toContain(name);
   }
 
   expect(
@@ -30,7 +31,7 @@ test("public root exposes fault schemas, guards and result matchers", () => {
 });
 
 test("public roots isolate internals", () => {
-  expect(Object.keys(Root)).not.toContain("OwnerRecords");
-  expect(Object.keys(Protocol.Protocol)).not.toContain("create");
-  expect(Object.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
+  expect(Record.keys(Root)).not.toContain("OwnerRecords");
+  expect(Record.keys(Protocol.Protocol)).not.toContain("create");
+  expect(Record.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
 });

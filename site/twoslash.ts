@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { transformerTwoslash } from "fumadocs-twoslash";
@@ -38,7 +39,7 @@ export const snippetTwoslashOptions = () => ({
   cwd: snippetsPackage,
   compilerOptions: snippetCompilerOptions,
   handbookOptions: { noStaticSemanticInfo: true },
-  extraFiles: Object.fromEntries(
+  extraFiles: Record.fromEntries(
     sharedModules.map((name) => [name, readFileSync(join(snippetsPackage, "src", name), "utf8")]),
   ),
 });

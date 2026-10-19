@@ -1,4 +1,4 @@
-import { Array, Effect } from "effect";
+import { Array, Effect, Record } from "effect";
 import { SqlClient } from "effect/sql";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -22,7 +22,7 @@ export const transaction = withPrepare(
         const store = yield* CheckpointStore;
         const outputs = detailsOf(pending).outputs;
 
-        for (const { address, service } of Object.values(outputs)) {
+        for (const { address, service } of Record.values(outputs)) {
           if (service.owner !== tx.owner)
             return yield* new ProjectionFault({
               phase: "load",
@@ -62,7 +62,7 @@ export const transaction = withPrepare(
             );
 
             if (result !== undefined && "outputs" in result) {
-              for (const [name, output] of Object.entries(result.outputs)) {
+              for (const [name, output] of Record.toEntries(result.outputs)) {
                 if (!Array.isReadonlyArrayNonEmpty(output.items)) continue;
                 const resolved = outputs[name];
 

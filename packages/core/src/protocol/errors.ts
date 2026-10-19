@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Record as EffectRecord, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 
 /** Protocol rejections. Optional create reasons reflect the public HTTP wire's loss of detail. */
@@ -197,4 +197,4 @@ const protocolErrorTags = {
 
 /** The HTTP edge answers every protocol rejection through one mapper, so it needs one guard. */
 export const isProtocolError = (error: { readonly _tag: string }): error is ProtocolError =>
-  Object.hasOwn(protocolErrorTags, error._tag);
+  EffectRecord.has<string, true>(protocolErrorTags, error._tag);

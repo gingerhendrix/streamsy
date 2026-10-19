@@ -35,7 +35,7 @@ describe("digests", () => {
   });
 });
 
-import { Schema } from "effect";
+import { Record, Schema } from "effect";
 import { PublicErrorSchema } from "../src/errors.ts";
 import { decodePublicError, type PublicError } from "../src/contract.ts";
 
@@ -88,8 +88,11 @@ test("S-4 server Schema and browser decoder agree on the wire JSON domain", () =
     expect(server(error)).toEqual(decodePublicError(error));
     candidates.push(error, { ...error, extra: "ignored" });
 
-    for (const key of Object.keys(error)) {
-      const missing = Object.fromEntries(Object.entries(error).filter(([name]) => name !== key));
+    for (const key of Record.keys<string, unknown>(error)) {
+      const missing = Record.fromEntries(
+        Record.toEntries<string, unknown>(error).filter(([name]) => name !== key),
+      );
+
       candidates.push(missing);
 
       for (const wrong of [null, false, [], {}, 2, "unknown"])

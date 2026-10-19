@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import { contractFingerprint } from "../contract.ts";
 /**
  * The action-sink declaration.
@@ -119,8 +120,8 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
     name: spec.name,
     key,
     handler: { ...spec.handler },
-    delivery: Object.fromEntries(
-      Object.entries(spec.delivery).map(([name, value]) => [
+    delivery: Record.fromEntries(
+      Record.toEntries(spec.delivery).map(([name, value]) => [
         name,
         Number.isFinite(value) ? value : String(value),
       ]),

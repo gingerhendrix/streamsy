@@ -1,3 +1,4 @@
+import { Record } from "effect";
 import { HttpServerResponse } from "effect/http";
 /**
  * Response factory for the HTTP layer.
@@ -78,6 +79,6 @@ export function fromWeb(response: Response): HttpServerResponse.HttpServerRespon
   return HttpServerResponse.raw(response, {
     status: response.status,
     statusText: response.statusText,
-    headers: Object.fromEntries(response.headers),
+    headers: Record.fromEntries(response.headers),
   });
 }

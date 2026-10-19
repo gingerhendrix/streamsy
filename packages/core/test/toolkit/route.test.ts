@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { Option, Schema } from "effect";
+import { Option, Record, Schema } from "effect";
 import { StreamId } from "../../src/schema/index.ts";
 import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as StreamRoute from "../../src/toolkit/route.ts";
@@ -133,7 +133,7 @@ it("state routes round trip decoded params and reject bad segments", () => {
   });
 
   const address = route.address({ id: 7 });
-  expect(Object.keys(address.collections)).toEqual(["entry"]);
+  expect(Record.keys(address.collections)).toEqual(["entry"]);
   expect(route.parse(address.id)).toEqual(Option.some({ id: 7 }));
   expect(address.contentType).toBe("application/json");
 

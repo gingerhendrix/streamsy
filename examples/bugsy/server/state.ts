@@ -1,5 +1,5 @@
 import { Projection } from "@streamsy/projection";
-import { DateTime, Effect, Match, Schema } from "effect";
+import { DateTime, Effect, Match, Record, Schema } from "effect";
 import type { CommandRequest } from "../shared/api.ts";
 import type { IssueEvent } from "../domain/issue.ts";
 import { commandView } from "./command-view.ts";
@@ -15,7 +15,7 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
     input: "events",
     decide: ({ state }) =>
       Effect.gen(function* () {
-        const previous = Object.hasOwn(state.issues, command.issueId)
+        const previous = Record.has(state.issues, command.issueId)
           ? state.issues[command.issueId]
           : undefined;
 

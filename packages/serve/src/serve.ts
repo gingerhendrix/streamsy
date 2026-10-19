@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Record, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Http, Offset, type StreamAddress, type Streamsy } from "@streamsy/core";
 import { StreamsReader, type StreamRoute } from "@streamsy/core/protocol";
@@ -148,8 +148,8 @@ function collectionDescriptor(value: unknown) {
       ),
     );
 
-    return Object.fromEntries(
-      Object.entries(collections).map(([type, collection]) => [type, collection.key]),
+    return Record.fromEntries(
+      Record.toEntries(collections).map(([type, collection]) => [type, collection.key]),
     );
   });
 }

@@ -6,7 +6,7 @@
  * a stated invariant at the assertion site.
  */
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This module is the checked boundary between an author's codec record and the decoded parameter set; every widening below is guarded by the invariant in its own comment. */
-import { Data, Option, Schema } from "effect";
+import { Data, Option, Record as EffectRecord, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 import * as StreamAddress from "./address.ts";
 import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-internal.ts";
@@ -106,7 +106,7 @@ function decodeParams<Codecs extends ParamCodecs>(
 ): Option.Option<Params<Codecs>> {
   const decoded: Record<string, unknown> = {};
 
-  for (const name of Object.keys(codecs)) {
+  for (const name of EffectRecord.keys(codecs)) {
     const value = raw[name];
     const codec = codecs[name];
 
@@ -199,7 +199,7 @@ function checkTemplateParams(
     if (codecs[name] === undefined)
       throw new RangeError(`stream route ${template} has no codec for parameter: ${name}`);
 
-  for (const name of Object.keys(codecs))
+  for (const name of EffectRecord.keys(codecs))
     if (!names.includes(name))
       throw new RangeError(`stream route codec is absent from the template: ${name}`);
 }
