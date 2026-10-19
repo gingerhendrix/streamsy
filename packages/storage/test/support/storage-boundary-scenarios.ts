@@ -427,6 +427,10 @@ export const runExternalRepair = (externalWrite: Effect.Effect<void>, probe: Bou
   Effect.gen(function* () {
     const storage = yield* Storage;
     const id = StreamId.make("external");
+    // Hold the repair poll until the commit check. A poll tick between the
+    // external commit and the check wakes the pull early, and a slow host
+    // makes that window wide enough to fail the check.
+    probe.repairsPaused = true;
     const pull = yield* Stream.toPull(storage.changes(id));
     yield* drain(pull);
     const pending = yield* drain(pull).pipe(Effect.forkScoped);
@@ -434,6 +438,7 @@ export const runExternalRepair = (externalWrite: Effect.Effect<void>, probe: Bou
     const repairPassesBefore = probe.repairPasses;
     yield* externalWrite;
     const parkedAfterCommit = pending.pollUnsafe() === undefined;
+    probe.repairsPaused = false;
     const value = yield* Fiber.join(pending).pipe(Effect.timeout("5 seconds"));
 
     return {
