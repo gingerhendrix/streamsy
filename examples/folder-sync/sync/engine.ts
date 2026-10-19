@@ -119,7 +119,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   let origin = yield* state.get("origin");
 
   if (origin === undefined) {
-    origin = yield* crypto.randomUUIDv4;
+    origin = yield* crypto.randomUUIDv4();
     yield* state.set("origin", origin);
   }
 
@@ -227,7 +227,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     }
 
     if (!adopt && writable(folderId) && !isEcho(localHash, known, exceptSeq !== undefined)) {
-      const opId = yield* crypto.randomUUIDv4;
+      const opId = yield* crypto.randomUUIDv4();
       yield* state.enqueue(
         { folderId, path: file, opId, base: conflictBase(known), hash: localHash, bytes: local },
         {
@@ -287,7 +287,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       return yield* Effect.void;
     }
 
-    const opId = yield* crypto.randomUUIDv4;
+    const opId = yield* crypto.randomUUIDv4();
     yield* state.enqueue(
       { folderId, path: normalized, opId, base: conflictBase(known), hash, bytes },
       {
