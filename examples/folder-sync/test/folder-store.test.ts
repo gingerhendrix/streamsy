@@ -1,443 +1,165 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { ZERO_OFFSET, StorageFault } from "@streamsy/core";
-import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
-import { InvalidFile, MissingFile } from "../server/domain.ts";
+import { DurableState, CommitBoundary, StorageFault } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
+import { Effect, Layer } from "effect";
 import {
-  FolderStore,
-  FolderStoreLive,
-  Initialise,
-  NoWriteHook,
-  WriteHook,
-  WriteHookFailure,
-} from "../server/folder-store.ts";
-import { Projection } from "@streamsy/projection";
-import { Files, Folders, folderHead } from "../server/streams.ts";
+  FolderConflict,
+  InvalidFile,
+  MissingFile,
+  PreconditionFailed,
+  prepareContent,
+} from "../server/domain.ts";
+import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
+import { Files } from "../server/streams.ts";
 import { memoryHost, sqliteHost } from "../server/storage.ts";
-
-const metadata = (opId: string, base: number | null = null) => ({
-  opId,
-  base,
-  author: "test",
-  origin: "test",
-});
-
-const bytes = (text: string) => new TextEncoder().encode(text);
 
 for (const [name, storage] of [
   ["memory", memoryHost],
   ["sqlite", sqliteHost(":memory:")],
 ] as const) {
-  const host = Layer.merge(Initialise, FolderStoreLive).pipe(
-    Layer.provideMerge(NoWriteHook),
-    Layer.provideMerge(storage),
-  );
-
+  const host = Layer.merge(Initialise, FolderStoreLive).pipe(Layer.provideMerge(storage));
   layer(host)(name, (it) => {
-    it.effect("invalid folder creates leave the registry unchanged", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        const folders = yield* Folders;
-        const before = yield* folders.collect({});
-
-        for (const [folderId, title] of [
-          ["x".repeat(101), "Long"],
-          ["雪".repeat(84), "Long bytes"],
-          ["bad-title", ""],
-        ]) {
-          expect(yield* Effect.flip(store.create(folderId ?? "", title ?? ""))).toBeInstanceOf(
-            InvalidFile,
-          );
-        }
-
-        expect(yield* folders.collect({})).toEqual(before);
-      }),
-    );
-    it.effect("opaque folder ids round trip and folder creation is idempotent", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        const folderId = "2026-10-10/a?b#c%/雪";
-        const first = yield* store.create(folderId, "Opaque");
-        expect(yield* store.create(folderId, "New title")).toEqual(first);
-        const folders = yield* Folders;
-        expect(
-          (yield* folders.collect({})).items.filter((folder) => folder.folderId === folderId),
-        ).toHaveLength(1);
-
-        const written = yield* store.write(
-          folderId,
-          "constructor",
-          metadata("opaque"),
-          bytes("opaque"),
-        );
-
-        expect((yield* store.read(folderId, "constructor")).version).toBe(written.version);
-        expect(yield* Effect.flip(store.read(folderId, "__proto__"))).toBeInstanceOf(MissingFile);
-      }),
-    );
-    it.effect("head reads and version waits fold in memory without writing the checkpoint", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        const head = folderHead.at({ folderId: "read-only" });
-        yield* store.create("read-only", "Read only");
-        yield* store.write("read-only", "a", metadata("ro-1"), bytes("one"));
-        const before = yield* Projection.read(head);
-
-        const second = yield* store.write("read-only", "a", metadata("ro-2", 1), bytes("two"));
-        const latest = yield* store.read("read-only", "a", { minVersion: second.version });
-
-        expect(latest.version).toBe(second.version);
-        expect(latest.bytes).toEqual(bytes("two"));
-        expect(yield* Projection.read(head)).toEqual(before);
-      }),
-    );
-    it.effect("head reads distinguish deleted files from missing and historical versions", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        yield* store.create("read-errors", "Read errors");
-        expect(yield* Effect.flip(store.read("read-errors", "a"))).toMatchObject({
-          message: "File not found",
-        });
-        const put = yield* store.write("read-errors", "a", metadata("put"), bytes("one"));
-        const removed = yield* store.write("read-errors", "a", metadata("delete", put.version));
-        expect(yield* Effect.flip(store.read("read-errors", "a"))).toMatchObject({
-          message: "File was deleted",
-        });
-        expect(
-          yield* Effect.flip(store.read("read-errors", "a", { at: removed.version })),
-        ).toMatchObject({ message: "File not found at the requested version" });
-      }),
-    );
-    it.effect("stale writes mark the exact unseen head and opId replay appends nothing", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        yield* store.create("lww", "LWW");
-        const first = yield* store.write("lww", "a.md", metadata("first"), bytes("one"));
-
-        const second = yield* store.write(
-          "lww",
-          "a.md",
-          metadata("second", first.version),
-          bytes("two"),
-        );
-
-        expect(second.overwrote).toBeUndefined();
-
-        const third = yield* store.write(
-          "lww",
-          "a.md",
-          metadata("third", first.version),
-          bytes("three"),
-        );
-
-        expect(third.overwrote).toBe(second.version);
-        expect(
-          yield* store.write("lww", "a.md", metadata("third", first.version), bytes("three")),
-        ).toEqual(third);
-        expect(yield* store.history("lww", "a.md")).toHaveLength(3);
-        expect(new TextDecoder().decode((yield* store.read("lww", "a.md")).bytes)).toBe("three");
-        expect(
-          new TextDecoder().decode((yield* store.read("lww", "a.md", { at: first.version })).bytes),
-        ).toBe("one");
-        expect(
-          yield* Effect.flip(
-            store.write("lww", "a.md", metadata("future", 9007199254740991), bytes("bad")),
-          ),
-        ).toBeInstanceOf(InvalidFile);
-      }),
-    );
     it.effect(
-      "replay after another writer moves the head returns its original receipt without reverting",
+      "versions rise across paths; delete takes no number; recreation rejects stale versions",
       () =>
         Effect.gen(function* () {
           const store = yield* FolderStore;
           const files = yield* Files;
-          yield* store.create("replay", "Replay");
-          const initial = yield* store.write("replay", "a", metadata("initial"), bytes("initial"));
-          const a1 = yield* store.write("replay", "a", metadata("__proto__"), bytes("A1"));
-          expect(a1.overwrote).toBe(initial.version);
-
-          const b1 = yield* store.write(
-            "replay",
-            "a",
-            metadata("constructor", a1.version),
-            bytes("B1"),
-          );
-
-          const tail = (yield* files.head({ folderId: "replay" })).nextOffset;
-          expect(yield* store.write("replay", "./a", metadata("__proto__"), bytes("A1"))).toEqual(
-            a1,
-          );
-          expect((yield* files.head({ folderId: "replay" })).nextOffset).toBe(tail);
-          expect((yield* store.read("replay", "a")).bytes).toEqual(bytes("B1"));
-          expect((yield* store.read("replay", "a")).version).toBe(b1.version);
-          expect(yield* store.history("replay", "a")).toHaveLength(3);
-
-          const reused = yield* Effect.flip(
-            store.write("replay", "other", metadata("__proto__"), bytes("bad")),
-          );
-
-          expect(reused).toMatchObject({ message: "opId already used" });
-          expect((yield* files.head({ folderId: "replay" })).nextOffset).toBe(tail);
-          expect(yield* store.history("replay", "other")).toEqual([]);
-        }),
-    );
-    it.effect("history has exact per-entry versions across paths, deletes and recreation", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        yield* store.create("history", "History");
-        const first = yield* store.write("history", "a", metadata("first"), bytes("a"));
-        const other = yield* store.write("history", "b", metadata("other"), bytes("b"));
-        const deleted = yield* store.write("history", "a", metadata("delete", first.version));
-        expect(deleted.overwrote).toBeUndefined();
-        expect(yield* store.write("history", "a", metadata("delete", first.version))).toEqual(
-          deleted,
-        );
-        expect(yield* Effect.flip(store.read("history", "a"))).toBeInstanceOf(MissingFile);
-        expect(
-          yield* Effect.flip(store.read("history", "a", { at: other.version })),
-        ).toBeInstanceOf(MissingFile);
-
-        const restored = yield* store.write(
-          "history",
-          "a",
-          metadata("restore", first.version),
-          bytes("restored"),
-        );
-
-        expect(restored.overwrote).toBe(deleted.version);
-        expect((yield* store.history("history", "a")).map((row) => row.version)).toEqual([
-          first.version,
-          deleted.version,
-          restored.version,
-        ]);
-        expect((yield* store.history("history", "b"))[0]?.version).toBe(other.version);
-        expect((yield* store.read("history", "a", { at: first.version })).bytes).toEqual(
-          bytes("a"),
-        );
-      }),
-    );
-    it.effect(
-      "batched history and a copied log rebuild retain folder sequences and first receipts",
-      () =>
-        Effect.gen(function* () {
-          const store = yield* FolderStore;
-          const files = yield* Files;
-          yield* store.create("sequence", "Sequence");
-
-          for (let version = 1; version <= 12; version++) {
-            const receipt = yield* store.write(
-              "sequence",
-              version % 2 ? "a" : "b",
-              metadata(`seq-${version}`),
-              bytes(`text-${version}`),
-            );
-
-            expect(receipt.version).toBe(version);
-          }
-
-          const pages = yield* files.read({ folderId: "sequence" }).pipe(Stream.runCollect);
-          expect(pages).toHaveLength(1);
-          expect(pages[0]?.items).toHaveLength(12);
-          expect((yield* store.history("sequence", "a")).map((row) => row.version)).toEqual([
-            1, 3, 5, 7, 9, 11,
-          ]);
-
-          for (const version of [1, 5, 9, 11]) {
-            const row = yield* store.read("sequence", "a", { at: version });
-            expect(row.version).toBe(version);
-            expect(row.operation.version).toBe(version);
-            expect(row.bytes).toEqual(bytes(`text-${version}`));
-          }
-
-          yield* Projection.run(folderHead.at({ folderId: "sequence" }));
-          const live = (yield* Projection.read(folderHead.at({ folderId: "sequence" }))).state;
-          const rebuilt = { ...folderHead.at({ folderId: "sequence" }), generation: 3 };
-          yield* Projection.run(rebuilt);
-          expect((yield* Projection.read(rebuilt)).state).toEqual(live);
-
-          // One append assigns different storage offsets while retaining every entry's version.
-          yield* store.create("copy", "Copied log");
-          const operations = (yield* files.collect({ folderId: "sequence" })).items;
-          const [first, ...remaining] = operations;
-
-          if (first === undefined) throw new Error("Expected source operations");
-          yield* files.append({ folderId: "copy" }, [first, ...remaining]);
-          yield* Projection.run(folderHead.at({ folderId: "copy" }));
-          expect((yield* Projection.read(folderHead.at({ folderId: "copy" }))).state).toEqual(live);
-          expect(
-            (yield* store.write("copy", "a", metadata("seq-1"), bytes("ignored replay"))).version,
-          ).toBe(1);
-          expect((yield* files.collect({ folderId: "copy" })).items).toHaveLength(12);
-          const next = yield* store.write("copy", "b", metadata("seq-13", 9), bytes("next"));
-          expect(next).toEqual({ version: 13, overwrote: 12 });
-        }),
-    );
-    it.effect("delete requires a live head, while known delete replays never append again", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        const files = yield* Files;
-        yield* store.create("delete", "Delete");
-        expect(
-          yield* Effect.flip(store.write("delete", "missing", metadata("missing-delete"))),
-        ).toBeInstanceOf(MissingFile);
-        expect((yield* files.head({ folderId: "delete" })).nextOffset).toBe(ZERO_OFFSET);
-        expect(yield* store.history("delete", "missing")).toEqual([]);
-        const put = yield* store.write("delete", "a", metadata("put"), bytes("first"));
-        const deleted = yield* store.write("delete", "a", metadata("delete", put.version));
-        expect(
-          yield* Effect.flip(store.write("delete", "a", metadata("delete-again", deleted.version))),
-        ).toBeInstanceOf(MissingFile);
-        expect((yield* files.collect({ folderId: "delete" })).items.at(-1)?.version).toBe(
-          deleted.version,
-        );
-        expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
-
-        const restored = yield* store.write(
-          "delete",
-          "a",
-          metadata("restore", deleted.version),
-          bytes("restored"),
-        );
-
-        expect(yield* store.write("delete", "a", metadata("delete", put.version))).toEqual(deleted);
-        expect((yield* files.collect({ folderId: "delete" })).items.at(-1)?.version).toBe(
-          restored.version,
-        );
-        expect((yield* store.read("delete", "a")).bytes).toEqual(bytes("restored"));
-        expect(yield* store.history("delete", "a")).toHaveLength(3);
-      }),
-    );
-    it.effect("concurrent stale edits commit in log order and expose the replaced versions", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        yield* store.create("race", "Race");
-        const first = yield* store.write("race", "a", metadata("initial"), bytes("initial"));
-
-        const results = yield* Effect.all(
-          [
-            store.write("race", "a", metadata("left", first.version), bytes("left")),
-            store.write("race", "a", metadata("right", first.version), bytes("right")),
-          ],
-          { concurrency: 2 },
-        );
-
-        const sorted = results.toSorted((a, b) => a.version - b.version);
-        expect(sorted[0]?.overwrote).toBeUndefined();
-        expect(sorted[1]?.overwrote).toBe(sorted[0]?.version);
-        const latest = sorted[1];
-
-        if (latest === undefined) throw new Error("Expected two committed edits");
-        expect((yield* store.read("race", "a")).version).toBe(latest.version);
-      }),
-    );
-    it.effect("minVersion waits for the head fold while allowing writes to proceed", () =>
-      Effect.gen(function* () {
-        const store = yield* FolderStore;
-        yield* store.create("wait", "Wait");
-        const first = yield* store.write("wait", "a", metadata("first"), bytes("a"));
-        const expected = 2;
-        const files = yield* Files;
-        const parked = yield* Deferred.make<void>();
-
-        const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
-          Effect.provideService(Files, {
-            ...files,
-            wire: {
-              ...files.wire,
-              readNext: (id, options) =>
-                Deferred.succeed(parked, undefined).pipe(
-                  Effect.andThen(files.wire.readNext(id, options)),
-                ),
-            },
-          }),
-        );
-
-        const reader = yield* Effect.gen(function* () {
-          const service = yield* FolderStore;
-
-          return yield* service.read("wait", "a", { minVersion: expected });
-        }).pipe(Effect.provideContext(context), Effect.forkChild);
-
-        yield* Deferred.await(parked);
-        const second = yield* store.write("wait", "b", metadata("second"), bytes("b"));
-        expect(second.version).toBe(expected);
-        expect((yield* Fiber.join(reader)).version).toBe(first.version);
-      }),
-    );
-    it.effect(
-      "hook storage failures retain their cause and roll back both same-owner appends",
-      () =>
-        Effect.gen(function* () {
-          const store = yield* FolderStore;
-          const files = yield* Files;
-          const folders = yield* Folders;
-          yield* store.create("storage-hook", "Hook storage failure");
-          const before = (yield* folders.collect({})).items.length;
-
-          const fault = new StorageFault({
-            operation: "hook.append",
-            message: "disk unavailable",
-            retryable: true,
+          const folder = "opaque/雪%";
+          yield* store.create(folder, "Docs", "create");
+          expect(yield* store.create(folder, "Docs", "repeat")).toEqual({
+            folderId: folder,
+            title: "Docs",
           });
-
-          const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
-            Effect.provideService(WriteHook, {
-              committed: () =>
-                folders
-                  .append({}, [
-                    { folderId: "rolled-back-storage-hook", title: "rollback", created: "test" },
-                  ])
-                  .pipe(Effect.andThen(Effect.fail(fault))),
-            }),
+          expect(yield* Effect.flip(store.create(folder, "Other", "conflict"))).toBeInstanceOf(
+            FolderConflict,
           );
 
-          const failure = yield* Effect.gen(function* () {
-            const service = yield* FolderStore;
+          const one = {
+            ...(yield* prepareContent(new TextEncoder().encode("one"))),
+            author: "test",
+            txid: "one",
+          };
 
-            return yield* Effect.flip(
-              service.write("storage-hook", "a", metadata("hook"), bytes("bad")),
-            );
-          }).pipe(Effect.provideContext(context));
+          const two = {
+            ...(yield* prepareContent(new TextEncoder().encode("two"))),
+            author: "test",
+            txid: "two",
+          };
 
-          expect(failure).toBeInstanceOf(WriteHookFailure);
-          expect(failure).toMatchObject({ cause: fault });
-          expect((yield* files.head({ folderId: "storage-hook" })).nextOffset).toBe(ZERO_OFFSET);
-          expect((yield* folders.collect({})).items).toHaveLength(before);
-          const retried = yield* store.write("storage-hook", "a", metadata("hook"), bytes("good"));
-          expect((yield* store.read("storage-hook", "a")).version).toBe(retried.version);
-          expect(yield* store.history("storage-hook", "a")).toHaveLength(1);
+          expect((yield* store.commit(folder, "a", one, { absent: true })).version).toBe(1);
+          expect((yield* store.commit(folder, "b", two)).version).toBe(2);
+          yield* store.remove(folder, "a", { txid: "delete", author: "test" }, { version: 1 });
+          expect(yield* Effect.flip(store.read(folder, "a"))).toBeInstanceOf(MissingFile);
+          expect((yield* store.commit(folder, "a", two, { absent: true })).version).toBe(3);
+          expect(yield* Effect.flip(store.commit(folder, "a", one, { version: 1 }))).toBeInstanceOf(
+            PreconditionFailed,
+          );
+          expect(
+            yield* Effect.flip(store.commit(folder, "a", one, { absent: true })),
+          ).toBeInstanceOf(PreconditionFailed);
+          expect(
+            yield* Effect.flip(
+              store.remove(folder, "a", { txid: "bad", author: "test" }, { absent: true }),
+            ),
+          ).toBeInstanceOf(InvalidFile);
+          const changes = (yield* files.collect({ folderId: folder })).items;
+          expect(
+            changes.map((change) => ("value" in change ? change.value.version : null)),
+          ).toEqual([1, 2, null, 3]);
+          expect(changes[2]).not.toHaveProperty("value");
+          // Replaying one event per append into another owner changes storage positions, never versions.
+          yield* files.create({ folderId: "copy" });
+
+          for (const change of changes) yield* files.append({ folderId: "copy" }, [change]);
+          expect((yield* files.collect({ folderId: "copy" })).items).toEqual(changes);
         }),
     );
-    it.effect("a failing same-commit hook rolls back the file append and its checkpoint", () =>
+    it.effect(
+      "same-hash no-op returns first txid before checking precondition; moved retry gets 412",
+      () =>
+        Effect.gen(function* () {
+          const store = yield* FolderStore;
+          const files = yield* Files;
+          yield* store.create("retry", "Retry", "create-retry");
+
+          const one = {
+            ...(yield* prepareContent(new TextEncoder().encode("one"))),
+            author: "test",
+            txid: "first",
+          };
+
+          const accepted = yield* store.commit("retry", "a", one, { absent: true });
+          const tail = (yield* files.head({ folderId: "retry" })).nextOffset;
+          expect(
+            yield* store.commit("retry", "a", { ...one, txid: "second" }, { absent: true }),
+          ).toEqual(accepted);
+          expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(tail);
+
+          const two = {
+            ...(yield* prepareContent(new TextEncoder().encode("two"))),
+            author: "test",
+            txid: "moved",
+          };
+
+          yield* store.commit("retry", "a", two, { version: 1 });
+          expect(
+            yield* Effect.flip(store.commit("retry", "a", one, { absent: true })),
+          ).toBeInstanceOf(PreconditionFailed);
+          yield* store.remove("retry", "a", { author: "test", txid: "delete" });
+          const deletedTail = (yield* files.head({ folderId: "retry" })).nextOffset;
+          expect(
+            yield* store.remove("retry", "a", { author: "test", txid: "repeat" }, { version: 1 }),
+          ).toEqual({ txid: "repeat" });
+          expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(deletedTail);
+        }),
+    );
+    it.effect("failed head persistence rolls back append and counter", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
-        yield* store.create("hook", "Hook");
+        const records = yield* OwnerRecords;
         const files = yield* Files;
-        const folders = yield* Folders;
-        const before = (yield* folders.collect({})).items.length;
+        yield* store.create("rollback", "Rollback", "create");
+
+        const body = {
+          ...(yield* prepareContent(new TextEncoder().encode("one"))),
+          author: "test",
+          txid: "first",
+        };
+
+        const before = (yield* files.head({ folderId: "rollback" })).nextOffset;
 
         const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
-          Effect.provideService(WriteHook, {
-            committed: () =>
-              folders
-                .append({}, [{ folderId: "hook-side-effect", title: "rollback", created: "test" }])
-                .pipe(Effect.andThen(Effect.fail(new InvalidFile({ message: "Hook rejected" })))),
+          Effect.provideService(OwnerRecords, {
+            ...records,
+            write: () =>
+              Effect.fail(
+                new StorageFault({ operation: "test", message: "disk failed", retryable: false }),
+              ),
           }),
         );
 
-        const failure = yield* Effect.gen(function* () {
-          const service = yield* FolderStore;
-
-          return yield* Effect.flip(service.write("hook", "a", metadata("hook"), bytes("bad")));
+        yield* Effect.gen(function* () {
+          const failing = yield* FolderStore;
+          yield* Effect.flip(failing.commit("rollback", "a", body));
         }).pipe(Effect.provideContext(context));
+        expect((yield* files.head({ folderId: "rollback" })).nextOffset).toBe(before);
+        expect((yield* store.commit("rollback", "a", body)).version).toBe(1);
+        // An arbitrary failed transaction cannot consume a number either.
+        const boundary = yield* CommitBoundary;
+        yield* Effect.flip(
+          boundary.withTransaction(
+            store.commit("rollback", "b", body).pipe(Effect.andThen(Effect.fail("abort"))),
+          ),
+        );
+        expect((yield* store.commit("rollback", "b", body)).version).toBe(2);
 
-        expect(failure).toBeInstanceOf(InvalidFile);
-        expect((yield* files.head({ folderId: "hook" })).nextOffset).toBe(ZERO_OFFSET);
-        expect((yield* folders.collect({})).items).toHaveLength(before);
-        expect(yield* store.history("hook", "a")).toEqual([]);
-        const committed = yield* store.write("hook", "a", metadata("good"), bytes("good"));
-        expect((yield* store.read("hook", "a")).version).toBe(committed.version);
+        const append = DurableState.changes(Files.at({ folderId: "rollback" }), {}, [
+          DurableState.remove("file", "missing"),
+        ]);
+
+        expect(append[0]?.headers.operation).toBe("delete");
       }),
     );
   });

@@ -2,75 +2,58 @@ import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Effect, Layer } from "effect";
-import {
-  FolderStore,
-  FolderStoreLive,
-  Initialise,
-  NoWriteHook,
-} from "../../server/folder-store.ts";
-import { testDirectory } from "../../scripts/test-directory.ts";
+import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
+import { prepareContent } from "../../server/domain.ts";
 import { sqliteHost } from "../../server/storage.ts";
-
-const metadata = { base: null, opId: "persisted", author: "test", origin: "test" };
+import { testDirectory } from "../../scripts/test-directory.ts";
 
 const graph = (filename: string) =>
-  Layer.merge(Initialise, FolderStoreLive).pipe(
-    Layer.provide(NoWriteHook),
-    Layer.provide(sqliteHost(filename)),
-  );
+  Layer.merge(Initialise, FolderStoreLive).pipe(Layer.provide(sqliteHost(filename)));
 
 layer(BunServices.layer)((it) => {
-  it.effect(
-    "SQLite recovers folder registry, head, blobs and operation receipts after restart",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("restart-");
-        const filename = `${directory}/files.sqlite`;
-        const bytes = new Uint8Array([0, 255, 1]);
+  it.effect("counter survives restarts both after an upsert and after a delete", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("counter-restart-");
 
-        const version = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* Layer.build(graph(filename));
-
-            return yield* Effect.gen(function* () {
-              const store = yield* FolderStore;
-              yield* store.create("daily/demo", "Persisted");
-
-              const first = yield* store.write("daily/demo", "binary", metadata, bytes);
-              yield* store.write(
-                "daily/demo",
-                "binary",
-                { ...metadata, opId: "later", base: first.version },
-                new Uint8Array([1, 2, 3]),
-              );
-
-              return first.version;
-            }).pipe(Effect.provideContext(context));
-          }),
-        );
-
+      for (const deleteBeforeRestart of [false, true]) {
+        const filename = `${directory}/${deleteBeforeRestart}.sqlite`;
         yield* Effect.scoped(
           Effect.gen(function* () {
             const context = yield* Layer.build(graph(filename));
             yield* Effect.gen(function* () {
               const store = yield* FolderStore;
-              expect((yield* store.create("daily/demo", "New title")).title).toBe("Persisted");
-              const head = yield* store.read("daily/demo", "binary");
-              expect(head.version > version).toBe(true);
-              expect(head.bytes).toEqual(new Uint8Array([1, 2, 3]));
-              expect((yield* store.write("daily/demo", "binary", metadata, bytes)).version).toBe(
-                version,
-              );
-              expect((yield* store.read("daily/demo", "binary")).bytes).toEqual(
-                new Uint8Array([1, 2, 3]),
-              );
-              expect(yield* store.history("daily/demo", "binary")).toHaveLength(2);
-              expect((yield* store.read("daily/demo", "binary", { at: version })).bytes).toEqual(
-                bytes,
-              );
+              yield* store.create("daily/demo", "Docs", "create");
+              const content = yield* prepareContent(new TextEncoder().encode("one"));
+              expect(
+                (yield* store.commit("daily/demo", "a", {
+                  ...content,
+                  txid: "first",
+                  author: "test",
+                })).version,
+              ).toBe(1);
+
+              if (deleteBeforeRestart)
+                yield* store.remove("daily/demo", "a", { txid: "delete", author: "test" });
             }).pipe(Effect.provideContext(context));
           }),
         );
-      }),
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const context = yield* Layer.build(graph(filename));
+            yield* Effect.gen(function* () {
+              const store = yield* FolderStore;
+              const content = yield* prepareContent(new TextEncoder().encode("two"));
+              expect(
+                (yield* store.commit("daily/demo", "a", {
+                  ...content,
+                  txid: "second",
+                  author: "test",
+                })).version,
+              ).toBe(2);
+            }).pipe(Effect.provideContext(context));
+          }),
+        );
+      }
+    }),
   );
 });

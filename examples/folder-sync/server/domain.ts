@@ -2,12 +2,11 @@ import { Crypto, Effect, Schema } from "effect";
 
 export const INLINE_LIMIT = 64 * 1024;
 
-export const FILE_LIMIT = 8 * 1024 * 1024;
+export const FILE_LIMIT = 64 * 1024 * 1024;
 
-/** Folder sequence carried in the log entry. Stream offsets are only cursors. */
+/** Folder sequence carried in the value. Offsets are read cursors only. */
 export const Version = Schema.Int.check(Schema.isGreaterThan(0));
 
-/** Decimal representation at HTTP header and query boundaries. */
 export const VersionFromString = Schema.String.check(Schema.isPattern(/^[1-9]\d*$/)).pipe(
   Schema.decodeTo(Schema.FiniteFromString),
   Schema.decodeTo(Version),
@@ -22,7 +21,6 @@ export const Identifier = Schema.String.check(
   Schema.makeFilter((value) => value.isWellFormed()),
 );
 
-/** Router limits decoded UTF-16 units; the 512-character hex stream id allows 249 UTF-8 bytes. */
 export const FolderId = Identifier.check(
   Schema.makeFilter((value) =>
     value.length <= 100 && new TextEncoder().encode(value).length <= 249
@@ -31,7 +29,11 @@ export const FolderId = Identifier.check(
   ),
 );
 
-export const CreateFolder = Schema.Struct({ folderId: FolderId, title: Identifier });
+export const CreateFolder = Schema.Struct({
+  txid: Identifier,
+  folderId: FolderId,
+  title: Identifier,
+});
 
 export class InvalidFile extends Schema.TaggedError<InvalidFile>()("InvalidFile", {
   message: Schema.String,
@@ -45,12 +47,12 @@ export class MissingFile extends Schema.TaggedError<MissingFile>()("MissingFile"
   message: Schema.String,
 }) {}
 
-export class VersionUnavailable extends Schema.TaggedError<VersionUnavailable>()(
-  "VersionUnavailable",
-  { version: Version },
-) {}
+export class FolderConflict extends Schema.TaggedError<FolderConflict>()("FolderConflict", {
+  message: Schema.String,
+}) {}
 
-/** POSIX file names. Traversal is rejected before redundant separators and dots are removed. */
+export class BlobMissing extends Schema.TaggedError<BlobMissing>()("BlobMissing", { hash: Hash }) {}
+
 const canonicalPath = (path: string): string | undefined => {
   const parts = path.split("/");
 
@@ -83,123 +85,35 @@ export const normalisePath = (path: string) => {
     : Effect.succeed(normalized);
 };
 
-const fields = {
-  version: Version,
-  path: Path,
-  base: Schema.NullOr(Version),
-  opId: Identifier,
-  author: Identifier,
-  origin: Identifier,
-  overwrote: Schema.optionalKey(Version),
-  updatedAt: Schema.optionalKey(Schema.String),
-};
-
-const putFields = {
-  ...fields,
-  type: Schema.Literal("put"),
+const contentFields = {
   hash: Hash,
-  size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(FILE_LIMIT)),
+  size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  author: Identifier,
+  text: Schema.optionalKey(Schema.String),
 };
 
-export const PutFile = Schema.Union([
-  Schema.Struct({ ...putFields, inline: Schema.String }),
-  Schema.Struct({ ...putFields, blob: Hash }),
-]).check(
-  Schema.makeFilter((operation) =>
-    "blob" in operation
-      ? operation.hash === operation.blob
-      : new TextEncoder().encode(operation.inline).length === operation.size &&
-        operation.size <= INLINE_LIMIT &&
-        !operation.inline.includes("\0"),
-  ),
-);
+export const CommitFile = Schema.Struct({ txid: Identifier, ...contentFields });
 
-export type PutFile = typeof PutFile.Type;
+export type CommitFile = typeof CommitFile.Type;
 
-export const DeleteFile = Schema.Struct({ ...fields, type: Schema.Literal("delete") });
+export const DeleteFile = Schema.Struct({ txid: Identifier, author: Identifier });
 
 export type DeleteFile = typeof DeleteFile.Type;
 
-export const FileOp = Schema.Union([PutFile, DeleteFile]);
+export const File = Schema.Struct({ path: Path, version: Version, ...contentFields });
 
-export type FileOp = typeof FileOp.Type;
+export type File = typeof File.Type;
 
-export const WriteMetadata = Schema.Struct({
-  base: fields.base,
-  opId: Identifier,
-  author: Identifier,
-  origin: Identifier,
-});
-
-export type WriteMetadata = typeof WriteMetadata.Type;
-
-export const Head = Schema.Struct({
-  version: Version,
-  hash: Schema.optionalKey(Hash),
-  size: Schema.Int,
-  deleted: Schema.Boolean,
-  opId: Identifier,
-  operation: FileOp,
-});
+export const Head = Schema.Struct({ version: Version, hash: Hash, txid: Identifier });
 
 export type Head = typeof Head.Type;
 
-export const Heads = Schema.Record(Schema.String, Head);
+export class PreconditionFailed extends Schema.TaggedError<PreconditionFailed>()(
+  "PreconditionFailed",
+  { head: Schema.NullOr(Head) },
+) {}
 
-export type Heads = typeof Heads.Type;
-
-export const OperationReceipt = Schema.Struct({
-  path: Path,
-  version: Version,
-  overwrote: Schema.optionalKey(Version),
-});
-
-export type OperationReceipt = typeof OperationReceipt.Type;
-
-export const Operations = Schema.Record(Schema.String, OperationReceipt);
-
-export type Operations = typeof Operations.Type;
-
-export const FolderState = Schema.Struct({
-  seq: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  heads: Heads,
-  ops: Operations,
-});
-
-export type FolderState = typeof FolderState.Type;
-
-export const headAt = (heads: Heads, path: string): Head | undefined =>
-  Object.hasOwn(heads, path) ? heads[path] : undefined;
-
-export const operationAt = (ops: Operations, opId: string): OperationReceipt | undefined =>
-  Object.hasOwn(ops, opId) ? ops[opId] : undefined;
-
-/** Keep the first receipt when rebuilding duplicate entries. Versions come from the entry. */
-export const foldHead = (state: FolderState, operation: FileOp): FolderState => {
-  const { version } = operation;
-  const common = { version, opId: operation.opId, operation };
-
-  const head: Head =
-    operation.type === "put"
-      ? { ...common, hash: operation.hash, size: operation.size, deleted: false }
-      : { ...common, size: 0, deleted: true };
-
-  const receipt = { path: operation.path, version, ...overwriteMarkFromOp(operation) };
-
-  const ops =
-    operationAt(state.ops, operation.opId) === undefined
-      ? { ...state.ops, [operation.opId]: receipt }
-      : state.ops;
-
-  return { seq: version, heads: { ...state.heads, [operation.path]: head }, ops };
-};
-
-export const overwriteMarkFromOp = (operation: FileOp | OperationReceipt) =>
-  operation.overwrote === undefined ? {} : { overwrote: operation.overwrote };
-
-/** A null base means the author had no head. Folder sequences follow commit order. */
-export const overwriteMark = (head: Head | undefined, base: number | null) =>
-  head !== undefined && (base === null || head.version > base) ? { overwrote: head.version } : {};
+export type Precondition = { readonly version: number } | { readonly absent: true } | undefined;
 
 export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
   const crypto = yield* Crypto.Crypto;
@@ -208,7 +122,7 @@ export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
   return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 });
 
-const inlineText = (bytes: Uint8Array): string | undefined => {
+export const inlineText = (bytes: Uint8Array): string | undefined => {
   if (bytes.length > INLINE_LIMIT) return undefined;
 
   try {
@@ -220,13 +134,10 @@ const inlineText = (bytes: Uint8Array): string | undefined => {
   }
 };
 
-/** Text is inline only when UTF-8 round trips without losing bytes. All other content is a blob. */
 export const prepareContent = Effect.fn("File.prepareContent")(function* (bytes: Uint8Array) {
   if (bytes.length > FILE_LIMIT) return yield* new FileTooLarge({ size: bytes.length });
   const hash = yield* sha256(bytes);
-  const inline = inlineText(bytes);
+  const text = inlineText(bytes);
 
-  return inline === undefined
-    ? { hash, size: bytes.length, blob: hash }
-    : { hash, size: bytes.length, inline };
+  return text === undefined ? { hash, size: bytes.length } : { hash, size: bytes.length, text };
 });

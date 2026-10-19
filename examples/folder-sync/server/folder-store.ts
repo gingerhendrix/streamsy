@@ -1,292 +1,236 @@
-import { CommitBoundary, ZERO_OFFSET, type Decision, type AppendFailure } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, Crypto, DateTime, Effect, Layer, Match, Schema, Stream } from "effect";
-import type { SqlError } from "effect/sql/SqlError";
+import { CommitBoundary, DurableState } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
-  FileOp,
+  BlobMissing,
+  CommitFile,
+  CreateFolder,
+  DeleteFile,
+  File,
+  FileTooLarge,
+  FolderConflict,
   FolderId,
-  Identifier,
+  Head,
+  INLINE_LIMIT,
+  FILE_LIMIT,
   InvalidFile,
   MissingFile,
-  OperationReceipt,
-  VersionUnavailable,
-  WriteMetadata,
-  headAt,
+  PreconditionFailed,
   normalisePath,
-  operationAt,
-  overwriteMark,
-  overwriteMarkFromOp,
-  prepareContent,
+  sha256,
+  type Precondition,
 } from "./domain.ts";
-import { Files, Folders, folderHead } from "./streams.ts";
+import { Files, Folders } from "./streams.ts";
 
-export type WriteHookError = InvalidFile | AppendFailure | SqlError;
+const StoredHead = Schema.Struct({ head: Head, value: File });
 
-export class WriteHookFailure extends Schema.TaggedError<WriteHookFailure>()("WriteHookFailure", {
-  cause: Schema.Defect(),
-}) {}
+const StoredHeadJson = Schema.fromJsonString(StoredHead);
 
-/** Runs after the append, on its owner fiber in the same transaction. A host can capture another stream here. */
-export class WriteHook extends Context.Service<
-  WriteHook,
-  {
-    readonly committed: (
-      folderId: string,
-      operation: FileOp,
-      version: number,
-    ) => Effect.Effect<void, WriteHookError>;
-  }
->()("FolderSync/WriteHook") {}
+const CounterJson = Schema.fromJsonString(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)));
 
-export const NoWriteHook = Layer.succeed(WriteHook, { committed: () => Effect.void });
+const key = (folderId: string, path?: string) =>
+  JSON.stringify(["folder-sync.owner.v1", folderId, path ?? null]);
 
-const validId = (folderId: string) =>
-  Schema.decodeEffect(FolderId)(folderId).pipe(
-    Effect.mapError(
-      () =>
-        new InvalidFile({
-          message: "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
-        }),
-    ),
-  );
+const invalid = () => new InvalidFile({ message: "Invalid request" });
 
-const requireFolder = Effect.fn("Folder.require")(function* (folderId: string) {
-  yield* validId(folderId);
-  const files = yield* Files;
-
-  return yield* files
-    .head({ folderId })
-    .pipe(Effect.catchTag("StreamNotFound", () => new MissingFile({ message: "Unknown folder" })));
-});
-
-const create = Effect.fn("Folder.create")(function* (folderId: string, title: string) {
-  yield* validId(folderId);
-  yield* Schema.decodeEffect(Identifier)(title).pipe(
-    Effect.mapError(() => new InvalidFile({ message: "Invalid folder title" })),
-  );
-  const folders = yield* Folders;
-  const files = yield* Files;
-  const boundary = yield* CommitBoundary;
-  const created = DateTime.formatIso(yield* DateTime.now);
-
-  return yield* boundary.withTransaction(
-    Effect.gen(function* () {
-      const existing = (yield* folders.collect({})).items.find(
-        (item) => item.folderId === folderId,
-      );
-
-      if (existing !== undefined) return existing;
-      const folder = { folderId, title, created };
-      yield* files.create({ folderId });
-      yield* folders.append({}, [folder]);
-
-      return folder;
-    }),
-  );
-});
-
-type WriteDecision = { readonly replay: OperationReceipt } | { readonly operation: FileOp };
-
-const write = Effect.fn("Folder.write")(function* (
-  folderId: string,
-  path: string,
-  metadata: WriteMetadata,
-  bytes?: Uint8Array,
-) {
-  const normalized = yield* normalisePath(path);
-
-  const meta = yield* Schema.decodeEffect(WriteMetadata)(metadata).pipe(
-    Effect.mapError(() => new InvalidFile({ message: "Invalid write metadata" })),
-  );
-
-  yield* requireFolder(folderId);
-  // Immutable content is stored before the authoritative append. A failed write may leave an orphan blob.
-  const content = bytes === undefined ? undefined : yield* prepareContent(bytes);
-
-  if (content !== undefined && "blob" in content && bytes !== undefined) {
-    const blobs = yield* BlobStore;
-    yield* blobs.put(bytes);
-  }
-
-  const boundary = yield* CommitBoundary;
-  const hook = yield* WriteHook;
-  const writtenAt = yield* DateTime.now;
-
-  return yield* boundary.withTransaction(
-    Effect.gen(function* () {
-      const result = yield* Projection.decide(folderHead.at({ folderId }), {
-        input: "input",
-        decide: ({
-          state,
-        }): Effect.Effect<Decision<WriteDecision, FileOp>, InvalidFile | MissingFile> => {
-          const replay = operationAt(state.ops, meta.opId);
-
-          if (replay !== undefined) {
-            if (replay.path !== normalized)
-              return Effect.fail(new InvalidFile({ message: "opId already used" }));
-
-            return Effect.succeed({ value: { replay }, items: [] });
-          }
-
-          const head = headAt(state.heads, normalized);
-
-          if (content === undefined && (head === undefined || head.deleted))
-            return Effect.fail(new MissingFile({ message: "File not found" }));
-
-          if (meta.base !== null && meta.base > state.seq)
-            return Effect.fail(
-              new InvalidFile({ message: "Base version is ahead of the folder log" }),
-            );
-
-          const common = {
-            ...meta,
-            // Projection.decide appends with expectedOffset, so competing writers cannot reuse seq + 1.
-            version: state.seq + 1,
-            path: normalized,
-            ...overwriteMark(head, meta.base),
-            updatedAt: DateTime.formatIso(writtenAt),
-          };
-
-          const operation: FileOp =
-            content === undefined
-              ? { ...common, type: "delete" }
-              : { ...common, type: "put", ...content };
-
-          return Effect.succeed({ value: { operation }, items: [operation] });
-        },
-      });
-
-      if ("replay" in result.value)
-        return {
-          version: result.value.replay.version,
-          ...overwriteMarkFromOp(result.value.replay),
-        };
-
-      if (result.appended)
-        yield* hook
-          .committed(folderId, result.value.operation, result.value.operation.version)
-          .pipe(
-            Effect.mapError((error) =>
-              Match.value(error).pipe(
-                Match.tag("InvalidFile", (invalid) => invalid),
-                Match.orElse((cause) => new WriteHookFailure({ cause })),
-              ),
-            ),
-          );
-
-      return {
-        version: result.value.operation.version,
-        ...overwriteMarkFromOp(result.value.operation),
-      };
-    }),
-  );
-});
-
-const history = Effect.fn("Folder.history")(function* (folderId: string, path: string) {
-  const normalized = yield* normalisePath(path);
-  yield* requireFolder(folderId);
-  const files = yield* Files;
-
-  return yield* files.read({ folderId }).pipe(
-    Stream.runFold(
-      () => new Array<{ version: number; operation: FileOp }>(),
-      (rows, batch) => {
-        for (const operation of batch.items) {
-          if (operation.path === normalized) rows.push({ version: operation.version, operation });
-        }
-
-        return rows;
-      },
-    ),
-  );
-});
-
-const waitForVersion = Effect.fn("Folder.waitForVersion")(function* (
-  folderId: string,
-  version: number,
-) {
-  const files = yield* Files;
-  yield* requireFolder(folderId);
-  const projection = folderHead.at({ folderId });
-
-  while (true) {
-    // Folds in memory from the follower's checkpoint. Reads never write the head checkpoint.
-    const progress = yield* Projection.current(projection);
-
-    if (progress.state.seq >= version) return;
-    // This offset is only a wake-up cursor; the fold decides readiness.
-    yield* files.wire.readNext(Files.at({ folderId }).id, {
-      offset: progress.offsets.input ?? ZERO_OFFSET,
-    });
-  }
-});
-
-const read = Effect.fn("Folder.read")(function* (
-  folderId: string,
-  path: string,
-  options: { at?: number; minVersion?: number } = {},
-) {
-  const normalized = yield* normalisePath(path);
-  yield* requireFolder(folderId);
-
-  const minVersion = options.minVersion;
-
-  if (minVersion !== undefined)
-    yield* waitForVersion(folderId, minVersion).pipe(
-      Effect.timeoutOrElse({
-        duration: "10 seconds",
-        orElse: () => new VersionUnavailable({ version: minVersion }),
-      }),
-    );
-  let selected: { version: number; operation: FileOp } | undefined;
-
-  if (options.at !== undefined) {
-    selected = (yield* history(folderId, normalized)).find((row) => row.version === options.at);
-  } else {
-    const head = yield* Projection.current(folderHead.at({ folderId }));
-    selected = headAt(head.state.heads, normalized);
-  }
-
-  if (selected === undefined || selected.operation.type === "delete")
-    return yield* new MissingFile({
-      message:
-        options.at !== undefined
-          ? "File not found at the requested version"
-          : selected?.operation.type === "delete"
-            ? "File was deleted"
-            : "File not found",
-    });
-  const operation = selected.operation;
-
-  if ("inline" in operation)
-    return {
-      version: selected.version,
-      operation,
-      bytes: new TextEncoder().encode(operation.inline),
-    };
-  const blobs = yield* BlobStore;
-  const bytes = yield* blobs.get(operation.blob);
-
-  if (bytes === undefined) return yield* new MissingFile({ message: "Blob not found" });
-
-  return { version: selected.version, operation, bytes };
-});
+const condition = (head: Head | undefined, precondition: Precondition) =>
+  precondition === undefined ||
+  ("absent" in precondition ? head === undefined : head?.version === precondition.version)
+    ? Effect.void
+    : Effect.fail(new PreconditionFailed({ head: head ?? null }));
 
 const make = Effect.gen(function* () {
-  const context = yield* Effect.context<
-    Files | Folders | CheckpointStore | CommitBoundary | BlobStore | WriteHook | Crypto.Crypto
-  >();
+  const files = yield* Files;
+  const folders = yield* Folders;
+  const records = yield* OwnerRecords;
+  const boundary = yield* CommitBoundary;
+  const blobs = yield* BlobStore;
+  const crypto = yield* Crypto.Crypto;
 
-  return {
-    create: (...args: Parameters<typeof create>) =>
-      create(...args).pipe(Effect.provideContext(context)),
-    write: (...args: Parameters<typeof write>) =>
-      write(...args).pipe(Effect.provideContext(context)),
-    read: (...args: Parameters<typeof read>) => read(...args).pipe(Effect.provideContext(context)),
-    history: (...args: Parameters<typeof history>) =>
-      history(...args).pipe(Effect.provideContext(context)),
-  };
+  const requireFolder = Effect.fn("Folder.require")(function* (folderId: string) {
+    yield* Schema.decodeEffect(FolderId)(folderId).pipe(Effect.mapError(invalid));
+
+    return yield* files
+      .head({ folderId })
+      .pipe(
+        Effect.catchTag("StreamNotFound", () => new MissingFile({ message: "Unknown folder" })),
+      );
+  });
+
+  const load = Effect.fn("Folder.head")(function* (folderId: string, path: string) {
+    const encoded = yield* records.read(key(folderId, path));
+
+    return Option.isNone(encoded)
+      ? undefined
+      : yield* Schema.decodeEffect(StoredHeadJson)(encoded.value);
+  });
+
+  const create = Effect.fn("Folder.create")(function* (
+    folderId: string,
+    title: string,
+    txid: string,
+  ) {
+    yield* Schema.decodeEffect(CreateFolder)({ folderId, title, txid }).pipe(
+      Effect.mapError(invalid),
+    );
+
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const state = yield* folders.fold(
+          {},
+          () => new Map<string, typeof Folders.collections.folder.schema.Type>(),
+          (rows, change) => {
+            if ("value" in change) rows.set(change.key, change.value);
+            else rows.delete(change.key);
+
+            return rows;
+          },
+        );
+
+        const existing = state.state.get(folderId);
+
+        if (existing !== undefined) {
+          if (existing.title !== title)
+            return yield* new FolderConflict({ message: "Folder title differs" });
+
+          return existing;
+        }
+
+        const value = { folderId, title };
+        yield* files.create({ folderId });
+
+        const changes = DurableState.changes(Folders.at({}), { offset: state.offset }, [
+          DurableState.upsert("folder", value, {
+            headers: { txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
+          }),
+        ]);
+
+        yield* folders.append({}, changes, { expectedOffset: state.offset });
+        yield* records.write(key(folderId), "0");
+
+        return value;
+      }),
+    );
+  });
+
+  const commit = Effect.fn("Folder.commit")(function* (
+    folderId: string,
+    path: string,
+    input: CommitFile,
+    precondition?: Precondition,
+  ) {
+    const normalized = yield* normalisePath(path);
+    const body = yield* Schema.decodeEffect(CommitFile)(input).pipe(Effect.mapError(invalid));
+
+    if (body.size > FILE_LIMIT) return yield* new FileTooLarge({ size: body.size });
+    yield* requireFolder(folderId);
+
+    if (body.text !== undefined) {
+      const bytes = new TextEncoder().encode(body.text);
+
+      if (
+        !body.text.isWellFormed() ||
+        body.text.includes("\0") ||
+        bytes.length > INLINE_LIMIT ||
+        bytes.length !== body.size
+      )
+        return yield* new InvalidFile({ message: "Invalid inline text" });
+
+      if ((yield* sha256(bytes).pipe(Effect.provideService(Crypto.Crypto, crypto))) !== body.hash)
+        return yield* new InvalidFile({ message: "Text hash mismatch" });
+    } else if ((yield* blobs.head(body.hash)) !== body.size)
+      return yield* new BlobMissing({ hash: body.hash });
+
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const current = yield* load(folderId, normalized);
+
+        if (current?.head.hash === body.hash) return current.head;
+        yield* condition(current?.head, precondition);
+        const tail = (yield* files.head({ folderId })).nextOffset;
+        const encoded = yield* records.read(key(folderId));
+
+        // The counter belongs to the owner, independently of retained stream history.
+        const last = Option.isNone(encoded)
+          ? 0
+          : yield* Schema.decodeEffect(CounterJson)(encoded.value);
+
+        const value: File = {
+          path: normalized,
+          version: last + 1,
+          hash: body.hash,
+          size: body.size,
+          author: body.author,
+          text: body.text,
+        };
+
+        const head: Head = { version: value.version, hash: value.hash, txid: body.txid };
+
+        const changes = DurableState.changes(Files.at({ folderId }), { offset: tail }, [
+          DurableState.upsert("file", value, {
+            headers: { txid: body.txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
+          }),
+        ]);
+
+        yield* files.append({ folderId }, changes, { expectedOffset: tail });
+        yield* records.write(
+          key(folderId, normalized),
+          yield* Schema.encodeEffect(StoredHeadJson)({ head, value }),
+        );
+        yield* records.write(key(folderId), String(value.version));
+
+        return head;
+      }),
+    );
+  });
+
+  const remove = Effect.fn("Folder.delete")(function* (
+    folderId: string,
+    path: string,
+    input: DeleteFile,
+    precondition?: Precondition,
+  ) {
+    const normalized = yield* normalisePath(path);
+    const body = yield* Schema.decodeEffect(DeleteFile)(input).pipe(Effect.mapError(invalid));
+
+    if (precondition !== undefined && "absent" in precondition)
+      return yield* new InvalidFile({ message: "Delete does not accept If-None-Match" });
+    yield* requireFolder(folderId);
+
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const current = yield* load(folderId, normalized);
+
+        if (current === undefined) return { txid: body.txid };
+        yield* condition(current.head, precondition);
+        const tail = (yield* files.head({ folderId })).nextOffset;
+
+        const changes = DurableState.changes(Files.at({ folderId }), { offset: tail }, [
+          DurableState.remove("file", normalized, {
+            headers: { txid: body.txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
+          }),
+        ]);
+
+        yield* files.append({ folderId }, changes, { expectedOffset: tail });
+        yield* records.remove(key(folderId, normalized));
+
+        return { txid: body.txid };
+      }),
+    );
+  });
+
+  const read = Effect.fn("Folder.read")(function* (folderId: string, path: string) {
+    const normalized = yield* normalisePath(path);
+    yield* requireFolder(folderId);
+    const stored = yield* load(folderId, normalized);
+
+    if (stored === undefined) return yield* new MissingFile({ message: "File not found" });
+
+    return stored;
+  });
+
+  return { create, commit, remove, read };
 });
 
 export class FolderStore extends Context.Service<FolderStore, Effect.Success<typeof make>>()(

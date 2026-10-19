@@ -1,297 +1,205 @@
-import { Effect, Layer, Match, Schema, Stream } from "effect";
+import { Config, Effect, Layer, Match, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { BlobFailure, BlobStore } from "./blob-store.ts";
 import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiMiddleware,
-  HttpApiSchema,
-} from "effect/http-api";
-import { BlobStore } from "./blob-store.ts";
-import {
-  FILE_LIMIT,
+  CommitFile,
   CreateFolder,
-  FolderId,
-  FileOp,
-  FileTooLarge,
+  DeleteFile,
+  FILE_LIMIT,
   Hash,
-  Identifier,
-  Version,
+  InvalidFile,
   VersionFromString,
+  type Precondition,
 } from "./domain.ts";
 import { FolderStore } from "./folder-store.ts";
-import { Folder } from "./streams.ts";
 
-class BadRequest extends Schema.TaggedError<BadRequest>()(
-  "BadRequest",
-  { error: Schema.String },
-  { httpApiStatus: 400 },
-) {}
+const json = HttpServerResponse.jsonUnsafe;
 
-class NotFound extends Schema.TaggedError<NotFound>()(
-  "NotFound",
-  { error: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+const precondition = Effect.fn("Api.precondition")(function* (
+  headers: Readonly<Record<string, string | undefined>>,
+) {
+  const match = headers["if-match"];
+  const absent = headers["if-none-match"];
 
-class TooLarge extends Schema.TaggedError<TooLarge>()(
-  "TooLarge",
-  { error: Schema.String },
-  { httpApiStatus: 413 },
-) {}
+  if (match !== undefined && absent !== undefined)
+    return yield* new InvalidFile({ message: "Conflicting preconditions" });
 
-class Conflict extends Schema.TaggedError<Conflict>()(
-  "Conflict",
-  { error: Schema.String },
-  { httpApiStatus: 409 },
-) {}
+  if (absent !== undefined) {
+    if (absent !== "*") return yield* new InvalidFile({ message: "Expected If-None-Match: *" });
+    const result: Precondition = { absent: true };
 
-class Unavailable extends Schema.TaggedError<Unavailable>()(
-  "Unavailable",
-  { error: Schema.String },
-  { httpApiStatus: 503 },
-) {}
+    return result;
+  }
 
-class InternalError extends Schema.TaggedError<InternalError>()(
-  "InternalError",
-  { error: Schema.String },
-  { httpApiStatus: 500 },
-) {}
+  if (match === undefined) return undefined;
 
-class RequestErrors extends HttpApiMiddleware.Service<RequestErrors>()("FolderSync/RequestErrors", {
-  error: BadRequest,
-}) {}
+  if (!/^"[1-9]\d*"$/.test(match))
+    return yield* new InvalidFile({ message: "Expected a quoted version in If-Match" });
 
-const errors = [BadRequest, NotFound, TooLarge, Conflict, Unavailable, InternalError];
+  const version = yield* Schema.decodeEffect(VersionFromString)(match.slice(1, -1)).pipe(
+    Effect.mapError(() => new InvalidFile({ message: "Invalid version" })),
+  );
 
-const fileParams = { folderId: FolderId, "*": Schema.String };
+  return { version };
+});
 
-/** HttpApi decodes these URI components before passing metadata to a handler. */
-const HeaderIdentifier = Schema.String.check(Schema.isPattern(/^[!-~]+$/)).pipe(
-  Schema.decodeTo(Schema.StringFromUriComponent),
-  Schema.decodeTo(Identifier),
-);
+const make = Effect.gen(function* () {
+  const store = yield* FolderStore;
+  const blobs = yield* BlobStore;
+  const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(Config.withDefault(""));
 
-const metadataHeaders = {
-  "x-file-base": Schema.optionalKey(VersionFromString),
-  "x-file-op-id": HeaderIdentifier,
-  "x-file-author": HeaderIdentifier,
-  "x-file-origin": HeaderIdentifier,
-};
+  const handle = Effect.fn("Api.handle")(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const pathname = new URL(request.url, "http://localhost").pathname;
+    const method = request.method;
 
-const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
+    if (
+      ["PUT", "POST", "DELETE"].includes(method) &&
+      (token === "" || request.headers.authorization !== `Bearer ${token}`)
+    )
+      return json({ error: "Unauthorized" }, { status: 401 });
 
-const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
+    if (pathname === "/api/folders" && method === "POST") {
+      const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* request.json);
 
-class FilesApi extends HttpApiGroup.make("files").add(
-  HttpApiEndpoint.post("create", "/folders", {
-    payload: CreateFolder,
-    success: Folder,
-    error: errors,
-  }),
-  HttpApiEndpoint.put("put", "/folders/:folderId/files/*", {
-    params: fileParams,
-    headers: metadataHeaders,
-    success: Written,
-    error: errors,
-  }),
-  HttpApiEndpoint.delete("delete", "/folders/:folderId/files/*", {
-    params: fileParams,
-    headers: metadataHeaders,
-    success: Written,
-    error: errors,
-  }),
-  HttpApiEndpoint.get("read", "/folders/:folderId/files/*", {
-    params: fileParams,
-    query: {
-      at: Schema.optionalKey(VersionFromString),
-      minVersion: Schema.optionalKey(VersionFromString),
-    },
-    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
-    error: errors,
-  }),
-  HttpApiEndpoint.get("history", "/folders/:folderId/history/*", {
-    params: fileParams,
-    success: History,
-    error: errors,
-  }),
-  HttpApiEndpoint.get("blob", "/blobs/:hash", {
-    params: { hash: Hash },
-    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
-    error: errors,
-  }),
-) {}
+      return json(yield* store.create(body.folderId, body.title, body.txid));
+    }
 
-export class FolderSyncApi extends HttpApi.make("FolderSyncApi")
-  .add(FilesApi)
-  .middleware(RequestErrors)
-  .prefix("/api") {}
+    const blob = /^\/api\/blobs\/([^/]+)$/.exec(pathname);
 
-type StoreError =
-  | Effect.Error<ReturnType<typeof FolderStore.Service.write>>
-  | Effect.Error<ReturnType<typeof FolderStore.Service.create>>
-  | Effect.Error<ReturnType<typeof FolderStore.Service.read>>
-  | Effect.Error<ReturnType<typeof FolderStore.Service.history>>
-  | Effect.Error<ReturnType<typeof BlobStore.Service.get>>;
+    if (blob !== null) {
+      const hash = yield* Schema.decodeEffect(Hash)(blob[1] ?? "");
+      const headers = { "cache-control": "public, max-age=31536000, immutable", etag: `"${hash}"` };
 
-const apiErrors = <A, R>(self: Effect.Effect<A, StoreError, R>) =>
-  self.pipe(
+      if (method === "PUT") {
+        const length = request.headers["content-length"];
+
+        if (length !== undefined && Number(length) > FILE_LIMIT)
+          return json({ error: "File too large" }, { status: 413 });
+        yield* blobs.put(
+          hash,
+          request.stream.pipe(
+            Stream.mapError((cause) => new BlobFailure({ message: String(cause) })),
+          ),
+        );
+
+        return json({ hash });
+      }
+
+      if (method === "HEAD") {
+        const size = yield* blobs.head(hash);
+
+        return size === undefined
+          ? json({ error: "Blob not found" }, { status: 404 })
+          : HttpServerResponse.empty({ headers: { ...headers, "content-length": String(size) } });
+      }
+
+      if (method === "GET") {
+        const content = yield* blobs.get(hash);
+
+        return content === undefined
+          ? json({ error: "Blob not found" }, { status: 404 })
+          : HttpServerResponse.stream(content.body, {
+              headers: { ...headers, "content-length": String(content.size) },
+            });
+      }
+    }
+
+    const file = /^\/api\/folders\/([^/]+)\/files\/(.+)$/.exec(pathname);
+
+    if (file !== null) {
+      const folderId = yield* Effect.try({
+        try: () => decodeURIComponent(file[1] ?? ""),
+        catch: () => new InvalidFile({ message: "Invalid URL" }),
+      });
+
+      const path = yield* Effect.try({
+        try: () => decodeURIComponent(file[2] ?? ""),
+        catch: () => new InvalidFile({ message: "Invalid URL" }),
+      });
+
+      if (method === "PUT") {
+        const condition = yield* precondition(request.headers);
+        const body = yield* Schema.decodeUnknownEffect(CommitFile)(yield* request.json);
+        const head = yield* store.commit(folderId, path, body, condition);
+
+        return json(head, { headers: { etag: `"${head.version}"` } });
+      }
+
+      if (method === "DELETE") {
+        const condition = yield* precondition(request.headers);
+        const body = yield* Schema.decodeUnknownEffect(DeleteFile)(yield* request.json);
+
+        return json(yield* store.remove(folderId, path, body, condition));
+      }
+
+      if (method === "GET") {
+        const { head, value } = yield* store.read(folderId, path);
+        const headers = { etag: `"${head.version}"` };
+
+        if (value.text !== undefined)
+          return HttpServerResponse.uint8Array(new TextEncoder().encode(value.text), { headers });
+        const content = yield* blobs.get(value.hash);
+
+        return content === undefined
+          ? json({ error: "Blob not found" }, { status: 404 })
+          : HttpServerResponse.stream(content.body, {
+              headers: { ...headers, "content-length": String(content.size) },
+            });
+      }
+    }
+
+    return json({ error: "Not found" }, { status: 404 });
+  });
+
+  return yield* handle().pipe(
     Effect.catch((error) =>
       Match.value(error).pipe(
-        Match.tag("InvalidFile", ({ message }) => Effect.fail(new BadRequest({ error: message }))),
-        Match.tag("MissingFile", ({ message }) => Effect.fail(new NotFound({ error: message }))),
+        Match.tag("InvalidFile", ({ message }) =>
+          Effect.succeed(json({ error: message }, { status: 400 })),
+        ),
+        Match.tag("SchemaError", () =>
+          Effect.succeed(json({ error: "Invalid request" }, { status: 400 })),
+        ),
+        Match.tag("HttpServerError", () =>
+          Effect.succeed(json({ error: "Invalid body" }, { status: 400 })),
+        ),
+        Match.tag("MissingFile", ({ message }) =>
+          Effect.succeed(json({ error: message }, { status: 404 })),
+        ),
+        Match.tag("FolderConflict", ({ message }) =>
+          Effect.succeed(json({ error: message }, { status: 409 })),
+        ),
+        Match.tag("BlobMissing", ({ hash }) =>
+          Effect.succeed(json({ error: "blob-missing", hash }, { status: 409 })),
+        ),
         Match.tag("FileTooLarge", () =>
-          Effect.fail(new TooLarge({ error: "Files must be at most 8 MiB" })),
+          Effect.succeed(json({ error: "Files must be at most 64 MiB" }, { status: 413 })),
         ),
-        Match.tag("OffsetMismatch", () =>
-          Effect.fail(new Conflict({ error: "Concurrent write, retry with the same opId" })),
-        ),
-        Match.tag("VersionUnavailable", () =>
-          Effect.fail(
-            new Unavailable({ error: "Folder did not reach minVersion within 10 seconds" }),
-          ),
-        ),
-        Match.tag("WriteHookFailure", ({ cause }) =>
-          Effect.logError(cause).pipe(
-            Effect.andThen(Effect.fail(new InternalError({ error: "Storage failure" }))),
+        Match.tag("PreconditionFailed", ({ head }) =>
+          Effect.succeed(
+            json(head ?? { head: null }, {
+              status: 412,
+              headers: head === null ? {} : { etag: `"${head.version}"` },
+            }),
           ),
         ),
         Match.orElse((cause) =>
           Effect.logError(cause).pipe(
-            Effect.andThen(Effect.fail(new InternalError({ error: "Storage failure" }))),
+            Effect.as(json({ error: "Storage failure" }, { status: 500 })),
           ),
         ),
       ),
     ),
   );
-
-/** Bound the streamed body before allocating the complete file. Chunked requests have the same limit. */
-const requestBytes = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  yield* request.stream.pipe(
-    Stream.runForEach((chunk) => {
-      size += chunk.length;
-
-      if (size > FILE_LIMIT) return Effect.fail(new FileTooLarge({ size }));
-      chunks.push(chunk);
-
-      return Effect.void;
-    }),
-    Effect.catchTag("HttpServerError", () => new BadRequest({ error: "Cannot read request body" })),
-  );
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return bytes;
 });
 
-const HandlersLive = HttpApiBuilder.group(FolderSyncApi, "files", (handlers) =>
-  handlers
-    .handle("create", ({ payload }) =>
-      Effect.flatMap(FolderStore, (store) => store.create(payload.folderId, payload.title)).pipe(
-        apiErrors,
-      ),
-    )
-    .handleRaw("put", ({ params, headers }) =>
-      Effect.gen(function* () {
-        const bytes = yield* requestBytes.pipe(
-          Effect.catchTag(
-            "FileTooLarge",
-            () => new TooLarge({ error: "Files must be at most 8 MiB" }),
-          ),
-        );
+export const ApiRequestLive = HttpRouter.add("*", "/api/*", make);
 
-        const store = yield* FolderStore;
-
-        return yield* store
-          .write(
-            params.folderId,
-            params["*"],
-            {
-              base: headers["x-file-base"] ?? null,
-              opId: headers["x-file-op-id"],
-              author: headers["x-file-author"],
-              origin: headers["x-file-origin"],
-            },
-            bytes,
-          )
-          .pipe(apiErrors);
-      }),
-    )
-    .handle("delete", ({ params, headers }) =>
-      Effect.flatMap(FolderStore, (store) =>
-        store.write(params.folderId, params["*"], {
-          base: headers["x-file-base"] ?? null,
-          opId: headers["x-file-op-id"],
-          author: headers["x-file-author"],
-          origin: headers["x-file-origin"],
-        }),
-      ).pipe(apiErrors),
-    )
-    .handle("read", ({ params, query }) =>
-      Effect.flatMap(FolderStore, (store) => store.read(params.folderId, params["*"], query)).pipe(
-        apiErrors,
-        Effect.map(({ bytes, version, operation }) =>
-          HttpServerResponse.uint8Array(bytes, {
-            headers: { "x-file-version": String(version), etag: `"${operation.hash}"` },
-          }),
-        ),
-      ),
-    )
-    .handle("history", ({ params }) =>
-      Effect.flatMap(FolderStore, (store) => store.history(params.folderId, params["*"])).pipe(
-        apiErrors,
-      ),
-    )
-    .handle("blob", ({ params }) =>
-      Effect.flatMap(BlobStore, (blobs) => blobs.get(params.hash)).pipe(
-        apiErrors,
-        Effect.flatMap((bytes) =>
-          bytes === undefined
-            ? Effect.fail(new NotFound({ error: "Blob not found" }))
-            : Effect.succeed(
-                HttpServerResponse.uint8Array(bytes, {
-                  headers: {
-                    "cache-control": "public, max-age=31536000, immutable",
-                    etag: `"${params.hash}"`,
-                  },
-                }),
-              ),
-        ),
-      ),
-    ),
-);
-
-const RequestErrorsLive = HttpApiMiddleware.layerSchemaErrorTransform(RequestErrors, (error) =>
-  Effect.fail(
-    new BadRequest({
-      error: `Invalid request ${error.kind.toLowerCase()}: ${error.cause.message}`,
-    }),
-  ),
-);
-
-export const ApiRequestLive = HttpApiBuilder.layer(FolderSyncApi).pipe(
-  Layer.provide(HandlersLive),
-  Layer.provide(RequestErrorsLive),
+export const ApiLive = ApiRequestLive.pipe(
+  HttpRouter.provideRequest(Layer.effectContext(Effect.context<FolderStore | BlobStore>())),
 );
 
 export const HealthLive = HttpRouter.add("GET", "/health", HttpServerResponse.text("Folder sync"));
 
-export const NotFoundLive = HttpRouter.add(
-  "*",
-  "/api/*",
-  HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 }),
-);
-
-/** Bun composition captures services during layer acquisition; objects supply them per request. */
-export const ApiLive = ApiRequestLive.pipe(
-  HttpRouter.provideRequest(Layer.effectContext(Effect.context<FolderStore | BlobStore>())),
-);
+export const NotFoundLive = Layer.empty;
