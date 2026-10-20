@@ -1,4 +1,4 @@
-import { CommitBoundary, DurableState } from "@streamsy/core";
+import { CommitBoundary, DurableState, StreamAddress } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import {
   Context,
@@ -6,6 +6,7 @@ import {
   DateTime,
   Effect,
   Layer,
+  Option,
   Schema,
   Semaphore,
   Stream,
@@ -32,7 +33,15 @@ import {
   sha256,
   type Precondition,
 } from "./domain.ts";
-import { folderView, headOf, type FolderView } from "./folder-view.ts";
+import {
+  fileOf,
+  folderView,
+  headOf,
+  STREAM_START,
+  type FolderView,
+  type LiveFile,
+} from "./folder-view.ts";
+import { FileMessage } from "./projections.ts";
 import { Files, Folders } from "./streams.ts";
 
 /** Save the folder view after this many landed writes, and on the first write in a process. */
@@ -47,7 +56,7 @@ const condition = (head: Head | undefined, precondition: Precondition) =>
     : Effect.fail(new PreconditionFailed({ head: head ?? null }));
 
 const liveHead = (view: FolderView, path: string) => {
-  const live = view.files[path];
+  const live = view.files.get(path);
 
   return live === undefined ? undefined : headOf(live);
 };
@@ -136,6 +145,52 @@ const make = Effect.gen(function* () {
       Effect.map(({ state }) => state),
       Effect.provideContext(context),
     );
+
+  /**
+   * The inline text of a live file, read from the change that wrote it. The scan
+   * starts at the change's own offset and decodes one message at a time, so it
+   * usually decodes one change. A stream copied by replay keeps the offsets of
+   * its source, so a scan that misses starts again at the start of the stream.
+   */
+  const inlineTextOf = Effect.fn("Folder.inlineText")(function* (
+    folderId: string,
+    path: string,
+    live: LiveFile,
+  ) {
+    const address = StreamAddress.json(Files.at({ folderId }).id, { schema: FileMessage });
+    const decodeChange = Schema.decodeEffect(address.codec);
+    const decoder = new TextDecoder();
+
+    const scan = Effect.fn("Folder.scanText")(function* (from: string) {
+      let offset = from;
+
+      while (true) {
+        const page = yield* files.wire.read(address.id, { offset });
+
+        for (const message of page.messages) {
+          const change = yield* decodeChange(decoder.decode(message.data));
+
+          if ("value" in change && change.key === path && change.value.version === live.version)
+            return Option.fromUndefinedOr(change.value.text);
+        }
+
+        if (page.upToDate || page.messages.length === 0) return Option.none<string>();
+        offset = page.nextOffset;
+      }
+    });
+
+    const hinted =
+      live.offset === STREAM_START
+        ? Option.none<string>()
+        : yield* scan(live.offset).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+    const text = Option.isSome(hinted) ? hinted : yield* scan(STREAM_START);
+
+    if (Option.isNone(text))
+      return yield* Effect.die(new Error(`The Files stream has no text for ${path}`));
+
+    return text.value;
+  });
 
   const create = Effect.fn("Folder.create")(function* (
     folderId: string,
@@ -296,11 +351,17 @@ const make = Effect.gen(function* () {
   const read = Effect.fn("Folder.read")(function* (folderId: string, path: string) {
     const normalized = yield* normalisePath(path);
     yield* requireFolder(folderId);
-    const live = (yield* currentView(folderId)).files[normalized];
+    const live = (yield* currentView(folderId)).files.get(normalized);
 
     if (live === undefined) return yield* new MissingFile({ message: "File not found" });
+    const value = fileOf(normalized, live);
 
-    return { head: headOf(live), value: live.value };
+    if (!live.inline) return { head: headOf(live), value };
+
+    return {
+      head: headOf(live),
+      value: { ...value, text: yield* inlineTextOf(folderId, normalized, live) },
+    };
   });
 
   return { create, commit, remove, read };

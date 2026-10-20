@@ -127,13 +127,22 @@ Compare versions only for equality on the same path in the same folder.
 Offsets are read cursors. They never name file versions. The append uses
 `expectedOffset` as a write guard.
 
-The owner keeps no head table. Current heads, file values and the last version
+The owner keeps no head table. Current heads, file metadata and the last version
 are a fold of the folder's `Files` stream (`server/folder-view.ts`). A write
 folds the saved checkpoint plus the stream tail with `Projection.decide`, decides,
 and appends at the offset it read. A lost race folds again and decides again.
 After four lost races the write answers `503` with `Retry-After`. The owner saves
 the checkpoint on its first write in a process and every 32 writes after that. A
-lagging or missing checkpoint costs only a longer fold.
+save that fails is tried again 32 writes later. A lagging or missing checkpoint
+costs only a longer fold.
+
+The view holds metadata only: version, hash, size, author, txid and the offset
+where the change starts. `GET` of an inline file reads that one change from the
+stream. A file with a short path and txid costs about 200 bytes of checkpoint.
+A Worker keeps the checkpoint in one Durable Object SQLite row, and a row holds at
+most 2 MB, so one folder holds about 10,000 such files. Long paths lower that
+number. Past it, the save fails and logs a warning, writes still land, and each
+read folds a longer tail.
 
 Folder IDs are opaque strings. They may contain slashes. The limits are 100
 decoded UTF-16 code units and 249 UTF-8 bytes. In stream URLs, `folderKey` is the
@@ -366,7 +375,9 @@ pending sources, rejected files and backups have no quota. Old mirror SQLite
 formats have no migration; use fresh directories.
 
 Copying a folder's events into a new owner gives a writable folder. Its view
-folds the same heads and versions from the copied events. Restoring a missing blob alone does not reindex an
+folds the same heads and versions from the copied events. A copied change keeps
+the offset of its source, so a `GET` that misses it there reads the copy from the
+start. Restoring a missing blob alone does not reindex an
 already consumed change. A later write or index rebuild is needed.
 
 Sync scans hash every selected file. An external editor can save during the

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { StreamAddress } from "@streamsy/core";
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
@@ -70,6 +71,40 @@ const launch = (directory: string) =>
   );
 
 const worker = testDirectory("worker-host-").pipe(Effect.flatMap(launch));
+
+/** About 60 KB. Quotes, backslashes and newlines grow each time the text is JSON encoded. */
+const largeText = (index: number) =>
+  `line "${index}" with "quotes" and \\ a backslash\n`.repeat(1500).slice(0, 60_000);
+
+/** The stored folder view record: JSON state inside a JSON envelope. */
+const SavedView = Schema.fromJsonString(
+  Schema.Struct({
+    record: Schema.Struct({
+      state: Schema.fromJsonString(
+        Schema.Struct({ last: Schema.Finite, files: Schema.Array(Schema.Unknown) }),
+      ),
+    }),
+  }),
+);
+
+/** Read the folder view checkpoints straight from the Durable Object SQLite files. */
+const savedViews = (directory: string, folderKey: string) =>
+  Array.from(new Bun.Glob("objects/folder-sync-FolderObject/*.sqlite").scanSync(directory))
+    .filter((path) => !path.endsWith("/metadata.sqlite"))
+    .flatMap((path) => {
+      const db = new Database(`${directory}/${path}`, { readonly: true });
+
+      try {
+        return db
+          .query<{ owner_value: string }, [string]>(
+            "SELECT owner_value FROM streamsy_owner_records WHERE owner_key LIKE ?",
+          )
+          .all(`%folder-sync-view%${folderKey}%`)
+          .map((row) => row.owner_value);
+      } finally {
+        db.close();
+      }
+    });
 
 const listed = (url: string) =>
   HttpClient.get(`${url}/api/ls`).pipe(
@@ -168,6 +203,44 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(yield* changes(host.url, "derived")).toHaveLength(writes);
         }),
       { timeout: 15000 },
+    );
+
+    it.effect(
+      "workerd saves the view checkpoint of a folder with more than 2 MB of inline text",
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("worker-large-");
+          const host = yield* launch(directory);
+          yield* create(host.url, "large");
+          const writes = 40;
+
+          for (let index = 1; index <= writes; index++) {
+            const written = yield* HttpClient.put(fileUrl(host.url, "large", `f${index}.md`), {
+              headers: { ...headers, "if-none-match": "*" },
+              body: HttpBody.jsonUnsafe(content(largeText(index), `t${index}`)),
+            });
+
+            expect(written.status, `write ${index}`).toBe(200);
+          }
+
+          const rows = savedViews(directory, yield* Schema.encodeEffect(FolderKey)("large"));
+          expect(rows).toHaveLength(1);
+          const row = rows[0] ?? "";
+          const saved = yield* Schema.decodeEffect(SavedView)(row);
+
+          // The first write saves, and write CHECKPOINT_EVERY + 1 saves again.
+          expect(saved.record.state.last).toBe(CHECKPOINT_EVERY + 1);
+          expect(saved.record.state.files).toHaveLength(CHECKPOINT_EVERY + 1);
+          // Metadata only: far below the 2 MB row limit of a SQLite-backed Durable Object.
+          expect(row.length).toBeLessThan(64 * 1024);
+
+          const first = yield* HttpClient.get(fileUrl(host.url, "large", "f1.md"));
+          expect(first.headers.etag).toBe(`"1"`);
+          expect(yield* first.text).toBe(largeText(1));
+          const last = yield* HttpClient.get(fileUrl(host.url, "large", `f${writes}.md`));
+          expect(yield* last.text).toBe(largeText(writes));
+        }),
+      { timeout: 30000 },
     );
 
     it.effect(

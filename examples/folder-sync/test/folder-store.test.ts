@@ -159,11 +159,78 @@ for (const [name, storage] of [
         expect((yield* Projection.read(view)).state.last).toBe(2);
 
         yield* checkpoints.remove(Projection.key(view));
-        expect((yield* Projection.read(view)).state).toEqual({ last: 0, files: {} });
+        expect((yield* Projection.read(view)).state).toEqual({ last: 0, files: new Map() });
         expect(yield* store.read("rebuild", "a")).toEqual(before);
         expect(yield* Effect.flip(store.read("rebuild", "b"))).toBeInstanceOf(MissingFile);
         // The deleted version 2 is still in the retained stream, so the next write gets 3.
         expect((yield* store.commit("rebuild", "b", one)).version).toBe(3);
+      }),
+    );
+    it.effect("root paths named after Object.prototype members are ordinary files", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        yield* store.create("proto", "Proto", "create");
+        const names = ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"];
+
+        for (const [index, path] of names.entries()) {
+          expect(yield* Effect.flip(store.read("proto", path))).toBeInstanceOf(MissingFile);
+          const first = yield* body(`first ${path}`, `create-${index}`);
+          const created = yield* store.commit("proto", path, first, { absent: true });
+          const second = yield* body(`second ${path}`, `update-${index}`);
+          yield* store.commit("proto", path, second, { version: created.version });
+          expect((yield* store.read("proto", path)).value.text).toBe(`second ${path}`);
+        }
+
+        // The saved checkpoint decodes every name as a map entry, not as an object member.
+        const view = folderView.at({ folderId: "proto" });
+        yield* Projection.run(view);
+        const saved = (yield* Projection.read(view)).state;
+        expect([...saved.files.keys()].toSorted()).toEqual(names.toSorted());
+        expect(saved.files.get("__proto__")?.version).toBe(names.length * 2 - 4);
+        expect((yield* store.read("proto", "__proto__")).value.text).toBe("second __proto__");
+        yield* store.remove("proto", "constructor", { txid: "delete", author: "test" });
+        expect(yield* Effect.flip(store.read("proto", "constructor"))).toBeInstanceOf(MissingFile);
+      }),
+    );
+    it.effect("the view keeps metadata; a read takes inline text from the change", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const files = yield* Files;
+        yield* store.create("meta", "Meta", "create");
+        const tail = (yield* files.head({ folderId: "meta" })).nextOffset;
+        yield* store.commit("meta", "a", yield* body("alpha", "a1"));
+        yield* store.commit("meta", "b", yield* body("beta", "b1"));
+        yield* store.commit("meta", "a", yield* body("alpha two", "a2"));
+
+        const view = folderView.at({ folderId: "meta" });
+        yield* Projection.run(view);
+        const saved = (yield* Projection.read(view)).state.files.get("a");
+        expect(saved).not.toHaveProperty("text");
+        expect(saved).toMatchObject({ version: 3, inline: true });
+        expect(saved?.offset).not.toBe(tail);
+        expect(yield* store.read("meta", "a")).toEqual({
+          head: { version: 3, hash: saved?.hash, txid: "a2" },
+          value: {
+            path: "a",
+            version: 3,
+            hash: saved?.hash,
+            size: 9,
+            author: "test",
+            text: "alpha two",
+          },
+        });
+        expect((yield* store.read("meta", "b")).value.text).toBe("beta");
+
+        // A replayed copy keeps its source offsets. The copy holds only the last
+        // change of "a" and then "b", so the hint for "a" points past its real
+        // position, and the read scans again from the start.
+        const changes = (yield* files.collect({ folderId: "meta" })).items;
+        yield* files.create({ folderId: "meta-copy" });
+
+        for (const change of [changes[2], changes[1]])
+          if (change !== undefined) yield* files.append({ folderId: "meta-copy" }, [change]);
+        expect((yield* store.read("meta-copy", "a")).value.text).toBe("alpha two");
+        expect((yield* store.read("meta-copy", "b")).value.text).toBe("beta");
       }),
     );
     it.effect("a failing checkpoint save runs once per CHECKPOINT_EVERY writes", () =>
