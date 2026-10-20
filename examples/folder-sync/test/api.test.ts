@@ -302,3 +302,28 @@ test("every write requires the writer token; reads stay public", async () => {
     await host.stop();
   }
 });
+
+test("every JSON write needs application/json", async () => {
+  const host = protocolHost();
+
+  try {
+    await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    const file = "/api/folders/docs/files/a";
+    expect((await call(host, file, "PUT", commit("one", "first"))).status).toBe(200);
+
+    for (const [path, method, body] of [
+      ["/api/folders", "POST", { txid: "again", folderId: "docs", title: "Docs" }],
+      [file, "PUT", commit("two", "second")],
+      [file, "DELETE", { txid: "delete", author: "Zoë" }],
+    ] as const) {
+      const response = await call(host, path, method, body, { "content-type": "text/plain" });
+
+      expect(response.status).toBe(415);
+      expect(await response.json()).toEqual({ error: "Expected application/json" });
+    }
+
+    expect(await (await call(host, file)).text()).toBe("one");
+  } finally {
+    await host.stop();
+  }
+});

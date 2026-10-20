@@ -81,6 +81,12 @@ The index object owns the folder registry and search. After a commit, a
 best-effort ping asks the index to catch up. The hourly cron checks every folder
 cursor after a lost ping. The local harness runs the same pass on startup and
 each hour. An authenticated `POST /api/admin/wake` runs it immediately.
+The Worker checks the writer token at its edge, and each object checks it again.
+
+`build:worker` writes two bundles. `public/worker/index.js` is the deploy
+bundle. `public/worker/test-worker.js` adds test switches from
+`test/worker/test-worker.ts`, such as dropping folder pings, and only the Worker
+tests load it.
 
 Blob routes run in the Worker entry and stream directly to local R2. Uploads
 require `Content-Length`; missing length gets 400. The shipped clients supply
@@ -161,7 +167,8 @@ starts a fresh read from `-1`. No production writer currently emits either.
 ## Write API
 
 JSON write bodies are limited to 512 KiB. Send `Content-Type: application/json`.
-Folder creation with another content type gets 415 on both hosts.
+A JSON write with another content type gets 415 on both hosts: folder creation,
+file commits and file deletes.
 
 | Request                                 | Body                                  | Result                                                      |
 | --------------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
@@ -323,9 +330,10 @@ Render snippet segments as text. Deleted files and binary content have no search
 text. Blob text is capped at the first 1 MiB. Preparation reads one blob prefix
 at a time, so a page does not hold every blob's text in memory.
 
-Both indexes read each folder stream directly. Bun follows in process. The
-Worker reads over HTTP after pings or cron. Each index commits its rows with the
-consumed cursor. Search and listing are eventually consistent. A missing blob
+Both indexes run the same search projection (`server/search-index.ts`) with
+`Projection.run`, and each commits its rows with the projection checkpoint. Bun
+follows each folder stream in process. On the Worker, the index object reads
+each `Files` stream from its folder object over HTTP after a ping or the cron. Search and listing are eventually consistent. A missing blob
 keeps file metadata without searchable text and does not stall later changes.
 
 ## Local measurements
@@ -372,7 +380,10 @@ must keep the highest removed version, or a cold fold of the view can give a
 used version again. There is no State compaction,
 blob orphan sweep, multipart upload or cache garbage collection. Storage,
 pending sources, rejected files and backups have no quota. Old mirror SQLite
-formats have no migration; use fresh directories.
+formats have no migration; use fresh directories. The same applies to server
+state: SQLite databases and Durable Objects from older builds keep rows that no
+reader uses (owner records, view checkpoints of version 1, the Worker
+`folder_sync_cursors` table). Start the demo with fresh state.
 
 Copying a folder's events into a new owner gives a writable folder. Its view
 folds the same heads and versions from the copied events. A copied change keeps
