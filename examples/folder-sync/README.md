@@ -1,437 +1,265 @@
 # Folder sync
 
-A durable file workspace with one append-only log per folder, full history, a live
-browser, full-text search, and a local sync CLI. Commit order chooses the latest
-version. A write that replaces an unseen change records an `overwrote` mark.
-The change feed, manifest, and search index rebuild from the folder logs.
+A file workspace with a State stream for each folder, a live browser, search,
+a sync CLI and an agent filesystem. Reads follow the folder streams. Writes use
+a JSON API with HTTP preconditions. A stale edit gets 412. Each file value keeps
+its version when its stream is copied or replayed.
 
-## Try it by hand
-
-From the repository root, install and build the workspace packages:
-
-```sh
-bun install --frozen-lockfile
-bun run build
-```
-
-Start a persistent server in one terminal. `start` builds the Vite UI before
-launching Bun. Open http://localhost:1339 in your browser.
-
-```sh
-FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
-```
-
-In another terminal, seed the Streamsy docs through the HTTP API:
-
-```sh
-bun run --cwd examples/folder-sync seed
-bun run --cwd examples/folder-sync seed
-```
-
-The second run adds no versions. The first docs directory becomes the section
-folder: `docs/streams`, `docs/projections`, `docs/demos`, `docs/hosting`, and
-`docs/http`. Root files live in `docs/root`. The script includes metadata JSON
-and uses a stable operation ID made from folder, path, and content hash. Repeating
-an earlier seed does not undo subsequent user edits. Changed seed content gets a
-new operation ID and replaces user edits without an `overwrote` mark, because
-the seed uses the current head as its base. `--server <url>` selects another server.
-
-Start two mirrors in separate terminals. Use fresh directories for this check:
-
-```sh
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
-```
-
-Choose `docs/root/tutorial.mdx` in the browser and open **Edit**. Change a paragraph,
-set an author name, and save. Both mirrors update. Edit the same file under
-`examples/folder-sync/mirror-a/docs/root/` and watch the browser and the other mirror update. Search
-for a distinctive word from the edit. Search results open the exact version they
-indexed. **Open current** returns to the latest file.
-
-To see an overwrite mark, leave an unsaved draft in the browser, edit the file
-in a mirror, wait for the server change, then save the draft. History says
-“replaced a change you did not see”. Its link opens the replaced version. Save
-again from the browser; this save uses the first receipt as its base and does
-not mark that first save as unseen.
-
-Stop the server, edit a writable mirror, and restart the server with the same
-SQLite path. Queued writes deliver and both mirrors converge. The browser shows
-**Offline** while its stream reader cannot connect. Returning online or bringing
-the page into view immediately retries a sleeping network read. Without those
-events, network retries back off from 100 ms to a 30 s ceiling; HTTP errors retain
-the stream client's backoff and any server `Retry-After` delay. Stop both CLIs with Ctrl+C
-when finished. Their state stays under `.folder-sync` in each mirror.
-
-## Browser and development
-
-The folder tree uses a TanStack DB collection fed by `/streams/manifest` through
-`@durable-streams/state/db`. It loads every retained event, then follows new
-ones. Clean viewers refresh on manifest changes. An unsaved draft retains its
-open version and shows when a newer head arrives. Historical views are read-only.
-The browser editor supports UTF-8 text. Markdown and MDX show Markdown without
-executing HTML or JSX. Other files offer a raw download; blob files download by
-immutable hash. Search snippets are text segments with boolean match flags,
-rendered as escaped React children. Empty, unsafe, and relative Markdown links
-are plain text; absolute HTTP, HTTPS, and mail links open a new tab. An author name is a display label.
-
-For browser development, run the server and the Vite client separately:
-
-```sh
-bun run --cwd examples/folder-sync start
-bun run --cwd examples/folder-sync dev:web
-```
-
-Open http://localhost:5179. Vite proxies `/api` and `/streams` to port 1339. The
-Bun listener serves the built HTML and its assets, with API and stream routes
-falling through to the Effect router. It uses the same scoped shutdown as the
-issue tracker. `/health` is a small health response. Rebuild the UI or restart
-`start` after frontend changes; `dev:web` provides live frontend development.
-
-```sh
-bun run --cwd examples/folder-sync test
-bun run --cwd examples/folder-sync smoke:http
-bun run --cwd examples/folder-sync typecheck
-```
-
-## File API and storage
-
-The default port is 1339 (`PORT` overrides it). An unset or empty `FOLDER_SYNC_DB`
-uses transient SQLite (`:memory:`), including FTS5. Setting a path persists logs,
-checkpoints, blobs, and search in the named SQLite file. The folder service also
-has a MemoryStorage test host; the indexed server requires SQL transactions.
-Tests use a scoped directory under `.scratch/`; `FOLDER_SYNC_SCRATCH` overrides it.
-
-Create a folder with `POST /api/folders` and JSON `{ "folderId": "docs", "title": "Docs" }`.
-Folder IDs are opaque strings limited to 100 decoded UTF-16 code units and
-249 UTF-8 bytes. The router counts decoded units, so percent encoding slashes
-or Unicode does not reduce the 100-unit bound. The byte bound keeps the hex
-stream ID within 512 characters. Invalid creates answer 400 before registration. URL-encode the whole ID as one segment, including any slashes.
-File paths are relative POSIX paths; encode each segment separately.
-
-- `PUT /api/folders/:folderId/files/*path` sends raw bytes. Supply `x-file-op-id`,
-  `x-file-author`, and `x-file-origin`, percent-encoding each value with
-  `encodeURIComponent`. Invalid encoding answers 400. Supply `x-file-base` with the version last
-  seen, or omit it for a file you have not seen. Text up to 64 KiB is inline;
-  other files use immutable blobs. Files above 8 MiB answer 413.
-- `DELETE` on that path uses the same headers. A new delete requires a live head;
-  missing or already deleted files answer 404 without an append. Writes return
-  `{ version, overwrote? }`.
-  Replaying an opId for the same path returns its original version and overwrite
-  mark, even after another writer changes the head. Reusing it for a different
-  path in the same folder answers 400.
-- `GET` returns raw bytes with `x-file-version` and a hash ETag. `?at=<version>`
-  reads that exact entry for the path. `?minVersion=<version>` waits for the
-  head fold to reach that folder sequence, then reads the current file head. It answers
-  503 if the fold has not reached it after 10 seconds.
-- `GET /api/folders/:folderId/history/*path` returns `{ version, operation }`
-  entries, including tombstones and `overwrote` marks.
-- `GET /api/blobs/:hash` returns immutable bytes with long cache headers.
-
-Versions are positive integers: a folder sequence starting at 1, carried in each
-`FileOp`. `Projection.decide` folds the head in memory, assigns `seq + 1` and
-appends with the expected log offset, so concurrent writers cannot commit the same
-sequence. Head reads and `minVersion` waits use `Projection.current`. Neither writes
-the head checkpoint; one `Projection.follow` per folder is its only writer. JSON versions,
-`base`, and `overwrote` are numbers; headers and query parameters use decimal
-integers. Offsets remain stream cursors. Directories are implicit.
-Deletes keep history. A stale write wins in commit order and records the unseen
-head in `overwrote`. There is no rename operation.
-
-## Index and live reads
-
-All index reads are eventually consistent with folder commits. They retain folder
-log versions, so a search hit can be opened with `?at=<version>`.
-
-- `GET /api/ls?folder=docs&prefix=guide/&glob=**/*.md` returns current live
-  manifest rows. All filters are optional and combine. Prefix and glob apply to
-  the path within each folder. Globs use picomatch with dotfiles enabled. URL-encode
-  query values. Each row has `id`, `folderId`, `path`, `version`, `hash`, `size`,
-  `updatedAt`, and `author`. The id is the JSON tuple `[folderId, path]`.
-- `GET /api/search?q=durable&folder=docs` searches current UTF-8 text, including
-  text stored as blobs. The optional folder filter is exact. Binary content and
-  deleted files are removed. FTS5 query syntax is accepted; malformed queries
-  answer 400 and an empty query returns no hits. Results contain folder, path,
-  version, and snippet, sorted by FTS5 bm25 relevance with folder/path tie breaks,
-  with a limit of 100. A snippet is an array of `{ text, match }` segments. Render
-  every segment as text; `match` says which segments to highlight.
-- `GET /streams/manifest?offset=-1` serves the read-only Durable State contract
-  for the `file` collection. Consume every page, then tail from
-  `stream-next-offset` with `live=long-poll`. Upserts replace the row and deletes
-  remove it. The manifest stream contains retained change events, not just heads.
-- `GET /streams/changes?offset=-1` reads the shared JSON change feed. Each entry
-  carries folder, path, folder-log version, size, deletion status, optional hash
-  and overwrite mark, author, and timestamp. The response's
-  `stream-next-offset` is the sync cursor, distinct from the folder version.
-  Read pages until `stream-up-to-date: true`, then use
-  `?offset=<cursor>&live=long-poll`. A 204 response means no change before the
-  long-poll timeout; continue with the returned cursor.
-
-All hosts use the default page limit of 1000 entries. Clients must follow
-pagination for both streams. New log entries carry a server timestamp;
-older entries without one use the epoch timestamp during projection rebuilds.
-The timestamps never choose the winning write.
-
-On restart, the server restores bindings from the complete registry before tailing
-new folders. Every projection resumes its saved offset. The rebuild test stops
-followers, clears output streams and FTS rows, and replays a new generation from
-the folder logs. A rebuild resets feed cursors and requires clients to bootstrap
-again. Cross-folder replay can interleave differently, while each folder retains
-its original commit order and final heads.
-
-`/api/ls` also returns `stream-next-offset`: the shared changes offset consumed by
-these manifest rows, read in the same SQL transaction. Bootstrap files from the
-rows, then tail `/streams/changes` from this header. A lagging manifest is safe:
-changes newer than its cursor are replayed. Filtered lists still return the global
-cursor; keep the same folder selection when tailing.
-
-## Sync CLI
-
-With the server running, create folders through the API, then mirror them:
-
-```sh
-bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-docs" --folders docs,notes --write notes
-```
-
-`--folders` selects folders; omit it to discover every folder with files. `--write`
-accepts a comma-separated list of writable folders and defaults to none. An edit
-in a read-only folder is restored from the server and logged. Writable folders
-must already exist on the server. Folder IDs and file names may contain Unicode.
-The comma syntax cannot select an ID containing a comma; the exported runner
-accepts arrays for that case.
-
-Files appear at `<dir>/<folderId>/<path>`. A slash in a folder ID stays a nested
-directory. `sync(options)` in `sync/engine.ts` accepts a `folderDirectory(id)`
-function returning a relative directory, so another host can choose its layout.
-Mappings must stay inside the mirror and use disjoint roots. Absolute IDs,
-traversal-like IDs, overlapping roots such as `docs` and `docs/api`, and the
-reserved `.folder-sync` directory require a different mapping or selection.
-Symlinks, special files, and files over 8 MiB are skipped and logged once per
-path and metadata change during each daemon run. Run one daemon per mirror directory.
-
-The CLI bootstraps from `/api/ls` and its consumed cursor, fetches current heads,
-and tails every change page using long-poll. It keeps folder versions separate
-from the feed cursor and ignores older or duplicate versions. A cursor beyond
-the server's tail, or a regressing response cursor, triggers bootstrap again.
-The selection and server URL are bound to the state directory; use another
-`--dir` when changing them. Restarting with the same options resumes the cursor
-and any pending writes. `Ctrl+C` or `SIGTERM` closes watchers, requests, and SQLite;
-the Effect runtime uses exit code 130 for interruption.
-
-`.folder-sync/state.sqlite` stores known heads, observed versions and hashes, tombstone
-versions, the feed cursor, and an immutable write outbox. A saved pull intent
-whose observed version has not settled is finished after restart. The watcher ignores
-`.folder-sync`, waits 100 ms for editor bursts to settle, and hashes the resulting
-files. A periodic reconciliation scan also covers coalesced or missing watcher
-events. Pulled bytes with a known hash do not push back. A temp-file-then-rename
-save within the settle interval is observed as the final file. Other longer-lived
-temporary files can be synced.
-
-Local edits are queued before sending. Offline writes and retryable HTTP failures
-(5xx, including `minVersion` 503, 409, and 429) retry with exponential backoff from
-100 ms to a 3 s ceiling. Replays reuse the original opId, base, and bytes. Pending
-edits stay on disk while remote changes arrive. After acceptance the CLI refreshes
-the authoritative head, so a lost-response replay cannot restore stale content
-over another writer. An unseen overwrite is logged. A delete pulled from the
-server retains its tombstone version for a later local recreation's base.
-401 and 403 stop the daemon with a clear authorization error and keep all pending
-entries queued. Correct the token and restart. HTTP 408, 409, 429, transport errors,
-and 5xx retry with backoff. Other non-retryable HTTP write errors move the entry and its bytes to the SQLite
-`rejected` table, log the reason, and allow later writes to continue. Other local
-I/O failures stop the CLI with an error; the
-outbox remains on disk for inspection or a corrected restart.
-
-This remains a demo: every scan hashes selected files, history and manifest reads
-grow with retained events, and outbox bodies are stored in SQLite without a disk
-quota. Folder logs and outbox entries retain the server's 8 MiB file limit.
-
-On the first bootstrap and after a feed epoch changes, identical existing files
-adopt the server version without writing it again. In writable folders, different
-local bytes are preserved as `name.conflict-<origin>[-n].ext` siblings while the
-server head keeps the original path. Those siblings sync as new files. Existing
-writable files with no server head become new writes with an absent base. In read-only folders,
-different files and files missing from the server move to the rejected backup
-directory below before any server bytes are installed.
-
-Read-only edits and new local files are moved before restoration to
-`<dir>/.folder-sync/rejected/<folderId>/<path>` (using the configured folder mapping).
-An existing backup gets a numeric suffix before its extension (`read-1.md`); no earlier backup is replaced. The CLI
-logs the full backup path. These saved bytes stay outside the watched mirror.
-
-The default ignore list covers Vim `.swp` and `.swx` files, `~` backups and `4913`
-probes; Emacs `#file#` and `.#file` files; and `.DS_Store`. Matching names at any
-path depth are ignored by scans, bootstrap, live pulls, and watcher triggers.
-
-Bootstrap, per-change head reads, and the post-push head read run inside the local
-sync gate. A slow server or a `minVersion` timeout can delay scans and other
-mirror decisions for up to the server's ten-second wait.
-
-Both hosts return a persisted `stream-epoch` on `/api/ls` and all changes responses,
-including HEAD and long-poll. The CLI checks the epoch before tailing and on every
-page. A changed epoch triggers a fresh bootstrap even when the feed cursor still
-fits. The replacement server is treated as unknown: old echo hashes cannot justify
-removing a local file. Each unqueued local file follows the fresh-bootstrap rules
-above, so an empty or older database with a new epoch preserves local bytes.
-Stored folder versions and unsent bases are cleared; pending bytes and opIds stay
-queued. A pending write in a replacement database uses an absent base and may carry
-an overwrite mark. Rebuild tools must rotate the epoch with `rotateFeedEpoch` in
-the same owner transaction that resets outputs. There is no
-public rebuild endpoint. A live read already parked during a reset can take the
-long-poll timeout to observe it; restart checks immediately.
-
-Within one epoch the feed is append-only. If the server history goes backwards, the
-CLI stops with a `HistoryRewound` error and changes no more files. It checks two
-signs: a saved cursor past the feed tail, and a file head older than the version
-the mirror already saw. A restart stops again at the same point. A database
-restored from a backup keeps its old epoch, so it stops every mirror that synced
-past the backup point. To resync after a restore, rotate the epoch with
-`rotateFeedEpoch`; mirrors then follow the replacement rules above. A restore that
-the CLI cannot see is not caught: if new writes move the tail past the saved
-cursor, the CLI reads on and stops only when a known file shows an older head.
-
-Atomic replacement still has a final local read-to-rename window in which an
-external editor save can be replaced. SQLite and disk replacement have no shared
-transaction or explicit filesystem fsync.
-
-## Rejected writes and operational limits
-
-Inspect rejected writes without connecting to the server or running a watcher:
-
-```sh
-bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-sync/mirror-a"
-```
-
-The command opens existing SQLite state read-only and prints a JSON array of
-sequence, folder, path, operation ID, base, byte size, HTTP status, and reason.
-It does not print file bodies or requeue writes. Read-only backup files are
-separate from rejected HTTP operations and remain under `.folder-sync/rejected`.
-
-Index followers log terminal failures and restart after one second, resuming
-persisted checkpoints. A permanent failure repeats that log until repaired;
-HTTP head writes can continue while an index catches up.
-
-The Bun listener remains open for a trusted local demo. The Worker requires a
-writer token for every write and keeps reads open. There is no deployed instance
-or phone cache. One-item stream
-pages and retained manifest events make browser load time grow with history.
-Head checkpoints keep all paths and operation receipts; history reads and search
-preparation scan folder logs. Browser bundle size and sync scans suit a small
-demo corpus. Rejected records, backups, and blob storage have no retention quota.
-Browser drafts are held in memory; navigating to another file or reloading loses
-an unsaved draft. Search shows at most 100 hits. The CLI bootstraps automatically after a feed epoch changes.
-
-## Local Cloudflare Worker
+## Run on Bun
 
 Run from the repository root:
 
 ```sh
-FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync dev:worker
+bun install --frozen-lockfile
+bun run build
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
 ```
 
-This command builds the UI and Worker, then starts Miniflare/workerd with local
-SQLite Durable Objects, local R2, and Workers static assets. It creates no remote
-resources and needs no Cloudflare account or login. `PORT` defaults to 1339.
-`FOLDER_SYNC_WORKER_STATE` selects the persistent local state directory; the
-default is `examples/folder-sync/.scratch/worker`. Stop with Ctrl-C.
+Open http://localhost:1339. Enter `local-demo-token` in **Writer token** to edit.
+Reads are public. Every write needs `Authorization: Bearer <writer token>` on
+both hosts. An unset writer token disables writes.
 
-Use `Authorization: Bearer local-demo-token` on folder creation, PUT, DELETE,
-and administrative writes. The check runs before the object router. A missing
-or wrong token answers 401. Reads remain open. For the seed:
+In another terminal, seed the docs through the API:
 
 ```sh
 FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync seed
 ```
 
-For a writable mirror:
+The seed makes one folder per docs section and `docs/root` for root files.
+It includes metadata JSON. Repeating an unchanged corpus adds no versions while
+the remote content still matches. The seed sends no precondition, so it can
+replace user edits. `--server <url>` selects another server.
+
+Run two mirrors in separate terminals, using fresh directories:
 
 ```sh
 FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
 ```
 
-The CLI reads `FOLDER_SYNC_WRITER_TOKEN` when `--token` is absent. An explicit
-`--token` overrides the environment variable.
+Edit `docs/root/tutorial.mdx` in the browser. Both mirrors update. Edit the file
+under `mirror-a/docs/root/`; the browser and the other mirror update. Leave a
+browser draft open, change the file from a mirror, then save the draft. The
+browser keeps the draft and reports a stale edit. **Discard draft and reload**
+takes the current file. History reads the folder stream and can open earlier
+values. Search opens the version it indexed.
 
-Set the browser's **Writer token** field before saving. It stores the token in
-localStorage for that origin and supplies it on saves. Clear the field to remove
-it. Unsaved drafts still live only in memory.
+Stop the server, edit a writable mirror, and restart with the same database.
+Queued writes resume. Concurrent edits become conflict copies. Stop the CLIs
+with Ctrl+C when finished. Their state stays under `.folder-sync`.
 
-The `alchemy.run.ts` stack declares two SQLite Durable Object classes, an R2
-bucket, static assets, a redacted writer token, and an hourly cron. This
-batch uses the local workerd runner; the stack is typechecked. No Alchemy apply,
-Cloudflare provisioning, or deployment has been run.
+`PORT` overrides 1339. `FOLDER_SYNC_DB` persists streams, owner records, index
+rows and cursors in SQLite. Blobs live beside it in `<database>.blobs/`. Without
+a database path, SQLite is transient and blobs use a scoped disk directory under
+`.scratch/`. The memory blob store is for tests.
 
-Each opaque folder ID routes through `Placement.byRoute` to one folder object.
-Placement decodes the internal hex stream segment, so the object name uses the
-original ID rather than its doubled hex form. An index object owns the registry,
-notice inbox, change feed, manifest, and FTS5 table.
-
-A folder write and its durable notice enqueue commit in one SQL transaction.
-Notices carry the folder version, overwrite mark, and inline text or R2 hash.
-`folderId/version` deduplicates intake; search needs no remote folder-log read.
-
-Each folder object registers two wakeups with the stock Streamsy host. The
-`OutboxWakeup.make(notices, handler, { ordered: true })` wakeup delivers
-notices. A write arms the object's alarm in its mutation finalizer, and the
-alarm turn drains the outbox. The write does not wait for delivery. The oldest
-pending notice blocks later ones until it succeeds, so retry backoff cannot
-reorder folder commits. Each delivery has a two-second bound. A failed delivery
-keeps the notice queued, and the alarm fires again at its retry time. A backlog
-larger than one pass of 100 notices drains in back-to-back alarm turns.
-
-The `folder-sync/head` wakeup is the Worker's head writer. It runs
-`Projection.run` on `folderHead` when the stored checkpoint is behind the folder
-log. It is the only writer of that checkpoint, as the follower is on the Bun
-host. Reads and `decide` fold forward from it in memory.
-
-The hourly cron is a backstop. It lists registered folders and wakes each one.
-The wake re-arms the alarm when work is due, so a folder that lost its alarm
-still delivers. The local runner calls the same pass every hour, because
-Miniflare fires object alarms but does not fire cron. `POST /api/admin/wake`,
-protected by the writer token, triggers the pass at once.
-
-Index reads catch up notices, changes, manifest, and search before answering.
-Projection failures are logged and reads answer 503 with `Retry-After: 1`;
-registry access and durable notice intake continue while projections are down.
-Later passes retry from checkpoints. Both hosts read manifest rows, the consumed
-change cursor, and epoch in one SQL transaction.
-
-Each notice attempts the index projections twice: a best-effort pass before
-intake and a pass after durable intake. These passes run in the folder's alarm
-turn, so a slow index delays search and does not delay the folder write.
-
-The stock host runs stream expiry, notice delivery, and the head writer from
-one alarm. Each wakeup has its own deadline and backoff. The objects hold no
-long-lived projection followers.
-
-Run the local checks:
+For frontend development, keep Bun running and start Vite:
 
 ```sh
-bun run --cwd examples/folder-sync smoke:worker
-bun run --cwd examples/folder-sync test:worker
+bun run --cwd examples/folder-sync dev:web
 ```
 
-`smoke:worker` runs the shared HTTP smoke against a fresh local Worker.
-`test:worker` verifies alarm delivery and recovery, the head writer, auth, SQLite query behavior, R2 and
-object persistence, then runs the entire sync integration suite against workerd.
-The ordinary `test` command keeps all Bun checks and includes the Worker host
-checks. Set `FOLDER_SYNC_SCRATCH` to place temporary test data in a chosen directory.
+Open http://localhost:5179. Vite proxies `/api` and `/streams` to port 1339.
+`start` builds the browser before launching Bun. Restart it after frontend changes
+when using the built page. `/health` reports health.
 
-Change entries on both hosts include optional inline content or a blob hash.
-Search uses these fields without scanning the file log. All reads are public,
-including these feed fields. Streams use the default limit of 1000 entries.
-Delivered outbox rows and receiver dedup rows are retained without a quota.
-There is no public index-rebuild command; reset procedures must rotate the epoch
-and clear derived outputs, checkpoints, and index head tables together.
+## Run on local workerd
+
+Use this command instead of the Bun server:
+
+```sh
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync dev:worker
+```
+
+It builds the browser and Worker, then starts Miniflare/workerd on port 1339.
+Durable Objects and R2 use local disk state under `.scratch/worker/`.
+`FOLDER_SYNC_WORKER_STATE` selects another directory; `PORT` changes the port.
+Use the same seed, browser token and mirror commands above.
+
+Each folder object owns its file stream, current heads and version counter.
+The index object owns the folder registry and search. After a commit, a
+best-effort ping asks the index to catch up. The hourly cron checks every folder
+cursor after a lost ping. The local harness runs the same pass on startup and
+each hour. An authenticated `POST /api/admin/wake` runs it immediately.
+
+Blob routes run in the Worker entry and stream directly to local R2. Uploads
+require `Content-Length`; missing length gets 400. The shipped clients supply
+it. Bun also accepts streamed uploads without a declared length. These commands
+use no remote Cloudflare resources. There is no hosted deployment.
+
+## Two State streams
+
+| URL                                  | Collection | Key        |
+| ------------------------------------ | ---------- | ---------- |
+| `/streams/folders`                   | `folder`   | `folderId` |
+| `/streams/folders/<folderKey>/files` | `file`     | `path`     |
+
+Both use the stock read-only State server. PUT, POST and DELETE get 405. Folder
+values contain `{ folderId, title }`. File upserts have this shape:
+
+```json
+{
+  "type": "file",
+  "key": "guide/intro.md",
+  "value": {
+    "path": "guide/intro.md",
+    "version": 41,
+    "hash": "<sha256-hex>",
+    "size": 8,
+    "author": "sync CLI",
+    "text": "# Intro\n"
+  },
+  "headers": {
+    "operation": "upsert",
+    "txid": "cli-save-12",
+    "timestamp": "2026-10-19T12:01:00.000Z"
+  }
+}
+```
+
+A delete has `type`, `key` and headers with `operation: "delete"`. It has no
+value or version. Each append contains one change. The server time is for
+display only.
+
+The owner assigns the next positive folder sequence to each upsert. Deletes
+take no number. The durable counter never goes down after delete or restart.
+Compare versions only for equality on the same path in the same folder.
+Offsets are read cursors. They never name file versions. The append uses
+`expectedOffset` as a write guard. The append, current head and counter commit
+in one owner transaction.
+
+Folder IDs are opaque strings. They may contain slashes. The limits are 100
+decoded UTF-16 code units and 249 UTF-8 bytes. In stream URLs, `folderKey` is the
+hex of the ID's UTF-8 bytes: `docs` becomes `646f6373`. In API URLs, percent-encode
+the whole folder ID as one segment. Paths are relative POSIX paths; encode each
+path segment separately. Directories are implicit. Folder rename and delete
+are outside this demo.
+
+Bootstrap with `offset=-1`. Consume pages in order, then follow
+`Stream-Next-Offset` with `live=long-poll` or `live=sse`. Save that cursor after
+applying a response. `Stream-Up-To-Date: true` means the read reached the tail.
+A stored `reset` control clears that folder's state; apply the changes after it
+in the same response and keep the cursor moving forward. A 410 clears state and
+starts a fresh read from `-1`. No production writer currently emits either.
+
+## Write API
+
+JSON write bodies are limited to 512 KiB. Send `Content-Type: application/json`.
+Folder creation with another content type gets 415 on both hosts.
+
+| Request                                 | Body                                  | Result                                                      |
+| --------------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| `POST /api/folders`                     | `{ txid, folderId, title }`           | 200; same ID and title is a no-op, another title gets 409   |
+| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, hash, size, text? }` | 200 with `{ version, txid, hash }` and a version ETag       |
+| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author }`                    | 200 with `{ txid }`; already absent gives `{}` with no txid |
+| `GET /api/folders/<id>/files/<path>`    | none                                  | Content bytes with `ETag: "<version>"`, or 404              |
+
+The path comes from the URL. The owner sets the version. Choose a precondition:
+
+| Header             | Meaning                                      |
+| ------------------ | -------------------------------------------- |
+| `If-Match: "41"`   | Write only if this path still has version 41 |
+| `If-None-Match: *` | Create only if the path has no live file     |
+| none               | Last writer wins                             |
+
+A precondition miss gets 412 with the current `{ version, txid, hash }` and its
+ETag, or `{ "head": null }` when absent. Delete rejects `If-None-Match`.
+`If-Match: *`, weak tags and tag lists get 400. The API supports only one quoted
+positive version.
+
+After validating content, the owner checks for the current hash before checking
+the precondition. Matching content returns the current head and appends nothing,
+even when the supplied version is stale. Retry a network error or 5xx with the
+same body and precondition. If another writer changed the head, a conditional
+retry can get 412. An unconditioned retry remains last writer wins.
+
+Wait for the txid in the answer to appear on the stream. It can differ from the
+request's txid when another writer stored the same content first. A no-op delete
+returns no txid because it appends nothing; there is nothing to wait for.
+
+## Blobs
+
+All content has a SHA-256 hex hash. Valid UTF-8 without NUL, at most 64 KiB,
+must use `text`. Other content uses a blob reference. The file limit is 64 MiB.
+
+1. `PUT /api/blobs/<hash>` uploads bytes with the writer token and
+   `Content-Length`. Success is `200 { "hash": "<hash>" }`. A repeated upload
+   writes nothing. Wrong bytes get 400; content above the limit gets 413.
+2. Commit the file JSON with `hash` and `size`, omitting `text`. The owner checks
+   that the blob exists with that size. Missing content gets
+   `409 { "error": "blob-missing", "hash": "..." }`. Upload and commit again.
+
+`HEAD /api/blobs/<hash>` returns 200 with `Content-Length`, or 404. GET returns
+the bytes with immutable cache headers. Bun hashes while writing to disk,
+syncs the file and directory, and publishes it only after validation. The Worker
+streams to R2 with the expected SHA-256. Large bytes stay out of folder objects.
+Uploads and commits are separate, so an abandoned upload can leave an orphan.
+
+## Browser
+
+The browser uses one `createStreamDB` for the registry and one for the open
+folder. TanStack DB live queries build the tree from these collections. File
+upserts replace complete rows, including removal of optional inline text.
+An edit appears optimistically, sends `If-Match`, and waits for the answer's
+txid through `awaitTxId`. A failed save rolls back the optimistic row and keeps
+the draft. The accepted version becomes the next edit's base.
+
+History is a paginated replay of the folder stream filtered by path. Earlier
+content comes from the saved value's `text` or immutable hash. Markdown and MDX
+display without executing HTML or JSX. Search snippets render as escaped text.
+Binary files offer a download. Drafts stay in memory and are lost on navigation
+or reload. The writer token is stored in browser local storage.
+
+## Sync CLI
+
+`--folders docs,notes` selects folders. Omit it to discover the registry.
+`--write notes` selects writable folders; the default is none. `--token` overrides
+the writer token environment setting. Writable folders must already exist.
+
+Files live at `<dir>/<folderId>/<path>`. The exported `sync(options)` accepts a
+`folderDirectory(id)` function for another layout. Mappings must be relative,
+contained and disjoint. IDs such as `docs` and `docs/api` need a different mapping
+or selection when used together. `.folder-sync` is reserved. Comma-separated
+arguments cannot select IDs containing commas; the runner accepts arrays.
+
+The CLI keeps one cursor per folder and each path's version, remote hash and
+local hash. Startup checks each saved cursor against a HEAD tail. A tail
+lexicographically before the cursor stops sync with `HistoryRewound`. Restore
+the server history or use a fresh mirror after resolving the restore. No file
+version is compared numerically to detect a rewind.
+
+Each folder bootstraps by replay, then stays live. Unchanged local files take
+remote content. A local edit uses its observed version with `If-Match`; a new
+path uses `If-None-Match: *`. On 412, its bytes become a
+`name.conflict-<client>[-n].ext` sibling. The original path takes the server file,
+and the sibling syncs as a new file. A delete without an observed version sends
+no request. A stale delete keeps the remote file. A reset clears folder state
+and consumes the rest of that page; 410 replays from `-1` and reconciles again.
+
+SQLite stores observations, cursors and queued operations. Immutable source
+files under `.folder-sync/content/<hash>` keep pending bytes safe across edits
+and restarts. The CLI streams uploads and downloads. Retryable failures back
+off; 401 and 403 stop the daemon with pending writes retained. The server URL
+and selection are bound to the mirror state. Use a new directory to change them.
+
+Read-only edits are backed up under `.folder-sync/rejected/` before restoration.
+Existing backups get a numeric suffix. Non-retryable commit failures retain their
+source and reason. Inspect those summaries offline:
+
+```sh
+bun run --cwd examples/folder-sync sync rejected --dir "$PWD/examples/folder-sync/mirror-a"
+```
+
+Symlinks, special files and files over 64 MiB are skipped with a warning.
+Editor swap files, common backup names and `.DS_Store` are ignored. The watcher
+settles editor bursts for 100 ms; periodic scans cover missed events. Run one
+daemon per mirror. Ctrl+C closes watchers, reads and SQLite.
 
 ## Agent filesystem
 
-`agent/index.ts` creates one HTTP core with adapters for just-bash 3.6.0 and
-`@better-fs-tools/fs` 0.1.0. The returned `fs` implements just-bash `IFileSystem`;
-`tools` implements Better FS Tools `WritableFileSystem`. Both adapters share the
-same selection and session observations. This works against the Bun or Worker
-URL. It does not mirror files to disk.
-
-From code run at the repository root:
+`createAgentFileSystem` in `agent/index.ts` returns a just-bash session, its
+filesystem, a Better FS Tools adapter and the shared HTTP core. For example,
+from code at the repository root:
 
 ```ts
 import { createAgentFileSystem } from "./examples/folder-sync/agent/index.ts";
@@ -440,110 +268,105 @@ const session = await createAgentFileSystem({
   server: "http://localhost:1339",
   folders: ["docs/root"],
   writable: ["docs/root"],
-  // token: "the Worker writer token",
+  token: "local-demo-token",
 });
-
-console.log(await session.bash.exec("ls /docs/root"));
-console.log(await session.bash.exec("cat /docs/root/tutorial.mdx"));
-console.log(await session.bash.exec("grep --search projection -n projection /docs/root"));
-console.log(await session.bash.exec("echo 'agent note' > /docs/root/agent-note.txt"));
-console.log(await session.bash.exec("cat /docs/root/agent-note.txt"));
-
-const stat = await session.tools.stat("/docs/root/agent-note.txt", {});
-if (stat.ok && stat.stat.exists) {
-  console.log(
-    await session.tools.write(
-      "/docs/root/agent-note.txt",
-      new TextEncoder().encode("revised note\n"),
-      { precondition: { kind: "version", version: stat.stat.version }, createParents: false },
-    ),
-  );
-}
+await session.bash.exec("cat /docs/root/tutorial.mdx");
+await session.bash.exec("echo note > /docs/root/agent-note.txt");
 ```
 
-Files appear at `/<folderId>/<path>`; the slash in `docs/root` creates synthetic
-parents. `folderDirectory(id)` can instead return a relative directory. It uses
-the CLI's shared mapping validation: paths must stay inside the virtual root,
-folder roots must be disjoint, and `.folder-sync` is reserved. Explicit `folders`
-restricts selection; otherwise `/api/ls` discovers folders with indexed files.
-A discovered folder whose mapping overlaps an existing root is skipped with one
-warning, so later listings, reads, and search continue. `onWarning(message)` can
-capture those warnings; by default the host logs them. Explicit `folders` or
-`writable` configurations still refuse overlapping roots. An empty folder can be
-selected explicitly or named in `writable`. The default
-writable list is empty. The root, folder roots, and their synthetic parents are
-read-only. Writing there or into an unselected or read-only folder gives `EROFS`.
+The agent keeps folder maps from the State streams and loads blobs by hash.
+Folder discovery uses the registry. `folderDirectory(id)` applies the same
+mapping rules as the CLI. Writable folders default to none. Root and synthetic
+parents are read-only.
 
-Writes go directly to the file API with the session's last observed version as
-`x-file-base` and one operation ID reused across retries. File reads and write
-receipts update that observation; metadata checks and listings do not. Deletes
-retain the tombstone receipt as the next base. Only a first write to a path that
-the session has never observed uses a fresh head as base. That blind first write
-can replace content without a mark; later unseen edits produce `overwrote`.
-Append pins the version of the bytes it read. Copy observes the source read and
-uses the destination's own observation as base, or the source read version for
-a same-path copy. Reads fetch bytes through
-the file API. Stat and verification use history metadata without fetching bytes.
-The tools adapter buffers one file, reports `streaming: false`, and exposes no
-stable identity. `open().info.version` and `stat().version` are the file's decimal
-folder sequence. Handles have single-use bytes, change verification, and
-idempotent close.
+Content writes use the version seen by a read or successful write, or an explicit
+version precondition. A write to a path the session never read uses
+`If-None-Match: *`, even if listing found it. A 412 becomes `ESTALE`; read again
+before retrying. Deletes may use a listed version without reading the bytes.
+That version is pinned before refresh, so a stale listing also gets `ESTALE`.
+The Better FS Tools adapter advertises atomic writes and compare-and-swap.
 
-`writeCapabilities` is `{ atomic: true, compareAndSwap: false, preserveMode: false }`.
-The API atomically commits a complete file, but `base` records unseen overwrites
-instead of rejecting them. The adapter checks `absent` and `version` before
-writing; another writer can commit between that check and the PUT. Better FS Tools
-must treat those preconditions as advisory. There is no staged write, persistent
-mode, symlink, hard link, or atomic rename for HTTP files. File copying, appending, and deletion
-work; directory copying and removal are unsupported. Empty directories made by
-`mkdir` or `createParents` exist only for this session. Server directories remain
-implicit in file paths. The shell mounts an InMemoryFs at `/tmp` for private,
-non-durable session scratch, and an in-memory device filesystem at `/dev` with
-`null`, `zero`, `stdin`, `stdout`, `stderr`, and `fd`, matching just-bash's standard
-layout. `/dev/null` writes and appends are discarded. These mounts participate
-in listing, path resolution, and globbing and shadow HTTP paths under `/dev` and
-`/tmp`; map such folders elsewhere with `folderDirectory`. The Better FS Tools
-adapter remains over the HTTP core. `touch` on a writable HTTP file accepts the
-timestamp call as a no-op. A failed shell redirection can reject `bash.exec()`;
-catch it and reuse the same session.
+Shell globs use the session path snapshot. List again after external edits.
+Empty directories are session-only. Links, persistent modes and atomic rename
+are unsupported. Handles buffer a whole file. `grep --search <fts-query>` uses
+the index for candidates, then verifies matches against file bytes. It reports
+possible incompleteness at the API's 100-hit limit. Ordinary grep keeps its
+usual stdin and flags. Requests support cancellation and bounded retries.
 
-Every listing fetches `/api/ls`, which can lag folder commits. Session mutations
-bridge that lag and refresh their heads on listing, so external edits and deletes
-are observed. There is no head TTL or background cache. Shell glob expansion uses
-the latest path snapshot populated at creation and by listings or mutations;
-list again to refresh it after external changes. Ordinary file reads and version
-checks always reach the authoritative file API.
+## Search and listing
 
-Ordinary `grep` delegates unchanged to the built-in command, including pipes,
-recursive flags, and stdin. Opt-in candidate mode uses `--search FTS_QUERY [OPTIONS] PATTERN [PATH ...]`.
-It asks `/api/search` for candidates, joins the snippet segments' `text` fields,
-and passes candidate paths to just-bash's real grep. Matches are confirmed against
-current file bytes; snippets are never match evidence. Supported options are
-`-F`, `-E`, `-i`, `-n`, `-w`, `-l`, `-c`, `-v`, `-q`, `-H`, `-r`, and `-R`. With no path, the
-scope is the current directory. Use `--` before a pattern starting with a dash.
-This is an explicitly scoped index search: FTS token semantics, text-only indexing,
-projection lag, and the API's 100-hit limit can omit files. It does not promise a
-complete corpus grep. Reaching 100 search hits prints an incompleteness note on
-stderr, even when the requested scope filters out those hits.
+`GET /api/ls?folder=docs&prefix=guide/&glob=**/*.md` lists live files. The filters
+are optional and combine. Rows contain `id`, `folderId`, `path`, `version`,
+`hash`, `size`, `updatedAt` and `author`. The ID is a JSON tuple of folder and
+path. Globs match paths within each folder and include dotfiles.
 
-Expected errors keep the session usable:
+`GET /api/search?q=durable&folder=docs` searches current text. FTS5 syntax is
+accepted; a bad query gets 400. Results have folder, path, version and
+`{ text, match }` snippet segments. They sort by relevance with a 100-hit limit.
+Render snippet segments as text. Deleted files and binary content have no search
+text. Blob text is capped at the first 1 MiB. Preparation reads one blob prefix
+at a time, so a page does not hold every blob's text in memory.
 
-| Failure                                            | just-bash errno | Better FS Tools reason                  |
-| -------------------------------------------------- | --------------- | --------------------------------------- |
-| 400                                                | `EINVAL`        | `io`                                    |
-| 404                                                | `ENOENT`        | `not-found`                             |
-| 413 or more than 8 MiB                             | `EFBIG`         | `too-large`                             |
-| 401 or 403                                         | `EACCES`        | `permission-denied`                     |
-| Read-only target                                   | `EROFS`         | `read-only`                             |
-| Folder ID over 100 UTF-16 units or 249 UTF-8 bytes | `ENAMETOOLONG`  | `io` (nearest reason, with errno cause) |
+Both indexes read each folder stream directly. Bun follows in process. The
+Worker reads over HTTP after pings or cron. Each index commits its rows with the
+consumed cursor. Search and listing are eventually consistent. A missing blob
+keeps file metadata without searchable text and does not stall later changes.
 
-Invalid folder IDs or mappings fail session creation. HTTP 408, 409, 429, and 503
-retry at most three times after the initial request, with exponential backoff and
-`Retry-After` seconds or an HTTP date as a minimum delay. Exhaustion gives `EIO`.
-Retry-After is accepted up to 5 seconds. A larger delay fails immediately with
-`EIO` rather than sleeping or retrying. 401 and 403 never retry, and the writer token is sent only on writes.
-Tools calls accept an abort signal, including during retry backoff.
+## Local measurements
 
-The agent tests run both Better FS Tools conformance suites against the in-process
-Bun host and a scripted just-bash session. `test:worker` also includes the agent's
-workerd authorization test.
+These are single loopback runs with warm OS caches. They are observations,
+not a throughput comparison. The recorded corpus had 33 files in 6 folders.
+Timing runs from fresh CLI launch until all destination hashes match.
+
+| Docs bootstrap         | Previous Bun version | State on Bun | State on local Worker |
+| ---------------------- | -------------------: | -----------: | --------------------: |
+| Wall time              |              0.517 s |      0.476 s |               0.539 s |
+| GET body bytes         |              254,248 |      268,760 |     76,585 compressed |
+| Decoded body bytes     |              254,248 |      268,760 |               268,760 |
+| Completed GET requests |                   34 |           19 |                    19 |
+| Peak CLI RSS           |          107,624 KiB |  113,600 KiB |           115,416 KiB |
+
+The previous Bun run used `1617e974`; State on Bun used `8531ead6`; the Worker
+used `aac27998`. All Worker bootstrap responses used gzip. Response-body counts
+exclude headers. Seeding and index catch-up are outside the interval.
+
+| 32 MiB binary round trip |         Bun | Local Worker |
+| ------------------------ | ----------: | -----------: |
+| Upload and commit        |     0.426 s |      0.860 s |
+| Fresh second client pull |     0.293 s |      0.406 s |
+| Total                    |     0.719 s |      1.266 s |
+| Writer peak RSS          | 143,680 KiB |  152,328 KiB |
+| Reader peak RSS          | 121,048 KiB |  108,336 KiB |
+
+Both transfers verified all 33,554,432 bytes by SHA-256. The Bun server's peak RSS
+was 173,240 KiB. The Worker harness RSS is not a workerd memory measurement.
+
+## Checks and limits
+
+```sh
+bun run --cwd examples/folder-sync typecheck
+bun run --cwd examples/folder-sync test
+bun run --cwd examples/folder-sync smoke:http
+bun run --cwd examples/folder-sync smoke:worker
+bun run --cwd examples/folder-sync test:worker
+```
+
+Bootstrap and history replay every retained event. There is no State compaction,
+blob orphan sweep, multipart upload or cache garbage collection. Storage,
+pending sources, rejected files and backups have no quota. Old mirror SQLite
+formats have no migration; use fresh directories.
+
+A writable import needs the owner's durable counter and current heads as well
+as the stream. Copying events alone preserves value versions but does not
+initialize a writable owner. Restoring a missing blob alone does not reindex an
+already consumed change. A later write or index rebuild is needed.
+
+Sync scans hash every selected file. An external editor can save during the
+final local read-to-rename window. A delete made while stopped during an
+interrupted first install can be restored on restart. Browser bundle size,
+full replay and scans suit a small demo corpus. There is no phone cache.
+
+Worker creation spans the registry and folder objects. A crash between them
+leaves a listed folder whose creation must be retried. A lost ping can leave
+search stale until the hourly pass. R2 checks and restart tests use local
+workerd; no remote deployment was tested.
