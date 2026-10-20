@@ -1,8 +1,10 @@
+import { StreamAddress } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Effect, Stream } from "effect";
+import { Effect, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
-import { Files, FolderKey, fileKey, type FileChange } from "./streams.ts";
+import { File } from "./domain.ts";
+import { Files, FolderKey, fileKey } from "./streams.ts";
 
 export const SEARCH_LIMIT = 1024 * 1024;
 
@@ -30,48 +32,68 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
   }
 
   let length = 0;
-
-  const chunks = yield* content.body.pipe(
-    Stream.map((chunk) => {
-      const prefix = chunk.subarray(0, SEARCH_LIMIT - length);
-      length += prefix.length;
-
-      return prefix;
-    }),
-    Stream.takeUntil(() => length >= SEARCH_LIMIT),
-    Stream.runCollect,
+  const bytes = new Uint8Array(Math.min(content.size, SEARCH_LIMIT));
+  yield* content.body.pipe(
+    Stream.tap((chunk) =>
+      Effect.sync(() => {
+        const prefix = chunk.subarray(0, bytes.length - length);
+        bytes.set(prefix, length);
+        length += prefix.length;
+      }),
+    ),
+    Stream.takeUntil(() => length >= bytes.length),
+    Stream.runDrain,
   );
 
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  // Retain an incomplete final UTF-8 character when the byte cap cuts through it.
-  return searchableText(bytes, content.size > length);
+  return searchableText(bytes.subarray(0, length), content.size > length);
 });
 
-/** Preparation is shared by the Bun source follower and the Worker's HTTP reader. */
-export const prepareIndexChanges = (changes: ReadonlyArray<FileChange>) =>
-  Effect.forEach(changes, (change) =>
-    Effect.gen(function* () {
-      const text =
-        "value" in change ? (change.value.text ?? (yield* blobText(change.value.hash))) : undefined;
+export const FileMessage = Schema.Union([
+  StreamAddress.stateChange({ type: "file", schema: File }),
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
 
-      return { change, text };
-    }),
-  );
+export type FileMessage = typeof FileMessage.Type;
+
+/** Stage one prefix at a time outside the index transaction. Page size never multiplies JS text memory. */
+export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
+  folderId: string,
+  changes: ReadonlyArray<FileMessage>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`DELETE FROM folder_sync_index_text WHERE folderId = ${folderId}`;
+
+  const lastReset = changes.findLastIndex((change) => !("type" in change));
+
+  for (const [position, change] of changes.entries()) {
+    if (position < lastReset || !("value" in change)) continue;
+    const text = change.value.text ?? (yield* blobText(change.value.hash));
+
+    if (text !== undefined)
+      yield* sql`INSERT INTO folder_sync_index_text (folderId, position, text) VALUES (${folderId}, ${position}, ${text})`;
+  }
+
+  return changes;
+});
+
+export const clearIndexFolder = Effect.fn("Search.clear")(function* (folderId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId}`;
+  yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId}`;
+});
 
 export const applyIndexChanges = Effect.fn("Search.apply")(function* (
   folderId: string,
-  prepared: Effect.Success<ReturnType<typeof prepareIndexChanges>>,
+  prepared: ReadonlyArray<FileMessage>,
 ) {
   const sql = yield* SqlClient.SqlClient;
 
-  for (const { change, text } of prepared) {
+  for (const [position, change] of prepared.entries()) {
+    if (!("type" in change)) {
+      yield* clearIndexFolder(folderId);
+      continue;
+    }
+
     yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId} AND path = ${change.key}`;
     yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId} AND path = ${change.key}`;
 
@@ -90,25 +112,39 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
       };
 
       yield* sql`INSERT INTO folder_sync_manifest ${sql.insert(row)}`;
-
-      if (text !== undefined)
-        yield* sql`INSERT INTO folder_sync_search (folderId, path, version, text) VALUES (${folderId}, ${value.path}, ${value.version}, ${text})`;
+      yield* sql`INSERT INTO folder_sync_search (folderId, path, version, text)
+        SELECT ${folderId}, ${value.path}, ${value.version}, text FROM folder_sync_index_text
+        WHERE folderId = ${folderId} AND position = ${position}`;
     }
   }
+
+  yield* sql`DELETE FROM folder_sync_index_text WHERE folderId = ${folderId}`;
 });
 
 /** Each folder's SQL rows and input cursor commit together on the index owner. */
-export const search = Projection.process({
-  id: "folder-index",
-  params: { folderId: FolderKey },
-  inputs: { input: Files },
-  commit: Commit.transaction,
-  prepare: (batch) => prepareIndexChanges(batch.input.items),
-  process: (_batch, unit, prepared) => applyIndexChanges(unit.params.folderId, prepared),
-});
+export const search = {
+  at: (params: { folderId: string }) =>
+    Projection.process({
+      id: "folder-index",
+      params: { folderId: FolderKey },
+      // State's public change codec omits controls. Read the same stream through a JSON codec that accepts reset.
+      inputs: {
+        input: {
+          ...StreamAddress.json(Files.at(params).id, { schema: FileMessage }),
+          stream: Files,
+        },
+      },
+      commit: Commit.transaction,
+      prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
+      process: (_batch, unit, prepared) => applyIndexChanges(unit.params.folderId, prepared),
+    }).at(params),
+};
 
 export const initialiseSearch = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_index_text (
+    folderId TEXT NOT NULL, position INTEGER NOT NULL, text TEXT NOT NULL,
+    PRIMARY KEY (folderId, position))`;
   yield* sql.unsafe(
     "CREATE VIRTUAL TABLE IF NOT EXISTS folder_sync_search USING fts5(folderId UNINDEXED, path UNINDEXED, version UNINDEXED, text)",
   );

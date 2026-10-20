@@ -1,13 +1,23 @@
+import { StreamGone, ZERO_OFFSET } from "@streamsy/core";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { Effect, Layer, Logger, Result, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
-import { FileIndex, FileIndexLive, IndexLive } from "../server/file-index.ts";
-import { initialiseSearch, search, SEARCH_LIMIT } from "../server/projections.ts";
+import { FileIndex, FileIndexLive, IndexLive, runIndex } from "../server/file-index.ts";
+import {
+  applyIndexChanges,
+  initialiseSearch,
+  prepareIndexChanges,
+  search,
+  SEARCH_LIMIT,
+  type FileMessage,
+} from "../server/projections.ts";
 import { BlobStore } from "../server/blob-store.ts";
 import { prepareContent } from "../server/domain.ts";
+import { Files, Folders } from "../server/streams.ts";
+import { makeIndexReader } from "../worker/index-reader.ts";
 import { sqliteHost } from "../server/storage.ts";
 
 class NotReady extends Schema.TaggedError<NotReady>()("NotReady", {}) {}
@@ -25,7 +35,279 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
   Layer.provideMerge(sqliteHost(":memory:")),
 );
 
+const fileMessage = (path: string, version = 1): FileMessage => ({
+  type: "file",
+  key: path,
+  value: { path, version, hash: "0".repeat(64), size: 6, author: "test", text: "needle" },
+  headers: { operation: "upsert", txid: path },
+});
+
+const reset: FileMessage = { headers: { control: "reset" } };
+
+layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
+  it.effect("Bun discovery consumes a stored registry reset without replaying it", () =>
+    Effect.gen(function* () {
+      const store = yield* FolderStore;
+      const folders = yield* Folders;
+      const index = yield* FileIndex;
+      yield* store.create("discarded", "Discarded", "discarded");
+      yield* store.create("retained", "Retained", "retained");
+
+      for (const folderId of ["discarded", "retained"])
+        yield* store.commit(folderId, "a", {
+          ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+          txid: folderId,
+          author: "test",
+        });
+
+      const retained = (yield* folders.collect({})).items.find(
+        (change) => change.key === "retained",
+      );
+
+      const data = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
+        reset,
+        retained,
+      ]);
+
+      yield* folders.wire.append(Folders.at({}).id, {
+        contentType: "application/json",
+        data: new TextEncoder().encode(data),
+      });
+      yield* Layer.build(IndexLive);
+      yield* until(index.list({ folder: "retained" }), (rows) => rows.length === 1);
+      expect(yield* index.list({ folder: "discarded" })).toEqual([]);
+    }),
+  );
+});
+
 layer(graph, { excludeTestServices: true })((it) => {
+  it.effect("Bun indexes a stored reset and following changes once, keeping its cursor", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const store = yield* FolderStore;
+      const files = yield* Files;
+      const index = yield* FileIndex;
+      yield* store.create("stored-reset", "Reset", "folder");
+      yield* files.wire.append(Files.at({ folderId: "stored-reset" }).id, {
+        contentType: "application/json",
+        data: new TextEncoder().encode(
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
+            fileMessage("before"),
+            reset,
+            fileMessage("after", 2),
+          ]),
+        ),
+      });
+      yield* runIndex("stored-reset");
+      expect((yield* index.list({ folder: "stored-reset" })).map((row) => row.path)).toEqual([
+        "after",
+      ]);
+
+      const before = (yield* Projection.read(search.at({ folderId: "stored-reset" }))).offsets
+        .input;
+
+      yield* runIndex("stored-reset");
+      expect((yield* Projection.read(search.at({ folderId: "stored-reset" }))).offsets.input).toBe(
+        before,
+      );
+    }),
+  );
+
+  it.effect("Bun rebuilds a gone cursor from the beginning and rejects a gone bootstrap", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const store = yield* FolderStore;
+      const files = yield* Files;
+      yield* store.create("gone-index", "Gone", "folder");
+      yield* store.commit("gone-index", "a", {
+        ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+        txid: "one",
+        author: "test",
+      });
+      yield* runIndex("gone-index");
+      const reads: string[] = [];
+      let gone = false;
+
+      const wrapped = {
+        ...files,
+        wire: {
+          ...files.wire,
+          read: (
+            id: Parameters<typeof files.wire.read>[0],
+            options?: Parameters<typeof files.wire.read>[1],
+          ) => {
+            reads.push(options?.offset ?? ZERO_OFFSET);
+
+            if (!gone) {
+              gone = true;
+
+              return Effect.fail(new StreamGone({ id }));
+            }
+
+            return files.wire.read(id, options);
+          },
+        },
+      };
+
+      yield* runIndex("gone-index").pipe(Effect.provideService(Files, wrapped));
+      expect(reads[0]).not.toBe(ZERO_OFFSET);
+      expect(reads.slice(1)).toContain(ZERO_OFFSET);
+      let attempts = 0;
+
+      const failed = yield* runIndex("gone-index").pipe(
+        Effect.provideService(Files, {
+          ...files,
+          wire: {
+            ...files.wire,
+            read: (id) => {
+              attempts++;
+
+              return Effect.fail(new StreamGone({ id }));
+            },
+          },
+        }),
+        Effect.result,
+      );
+
+      expect(Result.isFailure(failed)).toBe(true);
+      expect(attempts).toBe(2);
+    }),
+  );
+
+  it.effect("Worker reset applies the rest of the page and lets another folder catch up", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      yield* store.create("reset-worker", "Reset", "reset");
+      yield* store.create("other-worker", "Other", "other");
+      yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_cursors (folderId TEXT PRIMARY KEY, cursor TEXT NOT NULL)`;
+      yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, dropPings INTEGER NOT NULL)`;
+      yield* sql`INSERT INTO folder_sync_test VALUES (1, 0) ON CONFLICT DO NOTHING`;
+      const reads: string[] = [];
+
+      const reader = yield* makeIndexReader((folderId, _key, cursor) => {
+        if (!["reset-worker", "other-worker"].includes(folderId))
+          return Promise.resolve(new Response(null, { status: 404 }));
+        reads.push(`${folderId}:${cursor}`);
+
+        const rows =
+          folderId === "reset-worker"
+            ? [fileMessage("before"), reset, fileMessage("after")]
+            : [fileMessage("other")];
+
+        return Promise.resolve(
+          Response.json(cursor === "-1" ? rows : [], {
+            headers: { "stream-next-offset": "0000000000000001", "stream-up-to-date": "true" },
+          }),
+        );
+      });
+
+      yield* reader.catchup;
+      expect((yield* index.list({ folder: "reset-worker" })).map((row) => row.path)).toEqual([
+        "after",
+      ]);
+      expect((yield* index.list({ folder: "other-worker" })).map((row) => row.path)).toEqual([
+        "other",
+      ]);
+      expect(reads).toHaveLength(2);
+      yield* reader.catchup;
+      expect(reads.slice(2).every((read) => !read.endsWith(":-1"))).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "Worker 410 retries -1 once; an unavailable bootstrap does not block other folders",
+    () =>
+      Effect.gen(function* () {
+        yield* initialiseSearch;
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* FolderStore;
+        const index = yield* FileIndex;
+        yield* store.create("gone-worker", "Gone", "gone");
+        yield* store.create("healthy-worker", "Healthy", "healthy");
+        yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_cursors (folderId TEXT PRIMARY KEY, cursor TEXT NOT NULL)`;
+        yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, dropPings INTEGER NOT NULL)`;
+        yield* sql`INSERT INTO folder_sync_test VALUES (1, 0) ON CONFLICT DO NOTHING`;
+        yield* sql`INSERT INTO folder_sync_cursors VALUES ('gone-worker', 'old')`;
+        const offsets: string[] = [];
+        let bootstrapGone = false;
+
+        const reader = yield* makeIndexReader((folderId, _key, cursor) => {
+          if (!["gone-worker", "healthy-worker"].includes(folderId))
+            return Promise.resolve(new Response(null, { status: 404 }));
+
+          if (folderId === "gone-worker") {
+            offsets.push(cursor);
+
+            if (cursor !== "-1" || bootstrapGone)
+              return Promise.resolve(new Response(null, { status: 410 }));
+          }
+
+          return Promise.resolve(
+            Response.json([fileMessage(folderId)], {
+              headers: { "stream-next-offset": "next", "stream-up-to-date": "true" },
+            }),
+          );
+        });
+
+        yield* reader.catchup;
+        expect(offsets).toEqual(["old", "-1"]);
+        bootstrapGone = true;
+        expect(Result.isFailure(yield* Effect.result(reader.catchup))).toBe(true);
+        expect(offsets.slice(2)).toEqual(["next", "-1"]);
+        expect(yield* index.list({ folder: "healthy-worker" })).toHaveLength(1);
+      }),
+  );
+
+  it.effect("blob page preparation stages each prefix before fetching the next", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const blobs = yield* BlobStore;
+      const bytes = new TextEncoder().encode("needle " + "x".repeat(SEARCH_LIMIT));
+
+      const changes = Array.from({ length: 12 }, (_, i): FileMessage => {
+        const row = fileMessage(`large-${i}`);
+
+        if (!("value" in row)) throw new Error("Expected upsert");
+        const { text: _text, ...value } = row.value;
+
+        return { ...row, value: { ...value, size: bytes.length } };
+      });
+
+      let fetched = 0;
+
+      const prepared = yield* prepareIndexChanges("staged", changes).pipe(
+        Effect.provideService(BlobStore, {
+          ...blobs,
+          get: () =>
+            Effect.gen(function* () {
+              const rows = yield* sql<{
+                count: number;
+              }>`SELECT count(*) AS count FROM folder_sync_index_text WHERE folderId = 'staged'`.pipe(
+                Effect.orDie,
+              );
+
+              expect(rows[0]?.count).toBe(fetched++);
+
+              return { size: bytes.length, body: Stream.succeed(bytes) };
+            }),
+        }),
+      );
+
+      expect(prepared).toEqual(changes);
+      yield* sql.withTransaction(applyIndexChanges("staged", prepared));
+      expect(
+        (yield* sql<{
+          count: number;
+        }>`SELECT count(*) AS count FROM folder_sync_search WHERE folderId = 'staged'`)[0]?.count,
+      ).toBe(12);
+      expect(yield* sql`SELECT * FROM folder_sync_index_text`).toEqual([]);
+    }),
+  );
+
   it.effect(
     "search ranks relevant text before alphabetic paths and returns safe snippet parts",
     () =>

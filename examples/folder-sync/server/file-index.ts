@@ -1,10 +1,12 @@
+import { StreamAddress, ZERO_OFFSET } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { Projection } from "@streamsy/projection";
 import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import picomatch from "picomatch";
 import { InvalidFile } from "./domain.ts";
-import { Folders, ListedFile } from "./streams.ts";
-import { initialiseSearch, search } from "./projections.ts";
+import { Folder, Folders, ListedFile } from "./streams.ts";
+import { clearIndexFolder, initialiseSearch, search } from "./projections.ts";
 import { SearchResult, snippetParts } from "./search-result.ts";
 
 export { SearchResult } from "./search-result.ts";
@@ -90,6 +92,32 @@ export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =
     Effect.retry({ schedule: Schedule.spaced("1 second") }),
   );
 
+/** A gone cursor rebuilds only this folder. An unavailable bootstrap fails instead of spinning. */
+export const runIndex = Effect.fn("Index.run")(function* (folderId: string) {
+  const bound = search.at({ folderId });
+
+  return yield* Projection.run(bound).pipe(
+    Effect.catchTag("ProjectionFault", (error) =>
+      Effect.gen(function* () {
+        if (
+          error.reason !== "history-unavailable" ||
+          (yield* Projection.read(bound)).offsets.input === ZERO_OFFSET
+        )
+          return yield* error;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* clearIndexFolder(folderId);
+            yield* Projection.forget(bound);
+          }),
+        );
+
+        return yield* Projection.run(bound);
+      }),
+    ),
+  );
+});
+
 /** Folder discovery owns one direct source follower per folder. No derived feed. */
 export const IndexLive = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -101,27 +129,37 @@ export const IndexLive = Layer.effectDiscard(
     const start = Effect.fn("Index.start")(function* (folderId: string) {
       if (started.has(folderId)) return;
       const bound = search.at({ folderId });
-      yield* Projection.run(bound);
-      yield* supervise(folderId, Projection.follow(bound).pipe(Effect.flatMap(Fiber.join))).pipe(
-        Effect.forkIn(scope),
-      );
+      yield* runIndex(folderId);
+      yield* supervise(
+        folderId,
+        Effect.gen(function* () {
+          yield* runIndex(folderId);
+
+          return yield* Projection.follow(bound).pipe(Effect.flatMap(Fiber.join));
+        }),
+      ).pipe(Effect.forkIn(scope));
       started.add(folderId);
     });
 
     // Replay the small registry on every runtime start to restore all folder bindings.
     yield* supervise(
       "folders",
-      folders
-        .follow({})
-        .pipe(
-          Stream.runForEach((batch) =>
-            Effect.forEach(
-              batch.items,
-              (change) => ("value" in change ? start(change.value.folderId) : Effect.void),
-              { discard: true },
-            ),
+      Streams.follow(
+        StreamAddress.json(Folders.at({}).id, {
+          schema: Schema.Union([
+            StreamAddress.stateChange({ type: "folder", schema: Folder }),
+            Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+          ]),
+        }),
+      ).pipe(
+        Stream.runForEach((batch) =>
+          Effect.forEach(
+            batch.items.slice(batch.items.findLastIndex((change) => !("type" in change)) + 1),
+            (change) => ("value" in change ? start(change.value.folderId) : Effect.void),
+            { discard: true },
           ),
         ),
-    ).pipe(Effect.forkIn(scope));
+      ),
+    ).pipe(Effect.provideService(StreamsReader, folders.wire), Effect.forkIn(scope));
   }),
 );

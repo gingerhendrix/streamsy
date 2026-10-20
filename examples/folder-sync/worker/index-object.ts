@@ -1,168 +1,19 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import {
-  CommitBoundary,
-  DurableState,
-  StorageFault,
-  StreamAddress,
-  Streamsy,
-} from "@streamsy/core";
+import { CommitBoundary, DurableState, StorageFault, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, Context, DateTime, Effect, Layer, Schema, Semaphore } from "effect";
+import { Cause, DateTime, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { HealthLive, jsonBody } from "../server/api.ts";
-import { BlobStore } from "../server/blob-store.ts";
-import { CreateFolder, File, FolderConflict, FolderId } from "../server/domain.ts";
+import { CreateFolder, FolderConflict, FolderId } from "../server/domain.ts";
 import { FileIndexLive } from "../server/file-index.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
-import { applyIndexChanges, initialiseSearch, prepareIndexChanges } from "../server/projections.ts";
-import { Folder, FolderKey, Folders } from "../server/streams.ts";
+import { initialiseSearch } from "../server/projections.ts";
+import { IndexReader, indexReaderLayer } from "./index-reader.ts";
+import { Folder, Folders } from "../server/streams.ts";
 import type { Env } from "./env.ts";
 import { objectStorage } from "./storage.ts";
-
-const FileMessage = Schema.Union([
-  StreamAddress.stateChange({ type: "file", schema: File }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
-
-class IndexReadFailure extends Schema.TaggedError<IndexReadFailure>()("IndexReadFailure", {
-  message: Schema.String,
-}) {}
-
-const makeIndexReader = (env: Env) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const registry = yield* Folders;
-    const blobs = yield* BlobStore;
-    // A pass includes network reads. Serialize passes so an older response cannot replace a newer row.
-    const gate = yield* Semaphore.make(1);
-
-    const clear = (folderId: string) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId}`;
-          yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId}`;
-          yield* sql`DELETE FROM folder_sync_cursors WHERE folderId = ${folderId}`;
-        }),
-      );
-
-    const folder = Effect.fn("Index.readFolder")(function* (folderId: string) {
-      const rows = yield* sql<{
-        cursor: string;
-      }>`SELECT cursor FROM folder_sync_cursors WHERE folderId = ${folderId}`;
-
-      let cursor = rows[0]?.cursor ?? "-1";
-      const key = yield* Schema.encodeEffect(FolderKey)(folderId);
-      const stub = env.FOLDERS.get(env.FOLDERS.idFromName(folderId));
-
-      while (true) {
-        const response = yield* Effect.tryPromise({
-          try: () =>
-            stub.fetch(
-              `https://internal/streams/folders/${key}/files?offset=${encodeURIComponent(cursor)}`,
-            ),
-          catch: (cause) => new IndexReadFailure({ message: String(cause) }),
-        });
-
-        // Registration precedes stream creation, so a crash can leave a registered empty folder.
-        if (response.status === 404) return yield* Effect.void;
-
-        if (response.status === 410) {
-          yield* clear(folderId);
-          cursor = "-1";
-          continue;
-        }
-
-        if (![200, 204].includes(response.status))
-          return yield* new IndexReadFailure({
-            message: `Folder ${folderId} answered ${response.status}`,
-          });
-
-        const messages =
-          response.status === 204
-            ? []
-            : yield* Effect.tryPromise({
-                try: () => response.json(),
-                catch: (cause) => new IndexReadFailure({ message: String(cause) }),
-              }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(FileMessage))));
-
-        if (messages.some((change) => !("type" in change))) {
-          yield* clear(folderId);
-          cursor = "-1";
-          continue;
-        }
-
-        const next = response.headers.get("stream-next-offset");
-
-        if (next === null)
-          return yield* new IndexReadFailure({ message: `Missing cursor for ${folderId}` });
-
-        const prepared = yield* prepareIndexChanges(
-          messages.filter((change) => "type" in change),
-        ).pipe(Effect.provideService(BlobStore, blobs));
-
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* applyIndexChanges(folderId, prepared).pipe(
-              Effect.provideService(SqlClient.SqlClient, sql),
-            );
-            yield* sql`INSERT INTO folder_sync_cursors (folderId, cursor) VALUES (${folderId}, ${next}) ON CONFLICT (folderId) DO UPDATE SET cursor = excluded.cursor`;
-          }),
-        );
-
-        if (response.headers.get("stream-up-to-date") === "true" || response.status === 204)
-          return yield* Effect.void;
-
-        if (next === cursor)
-          return yield* new IndexReadFailure({ message: `Folder ${folderId} did not advance` });
-        cursor = next;
-      }
-    });
-
-    const moved = (folderId: string) =>
-      gate.withPermit(
-        Effect.gen(function* () {
-          const flags = yield* sql<{
-            dropPings: number;
-          }>`SELECT dropPings FROM folder_sync_test WHERE id = 1`;
-
-          if (flags[0]?.dropPings === 1) return yield* Effect.void;
-
-          return yield* folder(folderId);
-        }),
-      );
-
-    const catchup = gate.withPermit(
-      Effect.gen(function* () {
-        let failed = false;
-        const rows = (yield* registry.collect({})).items;
-
-        for (const change of rows) {
-          if (!("value" in change)) continue;
-          yield* folder(change.value.folderId).pipe(
-            Effect.catchCause((cause) => {
-              failed = true;
-
-              return Effect.logError(`Index catch-up failed for ${change.value.folderId}`, cause);
-            }),
-          );
-        }
-
-        if (failed)
-          return yield* new IndexReadFailure({ message: "Some folders could not be indexed" });
-
-        return yield* Effect.void;
-      }),
-    );
-
-    return { moved, catchup };
-  });
-
-class IndexReader extends Context.Service<
-  IndexReader,
-  Effect.Success<ReturnType<typeof makeIndexReader>>
->()("FolderSync/IndexReader") {}
 
 const IndexInternal = Layer.mergeAll(
   HttpRouter.add(
@@ -294,7 +145,14 @@ const indexInitialise = Layer.effectDiscard(
 );
 
 const indexLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(FileIndexLive, Layer.effect(IndexReader, makeIndexReader(env))).pipe(
+  Layer.mergeAll(
+    FileIndexLive,
+    indexReaderLayer((folderId, key, cursor) =>
+      env.FOLDERS.get(env.FOLDERS.idFromName(folderId)).fetch(
+        `https://internal/streams/folders/${key}/files?offset=${encodeURIComponent(cursor)}`,
+      ),
+    ),
+  ).pipe(
     Layer.provideMerge(indexInitialise),
     Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders))),
     Layer.catchCause((cause) =>
