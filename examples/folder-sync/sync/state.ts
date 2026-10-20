@@ -64,10 +64,32 @@ const make = Effect.gen(function* () {
       version = excluded.version, hash = excluded.hash, localHash = excluded.localHash, localVersion = excluded.localVersion`;
   });
 
+  /** The paths of one folder that this mirror has a head for. */
+  const paths = Effect.fn("SyncState.paths")(function* (folderId: string) {
+    return (yield* sql<{ path: string }>`SELECT path FROM known WHERE folderId = ${folderId}`).map(
+      (row) => row.path,
+    );
+  });
+
   const pending = Effect.fn("SyncState.pending")(function* () {
     return yield* Schema.decodeUnknownEffect(Schema.Array(Pending))(
       yield* sql`SELECT * FROM outbox ORDER BY seq`,
     );
+  });
+
+  /** The oldest queued operation, or `undefined` when the outbox is empty. */
+  const next = Effect.fn("SyncState.next")(function* () {
+    return (yield* Schema.decodeUnknownEffect(Schema.Array(Pending))(
+      yield* sql`SELECT * FROM outbox ORDER BY seq LIMIT 1`,
+    ))[0];
+  });
+
+  /** True when an operation for this path waits in the outbox. */
+  const hasPending = Effect.fn("SyncState.hasPending")(function* (folderId: string, path: string) {
+    const rows = yield* sql<{ queued: number }>`SELECT EXISTS(
+      SELECT 1 FROM outbox WHERE folderId = ${folderId} AND path = ${path}) AS queued`;
+
+    return rows[0]?.queued === 1;
   });
 
   const enqueue = Effect.fn("SyncState.enqueue")(function* (
@@ -159,7 +181,10 @@ const make = Effect.gen(function* () {
     heads,
     head,
     save,
+    paths,
     pending,
+    next,
+    hasPending,
     enqueue,
     uploaded,
     discard,
