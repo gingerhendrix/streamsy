@@ -3,9 +3,17 @@
 /* oxlint-disable effecttsgo/global-fetch -- Injectable standard Request transport also serves in-process hosts. */
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Session and operation IDs are transport metadata. */
 /* oxlint-disable effecttsgo/extends-native-error -- just-bash requires thrown errno errors, shared with the typed tools edge. */
+import { StreamAddress } from "@streamsy/core";
 import { Duration, Effect, Result, Schedule, Schema } from "effect";
-import { FILE_LIMIT, FolderId, Version, Path as FilePath } from "../server/domain.ts";
-import { ManifestFile } from "../server/streams.ts";
+import {
+  FILE_LIMIT,
+  FolderId,
+  Version,
+  File,
+  inlineText,
+  Path as FilePath,
+} from "../server/domain.ts";
+import { Folder, FolderKey } from "../server/streams.ts";
 import { SearchResult } from "../server/search-result.ts";
 import { folderRoot } from "../sync/layout.ts";
 import { encodeFilePath } from "../sync/decisions.ts";
@@ -73,18 +81,17 @@ export interface MutationOptions {
   readonly signal?: AbortSignal;
 }
 
-const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
+const Written = Schema.Struct({ version: Schema.optionalKey(Version), txid: Schema.String });
 
-const History = Schema.Array(
-  Schema.Struct({
-    version: Version,
-    operation: Schema.Struct({
-      type: Schema.Literals(["put", "delete"]),
-      size: Schema.optionalKey(Schema.Int),
-      updatedAt: Schema.optionalKey(Schema.String),
-    }),
-  }),
-);
+const FileMessage = Schema.Union([
+  StreamAddress.stateChange({ type: "file", schema: File }),
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
+
+const FolderMessage = Schema.Union([
+  StreamAddress.stateChange({ type: "folder", schema: Folder }),
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
 
 const statusCode = (status: number): Errno => {
   switch (status) {
@@ -92,6 +99,8 @@ const statusCode = (status: number): Errno => {
       return "EINVAL";
     case 404:
       return "ENOENT";
+    case 412:
+      return "ESTALE";
     case 413:
       return "EFBIG";
     case 401:
@@ -118,13 +127,10 @@ export class FolderHttpFileSystem {
   private readonly skippedFolders = new Set<string>();
   private readonly observedVersions = new Map<string, number>();
   private readonly emptyDirectories = new Set<string>();
-  // Session writes overlay the eventually consistent manifest until newer rows arrive.
-  private readonly mutations = new Map<
-    string,
-    { head: FileHead; folderId: string; file: string }
-  >();
+  private readonly files = new Map<string, Map<string, File>>();
+  private readonly cursors = new Map<string, string>();
+  private folderCursor = "-1";
   private paths: string[] = ["/"];
-  private readonly origin = crypto.randomUUID();
   private readonly transport: (request: Request) => Promise<Response>;
 
   private constructor(private readonly options: AgentOptions) {
@@ -228,7 +234,12 @@ export class FolderHttpFileSystem {
     return `/api/folders/${encodeURIComponent(folderId)}/${kind}/${encodeFilePath(file)}`;
   }
 
-  private async request(route: string, init: RequestInit = {}, signal?: AbortSignal) {
+  private async request(
+    route: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+    allowed: readonly number[] = [],
+  ) {
     if (signal?.aborted) throw new FileSystemError("ECANCELED", route);
 
     const work = Effect.tryPromise({
@@ -241,8 +252,8 @@ export class FolderHttpFileSystem {
           }),
         );
 
-        if (!response.ok) {
-          const retryable = [408, 409, 429, 503].includes(response.status);
+        if (!response.ok && !allowed.includes(response.status)) {
+          const retryable = [408, 429].includes(response.status) || response.status >= 500;
           const retryAfterMs = retryAfter(response.headers.get("retry-after"));
 
           // Refuse excessive server delays instead of sleeping beyond the session retry ceiling.
@@ -300,41 +311,112 @@ export class FolderHttpFileSystem {
     }
   }
 
-  private async snapshot(signal?: AbortSignal) {
-    const rows = await this.decode(
-      await this.request("/api/ls", {}, signal),
-      Schema.Array(ManifestFile),
-    );
+  private async refreshFolders(signal?: AbortSignal) {
+    if (this.options.folders !== undefined) return;
 
-    if (this.options.folders === undefined)
-      for (const row of rows) await this.addFolder(row.folderId, true);
+    while (true) {
+      const from = this.folderCursor;
+
+      const response = await this.request(
+        `/streams/folders?offset=${encodeURIComponent(from)}`,
+        {},
+        signal,
+        [410],
+      );
+
+      if (from !== this.folderCursor) continue;
+
+      if (response.status === 410) {
+        this.folderCursor = "-1";
+        continue;
+      }
+
+      const changes =
+        response.status === 204 ? [] : await this.decode(response, Schema.Array(FolderMessage));
+
+      if (from !== this.folderCursor) continue;
+
+      if (changes.some((change) => !("type" in change))) {
+        this.folderCursor = "-1";
+        continue;
+      }
+
+      for (const change of changes)
+        if ("value" in change) await this.addFolder(change.value.folderId, true);
+      const cursor = response.headers.get("stream-next-offset");
+
+      if (cursor === null) throw new FileSystemError("EIO", "Missing folder cursor");
+      this.folderCursor = cursor;
+
+      if (response.headers.get("stream-up-to-date") === "true" || response.status === 204) return;
+    }
+  }
+
+  private async refreshFolder(folderId: string, signal?: AbortSignal) {
+    while (true) {
+      const from = this.cursors.get(folderId) ?? "-1";
+      const key = Schema.encodeSync(FolderKey)(folderId);
+
+      const response = await this.request(
+        `/streams/folders/${key}/files?offset=${encodeURIComponent(from)}`,
+        {},
+        signal,
+        [410, 404],
+      );
+
+      if (from !== (this.cursors.get(folderId) ?? "-1")) continue;
+
+      if (response.status === 404) return;
+
+      if (response.status === 410) {
+        this.cursors.delete(folderId);
+        this.files.delete(folderId);
+        continue;
+      }
+
+      const changes =
+        response.status === 204 ? [] : await this.decode(response, Schema.Array(FileMessage));
+
+      if (from !== (this.cursors.get(folderId) ?? "-1")) continue;
+
+      if (changes.some((change) => !("type" in change))) {
+        this.cursors.delete(folderId);
+        this.files.delete(folderId);
+        continue;
+      }
+
+      const files = this.files.get(folderId) ?? new Map<string, File>();
+
+      for (const change of changes) {
+        if (!("type" in change)) continue;
+
+        if ("value" in change) files.set(change.key, change.value);
+        else files.delete(change.key);
+      }
+
+      const cursor = response.headers.get("stream-next-offset");
+
+      if (cursor === null) throw new FileSystemError("EIO", "Missing file cursor");
+      this.files.set(folderId, files);
+      this.cursors.set(folderId, cursor);
+
+      if (response.headers.get("stream-up-to-date") === "true" || response.status === 204) return;
+    }
+  }
+
+  private async snapshot(signal?: AbortSignal) {
+    await this.refreshFolders(signal);
     const files = new Map<string, FileHead>();
 
-    for (const row of rows) {
-      const path = this.folderPath(row.folderId, row.path);
+    for (const folderId of this.roots.keys()) {
+      await this.refreshFolder(folderId, signal);
 
-      if (path !== undefined)
-        files.set(path, {
-          version: row.version,
-          size: row.size,
-          deleted: false,
-          mtimeMs: Date.parse(row.updatedAt),
-        });
-    }
+      for (const row of this.files.get(folderId)?.values() ?? []) {
+        const path = this.folderPath(folderId, row.path);
 
-    for (const path of this.mutations.keys()) {
-      const current = await this.head(path, signal);
-      const remote = files.get(path);
-
-      if (current !== undefined && remote !== undefined && remote.version >= current.version) {
-        this.mutations.delete(path);
-      } else if (current === undefined || current.deleted) {
-        files.delete(path);
-      } else {
-        files.set(path, current);
+        if (path !== undefined)
+          files.set(path, { version: row.version, size: row.size, deleted: false, mtimeMs: null });
       }
-      // The receipt remains an observation until the manifest catches up.
-      // Reading the authoritative head here also notices external deletions.
     }
 
     const directories = new Set(["/", ...this.emptyDirectories]);
@@ -358,29 +440,12 @@ export class FolderHttpFileSystem {
 
     if (target === undefined) return undefined;
 
-    let history: typeof History.Type;
+    await this.refreshFolder(target.folderId, signal);
+    const row = this.files.get(target.folderId)?.get(target.file);
 
-    try {
-      history = await this.decode(
-        await this.request(this.url(target.folderId, target.file, "history"), {}, signal),
-        History,
-      );
-    } catch (error) {
-      if (error instanceof FileSystemError && error.code === "ENOENT") return undefined;
-      throw error;
-    }
-
-    const last = history.at(-1);
-
-    return last === undefined
+    return row === undefined
       ? undefined
-      : {
-          version: last.version,
-          deleted: last.operation.type === "delete",
-          size: last.operation.size ?? 0,
-          mtimeMs:
-            last.operation.updatedAt === undefined ? null : Date.parse(last.operation.updatedAt),
-        };
+      : { version: row.version, size: row.size, deleted: false, mtimeMs: null };
   }
 
   async stat(path: string, signal?: AbortSignal): Promise<NodeStat | undefined> {
@@ -405,25 +470,27 @@ export class FolderHttpFileSystem {
       throw new FileSystemError("ENOENT", path);
     }
 
-    try {
-      const response = await this.request(this.url(target.folderId, target.file), {}, signal);
-      const version = Number(response.headers.get("x-file-version"));
+    await this.refreshFolder(target.folderId, signal);
+    const row = this.files.get(target.folderId)?.get(target.file);
 
-      if (!Schema.is(Version)(version)) throw new FileSystemError("EIO", path);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+    if (row === undefined) {
+      this.observedVersions.delete(target.resolved);
 
-      this.observedVersions.set(target.resolved, version);
-
-      return { bytes, version, resolved: target.resolved };
-    } catch (error) {
-      if (
-        error instanceof FileSystemError &&
-        error.code === "ENOENT" &&
-        (await this.stat(path, signal))?.kind === "directory"
-      )
+      if ((await this.stat(path, signal))?.kind === "directory")
         throw new FileSystemError("EISDIR", path);
-      throw error;
+      throw new FileSystemError("ENOENT", path);
     }
+
+    const bytes =
+      row.text === undefined
+        ? new Uint8Array(
+            await (await this.request(`/api/blobs/${row.hash}`, {}, signal)).arrayBuffer(),
+          )
+        : new TextEncoder().encode(row.text);
+
+    this.observedVersions.set(target.resolved, row.version);
+
+    return { bytes, version: row.version, resolved: target.resolved };
   }
 
   async list(path: string, signal?: AbortSignal) {
@@ -510,46 +577,81 @@ export class FolderHttpFileSystem {
 
     for (const parent of parents) this.assertWritable(parent);
 
-    const headers = new Headers({
-      "x-file-op-id": crypto.randomUUID(),
-      "x-file-author": "agent",
-      "x-file-origin": this.origin,
-    });
+    const headers = new Headers({ "content-type": "application/json" });
 
-    // Metadata checks must not claim the session saw an external edit.
-    const base = observedVersion ?? head?.version;
+    const base =
+      condition?.kind === "version"
+        ? Number(condition.version)
+        : (observedVersion ?? head?.version);
 
-    if (base !== undefined) headers.set("x-file-base", String(base));
+    if (condition?.kind === "absent" || base === undefined) {
+      if (bytes !== null) headers.set("if-none-match", "*");
+    } else headers.set("if-match", `"${base}"`);
 
     if (this.options.token !== undefined)
       headers.set("authorization", `Bearer ${this.options.token}`);
+    const txid = crypto.randomUUID();
+    let hash: string | undefined;
+    let text: string | undefined;
 
-    // The request and opId stay identical across retries. Base is an observation, not CAS.
-    const receipt = await this.decode(
+    if (bytes !== null) {
+      const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+      hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      text = inlineText(bytes);
+    }
+
+    const upload = async () => {
+      if (bytes === null || hash === undefined) throw new FileSystemError("EIO", path);
       await this.request(
-        this.url(target.folderId, target.file),
+        `/api/blobs/${hash}`,
         {
-          method: bytes === null ? "DELETE" : "PUT",
-          headers,
-          body: bytes === null ? undefined : new Uint8Array(bytes),
+          method: "PUT",
+          headers: { authorization: `Bearer ${this.options.token ?? ""}` },
+          body: new Uint8Array(bytes),
         },
         options.signal,
-      ),
-      Written,
+      );
+    };
+
+    if (bytes !== null && text === undefined) await upload();
+
+    const content =
+      bytes === null
+        ? { txid, author: "agent" }
+        : { txid, author: "agent", hash, size: bytes.length, text };
+
+    const init = {
+      method: bytes === null ? "DELETE" : "PUT",
+      headers,
+      body: JSON.stringify(content),
+    };
+
+    let response = await this.request(
+      this.url(target.folderId, target.file),
+      init,
+      options.signal,
+      [409],
     );
 
-    this.observedVersions.set(target.resolved, receipt.version);
+    if (response.status === 409) {
+      const missing = await this.decode(
+        response,
+        Schema.Struct({ error: Schema.Literal("blob-missing"), hash: Schema.String }),
+      );
+
+      if (missing.hash !== hash) throw new FileSystemError("EIO", path);
+      await upload();
+      response = await this.request(this.url(target.folderId, target.file), init, options.signal);
+    }
+
+    const receipt = await this.decode(response, Written);
+
+    if (bytes !== null && receipt.version === undefined) throw new FileSystemError("EIO", path);
+
+    if (receipt.version === undefined) this.observedVersions.delete(target.resolved);
+    else this.observedVersions.set(target.resolved, receipt.version);
 
     for (const parent of parents) this.emptyDirectories.add(parent);
-    this.mutations.set(target.resolved, {
-      ...target,
-      head: {
-        version: receipt.version,
-        size: bytes?.length ?? 0,
-        deleted: bytes === null,
-        mtimeMs: Date.now(),
-      },
-    });
     // Keep globs useful immediately, without another network call after a successful write.
     this.paths = this.paths.filter((value) => value !== target.resolved);
 

@@ -8,8 +8,13 @@ test("candidate grep warns at the API limit before selection and preserves origi
     server: "http://localhost",
     folders: ["docs"],
     fetch: async (request) =>
-      new URL(request.url).pathname === "/api/ls"
-        ? Response.json([])
+      new URL(request.url).pathname.startsWith("/streams/")
+        ? Response.json([], {
+            headers: {
+              "stream-next-offset": "0000000000000000_0000000000000000",
+              "stream-up-to-date": "true",
+            },
+          })
         : Response.json(
             Array.from({ length: 100 }, (_, index) => ({
               folderId: "docs",
