@@ -1,6 +1,6 @@
 import { CommitBoundary, DurableState } from "@streamsy/core";
 import { OwnerRecords } from "@streamsy/core/internal";
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, Stream } from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
   BlobMissing,
@@ -18,6 +18,7 @@ import {
   MissingFile,
   PreconditionFailed,
   normalisePath,
+  inlineText,
   sha256,
   type Precondition,
 } from "./domain.ts";
@@ -139,8 +140,25 @@ const make = Effect.gen(function* () {
 
       if ((yield* sha256(bytes).pipe(Effect.provideService(Crypto.Crypto, crypto))) !== body.hash)
         return yield* new InvalidFile({ message: "Text hash mismatch" });
-    } else if ((yield* blobs.head(body.hash)) !== body.size)
-      return yield* new BlobMissing({ hash: body.hash });
+    } else {
+      if ((yield* blobs.head(body.hash)) !== body.size)
+        return yield* new BlobMissing({ hash: body.hash });
+
+      if (body.size <= INLINE_LIMIT) {
+        const content = yield* blobs.get(body.hash);
+        if (content === undefined) return yield* new BlobMissing({ hash: body.hash });
+        const bytes = new Uint8Array(body.size);
+        let offset = 0;
+        yield* Stream.runForEach(content.body, (chunk) =>
+          Effect.sync(() => {
+            bytes.set(chunk, offset);
+            offset += chunk.length;
+          }),
+        );
+        if (inlineText(bytes) !== undefined)
+          return yield* new InvalidFile({ message: "Small UTF-8 content must use inline text" });
+      }
+    }
 
     return yield* boundary.withTransaction(
       Effect.gen(function* () {

@@ -2,6 +2,7 @@
 import { Schema } from "effect";
 import { test, expect } from "vitest";
 import { FILE_LIMIT, INLINE_LIMIT } from "../server/domain.ts";
+import { JSON_BODY_LIMIT } from "../server/api.ts";
 import { protocolHost, writerToken } from "./protocol-host.ts";
 
 const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -162,6 +163,70 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
     expect((await call(host, file, "PUT", commit("x".repeat(INLINE_LIMIT), "exact"))).status).toBe(
       200,
     );
+    for (const size of [0, INLINE_LIMIT]) {
+      const text = "x".repeat(size);
+      const hash = digest(text);
+      expect((await call(host, `/api/blobs/${hash}`, "PUT", text)).status).toBe(200);
+      expect(
+        (await call(host, file, "PUT", { hash, size, txid: "must-inline", author: "test" })).status,
+      ).toBe(400);
+    }
+    const largeText = "x".repeat(INLINE_LIMIT + 1);
+    const largeHash = digest(largeText);
+    await call(host, `/api/blobs/${largeHash}`, "PUT", largeText);
+    expect(
+      (
+        await call(host, file, "PUT", {
+          hash: largeHash,
+          size: largeText.length,
+          txid: "large-text",
+          author: "test",
+        })
+      ).status,
+    ).toBe(200);
+  } finally {
+    await host.stop();
+  }
+});
+
+test("JSON writes reject oversized declared and streamed bodies before parsing", async () => {
+  const host = protocolHost();
+  try {
+    await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    for (const [path, method] of [
+      ["/api/folders", "POST"],
+      ["/api/folders/docs/files/a", "PUT"],
+      ["/api/folders/docs/files/a", "DELETE"],
+    ]) {
+      const headers = {
+        authorization: `Bearer ${writerToken}`,
+        "content-type": "application/json",
+      };
+      const declared = await host.fetch(
+        new Request(`http://localhost${path}`, {
+          method,
+          headers: { ...headers, "content-length": String(JSON_BODY_LIMIT + 1) },
+          body: "not JSON",
+        }),
+      );
+      expect(declared.status).toBe(413);
+      let pulls = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new Uint8Array(65536).fill(32));
+          if (pulls === 32) controller.close();
+        },
+      });
+      const streamed = await host.fetch(
+        new Request(`http://localhost${path}`, { method, headers, body }),
+      );
+      expect(streamed.status).toBe(413);
+      expect(pulls).toBeLessThan(32);
+    }
+    // Six-byte JSON escapes still fit for a full 64 KiB of inline UTF-8.
+    const escaped = commit("\u0001".repeat(INLINE_LIMIT), "escaped");
+    expect((await call(host, "/api/folders/docs/files/a", "PUT", escaped)).status).toBe(200);
   } finally {
     await host.stop();
   }

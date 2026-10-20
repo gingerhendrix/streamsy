@@ -14,6 +14,36 @@ import {
 import { FolderStore } from "./folder-store.ts";
 
 const json = HttpServerResponse.jsonUnsafe;
+export const JSON_BODY_LIMIT = 512 * 1024;
+
+class JsonBodyTooLarge extends Schema.TaggedError<JsonBodyTooLarge>()("JsonBodyTooLarge", {}) {}
+
+const jsonBody = Effect.fn("Api.jsonBody")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const length = request.headers["content-length"];
+  if (length !== undefined && Number(length) > JSON_BODY_LIMIT)
+    return yield* new JsonBodyTooLarge();
+  let size = 0;
+  const chunks = yield* request.stream.pipe(
+    Stream.tap((chunk) => {
+      size += chunk.length;
+
+      return size > JSON_BODY_LIMIT ? Effect.fail(new JsonBodyTooLarge()) : Effect.void;
+    }),
+    Stream.runCollect,
+  );
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+    new TextDecoder().decode(bytes),
+  );
+});
 
 const precondition = Effect.fn("Api.precondition")(function* (
   headers: Readonly<Record<string, string | undefined>>,
@@ -60,7 +90,7 @@ const make = Effect.gen(function* () {
       return json({ error: "Unauthorized" }, { status: 401 });
 
     if (pathname === "/api/folders" && method === "POST") {
-      const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* request.json);
+      const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
 
       return json(yield* store.create(body.folderId, body.title, body.txid));
     }
@@ -123,7 +153,7 @@ const make = Effect.gen(function* () {
 
       if (method === "PUT") {
         const condition = yield* precondition(request.headers);
-        const body = yield* Schema.decodeUnknownEffect(CommitFile)(yield* request.json);
+        const body = yield* Schema.decodeUnknownEffect(CommitFile)(yield* jsonBody(request));
         const head = yield* store.commit(folderId, path, body, condition);
 
         return json(head, { headers: { etag: `"${head.version}"` } });
@@ -131,7 +161,7 @@ const make = Effect.gen(function* () {
 
       if (method === "DELETE") {
         const condition = yield* precondition(request.headers);
-        const body = yield* Schema.decodeUnknownEffect(DeleteFile)(yield* request.json);
+        const body = yield* Schema.decodeUnknownEffect(DeleteFile)(yield* jsonBody(request));
 
         return json(yield* store.remove(folderId, path, body, condition));
       }
@@ -158,6 +188,11 @@ const make = Effect.gen(function* () {
   return yield* handle().pipe(
     Effect.catch((error) =>
       Match.value(error).pipe(
+        Match.tag("JsonBodyTooLarge", () =>
+          Effect.succeed(
+            json({ error: "JSON write bodies must be at most 512 KiB" }, { status: 413 }),
+          ),
+        ),
         Match.tag("InvalidFile", ({ message }) =>
           Effect.succeed(json({ error: message }, { status: 400 })),
         ),
