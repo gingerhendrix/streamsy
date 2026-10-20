@@ -81,6 +81,47 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
 });
 
 layer(graph, { excludeTestServices: true })((it) => {
+  it.effect("a gone bootstrap folder does not block registry discovery of a healthy folder", () =>
+    Effect.gen(function* () {
+      const store = yield* FolderStore;
+      const files = yield* Files;
+      const index = yield* FileIndex;
+      yield* store.create("gone-bootstrap", "Gone", "gone-bootstrap");
+      yield* store.create("healthy-bootstrap", "Healthy", "healthy-bootstrap");
+
+      for (const folderId of ["gone-bootstrap", "healthy-bootstrap"])
+        yield* store.commit(folderId, "a", {
+          ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+          txid: folderId,
+          author: "test",
+        });
+      const goneId = Files.at({ folderId: "gone-bootstrap" }).id;
+      const messages: unknown[] = [];
+      const logger = Logger.make(({ message }) => messages.push(message));
+      yield* Layer.build(IndexLive).pipe(
+        Effect.provideService(Files, {
+          ...files,
+          wire: {
+            ...files.wire,
+            read: (id, options) =>
+              id === goneId ? Effect.fail(new StreamGone({ id })) : files.wire.read(id, options),
+          },
+        }),
+        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+      );
+      yield* until(index.list({ folder: "healthy-bootstrap" }), (rows) => rows.length === 1);
+      expect(yield* index.list({ folder: "gone-bootstrap" })).toEqual([]);
+      expect(
+        messages.filter((entry) =>
+          String(entry).includes("gone-bootstrap history is unavailable at bootstrap"),
+        ),
+      ).toHaveLength(1);
+      expect(
+        messages.some((entry) => String(entry).includes("Index follower folders failed")),
+      ).toBe(false);
+    }),
+  );
+
   it.effect("Bun indexes a stored reset and following changes once, keeping its cursor", () =>
     Effect.gen(function* () {
       yield* initialiseSearch;

@@ -1,7 +1,7 @@
 import { StreamAddress, ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
-import { Projection } from "@streamsy/projection";
-import { Cause, Context, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
+import { Projection, ProjectionFault } from "@streamsy/projection";
+import { Cause, Context, Duration, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import picomatch from "picomatch";
 import { InvalidFile } from "./domain.ts";
@@ -92,6 +92,39 @@ export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =
     Effect.retry({ schedule: Schedule.spaced("1 second") }),
   );
 
+export class IndexBootstrapUnavailable extends Schema.TaggedError<IndexBootstrapUnavailable>()(
+  "IndexBootstrapUnavailable",
+  { folderId: Schema.String },
+) {}
+
+/** Bootstrap failures stay local to one folder and emit one warning during its lifetime. */
+export const superviseFolder = <A, E, R>(folderId: string, work: Effect.Effect<A, E, R>) =>
+  Effect.suspend(() => {
+    let warned = false;
+
+    return supervise(
+      folderId,
+      work.pipe(
+        Effect.tapError((error) => {
+          if (!Schema.is(IndexBootstrapUnavailable)(error) || warned) return Effect.void;
+          warned = true;
+
+          return Effect.logWarning(
+            `Index folder ${folderId} history is unavailable at bootstrap; retrying with backoff up to 60 seconds`,
+          );
+        }),
+        Effect.retry({
+          while: Schema.is(IndexBootstrapUnavailable),
+          schedule: Schedule.exponential("1 second").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(60))),
+            ),
+          ),
+        }),
+      ),
+    );
+  });
+
 /** A gone cursor rebuilds only this folder. An unavailable bootstrap fails instead of spinning. */
 export const runIndex = Effect.fn("Index.run")(function* (folderId: string) {
   const bound = search.at({ folderId });
@@ -99,11 +132,10 @@ export const runIndex = Effect.fn("Index.run")(function* (folderId: string) {
   return yield* Projection.run(bound).pipe(
     Effect.catchTag("ProjectionFault", (error) =>
       Effect.gen(function* () {
-        if (
-          error.reason !== "history-unavailable" ||
-          (yield* Projection.read(bound)).offsets.input === ZERO_OFFSET
-        )
-          return yield* error;
+        if (error.reason !== "history-unavailable") return yield* error;
+
+        if ((yield* Projection.read(bound)).offsets.input === ZERO_OFFSET)
+          return yield* new IndexBootstrapUnavailable({ folderId });
         const sql = yield* SqlClient.SqlClient;
         yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -112,7 +144,13 @@ export const runIndex = Effect.fn("Index.run")(function* (folderId: string) {
           }),
         );
 
-        return yield* Projection.run(bound);
+        return yield* Projection.run(bound).pipe(
+          Effect.mapError((failure) =>
+            Schema.is(ProjectionFault)(failure) && failure.reason === "history-unavailable"
+              ? new IndexBootstrapUnavailable({ folderId })
+              : failure,
+          ),
+        );
       }),
     ),
   );
@@ -129,8 +167,7 @@ export const IndexLive = Layer.effectDiscard(
     const start = Effect.fn("Index.start")(function* (folderId: string) {
       if (started.has(folderId)) return;
       const bound = search.at({ folderId });
-      yield* runIndex(folderId);
-      yield* supervise(
+      yield* superviseFolder(
         folderId,
         Effect.gen(function* () {
           yield* runIndex(folderId);
