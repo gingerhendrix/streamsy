@@ -128,6 +128,17 @@ export class FolderObject extends StreamsyObject.make<
       );
     }
 
+    // Workerd only preserves Content-Length on streams whose byte length it can prove.
+    // The shared file API knows the immutable blob size, so retain streaming and its length.
+    const length = response.headers.get("content-length");
+
+    if (match && request.method === "GET" && response.ok && response.body && length !== null) {
+      const bounded = new FixedLengthStream(Number(length));
+      this.ctx.waitUntil(response.body.pipeTo(bounded.writable));
+
+      return new Response(bounded.readable, response);
+    }
+
     return response;
   }
 }

@@ -1,23 +1,39 @@
 import { Serve } from "@streamsy/serve";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { Files, FolderKey } from "./streams.ts";
 
-/**
- * The router limits named parameters to 100 characters by default. A valid
- * FolderKey can contain 498 hex characters, so capture it with a wildcard.
- * Serve.mount still owns method rejection, State metadata and all stream reads.
- */
+/** Capture the complete key: a valid FolderKey can exceed the router's named-parameter limit. */
 export const mountFiles = (path: `/${string}` = "/streams/*") =>
-  Serve.mount(
-    {
-      paramSchema: Schema.Struct({ "*": Schema.String }),
-      at: ({ "*": rest }) => {
-        const match = /^folders\/([a-f0-9]+)\/files$/.exec(rest);
-
-        if (match?.[1] === undefined) throw new Error("Invalid folder stream path");
-
-        return Files.at({ folderId: Schema.decodeSync(FolderKey)(match[1]) });
-      },
-    },
+  Serve.route(
     path,
+    Effect.gen(function* () {
+      const { "*": rest } = yield* HttpRouter.schemaPathParams(
+        Schema.Struct({ "*": Schema.String }),
+      );
+
+      const match = /^folders\/([^/]+)\/files$/.exec(rest);
+
+      if (match?.[1] === undefined)
+        return HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 });
+
+      const folderId = yield* Schema.decodeEffect(FolderKey)(match[1]).pipe(
+        Effect.mapError(() => new InvalidFolderStream()),
+      );
+
+      return yield* Serve.state(Files.at({ folderId }));
+    }).pipe(
+      Effect.catchTags({
+        SchemaError: () => Effect.succeed(HttpServerResponse.empty({ status: 404 })),
+        InvalidFolderStream: () =>
+          Effect.succeed(
+            HttpServerResponse.jsonUnsafe({ error: "Invalid folder stream" }, { status: 400 }),
+          ),
+      }),
+    ),
   );
+
+class InvalidFolderStream extends Schema.TaggedError<InvalidFolderStream>()(
+  "InvalidFolderStream",
+  {},
+) {}

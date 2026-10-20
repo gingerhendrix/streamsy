@@ -99,6 +99,10 @@ const make = Effect.gen(function* () {
       return json({ error: "Unauthorized" }, { status: 401 });
 
     if (pathname === "/api/folders" && method === "POST") {
+      if (
+        request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json"
+      )
+        return json({ error: "Expected application/json" }, { status: 415 });
       const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
 
       return json(yield* store.create(body.folderId, body.title, body.txid));
@@ -114,7 +118,7 @@ const make = Effect.gen(function* () {
         const length = request.headers["content-length"];
 
         if (length !== undefined && Number(length) > FILE_LIMIT)
-          return json({ error: "File too large" }, { status: 413 });
+          return json({ error: "Files must be at most 64 MiB" }, { status: 413 });
         yield* blobs.put(
           hash,
           request.stream.pipe(
@@ -145,6 +149,8 @@ const make = Effect.gen(function* () {
               headers: { ...headers, "content-length": String(content.size) },
             });
       }
+
+      return json({ error: "Method not allowed" }, { status: 405 });
     }
 
     const file = /^\/api\/folders\/([^/]+)\/files\/(.+)$/.exec(pathname);

@@ -8,7 +8,7 @@ const json = (error: string, status: number) => Response.json({ error }, { statu
 export async function handleBlobRequest(request: Request, env: Env): Promise<Response> {
   const hash = new URL(request.url).pathname.slice("/api/blobs/".length);
 
-  if (!/^[a-f0-9]{64}$/.test(hash)) return json("Invalid blob hash", 400);
+  if (!/^[a-f0-9]{64}$/.test(hash)) return json("Invalid request", 400);
 
   try {
     if (request.method === "HEAD") {
@@ -52,7 +52,7 @@ export async function handleBlobRequest(request: Request, env: Env): Promise<Res
     if (length > FILE_LIMIT) return json("Files must be at most 64 MiB", 413);
 
     // No second write and no body read when the immutable content already exists.
-    if ((await env.BLOBS.head(hash)) !== null) return new Response(null);
+    if ((await env.BLOBS.head(hash)) !== null) return Response.json({ hash });
 
     if (request.body === null) {
       if (length !== 0) return json("Missing blob body", 400);
@@ -65,7 +65,7 @@ export async function handleBlobRequest(request: Request, env: Env): Promise<Res
           : json("Cannot save blob", 500);
       }
 
-      return new Response(null);
+      return Response.json({ hash });
     }
 
     // R2 needs a stream with a known length. Count every chunk before it enters
@@ -130,7 +130,7 @@ export async function handleBlobRequest(request: Request, env: Env): Promise<Res
         ? json("Blob hash mismatch", 400)
         : json("Cannot save blob", 500);
 
-    return new Response(null);
+    return Response.json({ hash });
   } catch {
     return json("Blob storage unavailable", 500);
   }

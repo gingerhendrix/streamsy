@@ -1,7 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- Native Workers fetch/scheduled transport boundary. */
 import { Placement, rule } from "@streamsy/serve/cloudflare";
 import { Schema } from "effect";
-import { CreateFolder } from "../server/domain.ts";
+import { Http } from "@streamsy/core";
+import { CreateFolder, FolderId } from "../server/domain.ts";
 import { JSON_BODY_LIMIT } from "../server/api.ts";
 import { Files, FolderKey } from "../server/streams.ts";
 import { handleBlobRequest } from "./blob-api.ts";
@@ -51,14 +52,14 @@ export default {
     const url = new URL(request.url);
 
     // Stream endpoints are always read-only, including unauthenticated write attempts.
-    if (
-      url.pathname.startsWith("/streams/") &&
-      !["GET", "HEAD", "OPTIONS"].includes(request.method)
-    )
-      return json("Streams are read-only", 405);
+    if (url.pathname.startsWith("/streams/") && !["GET", "HEAD"].includes(request.method))
+      return new Response(null, {
+        status: 405,
+        headers: { ...Http.securityHeaders, allow: "GET, HEAD" },
+      });
     const write = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 
-    if (write && !authorized(request, env)) return json("Writer authorization required", 401);
+    if (write && !authorized(request, env)) return json("Unauthorized", 401);
 
     if (url.pathname === "/api/admin/wake" && request.method === "POST") {
       try {
@@ -162,18 +163,37 @@ export default {
     const stream = /^\/streams\/folders\/([^/]+)\/files$/.exec(url.pathname);
 
     if (stream?.[1]) {
+      let folderId: string;
+
       try {
-        return await folder(env, Schema.decodeSync(FolderKey)(stream[1])).fetch(request);
+        folderId = Schema.decodeSync(FolderKey)(stream[1]);
       } catch {
         return json("Invalid folder stream", 400);
+      }
+
+      try {
+        return await folder(env, folderId).fetch(request);
+      } catch {
+        return json("Folder unavailable; retry", 503);
       }
     }
 
     const file = /^\/api\/folders\/([^/]+)\/files\//.exec(url.pathname);
 
     if (file?.[1]) {
+      let folderId: string;
+
       try {
-        return await folder(env, decodeURIComponent(file[1])).fetch(request);
+        folderId = decodeURIComponent(file[1]);
+      } catch {
+        // Bun's router rejects malformed URI segments before dispatching the API.
+        return new Response(null, { status: 404 });
+      }
+
+      if (!Schema.is(FolderId)(folderId)) return json("Invalid request", 400);
+
+      try {
+        return await folder(env, folderId).fetch(request);
       } catch {
         return json("Folder unavailable; retry", 503);
       }
