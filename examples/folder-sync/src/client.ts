@@ -114,7 +114,8 @@ export async function history(
         `${folderStreamUrl(folderId)}?offset=${encodeURIComponent(offset)}`,
         transport.origin,
       ),
-      { signal },
+      // Even the last page at a fixed offset can grow as new changes are appended.
+      { signal, cache: "no-cache" },
     );
 
     if (response.status === 410) {
@@ -144,6 +145,28 @@ export async function history(
     offset = next;
   }
 }
+
+/** The panel's latest refresh owns the rows, including when a save races a row update. */
+export const historyReader = (apply: (rows: History) => void, load: typeof history = history) => {
+  let controller: AbortController | undefined;
+
+  return {
+    refresh: (selection: Selection) => {
+      controller?.abort();
+      const pending = new AbortController();
+      controller = pending;
+
+      return load(selection, pending.signal)
+        .then((rows) => {
+          if (!pending.signal.aborted) apply(rows);
+        })
+        .catch((error: Error) => {
+          if (!pending.signal.aborted) throw error;
+        });
+    },
+    cancel: () => controller?.abort(),
+  };
+};
 
 export interface OpenFile {
   version: number;

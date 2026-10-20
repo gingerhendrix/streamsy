@@ -78,16 +78,20 @@ const replayGone = (fetcher: typeof globalThis.fetch): typeof globalThis.fetch =
   Object.assign(
     // oxlint-disable-next-line effecttsgo/async-function -- StreamDB uses native fetch and Response at the browser boundary.
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = await fetcher(input, init);
       const request = new Request(input, init);
       const url = new URL(request.url);
+
+      // A new registry/file DB must revalidate its moving bootstrap page too.
+      const response = await fetcher(
+        new Request(request, url.searchParams.get("offset") === "-1" ? { cache: "no-cache" } : {}),
+      );
 
       if (response.status !== 410 || url.searchParams.get("offset") === "-1") return response;
       await response.body?.cancel();
       url.searchParams.set("offset", "-1");
       url.searchParams.delete("live");
       url.searchParams.delete("cursor");
-      const replay = await fetcher(new Request(url, request));
+      const replay = await fetcher(new Request(new Request(url, request), { cache: "no-cache" }));
 
       if (!replay.ok) return replay;
 

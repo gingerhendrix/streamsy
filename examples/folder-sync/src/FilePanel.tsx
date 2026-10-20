@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "./MarkdownLink.tsx";
 import { draftReads } from "./draft-reads.ts";
-import { fileUrl, history, readFile } from "./client.ts";
+import { fileUrl, historyReader, readFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
 import { editFile, type FileDb } from "./db.ts";
 
@@ -28,17 +28,14 @@ export function FilePanel({
   const [reload, setReload] = useState(0);
   const dirty = file !== null && file.text !== null && file.text !== draft;
   const reads = useRef(draftReads());
+  const historyReads = useRef(historyReader(setRows));
   const retry = useRef<{ text: string; base: number; author: string; txid: string } | null>(null);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void history(selection, controller.signal)
-      .then(setRows)
-      .catch((error: Error) => {
-        if (!controller.signal.aborted) setMessage(error.message);
-      });
+    const reader = historyReads.current;
+    void reader.refresh(selection).catch((error: Error) => setMessage(error.message));
 
-    return () => controller.abort();
+    return () => reader.cancel();
   }, [selection, headVersion]);
 
   useEffect(() => {
@@ -110,7 +107,7 @@ export function FilePanel({
         retry.current = null;
         setMessage("Saved");
 
-        return history(selection).then(setRows);
+        return historyReads.current.refresh(selection);
       })
       .catch((error: Error) => setMessage(error.message))
       .finally(() => setSaving(false));
