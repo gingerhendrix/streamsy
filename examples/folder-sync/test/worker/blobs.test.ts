@@ -160,9 +160,11 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
 
       expect(head.headers.get("content-length")).toBe("0");
       expect(head.headers.get("cache-control")).toContain("immutable");
+
       const failed = yield* Effect.promise(() =>
         mf.dispatchFetch("http://localhost/storage-failure"),
       );
+
       expect(failed.status).toBe(500);
 
       const oversized = yield* Effect.promise(() => mf.dispatchFetch("http://localhost/declared"));
