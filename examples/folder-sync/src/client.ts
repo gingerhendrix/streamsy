@@ -19,7 +19,9 @@ export interface Transport {
 /** Browser defaults are resolved only when needed, so tests can supply a native host. */
 export const browserTransport = (options: Partial<Transport> = {}): Transport => ({
   origin: options.origin ?? window.location.origin,
-  fetch: options.fetch ?? globalThis.fetch,
+  fetch:
+    options.fetch ??
+    Object.assign(globalThis.fetch.bind(globalThis), { preconnect: globalThis.fetch.preconnect }),
   writerHeaders: options.writerHeaders ?? writerHeaders,
 });
 
