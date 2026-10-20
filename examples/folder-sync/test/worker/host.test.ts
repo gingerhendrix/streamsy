@@ -423,6 +423,50 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
+      "a binary R2 blob and its file version survive a Worker restart",
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("worker-binary-restart-");
+          const host = yield* launch(directory);
+          yield* create(host.url, "binary");
+          const bytes = new Uint8Array([0, 255, 1, 128, 0]);
+          const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+
+          const upload = yield* HttpClient.put(`${host.url}/api/blobs/${hash}`, {
+            headers,
+            body: HttpBody.uint8Array(bytes),
+          });
+
+          expect(upload.status).toBe(200);
+          yield* upload.text;
+
+          const written = yield* head(
+            yield* HttpClient.put(fileUrl(host.url, "binary"), {
+              headers,
+              body: HttpBody.jsonUnsafe({
+                txid: "binary",
+                author: "test",
+                hash,
+                size: bytes.length,
+              }),
+            }),
+          );
+
+          expect(written.version).toBe(1);
+          yield* Effect.promise(host.stop);
+          const restarted = yield* launch(directory);
+          const file = yield* HttpClient.get(fileUrl(restarted.url, "binary"));
+          expect(file.status).toBe(200);
+          expect(file.headers.etag).toBe('"1"');
+          expect(new Uint8Array(yield* file.arrayBuffer)).toEqual(bytes);
+          const blob = yield* HttpClient.get(`${restarted.url}/api/blobs/${hash}`);
+          expect(blob.status).toBe(200);
+          expect(new Uint8Array(yield* blob.arrayBuffer)).toEqual(bytes);
+        }),
+      { timeout: 20000 },
+    );
+
+    it.effect(
       "DO restarts preserve the counter after deletion and reject stale pre-recreation versions",
       () =>
         Effect.gen(function* () {
