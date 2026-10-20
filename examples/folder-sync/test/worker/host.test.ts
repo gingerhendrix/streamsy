@@ -9,6 +9,7 @@ import { startWorker } from "../../scripts/worker-harness.ts";
 import { FolderKey, ListedFile } from "../../server/streams.ts";
 import { SearchResult } from "../../server/search-result.ts";
 import { CreateFolder, File, Head } from "../../server/domain.ts";
+import { CHECKPOINT_EVERY } from "../../server/folder-store.ts";
 
 const token = "worker-test-token";
 
@@ -30,10 +31,8 @@ const fileUrl = (url: string, folderId: string, path = "a.md") =>
 const streamUrl = (url: string, folderId: string) =>
   `${url}/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
 
-const jsonPost = (
-  url: string,
-  body: typeof CreateFolder.Type | { fail: boolean } | { dropPings: boolean },
-) => HttpClient.post(url, { headers, body: HttpBody.jsonUnsafe(body) });
+const jsonPost = (url: string, body: typeof CreateFolder.Type | { dropPings: boolean }) =>
+  HttpClient.post(url, { headers, body: HttpBody.jsonUnsafe(body) });
 
 const create = (url: string, folderId: string, title = folderId) =>
   jsonPost(`${url}/api/folders`, { txid: `create:${folderId}`, folderId, title });
@@ -138,32 +137,35 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "workerd rolls back the append, head and counter when head persistence fails",
+      "workerd derives heads from a checkpoint and the stream tail",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
-          yield* create(host.url, "atomic");
-          yield* head(yield* commit(host.url, "atomic", "original", "first"));
-          const before = yield* changes(host.url, "atomic");
+          yield* create(host.url, "derived");
+          // Past one checkpoint interval, so reads fold a saved checkpoint plus a tail.
+          const writes = CHECKPOINT_EVERY + 3;
 
-          const configured = yield* jsonPost(`${host.url}/api/admin/test-head?folder=atomic`, {
-            fail: true,
-          });
+          for (let version = 1; version <= writes; version++) {
+            const written = yield* head(
+              yield* commit(
+                host.url,
+                "derived",
+                `text ${version}`,
+                `t${version}`,
+                version === 1 ? undefined : version - 1,
+              ),
+            );
 
-          expect(configured.status).toBe(200);
-          yield* configured.text;
-          const failed = yield* commit(host.url, "atomic", "failed", "failed", 1);
-          expect(failed.status).toBe(500);
-          yield* failed.text;
-          expect(yield* changes(host.url, "atomic")).toEqual(before);
-          const read = yield* HttpClient.get(fileUrl(host.url, "atomic"));
-          expect(read.headers.etag).toBe('"1"');
-          expect(yield* read.text).toBe("original");
-          yield* jsonPost(`${host.url}/api/admin/test-head?folder=atomic`, { fail: false });
-          expect(
-            yield* head(yield* commit(host.url, "atomic", "accepted", "second", 1)),
-          ).toMatchObject({ version: 2, txid: "second" });
-          expect(yield* changes(host.url, "atomic")).toHaveLength(2);
+            expect(written).toMatchObject({ version, txid: `t${version}` });
+          }
+
+          const read = yield* HttpClient.get(fileUrl(host.url, "derived"));
+          expect(read.headers.etag).toBe(`"${writes}"`);
+          expect(yield* read.text).toBe(`text ${writes}`);
+          const stale = yield* commit(host.url, "derived", "stale", "stale", writes - 1);
+          expect(stale.status).toBe(412);
+          expect(yield* head(stale)).toMatchObject({ version: writes, txid: `t${writes}` });
+          expect(yield* changes(host.url, "derived")).toHaveLength(writes);
         }),
       { timeout: 15000 },
     );

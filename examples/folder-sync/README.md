@@ -48,8 +48,8 @@ Stop the server, edit a writable mirror, and restart with the same database.
 Queued writes resume. Concurrent edits become conflict copies. Stop the CLIs
 with Ctrl+C when finished. Their state stays under `.folder-sync`.
 
-`PORT` overrides 1339. `FOLDER_SYNC_DB` persists streams, owner records, index
-rows and cursors in SQLite. Blobs live beside it in `<database>.blobs/`. Without
+`PORT` overrides 1339. `FOLDER_SYNC_DB` persists streams, view checkpoints,
+index rows and cursors in SQLite. Blobs live beside it in `<database>.blobs/`. Without
 a database path, SQLite is transient and blobs use a scoped disk directory under
 `.scratch/`. The memory blob store is for tests.
 
@@ -76,7 +76,7 @@ Durable Objects and R2 use local disk state under `.scratch/worker/`.
 `FOLDER_SYNC_WORKER_STATE` selects another directory; `PORT` changes the port.
 Use the same seed, browser token and mirror commands above.
 
-Each folder object owns its file stream, current heads and version counter.
+Each folder object owns its file stream and the checkpoint of its folder view.
 The index object owns the folder registry and search. After a commit, a
 best-effort ping asks the index to catch up. The hourly cron checks every folder
 cursor after a lost ping. The local harness runs the same pass on startup and
@@ -122,11 +122,18 @@ value or version. Each append contains one change. The server time is for
 display only.
 
 The owner assigns the next positive folder sequence to each upsert. Deletes
-take no number. The durable counter never goes down after delete or restart.
+take no number. The version never goes down after delete or restart.
 Compare versions only for equality on the same path in the same folder.
 Offsets are read cursors. They never name file versions. The append uses
-`expectedOffset` as a write guard. The append, current head and counter commit
-in one owner transaction.
+`expectedOffset` as a write guard.
+
+The owner keeps no head table. Current heads, file values and the last version
+are a fold of the folder's `Files` stream (`server/folder-view.ts`). A write
+folds the saved checkpoint plus the stream tail with `Projection.decide`, decides,
+and appends at the offset it read. A lost race folds again and decides again.
+After four lost races the write answers `503` with `Retry-After`. The owner saves
+the checkpoint on its first write in a process and every 32 writes after that. A
+lagging or missing checkpoint costs only a longer fold.
 
 Folder IDs are opaque strings. They may contain slashes. The limits are 100
 decoded UTF-16 code units and 249 UTF-8 bytes. In stream URLs, `folderKey` is the
@@ -351,14 +358,15 @@ bun run --cwd examples/folder-sync smoke:worker
 bun run --cwd examples/folder-sync test:worker
 ```
 
-Bootstrap and history replay every retained event. There is no State compaction,
+Bootstrap and history replay every retained event. A future State compaction
+must keep the highest removed version, or a cold fold of the view can give a
+used version again. There is no State compaction,
 blob orphan sweep, multipart upload or cache garbage collection. Storage,
 pending sources, rejected files and backups have no quota. Old mirror SQLite
 formats have no migration; use fresh directories.
 
-A writable import needs the owner's durable counter and current heads as well
-as the stream. Copying events alone preserves value versions but does not
-initialize a writable owner. Restoring a missing blob alone does not reindex an
+Copying a folder's events into a new owner gives a writable folder. Its view
+folds the same heads and versions from the copied events. Restoring a missing blob alone does not reindex an
 already consumed change. A later write or index rebuild is needed.
 
 Sync scans hash every selected file. An external editor can save during the

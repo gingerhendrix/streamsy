@@ -77,15 +77,6 @@ export default {
           method: "POST",
           body: request.body,
         });
-
-      if (url.pathname === "/api/admin/test-head")
-        return folder(env, url.searchParams.get("folder") ?? "").fetch(
-          "https://internal/__test/head",
-          {
-            method: "POST",
-            body: request.body,
-          },
-        );
     }
 
     if (url.pathname === "/api/folders" && request.method === "POST") {

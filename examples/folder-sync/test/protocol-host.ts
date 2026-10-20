@@ -1,7 +1,6 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
-import { StorageFault } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
+import { CheckpointStore, ProjectionFault } from "@streamsy/projection";
 import { ConfigProvider, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive } from "../server/api.ts";
@@ -14,26 +13,27 @@ import { sqliteHost } from "../server/storage.ts";
 
 export const writerToken = "protocol-test-token";
 
-export const protocolHost = (options: { failWrites?: () => boolean } = {}) => {
+export const protocolHost = (options: { failStorage?: () => boolean } = {}) => {
   const storage = sqliteHost(":memory:");
 
-  const records = Layer.effect(
-    OwnerRecords,
+  // Every folder read and write loads the view checkpoint first.
+  const checkpoints = Layer.effect(
+    CheckpointStore,
     Effect.gen(function* () {
-      const base = yield* OwnerRecords;
+      const base = yield* CheckpointStore;
 
-      return OwnerRecords.of({
+      return CheckpointStore.of({
         ...base,
-        write: (key, value) =>
-          options.failWrites?.()
+        load: (key) =>
+          options.failStorage?.()
             ? Effect.fail(
-                new StorageFault({
-                  operation: "write",
+                new ProjectionFault({
+                  phase: "load",
+                  reason: "storage-failure",
                   message: "injected disk failure",
-                  retryable: false,
                 }),
               )
-            : base.write(key, value),
+            : base.load(key),
       });
     }),
   ).pipe(Layer.provide(storage));
@@ -48,7 +48,7 @@ export const protocolHost = (options: { failWrites?: () => boolean } = {}) => {
       Layer.provide(FileIndexLive),
       Layer.provide(IndexLive),
       Layer.provide(Initialise),
-      Layer.provide(FolderStoreLive.pipe(Layer.provide(records))),
+      Layer.provide(FolderStoreLive.pipe(Layer.provide(checkpoints))),
       HttpRouter.provideRequest(storage),
       Layer.provide([storage, BunHttpServer.layerHttpServices]),
       Layer.provide(

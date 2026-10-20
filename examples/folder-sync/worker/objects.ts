@@ -1,8 +1,7 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, ConfigProvider, Context, Effect, Layer, Schema } from "effect";
+import { Cause, ConfigProvider, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { ApiRequestLive, HealthLive, jsonBody } from "../server/api.ts";
 import { CreateFolder } from "../server/domain.ts";
@@ -11,67 +10,22 @@ import { mountFiles } from "../server/file-stream.ts";
 import { objectStorage } from "./storage.ts";
 import type { Env } from "./env.ts";
 
-class TestHead extends Context.Service<TestHead, { fail: boolean }>()("FolderSync/TestHead") {}
+const FolderInternal = HttpRouter.add(
+  "POST",
+  "/__create",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
+    yield* initialiseFolder(body.folderId);
 
-const FolderInternal = Layer.mergeAll(
-  HttpRouter.add(
-    "POST",
-    "/__create",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
-      yield* initialiseFolder(body.folderId);
-
-      return HttpServerResponse.jsonUnsafe({ folderId: body.folderId, title: body.title });
-    }).pipe(Effect.orDie),
-  ),
-  HttpRouter.add(
-    "POST",
-    "/__test/head",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-
-      const body = yield* Schema.decodeUnknownEffect(Schema.Struct({ fail: Schema.Boolean }))(
-        yield* jsonBody(request),
-      );
-
-      const flags = yield* TestHead;
-      flags.fail = body.fail;
-
-      return HttpServerResponse.text("configured");
-    }).pipe(Effect.orDie),
-  ),
+    return HttpServerResponse.jsonUnsafe({ folderId: body.folderId, title: body.title });
+  }).pipe(Effect.orDie),
 );
 
 const folderLayer = (state: DurableObjectState, env: Env) => {
   const storage = objectStorage(state, env);
-  const flags = Layer.sync(TestHead, () => ({ fail: false }));
-
-  const records = Layer.effect(
-    OwnerRecords,
-    Effect.gen(function* () {
-      const base = yield* OwnerRecords;
-      const test = yield* TestHead;
-
-      return OwnerRecords.of({
-        ...base,
-        write: (key, value) =>
-          env.TEST_HOOKS === "true" && test.fail
-            ? Effect.fail(
-                new StorageFault({
-                  operation: "records.write",
-                  message: "Injected head persistence failure",
-                  retryable: false,
-                }),
-              )
-            : base.write(key, value),
-      });
-    }),
-  ).pipe(Layer.provide([storage, flags]));
 
   return FolderStoreLive.pipe(
-    Layer.provideMerge(records),
-    Layer.provideMerge(flags),
     Layer.provideMerge(storage),
     Layer.provideMerge(
       ConfigProvider.layer(

@@ -37,8 +37,8 @@ const commit = (text: string, txid: string) => ({
 });
 
 test("a storage failure answers 500 and preserves the previous head and stream", async () => {
-  let failWrites = false;
-  const host = protocolHost({ failWrites: () => failWrites });
+  let failStorage = false;
+  const host = protocolHost({ failStorage: () => failStorage });
 
   try {
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
@@ -46,15 +46,16 @@ test("a storage failure answers 500 and preserves the previous head and stream",
     await call(host, file, "PUT", commit("one", "first"));
     const stream = "/streams/folders/646f6373/files?offset=-1";
     const before = await (await call(host, stream)).json();
-    failWrites = true;
+    failStorage = true;
     expect(
       (await call(host, file, "PUT", commit("two", "failed"), { "if-match": '"1"' })).status,
     ).toBe(500);
+    expect((await call(host, file)).status).toBe(500);
+    failStorage = false;
     const read = await call(host, file);
     expect(await read.text()).toBe("one");
     expect(read.headers.get("etag")).toBe('"1"');
     expect(await (await call(host, stream)).json()).toEqual(before);
-    failWrites = false;
     const next = await call(host, file, "PUT", commit("two", "second"), { "if-match": '"1"' });
     expect(next.status).toBe(200);
     expect(next.headers.get("etag")).toBe('"2"');

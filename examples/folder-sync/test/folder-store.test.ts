@@ -1,8 +1,8 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { DurableState, CommitBoundary, StorageFault } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
-import { Effect, Layer } from "effect";
+import { DurableState, CommitBoundary } from "@streamsy/core";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { Deferred, Effect, Layer, Result } from "effect";
 import {
   FolderConflict,
   InvalidFile,
@@ -10,9 +10,22 @@ import {
   PreconditionFailed,
   prepareContent,
 } from "../server/domain.ts";
-import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
+import {
+  CHECKPOINT_EVERY,
+  FolderStore,
+  FolderStoreLive,
+  Initialise,
+} from "../server/folder-store.ts";
+import { folderView } from "../server/folder-view.ts";
 import { Files } from "../server/streams.ts";
 import { memoryHost, sqliteHost } from "../server/storage.ts";
+
+const body = (text: string, txid: string) =>
+  Effect.map(prepareContent(new TextEncoder().encode(text)), (content) => ({
+    ...content,
+    author: "test",
+    txid,
+  }));
 
 for (const [name, storage] of [
   ["memory", memoryHost],
@@ -130,45 +143,125 @@ for (const [name, storage] of [
           expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(deletedTail);
         }),
     );
-    it.effect("failed head persistence rolls back append and counter", () =>
+    it.effect("the view rebuilds from the stream after its checkpoint is removed", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
-        const records = yield* OwnerRecords;
+        const checkpoints = yield* CheckpointStore;
+        yield* store.create("rebuild", "Rebuild", "create");
+        const one = yield* body("one", "first");
+        const two = yield* body("two", "second");
+        yield* store.commit("rebuild", "a", one);
+        yield* store.commit("rebuild", "b", two);
+        yield* store.remove("rebuild", "b", { txid: "delete", author: "test" });
+        const before = yield* store.read("rebuild", "a");
+        const view = folderView.at({ folderId: "rebuild" });
+        yield* Projection.run(view);
+        expect((yield* Projection.read(view)).state.last).toBe(2);
+
+        yield* checkpoints.remove(Projection.key(view));
+        expect((yield* Projection.read(view)).state).toEqual({ last: 0, files: {} });
+        expect(yield* store.read("rebuild", "a")).toEqual(before);
+        expect(yield* Effect.flip(store.read("rebuild", "b"))).toBeInstanceOf(MissingFile);
+        // The deleted version 2 is still in the retained stream, so the next write gets 3.
+        expect((yield* store.commit("rebuild", "b", one)).version).toBe(3);
+      }),
+    );
+    it.effect("a checkpoint that lags the tail still gives the tail's heads", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const files = yield* Files;
+        yield* store.create("lag", "Lag", "create");
+        const view = folderView.at({ folderId: "lag" });
+        const writes = CHECKPOINT_EVERY + 5;
+
+        for (let index = 1; index <= writes; index++)
+          yield* store.commit("lag", `f${index}`, yield* body(`text ${index}`, `t${index}`));
+        const saved = yield* Projection.read(view);
+        const tail = (yield* files.head({ folderId: "lag" })).nextOffset;
+        expect(saved.offsets.files).not.toBe(tail);
+        expect(saved.state.last).toBeLessThan(writes);
+        expect((yield* store.read("lag", `f${writes}`)).head).toMatchObject({
+          version: writes,
+          txid: `t${writes}`,
+        });
+        expect((yield* store.commit("lag", "next", yield* body("next", "next"))).version).toBe(
+          writes + 1,
+        );
+      }),
+    );
+    it.effect(
+      "two writes with the same If-Match: one lands, the loser folds again and gets 412",
+      () =>
+        Effect.gen(function* () {
+          const store = yield* FolderStore;
+          const files = yield* Files;
+          const checkpoints = yield* CheckpointStore;
+          yield* store.create("race", "Race", "create");
+          yield* store.commit("race", "a", yield* body("base", "base"));
+          const left = yield* body("left", "left");
+          const right = yield* body("right", "right");
+
+          // Hold the first two view loads until both have started, so both commits decide from version 1.
+          let loads = 0;
+          const bothRead = yield* Deferred.make<void>();
+
+          const racing = CheckpointStore.of({
+            ...checkpoints,
+            load: (key) =>
+              Effect.gen(function* () {
+                loads++;
+
+                if (loads === 2) yield* Deferred.succeed(bothRead, undefined);
+
+                if (loads <= 2) yield* Deferred.await(bothRead);
+
+                return yield* checkpoints.load(key);
+              }),
+          });
+
+          const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
+            Effect.provideService(CheckpointStore, racing),
+          );
+
+          const results = yield* Effect.gen(function* () {
+            const racers = yield* FolderStore;
+
+            return yield* Effect.all(
+              [
+                Effect.result(racers.commit("race", "a", left, { version: 1 })),
+                Effect.result(racers.commit("race", "a", right, { version: 1 })),
+              ],
+              { concurrency: "unbounded" },
+            );
+          }).pipe(Effect.provideContext(context));
+
+          const landed = results.filter(Result.isSuccess);
+          const refused = results.filter(Result.isFailure);
+          expect(landed).toHaveLength(1);
+          expect(refused).toHaveLength(1);
+          expect(refused[0]?.failure).toBeInstanceOf(PreconditionFailed);
+          expect(landed[0]?.success.version).toBe(2);
+          // Two racing loads, the winner's first-write checkpoint, and the loser's second fold.
+          expect(loads).toBe(4);
+          expect((yield* files.collect({ folderId: "race" })).items).toHaveLength(2);
+        }),
+    );
+    it.effect("an aborted transaction cannot consume a version", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
         const files = yield* Files;
         yield* store.create("rollback", "Rollback", "create");
-
-        const body = {
-          ...(yield* prepareContent(new TextEncoder().encode("one"))),
-          author: "test",
-          txid: "first",
-        };
-
+        const one = yield* body("one", "first");
+        expect((yield* store.commit("rollback", "a", one)).version).toBe(1);
         const before = (yield* files.head({ folderId: "rollback" })).nextOffset;
-
-        const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
-          Effect.provideService(OwnerRecords, {
-            ...records,
-            write: () =>
-              Effect.fail(
-                new StorageFault({ operation: "test", message: "disk failed", retryable: false }),
-              ),
-          }),
-        );
-
-        yield* Effect.gen(function* () {
-          const failing = yield* FolderStore;
-          yield* Effect.flip(failing.commit("rollback", "a", body));
-        }).pipe(Effect.provideContext(context));
-        expect((yield* files.head({ folderId: "rollback" })).nextOffset).toBe(before);
-        expect((yield* store.commit("rollback", "a", body)).version).toBe(1);
-        // An arbitrary failed transaction cannot consume a number either.
         const boundary = yield* CommitBoundary;
         yield* Effect.flip(
           boundary.withTransaction(
-            store.commit("rollback", "b", body).pipe(Effect.andThen(Effect.fail("abort"))),
+            store.commit("rollback", "b", one).pipe(Effect.andThen(Effect.fail("abort"))),
           ),
         );
-        expect((yield* store.commit("rollback", "b", body)).version).toBe(2);
+        expect((yield* files.head({ folderId: "rollback" })).nextOffset).toBe(before);
+        expect((yield* store.commit("rollback", "b", one)).version).toBe(2);
 
         const append = DurableState.changes(Files.at({ folderId: "rollback" }), {}, [
           DurableState.remove("file", "missing"),

@@ -1,6 +1,16 @@
 import { CommitBoundary, DurableState } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, Stream } from "effect";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import {
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+  Stream,
+} from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
   BlobMissing,
@@ -17,21 +27,17 @@ import {
   InvalidFile,
   MissingFile,
   PreconditionFailed,
+  WriteConflict,
   normalisePath,
   inlineText,
   sha256,
   type Precondition,
 } from "./domain.ts";
+import { folderView, headOf, type FolderView } from "./folder-view.ts";
 import { Files, Folders } from "./streams.ts";
 
-const StoredHead = Schema.Struct({ head: Head, value: File });
-
-const StoredHeadJson = Schema.fromJsonString(StoredHead);
-
-const CounterJson = Schema.fromJsonString(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)));
-
-const key = (folderId: string, path?: string) =>
-  JSON.stringify(["folder-sync.owner.v1", folderId, path ?? null]);
+/** Save the folder view after this many landed writes, and on the first write in a process. */
+export const CHECKPOINT_EVERY = 32;
 
 const invalid = () => new InvalidFile({ message: "Invalid request" });
 
@@ -41,30 +47,31 @@ const condition = (head: Head | undefined, precondition: Precondition) =>
     ? Effect.void
     : Effect.fail(new PreconditionFailed({ head: head ?? null }));
 
-/** Initialise only the folder owner's stream and counter. Registry ownership may be remote. */
+const liveHead = (view: FolderView, path: string) => {
+  const live = view.files[path];
+
+  return live === undefined ? undefined : headOf(live);
+};
+
+/** Initialise only the folder owner's stream. Registry ownership may be remote. */
 export const initialiseFolder = Effect.fn("Folder.initialise")(function* (folderId: string) {
   yield* Schema.decodeEffect(FolderId)(folderId).pipe(Effect.mapError(invalid));
   const files = yield* Files;
-  const records = yield* OwnerRecords;
-  const boundary = yield* CommitBoundary;
-
-  yield* boundary.withTransaction(
-    Effect.gen(function* () {
-      // A repeated create must never reset the durable counter.
-      if (Option.isSome(yield* records.read(key(folderId)))) return;
-      yield* files.create({ folderId });
-      yield* records.write(key(folderId), "0");
-    }),
-  );
+  // The view folds versions from the stream, so a repeated create cannot reset them.
+  yield* files.create({ folderId });
 });
 
 const make = Effect.gen(function* () {
   const files = yield* Files;
   const folders = yield* Folders;
-  const records = yield* OwnerRecords;
   const boundary = yield* CommitBoundary;
   const blobs = yield* BlobStore;
   const crypto = yield* Crypto.Crypto;
+  // The view reads the Files stream and the checkpoint at each call.
+  const context = yield* Effect.context<CheckpointStore | Files>();
+  const checkpointing = yield* Semaphore.make(1);
+  // Writes since this process saved each folder's view. A missing folder has no save yet.
+  const unsaved = new Map<string, number>();
 
   const requireFolder = Effect.fn("Folder.require")(function* (folderId: string) {
     yield* Schema.decodeEffect(FolderId)(folderId).pipe(Effect.mapError(invalid));
@@ -76,13 +83,56 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const load = Effect.fn("Folder.head")(function* (folderId: string, path: string) {
-    const encoded = yield* records.read(key(folderId, path));
+  /**
+   * Fold the view, decide, and append at the offset that was read. A lost race
+   * folds the new tail and decides again. A precondition that held before can then fail.
+   */
+  const decide = <A, E>(
+    folderId: string,
+    decision: (view: FolderView) => Effect.Effect<{ value: A; items: Array<FileChangeItem> }, E>,
+  ) =>
+    Projection.decide(folderView.at({ folderId }), {
+      input: "files",
+      decide: ({ state, offsets }) =>
+        decision(state).pipe(
+          Effect.map(({ value, items }) => ({
+            value,
+            items:
+              items.length === 0
+                ? []
+                : DurableState.changes(Files.at({ folderId }), { offset: offsets.files }, items),
+          })),
+        ),
+    }).pipe(
+      Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ folderId }))),
+      Effect.tap(({ appended }) => (appended ? checkpoint(folderId) : Effect.void)),
+      Effect.map(({ value }) => value),
+      Effect.provideContext(context),
+    );
 
-    return Option.isNone(encoded)
-      ? undefined
-      : yield* Schema.decodeEffect(StoredHeadJson)(encoded.value);
-  });
+  /** A lagging checkpoint is safe, so a failed or skipped save only costs a longer fold. */
+  const checkpoint = Effect.fn("Folder.checkpoint")(
+    function* (folderId: string) {
+      const count = (unsaved.get(folderId) ?? CHECKPOINT_EVERY - 1) + 1;
+      unsaved.set(folderId, count);
+
+      if (count < CHECKPOINT_EVERY) return;
+
+      // One writer per checkpoint key. A save that is running already covers this write.
+      const saved = yield* checkpointing.withPermitsIfAvailable(1)(
+        Projection.run(folderView.at({ folderId })),
+      );
+
+      if (Option.isSome(saved)) unsaved.set(folderId, 0);
+    },
+    Effect.catch((error) => Effect.logWarning("Folder view checkpoint failed", error)),
+  );
+
+  const currentView = (folderId: string) =>
+    Projection.current(folderView.at({ folderId })).pipe(
+      Effect.map(({ state }) => state),
+      Effect.provideContext(context),
+    );
 
   const create = Effect.fn("Folder.create")(function* (
     folderId: string,
@@ -116,11 +166,7 @@ const make = Effect.gen(function* () {
         }
 
         const value = { folderId, title };
-        yield* initialiseFolder(folderId).pipe(
-          Effect.provideService(Files, files),
-          Effect.provideService(OwnerRecords, records),
-          Effect.provideService(CommitBoundary, boundary),
-        );
+        yield* initialiseFolder(folderId).pipe(Effect.provideService(Files, files));
 
         const changes = DurableState.changes(Folders.at({}), { offset: state.offset }, [
           DurableState.upsert("folder", value, {
@@ -182,23 +228,18 @@ const make = Effect.gen(function* () {
       }
     }
 
-    return yield* boundary.withTransaction(
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+
+    return yield* decide(folderId, (view) =>
       Effect.gen(function* () {
-        const current = yield* load(folderId, normalized);
+        const current = liveHead(view, normalized);
 
-        if (current?.head.hash === body.hash) return current.head;
-        yield* condition(current?.head, precondition);
-        const tail = (yield* files.head({ folderId })).nextOffset;
-        const encoded = yield* records.read(key(folderId));
-
-        // The counter belongs to the owner, independently of retained stream history.
-        const last = Option.isNone(encoded)
-          ? 0
-          : yield* Schema.decodeEffect(CounterJson)(encoded.value);
+        if (current?.hash === body.hash) return { value: current, items: [] };
+        yield* condition(current, precondition);
 
         const fields = {
           path: normalized,
-          version: last + 1,
+          version: view.last + 1,
           hash: body.hash,
           size: body.size,
           author: body.author,
@@ -208,20 +249,10 @@ const make = Effect.gen(function* () {
 
         const head: Head = { version: value.version, hash: value.hash, txid: body.txid };
 
-        const changes = DurableState.changes(Files.at({ folderId }), { offset: tail }, [
-          DurableState.upsert("file", value, {
-            headers: { txid: body.txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
-          }),
-        ]);
-
-        yield* files.append({ folderId }, changes, { expectedOffset: tail });
-        yield* records.write(
-          key(folderId, normalized),
-          yield* Schema.encodeEffect(StoredHeadJson)({ head, value }),
-        );
-        yield* records.write(key(folderId), String(value.version));
-
-        return head;
+        return {
+          value: head,
+          items: [DurableState.upsert("file", value, { headers: { txid: body.txid, timestamp } })],
+        };
       }),
     );
   });
@@ -238,25 +269,23 @@ const make = Effect.gen(function* () {
     if (precondition !== undefined && "absent" in precondition)
       return yield* new InvalidFile({ message: "Delete does not accept If-None-Match" });
     yield* requireFolder(folderId);
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
 
-    return yield* boundary.withTransaction(
+    return yield* decide(folderId, (view) =>
       Effect.gen(function* () {
-        const current = yield* load(folderId, normalized);
+        const current = liveHead(view, normalized);
+        // A delete of a missing path answers with no txid and appends nothing (D12).
+        const absent: Removed = {};
 
-        if (current === undefined) return {};
-        yield* condition(current.head, precondition);
-        const tail = (yield* files.head({ folderId })).nextOffset;
+        if (current === undefined) return { value: absent, items: [] };
+        yield* condition(current, precondition);
 
-        const changes = DurableState.changes(Files.at({ folderId }), { offset: tail }, [
-          DurableState.remove("file", normalized, {
-            headers: { txid: body.txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
-          }),
-        ]);
-
-        yield* files.append({ folderId }, changes, { expectedOffset: tail });
-        yield* records.remove(key(folderId, normalized));
-
-        return { txid: body.txid };
+        return {
+          value: { txid: body.txid },
+          items: [
+            DurableState.remove("file", normalized, { headers: { txid: body.txid, timestamp } }),
+          ],
+        };
       }),
     );
   });
@@ -264,15 +293,22 @@ const make = Effect.gen(function* () {
   const read = Effect.fn("Folder.read")(function* (folderId: string, path: string) {
     const normalized = yield* normalisePath(path);
     yield* requireFolder(folderId);
-    const stored = yield* load(folderId, normalized);
+    const live = (yield* currentView(folderId)).files[normalized];
 
-    if (stored === undefined) return yield* new MissingFile({ message: "File not found" });
+    if (live === undefined) return yield* new MissingFile({ message: "File not found" });
 
-    return stored;
+    return { head: headOf(live), value: live.value };
   });
 
   return { create, commit, remove, read };
 });
+
+type FileChangeItem = DurableState.Change<typeof Files.collections>;
+
+/** A delete answer. It has no txid when nothing was deleted. */
+interface Removed {
+  readonly txid?: string;
+}
 
 export class FolderStore extends Context.Service<FolderStore, Effect.Success<typeof make>>()(
   "FolderSync/FolderStore",

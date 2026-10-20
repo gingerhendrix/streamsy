@@ -237,6 +237,14 @@ const make = Effect.gen(function* () {
             }),
           ),
         ),
+        Match.tag("WriteConflict", () =>
+          Effect.succeed(
+            json(
+              { error: "Other writes kept landing first; retry" },
+              { status: 503, headers: { "retry-after": "1" } },
+            ),
+          ),
+        ),
         Match.orElse((cause) =>
           Effect.logError(cause).pipe(
             Effect.as(json({ error: "Storage failure" }, { status: 500 })),

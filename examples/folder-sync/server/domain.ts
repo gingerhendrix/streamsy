@@ -53,6 +53,11 @@ export class FolderConflict extends Schema.TaggedError<FolderConflict>()("Folder
 
 export class BlobMissing extends Schema.TaggedError<BlobMissing>()("BlobMissing", { hash: Hash }) {}
 
+/** Other writes to the folder kept landing first. The client may retry. */
+export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {
+  folderId: Schema.String,
+}) {}
+
 const canonicalPath = (path: string): string | undefined => {
   const parts = path.split("/");
 
