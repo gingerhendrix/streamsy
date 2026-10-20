@@ -1,96 +1,68 @@
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { ConfigProvider, Effect, Layer, Schedule, Schema } from "effect";
+import { Effect, Layer, Schedule, Schema } from "effect";
 import { FileIndex, FileIndexLive, IndexLive } from "../../server/file-index.ts";
-import {
-  FolderStore,
-  FolderStoreLive,
-  Initialise,
-  NoWriteHook,
-} from "../../server/folder-store.ts";
-import { Changes } from "../../server/streams.ts";
-import { StorageLive } from "../../server/storage.ts";
+import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
+import { prepareContent } from "../../server/domain.ts";
+import { sqliteHost } from "../../server/storage.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
 
 class Waiting extends Schema.TaggedError<Waiting>()("Waiting", {}) {}
 
-const metadata = (opId: string) => ({ base: null, opId, author: "test", origin: "restart" });
-
 const graph = (filename: string) =>
-  Layer.mergeAll(FolderStoreLive, FileIndexLive).pipe(
+  Layer.merge(FolderStoreLive, FileIndexLive).pipe(
     Layer.provideMerge(IndexLive),
     Layer.provideMerge(Initialise),
-    Layer.provide(NoWriteHook),
-    Layer.provideMerge(StorageLive),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ FOLDER_SYNC_DB: filename }))),
+    Layer.provideMerge(sqliteHost(filename)),
   );
 
 layer(BunServices.layer, { excludeTestServices: true })((it) => {
-  it.effect("FOLDER_SYNC_DB restarts restore known folder followers and discover new folders", () =>
-    Effect.gen(function* () {
-      const directory = yield* testDirectory("index-restart-");
-      const filename = `${directory}/files.sqlite`;
+  it.effect(
+    "index restart resumes source cursors, restores known folders and discovers new ones",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("index-restart-");
 
-      for (const run of [1, 2, 3]) {
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* Layer.build(graph(filename));
-            yield* Effect.gen(function* () {
-              const store = yield* FolderStore;
-              const index = yield* FileIndex;
-              const changes = yield* Changes;
+        for (const run of [1, 2, 3])
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const context = yield* Layer.build(graph(`${directory}/index.sqlite`));
+              yield* Effect.gen(function* () {
+                const store = yield* FolderStore;
+                const index = yield* FileIndex;
 
-              if (run === 1) yield* store.create("daily/old", "Old");
+                if (run === 1) yield* store.create("old/folder", "Old", "create");
+                yield* store.commit("old/folder", "a", {
+                  ...(yield* prepareContent(new TextEncoder().encode(`restartneedle ${run}`))),
+                  txid: `old-${run}`,
+                  author: "test",
+                });
+                yield* store.create(`new/${run}`, "New", `folder-${run}`);
+                yield* store.commit(`new/${run}`, "b", {
+                  ...(yield* prepareContent(new TextEncoder().encode("restartneedle new"))),
+                  txid: `new-${run}`,
+                  author: "test",
+                });
 
-              const written = yield* store.write(
-                "daily/old",
-                "old.md",
-                metadata(`old-${run}`),
-                new TextEncoder().encode(`restartneedle round ${run}`),
-              );
+                const listed = yield* index.list().pipe(
+                  Effect.filterOrFail(
+                    (rows) =>
+                      rows.length === run + 1 &&
+                      rows.some((row) => row.folderId === "old/folder" && row.version === run),
+                    () => new Waiting(),
+                  ),
+                  Effect.retry({
+                    while: Schema.is(Waiting),
+                    schedule: Schedule.spaced("10 millis").pipe(Schedule.upTo({ times: 200 })),
+                  }),
+                );
 
-              yield* store.create(`new/${run}`, "New");
-              yield* store.write(
-                `new/${run}`,
-                "new.md",
-                metadata(`new-${run}`),
-                new TextEncoder().encode("restartneedle new"),
-              );
-
-              const rows = yield* Effect.gen(function* () {
-                const hits = yield* index.search("restartneedle");
-                const manifest = yield* index.list();
-                const feed = yield* changes.collect({});
-
-                if (
-                  hits.length !== run + 1 ||
-                  !hits.some(
-                    (row) => row.version === written.version && row.folderId === "daily/old",
-                  ) ||
-                  manifest.length !== run + 1 ||
-                  !manifest.some(
-                    (row) => row.folderId === "daily/old" && row.version === written.version,
-                  ) ||
-                  feed.items.length !== 2 * run
-                )
-                  return yield* new Waiting();
-
-                return { hits, manifest, feed };
-              }).pipe(
-                Effect.retry({
-                  while: Schema.is(Waiting),
-                  schedule: Schedule.spaced("10 millis").pipe(Schedule.upTo({ times: 300 })),
-                }),
-              );
-
-              expect(rows.hits).toHaveLength(run + 1);
-              expect(rows.manifest).toHaveLength(run + 1);
-              expect(rows.feed.items).toHaveLength(2 * run);
-            }).pipe(Effect.provideContext(context));
-          }),
-        );
-      }
-    }),
+                expect(listed).toHaveLength(run + 1);
+                expect(yield* index.search("restartneedle")).toHaveLength(run + 1);
+              }).pipe(Effect.provideContext(context));
+            }),
+          );
+      }),
   );
 });

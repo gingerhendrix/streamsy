@@ -7,9 +7,11 @@ import { Files, FolderKey, fileKey } from "./streams.ts";
 
 export const SEARCH_LIMIT = 1024 * 1024;
 
-export const searchableText = (bytes: Uint8Array): string | undefined => {
+export const searchableText = (bytes: Uint8Array, truncated = false): string | undefined => {
   try {
-    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes, {
+      stream: truncated,
+    });
 
     return text.includes("\0") ? undefined : text;
   } catch {
@@ -44,7 +46,8 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
     offset += chunk.length;
   }
 
-  return searchableText(bytes);
+  // Retain an incomplete final UTF-8 character when the byte cap cuts through it.
+  return searchableText(bytes, content.size > length);
 });
 
 /** Each folder's SQL rows and input cursor commit together on the index owner. */
