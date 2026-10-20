@@ -126,7 +126,7 @@ for (const [name, storage] of [
           const deletedTail = (yield* files.head({ folderId: "retry" })).nextOffset;
           expect(
             yield* store.remove("retry", "a", { author: "test", txid: "repeat" }, { version: 1 }),
-          ).toEqual({ txid: "repeat" });
+          ).toEqual({});
           expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(deletedTail);
         }),
     );

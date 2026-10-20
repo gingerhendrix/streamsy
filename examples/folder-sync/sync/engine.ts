@@ -552,6 +552,17 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const operation = (yield* state.pending())[0];
 
     if (operation === undefined) return;
+
+    if (operation.source === null && operation.base === null) {
+      // No observed remote version belongs to this local delete.
+      yield* gate.withPermit(
+        state
+          .discard(operation.seq)
+          .pipe(Effect.andThen(refresh(operation.folderId, operation.path))),
+      );
+
+      return;
+    }
     // Conflict intent was saved before its disk copy. Complete it after a restart as well.
     const restore = yield* state.get(`restore:${operation.seq}`);
 
@@ -641,7 +652,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
           });
           yield* state.set(`restore:${operation.seq}`, "");
           yield* Effect.logWarning(`Preserved conflict: ${operation.folderId}/${copy}`);
-        } else yield* state.settle(operation, result?.version ?? null);
+        } else if (result === null) yield* state.discard(operation.seq);
+        else yield* state.settle(operation, result.version ?? null);
         yield* refresh(operation.folderId, operation.path);
       }),
     );

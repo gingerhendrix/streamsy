@@ -86,6 +86,11 @@ const make = Effect.gen(function* () {
     yield* sql`UPDATE outbox SET uploaded = 1 WHERE seq = ${seq}`;
   });
 
+  // A discarded delete did not change the server. Later observations keep their original base.
+  const discard = Effect.fn("SyncState.discard")(function* (seq: number) {
+    yield* sql`DELETE FROM outbox WHERE seq = ${seq}`;
+  });
+
   const settle = Effect.fn("SyncState.settle")(function* (op: Pending, version: number | null) {
     yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -157,6 +162,7 @@ const make = Effect.gen(function* () {
     pending,
     enqueue,
     uploaded,
+    discard,
     settle,
     conflict,
     reject,

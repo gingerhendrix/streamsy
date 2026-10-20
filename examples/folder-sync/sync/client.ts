@@ -47,7 +47,7 @@ const FolderMessage = Schema.Union([
 
 const receipt = Schema.Struct({
   version: Schema.optionalKey(File.fields.version),
-  txid: Schema.String,
+  txid: Schema.optionalKey(Schema.String),
   hash: Schema.optionalKey(Head.fields.hash),
 });
 
@@ -168,6 +168,10 @@ const makeRemote = (server: string, token?: string) =>
     });
 
     const push = Effect.fn("SyncRemote.push")(function* (operation: Pending) {
+      // Defence for callers outside the daemon: an unseen file must never be deleted.
+      if (operation.source === null && operation.base === null)
+        return yield* Schema.decodeUnknownEffect(receipt)({});
+
       let text: string | undefined;
 
       if (operation.source !== null && operation.size <= INLINE_LIMIT)
@@ -188,11 +192,7 @@ const makeRemote = (server: string, token?: string) =>
             : { ...content, text };
 
       const condition =
-        operation.base === null
-          ? operation.source === null
-            ? {}
-            : { "if-none-match": "*" }
-          : { "if-match": `"${operation.base}"` };
+        operation.base === null ? { "if-none-match": "*" } : { "if-match": `"${operation.base}"` };
 
       const req =
         operation.source === null

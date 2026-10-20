@@ -78,6 +78,9 @@ test("JSON writes, ETags, preconditions, no-op txids and State stream reads", as
         .status,
     ).toBe(200);
     expect((await call(host, url)).status).toBe(404);
+    const noopDelete = await call(host, url, "DELETE", { txid: "noop-delete", author: "test" });
+    expect(noopDelete.status).toBe(200);
+    expect(await noopDelete.json()).toEqual({});
     const absent = await call(host, url, "PUT", commit("three", "third"), { "if-match": '"2"' });
     expect(absent.status).toBe(412);
     expect(await absent.json()).toEqual({ head: null });

@@ -203,7 +203,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* load(folderId, normalized);
 
-        if (current === undefined) return { txid: body.txid };
+        if (current === undefined) return {};
         yield* condition(current.head, precondition);
         const tail = (yield* files.head({ folderId })).nextOffset;
 

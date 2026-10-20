@@ -97,6 +97,14 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         expect(requests.at(-1)?.url).toContain("/folders/daily%2Fdemo/files/a%252Fb.md");
         yield* remote.push({ ...op, base: null });
         expect(requests.at(-1)?.headers["if-none-match"]).toBe("*");
+        const count = requests.length;
+        expect(
+          yield* remote.push({ ...op, base: null, source: null, hash: null, size: 0 }),
+        ).toEqual({});
+        expect(requests).toHaveLength(count);
+        responseBody = {};
+        expect(yield* remote.push({ ...op, source: null, hash: null, size: 0 })).toEqual({});
+        expect(requests.at(-1)).toMatchObject({ method: "DELETE", headers: { "if-match": '"4"' } });
         status = 412;
         responseBody = { head: null };
         const stale = yield* Effect.flip(remote.push(op));

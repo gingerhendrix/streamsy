@@ -111,6 +111,128 @@ const initialiseMirror = Effect.fn("SyncTest.initialiseMirror")(function* (direc
 });
 
 layer(runtime, { excludeTestServices: true })((it) => {
+  it.effect("an offline create then delete preserves an unseen remote write", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-unseen-delete-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      const release = yield* Deferred.make<void>();
+      let deletes = 0;
+      const offline = SyncRemote.of({
+        ...remote,
+        push: (op) =>
+          Deferred.await(release).pipe(
+            Effect.andThen(() => {
+              if (op.source === null) deletes++;
+
+              return remote.push(op);
+            }),
+          ),
+      });
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, offline),
+        Effect.forkScoped,
+      );
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* fs.writeFileString(`${mirror}/daily/demo/n.md`, "mine");
+      yield* until(
+        state.pending(),
+        (rows) => rows.filter((row) => row.path === "n.md").length === 1,
+      );
+      yield* fs.remove(`${mirror}/daily/demo/n.md`);
+      yield* until(
+        state.pending(),
+        (rows) => rows.filter((row) => row.path === "n.md").length === 2,
+      );
+      yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
+      yield* Deferred.succeed(release, undefined);
+      yield* until(state.pending(), (rows) => rows.length === 0);
+      yield* until(
+        fs
+          .readFileString(`${mirror}/daily/demo/n.md`)
+          .pipe(Effect.orElseSucceed(() => "<missing>")),
+        (value) => value === "theirs",
+      );
+      expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
+      const origin = yield* state.get("origin");
+      if (origin === undefined) return yield* Effect.die("Missing origin");
+      expect(yield* read(server.url, "daily/demo", conflictPath("n.md", origin))).toBe("mine");
+      expect(deletes).toBe(0);
+      yield* Fiber.interrupt(daemon);
+    }),
+  );
+
+  it.effect("a delete rejected with 412 preserves the base of later queued deletes", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-stale-delete-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      const original = yield* put(server.url, "daily/demo", "n.md", "original", "original");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      const release = yield* Deferred.make<void>();
+      const bases: Array<number | null> = [];
+      const offline = SyncRemote.of({
+        ...remote,
+        push: (op) =>
+          Deferred.await(release).pipe(
+            Effect.andThen(() => {
+              if (op.source === null) bases.push(op.base);
+
+              return remote.push(op);
+            }),
+          ),
+      });
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, offline),
+        Effect.forkScoped,
+      );
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* fs.remove(`${mirror}/daily/demo/n.md`);
+      const queued = yield* until(state.pending(), (rows) => rows.length === 1);
+      const deletion = queued[0];
+      const known = yield* state.head("daily/demo", "n.md");
+      if (deletion === undefined || known === undefined)
+        return yield* Effect.die("Missing deletion");
+      // A second deletion observed before the first request returned keeps the same base.
+      yield* state.enqueue(
+        {
+          folderId: deletion.folderId,
+          path: deletion.path,
+          txid: "later-delete",
+          base: deletion.base,
+          hash: deletion.hash,
+          size: deletion.size,
+          source: deletion.source,
+          uploaded: deletion.uploaded,
+        },
+        known,
+      );
+      yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
+      yield* Deferred.succeed(release, undefined);
+      yield* until(state.pending(), (rows) => rows.length === 0);
+      yield* until(
+        fs
+          .readFileString(`${mirror}/daily/demo/n.md`)
+          .pipe(Effect.orElseSucceed(() => "<missing>")),
+        (value) => value === "theirs",
+      );
+      expect(bases).toEqual([original.version, original.version]);
+      expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
+      yield* Fiber.interrupt(daemon);
+    }),
+  );
+
   it.effect(
     "two clients converge through create, edit, delete, restart and read-only edit preservation",
     () =>

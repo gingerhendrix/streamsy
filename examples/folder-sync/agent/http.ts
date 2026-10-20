@@ -81,7 +81,10 @@ export interface MutationOptions {
   readonly signal?: AbortSignal;
 }
 
-const Written = Schema.Struct({ version: Schema.optionalKey(Version), txid: Schema.String });
+const Written = Schema.Struct({
+  version: Schema.optionalKey(Version),
+  txid: Schema.optionalKey(Schema.String),
+});
 
 const FileMessage = Schema.Union([
   StreamAddress.stateChange({ type: "file", schema: File }),
