@@ -1,282 +1,134 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { StorageFault, Streamsy } from "@streamsy/core";
-import { StreamsyObject, Wakeups } from "@streamsy/serve/cloudflare";
+import { StorageFault } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
+import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { Serve } from "@streamsy/serve";
-import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
-import { CommitBoundary } from "@streamsy/core";
-import { Cause, Context, Effect, Layer, Schema } from "effect";
-import { SqlClient } from "effect/sql";
+import { Cause, ConfigProvider, Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { ApiRequestLive, HealthLive, NotFoundLive } from "../server/api.ts";
-import { FolderStoreLive, Initialise } from "../server/folder-store.ts";
-import { FileIndexLive } from "../server/file-index.ts";
-import { BlobStore } from "../server/blob-store.ts";
-import { IndexRequestLive } from "../server/index-api.ts";
-import { feedEpoch } from "../server/feed-epoch.ts";
-import { Folder, Folders, Files, Manifest, Changes, folderHead } from "../server/streams.ts";
-import { initialiseSearch, manifest, search } from "../server/projections.ts";
+import { ApiRequestLive, HealthLive, jsonBody } from "../server/api.ts";
+import { CreateFolder } from "../server/domain.ts";
+import { FolderStoreLive, initialiseFolder } from "../server/folder-store.ts";
+import { Files } from "../server/streams.ts";
 import { objectStorage } from "./storage.ts";
-import { headWakeup } from "./head.ts";
-import {
-  Notices,
-  Notice,
-  OutboxLive,
-  NoticeHook,
-  noticeTransportLayer,
-  noticeTables,
-  noticeWakeup,
-  receiveNotice,
-  noticeChanges,
-  notices,
-} from "./notices.ts";
-import { OutboxStore } from "@streamsy/serve/action/outbox";
 import type { Env } from "./env.ts";
 
-const unavailable = () =>
-  HttpServerResponse.jsonUnsafe(
-    { error: "Index unavailable; retry" },
-    { status: 503, headers: { "retry-after": "1" } },
-  );
-
-const fault = (cause: Cause.Cause<unknown>) =>
-  new StorageFault({
-    operation: "folder-sync.acquire",
-    message: Cause.pretty(cause),
-    retryable: true,
-  });
+class TestHead extends Context.Service<TestHead, { fail: boolean }>()("FolderSync/TestHead") {}
 
 const FolderInternal = Layer.mergeAll(
-  // The cron backstop. Acquisition and this reconcile arm the alarm for any due wakeup.
   HttpRouter.add(
     "POST",
-    "/__wake",
-    Wakeups.use((wakeups) => wakeups.reconcile).pipe(Effect.as(HttpServerResponse.text("awake"))),
-  ),
-  HttpRouter.add(
-    "GET",
-    "/__pending",
-    Effect.gen(function* () {
-      const store = yield* OutboxStore;
-      const rows = yield* store.list(notices.name, undefined).pipe(Effect.orDie);
-
-      return HttpServerResponse.jsonUnsafe(
-        rows.map(({ state, idempotencyKey }) => ({ state, idempotencyKey })),
-      );
-    }),
-  ),
-  HttpRouter.add(
-    "GET",
-    "/__head",
+    "/__create",
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const folderId = new URL(request.url, "https://internal").searchParams.get("folder") ?? "";
-      const stored = yield* Projection.read(folderHead.at({ folderId }));
+      const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
+      yield* initialiseFolder(body.folderId);
 
-      return HttpServerResponse.jsonUnsafe({ seq: stored.state.seq, offset: stored.offsets.input });
+      return HttpServerResponse.jsonUnsafe({ folderId: body.folderId, title: body.title });
     }).pipe(Effect.orDie),
   ),
-);
-
-const folderLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(FolderStoreLive, noticeTransportLayer(env)).pipe(
-    Layer.provideMerge(Initialise),
-    Layer.provideMerge(NoticeHook),
-    Layer.provideMerge(OutboxLive),
-    Layer.provideMerge(objectStorage(state, env)),
-    Layer.catchCause((cause) => Layer.effectContext(Effect.fail(fault(cause)))),
-  );
-
-const FolderApp = Layer.mergeAll(
-  ApiRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
-  HealthLive,
-  NotFoundLive,
-  FolderInternal,
-);
-
-export class FolderObject extends StreamsyObject.make<
-  Env,
-  Layer.Success<ReturnType<typeof folderLayer>>
->({ app: FolderApp, layer: folderLayer, wakeups: [noticeWakeup, headWakeup] }) {}
-
-class IndexPass extends Context.Service<IndexPass, { readonly run: Effect.Effect<void> }>()(
-  "FolderSync/IndexPass",
-) {}
-
-const passLayer = Layer.effect(
-  IndexPass,
-  Effect.gen(function* () {
-    const run = Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-
-      const flags = yield* sql<{
-        failProjection: number;
-      }>`SELECT failProjection FROM folder_sync_test WHERE id = 1`;
-
-      if (flags[0]?.failProjection === 1) return yield* Effect.die("Injected projection failure");
-      yield* Projection.run(noticeChanges.at({}));
-      yield* Projection.run(manifest.at({}));
-      yield* Projection.run(search.at({}));
-
-      return yield* Effect.void;
-    });
-
-    const context = yield* Effect.context<
-      | Notices
-      | Changes
-      | Manifest
-      | Files
-      | BlobStore
-      | CheckpointStore
-      | Transaction
-      | CommitBoundary
-      | SqlClient.SqlClient
-    >();
-
-    return IndexPass.of({ run: run.pipe(Effect.provideContext(context), Effect.orDie) });
-  }),
-);
-
-const IndexInternal = Layer.mergeAll(
-  HttpRouter.add(
-    "GET",
-    "/__project",
-    Effect.gen(function* () {
-      const pass = yield* IndexPass;
-      yield* pass.run;
-
-      return HttpServerResponse.text("ready", { headers: { "stream-epoch": yield* feedEpoch } });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("Index projection failed; retry", cause).pipe(Effect.as(unavailable())),
-      ),
-    ),
-  ),
   HttpRouter.add(
     "POST",
-    "/__notice",
+    "/__test/head",
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const sql = yield* SqlClient.SqlClient;
-      const flags = yield* sql<{ fail: number }>`SELECT fail FROM folder_sync_test WHERE id = 1`;
 
-      if (flags[0]?.fail === 1) return unavailable();
-      const notice = yield* Schema.decodeUnknownEffect(Notice)(yield* request.json);
-      yield* receiveNotice(notice);
-
-      if (flags[0]?.fail === 2) return unavailable();
-      // Persist intake before projecting. A failed response can safely replay the same notice.
-      const pass = yield* IndexPass;
-      yield* pass.run.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("Notice persisted; index projection deferred", cause),
-        ),
+      const body = yield* Schema.decodeUnknownEffect(Schema.Struct({ fail: Schema.Boolean }))(
+        yield* jsonBody(request),
       );
 
-      return HttpServerResponse.text("accepted");
-    }).pipe(Effect.orDie),
-  ),
-  HttpRouter.add(
-    "GET",
-    "/__registry",
-    Effect.gen(function* () {
-      const registry = yield* Folders;
-
-      return HttpServerResponse.jsonUnsafe((yield* registry.collect({})).items);
-    }).pipe(Effect.orDie),
-  ),
-  HttpRouter.add(
-    "POST",
-    "/__register",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const folder = yield* Schema.decodeUnknownEffect(Folder)(yield* request.json);
-      const registry = yield* Folders;
-      const boundary = yield* CommitBoundary;
-      yield* boundary.withTransaction(
-        Effect.gen(function* () {
-          if (!(yield* registry.collect({})).items.some((row) => row.folderId === folder.folderId))
-            yield* registry.append({}, [folder]);
-        }),
-      );
-
-      return HttpServerResponse.text("registered");
-    }).pipe(Effect.orDie),
-  ),
-  HttpRouter.add(
-    "POST",
-    "/__test/intake",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const sql = yield* SqlClient.SqlClient;
-
-      const payload = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({
-          fail: Schema.Boolean,
-          projection: Schema.optionalKey(Schema.Boolean),
-          afterPersist: Schema.optionalKey(Schema.Boolean),
-        }),
-      )(yield* request.json);
-
-      const fail = payload.afterPersist ? 2 : Number(payload.fail);
-      yield* sql`UPDATE folder_sync_test SET fail = ${fail}, failProjection = ${payload.projection ? 1 : 0} WHERE id = 1`;
+      const flags = yield* TestHead;
+      flags.fail = body.fail;
 
       return HttpServerResponse.text("configured");
     }).pipe(Effect.orDie),
   ),
 );
 
-const indexInitialise = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* initialiseSearch;
-    yield* noticeTables;
-    yield* feedEpoch;
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, fail INTEGER NOT NULL, failProjection INTEGER NOT NULL)`;
-    yield* sql`INSERT INTO folder_sync_test VALUES (1, 0, 0) ON CONFLICT DO NOTHING`;
-    yield* (yield* Notices).create({});
-    yield* (yield* Changes).create({});
-    yield* (yield* Manifest).create({});
-    yield* (yield* Folders).create({});
-  }),
-);
+const folderLayer = (state: DurableObjectState, env: Env) => {
+  const storage = objectStorage(state, env);
+  const flags = Layer.sync(TestHead, () => ({ fail: false }));
 
-const indexLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(FileIndexLive, passLayer).pipe(
-    Layer.provideMerge(indexInitialise),
+  const records = Layer.effect(
+    OwnerRecords,
+    Effect.gen(function* () {
+      const base = yield* OwnerRecords;
+      const test = yield* TestHead;
+
+      return OwnerRecords.of({
+        ...base,
+        write: (key, value) =>
+          env.TEST_HOOKS === "true" && test.fail
+            ? Effect.fail(
+                new StorageFault({
+                  operation: "records.write",
+                  message: "Injected head persistence failure",
+                  retryable: false,
+                }),
+              )
+            : base.write(key, value),
+      });
+    }),
+  ).pipe(Layer.provide([storage, flags]));
+
+  return FolderStoreLive.pipe(
+    Layer.provideMerge(records),
+    Layer.provideMerge(flags),
+    Layer.provideMerge(storage),
     Layer.provideMerge(
-      objectStorage(state, env, Streamsy.group(Folders, Files, Changes, Manifest, Notices)),
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({ FOLDER_SYNC_WRITER_TOKEN: env.WRITER_TOKEN }),
+      ),
     ),
-    Layer.catchCause((cause) => Layer.effectContext(Effect.fail(fault(cause)))),
+    Layer.catchCause((cause) =>
+      Layer.effectContext(
+        Effect.fail(
+          new StorageFault({
+            operation: "folder-sync.acquire",
+            message: Cause.pretty(cause),
+            retryable: true,
+          }),
+        ),
+      ),
+    ),
   );
+};
 
-const IndexApp = Layer.mergeAll(
-  IndexRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
+const FolderApp = Layer.mergeAll(
+  ApiRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
   HealthLive,
-  IndexInternal,
-  Serve.mount(Changes, "/streams/changes"),
-  Serve.mount(Manifest, "/streams/manifest"),
+  FolderInternal,
+  Serve.mount(Files, "/streams/folders/:folderId/files"),
 );
 
-export class IndexObject extends StreamsyObject.make<
+export class FolderObject extends StreamsyObject.make<
   Env,
-  Layer.Success<ReturnType<typeof indexLayer>>
->({ app: IndexApp, layer: indexLayer }) {
-  // oxlint-disable-next-line effecttsgo/async-function -- Stock-host request wrapper runs the application projection route before reads.
+  Layer.Success<ReturnType<typeof folderLayer>>
+>({ app: FolderApp, layer: folderLayer }) {
+  // oxlint-disable-next-line effecttsgo/async-function -- Native Durable Object boundary schedules a best-effort post-commit ping.
   override async fetch(request: Request): Promise<Response> {
-    const path = new URL(request.url).pathname;
-
-    if (path === "/__project" || path === "/__test/intake" || path === "/__registry")
-      return super.fetch(request);
-    const ready = await super.fetch(new Request("https://internal/__project"));
-
-    // Notice intake skips the read gate. Retain the best-effort prepass and post-intake pass.
-    if (!ready.ok && path !== "/__notice") return ready;
     const response = await super.fetch(request);
+    const match = /^\/api\/folders\/([^/]+)\/files\//.exec(new URL(request.url).pathname);
 
-    if (path !== "/streams/changes") return response;
-    const headers = new Headers(response.headers);
-    headers.set("stream-epoch", ready.headers.get("stream-epoch") ?? "");
+    if (response.ok && ["PUT", "DELETE"].includes(request.method) && match?.[1]) {
+      const folderId = decodeURIComponent(match[1]);
+      this.ctx.waitUntil(
+        this.env.INDEX.get(this.env.INDEX.idFromName("index"))
+          .fetch("https://internal/__moved", {
+            method: "POST",
+            body: JSON.stringify({ folderId }),
+          })
+          .then((result) => {
+            if (!result.ok) throw new Error(`Index ping answered ${result.status}`);
 
-    return new Response(response.body, { status: response.status, headers });
+            return result.text();
+          })
+          .catch((error) => {
+            // oxlint-disable-next-line effecttsgo/global-console -- The cron backstop retries failed post-commit notifications.
+            console.error(`Index ping failed for ${folderId}`, error);
+          }),
+      );
+    }
+
+    return response;
   }
 }

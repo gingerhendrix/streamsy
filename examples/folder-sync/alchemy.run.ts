@@ -26,7 +26,7 @@ export default Alchemy.Stack(
         runWorkerFirst: true,
         notFoundHandling: "single-page-application",
       },
-      // Folder alarms deliver notices. The cron only wakes folders as a backstop.
+      // Lost folder pings recover when the index checks every folder cursor.
       crons: ["0 * * * *"],
     });
 

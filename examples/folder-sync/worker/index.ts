@@ -1,14 +1,18 @@
 /* oxlint-disable effecttsgo/async-function -- Native Workers fetch/scheduled transport boundary. */
 import { Placement, rule } from "@streamsy/serve/cloudflare";
-import { DateTime, Schema } from "effect";
+import { Schema } from "effect";
 import { CreateFolder } from "../server/domain.ts";
-import { Files, Folder } from "../server/streams.ts";
+import { JSON_BODY_LIMIT } from "../server/api.ts";
+import { Files, FolderKey } from "../server/streams.ts";
+import { handleBlobRequest } from "./blob-api.ts";
 import type { ScheduledController } from "@cloudflare/workers-types";
 import type { Env } from "./env.ts";
 
-export { FolderObject, IndexObject } from "./objects.ts";
+export { FolderObject } from "./objects.ts";
 
-// Placement decodes the internal hex stream segment back to the opaque id. Object names use the id itself.
+export { IndexObject } from "./index-object.ts";
+
+/** Placement decodes the hex URL segment. Object names use the opaque folder id. */
 export const placement = Placement.byRoute([
   rule({ stream: Files, owner: ({ folderId }) => folderId }),
 ]);
@@ -20,95 +24,67 @@ const index = (env: Env) => env.INDEX.get(env.INDEX.idFromName("index"));
 const folder = (env: Env, folderId: string) =>
   env.FOLDERS.get(env.FOLDERS.idFromName(folderOwner(folderId)));
 
-const json = (error: string, status: number) =>
-  new Response(JSON.stringify({ error }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+const json = (error: string, status: number) => Response.json({ error }, { status });
 
-/** Equal-length credentials use the Workers constant-time primitive. Only length can short-circuit. */
+/** Equal-length credentials use the Workers constant-time primitive. */
 const authorized = (request: Request, env: Env) => {
   const expected = new TextEncoder().encode(`Bearer ${env.WRITER_TOKEN}`);
   const supplied = new TextEncoder().encode(request.headers.get("authorization") ?? "");
 
-  const equal =
-    supplied.length === expected.length && crypto.subtle.timingSafeEqual(supplied, expected);
-
-  return Boolean(env.WRITER_TOKEN) && equal;
+  return (
+    Boolean(env.WRITER_TOKEN) &&
+    supplied.length === expected.length &&
+    crypto.subtle.timingSafeEqual(supplied, expected)
+  );
 };
 
-/**
- * The hourly backstop, also called by the authenticated local trigger. Folder
- * alarms deliver notices. This pass wakes each folder, so an object that lost
- * its alarm re-arms it. A failed folder does not stop the other folders.
- */
+/** The hourly backstop checks source tails from every stored folder cursor. */
 export const scheduledWake = async (env: Env) => {
-  const response = await index(env).fetch("https://internal/__registry");
+  const response = await index(env).fetch("https://internal/__catchup", { method: "POST" });
 
-  if (!response.ok) throw new Error(`Registry unavailable: ${response.status}`);
-  const folders = Schema.decodeUnknownSync(Schema.Array(Folder))(await response.json());
-
-  for (const row of folders) {
-    try {
-      const woken = await folder(env, row.folderId).fetch("https://internal/__wake", {
-        method: "POST",
-      });
-
-      if (!woken.ok) throw new Error(`Wake answered ${woken.status}`);
-    } catch (error) {
-      // oxlint-disable-next-line effecttsgo/global-console -- Platform scheduled boundary reports a folder the next cron pass retries.
-      console.error(`Scheduled wake failed for ${row.folderId}`, error);
-    }
-  }
+  if (!response.ok) throw new Error(`Index catch-up answered ${response.status}`);
+  await response.text();
 };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // Stream endpoints are always read-only, including unauthenticated write attempts.
+    if (
+      url.pathname.startsWith("/streams/") &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method)
+    )
+      return json("Streams are read-only", 405);
     const write = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 
     if (write && !authorized(request, env)) return json("Writer authorization required", 401);
 
-    // Internal object routes are not exposed through the public router.
     if (url.pathname === "/api/admin/wake" && request.method === "POST") {
       try {
         await scheduledWake(env);
 
         return new Response("awake");
       } catch {
-        return json("Scheduled wake failed", 503);
+        return json("Index catch-up failed", 503);
       }
     }
 
-    if (
-      url.pathname === "/api/admin/test-intake" &&
-      request.method === "POST" &&
-      env.TEST_HOOKS === "true"
-    )
-      return index(env).fetch("https://internal/__test/intake", {
-        method: "POST",
-        body: await request.text(),
-      });
+    if (env.TEST_HOOKS === "true" && request.method === "POST") {
+      if (url.pathname === "/api/admin/test-index")
+        return index(env).fetch("https://internal/__test/index", {
+          method: "POST",
+          body: request.body,
+        });
 
-    if (
-      url.pathname === "/api/admin/pending" &&
-      request.method === "GET" &&
-      env.TEST_HOOKS === "true" &&
-      authorized(request, env)
-    )
-      return folder(env, url.searchParams.get("folder") ?? "").fetch("https://internal/__pending");
-
-    if (
-      url.pathname === "/api/admin/head" &&
-      request.method === "GET" &&
-      env.TEST_HOOKS === "true" &&
-      authorized(request, env)
-    ) {
-      const folderId = url.searchParams.get("folder") ?? "";
-
-      return folder(env, folderId).fetch(
-        `https://internal/__head?folder=${encodeURIComponent(folderId)}`,
-      );
+      if (url.pathname === "/api/admin/test-head")
+        return folder(env, url.searchParams.get("folder") ?? "").fetch(
+          "https://internal/__test/head",
+          {
+            method: "POST",
+            body: request.body,
+          },
+        );
     }
 
     if (url.pathname === "/api/folders" && request.method === "POST") {
@@ -117,58 +93,96 @@ export default {
         "application/json"
       )
         return json("Expected application/json", 415);
-      let payload: { folderId: string; title: string };
 
-      try {
-        payload = Schema.decodeUnknownSync(CreateFolder)(await request.json());
-      } catch (error) {
-        return json(String(error), 400);
+      if (Number(request.headers.get("content-length")) > JSON_BODY_LIMIT)
+        return json("JSON write bodies must be at most 512 KiB", 413);
+      // Bound chunked bodies before parsing or making either object call.
+      const reader = request.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+
+      if (reader) {
+        try {
+          while (true) {
+            const part = await reader.read();
+
+            if (part.done) break;
+            size += part.value.length;
+
+            if (size > JSON_BODY_LIMIT) {
+              await reader.cancel();
+
+              return json("JSON write bodies must be at most 512 KiB", 413);
+            }
+
+            chunks.push(part.value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
       }
 
-      if (!payload.folderId) return json("Invalid folder", 400);
+      const bytes = new Uint8Array(size);
+      let offset = 0;
 
-      // Register before creating the folder so a crash cannot orphan it from the cron registry.
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      let payload: typeof CreateFolder.Type;
+
+      try {
+        payload = Schema.decodeUnknownSync(CreateFolder)(
+          JSON.parse(new TextDecoder().decode(bytes)),
+        );
+      } catch {
+        return json("Invalid request", 400);
+      }
+
+      const body = JSON.stringify(payload);
+
+      // Registry first: a crash leaves a discoverable folder that a retry can finish creating.
       const registration = await index(env).fetch("https://internal/__register", {
         method: "POST",
-        body: JSON.stringify({
-          ...payload,
-          created: Schema.encodeSync(Schema.DateTimeUtcFromString)(DateTime.nowUnsafe()),
-        }),
+        body,
       });
 
-      if (!registration.ok) return json("Registry unavailable; retry", 503);
+      if (!registration.ok) return registration;
+      await registration.text();
 
-      return folder(env, payload.folderId).fetch(request.url, {
+      const created = await folder(env, payload.folderId).fetch("https://internal/__create", {
         method: "POST",
-        headers: request.headers,
-        body: JSON.stringify(payload),
+        body,
       });
+
+      return created;
     }
 
-    const match = /^\/api\/folders\/([^/]+)\/(?:files|history)\//.exec(url.pathname);
+    const stream = /^\/streams\/folders\/([^/]+)\/files$/.exec(url.pathname);
 
-    if (match?.[1]) {
+    if (stream?.[1]) {
       try {
-        return await folder(env, decodeURIComponent(match[1])).fetch(request);
+        return await folder(env, Schema.decodeSync(FolderKey)(stream[1])).fetch(request);
+      } catch {
+        return json("Invalid folder stream", 400);
+      }
+    }
+
+    const file = /^\/api\/folders\/([^/]+)\/files\//.exec(url.pathname);
+
+    if (file?.[1]) {
+      try {
+        return await folder(env, decodeURIComponent(file[1])).fetch(request);
       } catch {
         return json("Folder unavailable; retry", 503);
       }
     }
 
-    if (url.pathname.startsWith("/api/blobs/")) {
-      // The file API's immutable blob handler shares the R2 layer in any folder object.
-      return folder(env, "__blob-reader").fetch(request.url, {
-        method: request.method,
-        headers: request.headers,
-      });
-    }
+    if (url.pathname.startsWith("/api/blobs/")) return handleBlobRequest(request, env);
 
-    if (
-      ["/api/ls", "/api/search", "/streams/changes", "/streams/manifest", "/health"].includes(
-        url.pathname,
-      )
-    )
-      return index(env).fetch(request.url, { method: request.method, headers: request.headers });
+    if (["/api/ls", "/api/search", "/streams/folders", "/health"].includes(url.pathname))
+      return index(env).fetch(request);
 
     if (
       url.pathname.startsWith("/api/") ||

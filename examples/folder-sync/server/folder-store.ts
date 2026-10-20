@@ -41,6 +41,23 @@ const condition = (head: Head | undefined, precondition: Precondition) =>
     ? Effect.void
     : Effect.fail(new PreconditionFailed({ head: head ?? null }));
 
+/** Initialise only the folder owner's stream and counter. Registry ownership may be remote. */
+export const initialiseFolder = Effect.fn("Folder.initialise")(function* (folderId: string) {
+  yield* Schema.decodeEffect(FolderId)(folderId).pipe(Effect.mapError(invalid));
+  const files = yield* Files;
+  const records = yield* OwnerRecords;
+  const boundary = yield* CommitBoundary;
+
+  yield* boundary.withTransaction(
+    Effect.gen(function* () {
+      // A repeated create must never reset the durable counter.
+      if (Option.isSome(yield* records.read(key(folderId)))) return;
+      yield* files.create({ folderId });
+      yield* records.write(key(folderId), "0");
+    }),
+  );
+});
+
 const make = Effect.gen(function* () {
   const files = yield* Files;
   const folders = yield* Folders;
@@ -99,7 +116,11 @@ const make = Effect.gen(function* () {
         }
 
         const value = { folderId, title };
-        yield* files.create({ folderId });
+        yield* initialiseFolder(folderId).pipe(
+          Effect.provideService(Files, files),
+          Effect.provideService(OwnerRecords, records),
+          Effect.provideService(CommitBoundary, boundary),
+        );
 
         const changes = DurableState.changes(Folders.at({}), { offset: state.offset }, [
           DurableState.upsert("folder", value, {
@@ -108,7 +129,6 @@ const make = Effect.gen(function* () {
         ]);
 
         yield* folders.append({}, changes, { expectedOffset: state.offset });
-        yield* records.write(key(folderId), "0");
 
         return value;
       }),

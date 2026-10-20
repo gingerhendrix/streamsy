@@ -19,7 +19,7 @@ export const JSON_BODY_LIMIT = 512 * 1024;
 
 class JsonBodyTooLarge extends Schema.TaggedError<JsonBodyTooLarge>()("JsonBodyTooLarge", {}) {}
 
-const jsonBody = Effect.fn("Api.jsonBody")(function* (
+export const jsonBody = Effect.fn("Api.jsonBody")(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const length = request.headers["content-length"];
@@ -81,7 +81,11 @@ const precondition = Effect.fn("Api.precondition")(function* (
 const make = Effect.gen(function* () {
   const store = yield* FolderStore;
   const blobs = yield* BlobStore;
-  const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(Config.withDefault(""));
+
+  const token = yield* Config.String("FOLDER_SYNC_WRITER_TOKEN").pipe(
+    Config.withDefault(""),
+    Effect.orDie,
+  );
 
   const handle = Effect.fn("Api.handle")(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
