@@ -1,10 +1,9 @@
 import { Streamsy } from "@streamsy/core";
-import { Crypto, Effect, Layer } from "effect";
+import { Crypto, Effect, Layer, Stream } from "effect";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { BlobFailure, BlobStore } from "../server/blob-store.ts";
-import { sha256 } from "../server/domain.ts";
 import { streams } from "../server/streams.ts";
 import type { Env } from "./env.ts";
 
@@ -19,40 +18,34 @@ const webCrypto = Layer.succeed(
   }),
 );
 
+/** Folder owners only inspect and read immutable blobs. Uploads enter through the Worker API. */
 export const r2Blobs = (env: Env) =>
-  Layer.effect(
+  Layer.succeed(
     BlobStore,
-    Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-
-      return BlobStore.of({
-        put: Effect.fn("BlobStore.R2.put")(function* (bytes) {
-          const hash = yield* sha256(bytes).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
-            Effect.mapError(() => new BlobFailure({ message: "Cannot hash blob" })),
-          );
-
-          yield* Effect.tryPromise({
-            try: () => env.BLOBS.put(hash, bytes),
-            catch: () => new BlobFailure({ message: "Cannot save blob" }),
-          });
-
-          return hash;
+    BlobStore.of({
+      put: () => Effect.fail(new BlobFailure({ message: "Upload blobs through the Worker API" })),
+      head: Effect.fn("BlobStore.R2.head")((hash) =>
+        Effect.tryPromise({
+          try: () => env.BLOBS.head(hash).then((blob) => blob?.size),
+          catch: () => new BlobFailure({ message: "Cannot inspect blob" }),
         }),
-        get: Effect.fn("BlobStore.R2.get")(function* (hash) {
-          const blob = yield* Effect.tryPromise({
-            try: () => env.BLOBS.get(hash),
-            catch: () => new BlobFailure({ message: "Cannot read blob" }),
-          });
+      ),
+      get: Effect.fn("BlobStore.R2.get")(function* (hash) {
+        const blob = yield* Effect.tryPromise({
+          try: () => env.BLOBS.get(hash),
+          catch: () => new BlobFailure({ message: "Cannot read blob" }),
+        });
 
-          if (blob === null) return undefined;
-
-          return yield* Effect.tryPromise({
-            try: () => blob.arrayBuffer().then((bytes) => new Uint8Array(bytes)),
-            catch: () => new BlobFailure({ message: "Cannot read blob bytes" }),
-          });
-        }),
-      });
+        return blob === null
+          ? undefined
+          : {
+              size: blob.size,
+              body: Stream.fromReadableStream({
+                evaluate: () => blob.body,
+                onError: () => new BlobFailure({ message: "Cannot read blob bytes" }),
+              }),
+            };
+      }),
     }),
   );
 
