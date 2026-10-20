@@ -79,6 +79,12 @@ test("stale reads and commit races return ESTALE, while successful edits use If-
       },
     });
 
+    await expect(b.core.mutate("/docs/a", encoded("blind"))).rejects.toMatchObject({
+      code: "ESTALE",
+    });
+    const blind = requests.filter((request) => request.method === "PUT").at(-1);
+    expect(blind?.headers.get("if-none-match")).toBe("*");
+    expect(blind?.headers.get("if-match")).toBeNull();
     await b.core.read("/docs/a");
     await a.core.mutate("/docs/a", encoded("two"));
     await expect(b.core.mutate("/docs/a", encoded("stale"))).rejects.toMatchObject({

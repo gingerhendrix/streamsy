@@ -256,7 +256,7 @@ export class FolderHttpFileSystem {
         );
 
         if (!response.ok && !allowed.includes(response.status)) {
-          const retryable = [408, 429].includes(response.status) || response.status >= 500;
+          const retryable = [408, 409, 429].includes(response.status) || response.status >= 500;
           const retryAfterMs = retryAfter(response.headers.get("retry-after"));
 
           // Refuse excessive server delays instead of sleeping beyond the session retry ceiling.
@@ -582,10 +582,10 @@ export class FolderHttpFileSystem {
 
     const headers = new Headers({ "content-type": "application/json" });
 
-    const base =
-      condition?.kind === "version"
-        ? Number(condition.version)
-        : (observedVersion ?? head?.version);
+    const base = condition?.kind === "version" ? Number(condition.version) : observedVersion;
+
+    // A delete needs an observed version too; If-None-Match is not valid on DELETE.
+    if (bytes === null && base === undefined) throw new FileSystemError("ESTALE", path);
 
     if (condition?.kind === "absent" || base === undefined) {
       if (bytes !== null) headers.set("if-none-match", "*");
@@ -609,7 +609,10 @@ export class FolderHttpFileSystem {
         `/api/blobs/${hash}`,
         {
           method: "PUT",
-          headers: { authorization: `Bearer ${this.options.token ?? ""}` },
+          headers:
+            this.options.token === undefined
+              ? {}
+              : { authorization: `Bearer ${this.options.token}` },
           body: new Uint8Array(bytes),
         },
         options.signal,
