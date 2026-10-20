@@ -2,12 +2,12 @@ import { expect, test } from "vitest";
 import {
   backupPath,
   conflictBase,
-  encodeFilePath,
-  feedReset,
   folderDirectory,
+  historyRewound,
   isEcho,
   ignoredPath,
 } from "../../sync/decisions.ts";
+import { encodeFilePath } from "../../server/routes.ts";
 import { parseArguments } from "../../sync/arguments.ts";
 
 const head = {
@@ -34,8 +34,8 @@ test("write bases retain the version observed on disk", () => {
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {
   expect(folderDirectory("daily/demo")).toBe("daily/demo");
   expect(encodeFilePath("docs/雪 100%.md")).toBe("docs/%E9%9B%AA%20100%25.md");
-  expect(feedReset("b", "a")).toBe(true);
-  expect(feedReset("a", "b")).toBe(false);
+  expect(historyRewound("b", "a")).toBe(true);
+  expect(historyRewound("a", "b")).toBe(false);
 });
 
 test("arguments validate required values and writable selection", () => {

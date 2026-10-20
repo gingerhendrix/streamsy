@@ -8,13 +8,8 @@ import { createStreamDB } from "@durable-streams/state/db";
 import { Schema } from "effect";
 import { File, type Head } from "../server/domain.ts";
 import { Folder } from "../server/streams.ts";
-import {
-  browserTransport,
-  folderStreamUrl,
-  saveFile,
-  textContent,
-  type Transport,
-} from "./client.ts";
+import { folderStreamUrl, FOLDERS_STREAM_URL } from "../server/routes.ts";
+import { browserTransport, saveFile, textContent, type Transport } from "./client.ts";
 import { trackConnection, type RetryEvents } from "./connection.ts";
 
 export const folderState = createStateSchema({
@@ -120,7 +115,7 @@ export const createFolderDb = (options: DbOptions = {}) => {
 
   const streamDb = createStreamDB({
     streamOptions: {
-      url: new URL("/streams/folders", transport.origin).href,
+      url: new URL(FOLDERS_STREAM_URL, transport.origin).href,
       contentType: "application/json",
       warnOnHttp: false,
       fetch: replayGone(connection.fetch),

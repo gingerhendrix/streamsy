@@ -6,7 +6,8 @@ import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } 
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { prepareContent } from "../../server/domain.ts";
-import { conflictPath, encodeFilePath } from "../../sync/decisions.ts";
+import { conflictPath } from "../../sync/decisions.ts";
+import { fileUrl as fileRoute } from "../../server/routes.ts";
 import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
 import { cacheBody, captureLocal, replaceSource } from "../../sync/local.ts";
@@ -29,7 +30,7 @@ const registryPageCursor = Schema.decodeSync(Offset)("0000000000000001_000000000
 const text = (value: string) => new TextEncoder().encode(value);
 
 const fileUrl = (server: string, folder: string, file: string) =>
-  `${server}/api/folders/${encodeURIComponent(folder)}/files/${encodeFilePath(file)}`;
+  `${server}${fileRoute(folder, file)}`;
 
 const create = Effect.fn("SyncTest.create")(function* (server: string, folderId: string) {
   const response = yield* HttpClient.post(`${server}/api/folders`, {

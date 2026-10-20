@@ -16,13 +16,20 @@ import {
 } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { INLINE_LIMIT, inlineText, normalisePath, type File } from "../server/domain.ts";
-import { RemoteFailure, SyncRemote, remoteLayer, type FileMessage } from "./client.ts";
+import {
+  afterLastReset,
+  applyChanges,
+  isReset,
+  isUpsert,
+  type FileMessage,
+} from "../server/messages.ts";
+import { RemoteFailure, SyncRemote, remoteLayer } from "./client.ts";
 import {
   backupPath,
   conflictBase,
   conflictPath,
-  feedReset,
   folderDirectory,
+  historyRewound,
   ignoredPath,
   isEcho,
   type SyncOptions,
@@ -256,7 +263,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const saved = yield* state.get(`cursor:${folderId}`);
     const tail = yield* remote.tail(folderId);
 
-    if (saved !== undefined && feedReset(saved, tail))
+    if (saved !== undefined && historyRewound(saved, tail))
       return yield* new HistoryRewound({
         message: `Server history went backwards: ${folderId} cursor ${saved} is past tail ${tail}. Sync stopped. Restore the server history or use a new --dir.`,
       });
@@ -289,11 +296,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         continue;
       }
 
-      for (const change of page.rows) {
-        if (!("type" in change)) files.clear();
-        else if (change.headers.operation === "delete") files.delete(change.key);
-        else if (change.value !== undefined) files.set(change.key, change.value);
-      }
+      applyChanges(files, page.rows);
 
       if (page.cursor === cursor && !page.upToDate)
         return yield* new RemoteFailure({
@@ -350,15 +353,9 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     yield* gate.withPermit(
       Effect.gen(function* () {
         for (const change of rows) {
-          if (!("type" in change)) continue;
-
-          if (ignoredPath(change.key)) continue;
+          if (isReset(change) || ignoredPath(change.key)) continue;
           yield* observe(folderId, change.key);
-          yield* install(
-            folderId,
-            change.key,
-            change.headers.operation === "delete" ? null : (change.value ?? null),
-          );
+          yield* install(folderId, change.key, isUpsert(change) ? change.value : null);
         }
 
         yield* state.set(`cursor:${folderId}`, cursor);
@@ -377,7 +374,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
         live,
       );
 
-      if (page.reset || page.rows.some((change) => !("type" in change))) {
+      if (page.reset || page.rows.some(isReset)) {
         // A stored reset replaces state at this position. Only 410 reads from -1.
         // Finish the replacement pages before reconciling paths absent from the new state.
         const { files, cursor: replay } = yield* readReplacement(folderId, cursor, page);
@@ -457,10 +454,8 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
     // Folder lifecycle changes are out of scope. Keep configured mirrors, and discover
     // registrations after the last reset without re-reading that stored control.
-    const reset = page.rows.findLastIndex((row) => !("type" in row));
-
-    for (const change of page.rows.slice(reset + 1))
-      if ("type" in change && change.value !== undefined) yield* addFolder(change.value.folderId);
+    for (const change of afterLastReset(page.rows))
+      if (isUpsert(change)) yield* addFolder(change.value.folderId);
     yield* state.set("foldersCursor", page.cursor);
 
     return page.upToDate;

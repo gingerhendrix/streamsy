@@ -1,5 +1,18 @@
 import { Schema } from "effect";
-import { Version } from "./domain.ts";
+import { File, FolderId, Version } from "./domain.ts";
+
+/** One `/api/ls` row. Its shape is public and does not follow the source streams. */
+export const ListedFile = Schema.Struct({
+  id: Schema.String,
+  folderId: FolderId,
+  ...File.fields,
+  updatedAt: Schema.String,
+});
+
+export type ListedFile = typeof ListedFile.Type;
+
+/** The index row key of one file. */
+export const fileKey = (folderId: string, path: string) => JSON.stringify([folderId, path]);
 
 export const SnippetPart = Schema.Struct({ text: Schema.String, match: Schema.Boolean });
 

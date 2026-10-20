@@ -1,24 +1,14 @@
 import { StreamAddress } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
-import { File } from "./domain.ts";
-import { Files, FolderKey, fileKey } from "./streams.ts";
+import { decodeText } from "./bytes.ts";
+import { FileMessage, isReset, isUpsert } from "./messages.ts";
+import { fileKey } from "./index-rows.ts";
+import { Files, FolderKey } from "./streams.ts";
 
 export const SEARCH_LIMIT = 1024 * 1024;
-
-export const searchableText = (bytes: Uint8Array, truncated = false): string | undefined => {
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes, {
-      stream: truncated,
-    });
-
-    return text.includes("\0") ? undefined : text;
-  } catch {
-    return undefined;
-  }
-};
 
 /** Stop the blob reader at the cap. Never buffer a large object for indexing. */
 const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
@@ -45,15 +35,8 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
     Stream.runDrain,
   );
 
-  return searchableText(bytes.subarray(0, length), content.size > length);
+  return decodeText(bytes.subarray(0, length), content.size > length);
 });
-
-export const FileMessage = Schema.Union([
-  StreamAddress.stateChange({ type: "file", schema: File }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
-
-export type FileMessage = typeof FileMessage.Type;
 
 /** Stage one prefix at a time outside the index transaction. Page size never multiplies JS text memory. */
 export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
@@ -63,10 +46,10 @@ export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM folder_sync_index_text WHERE folderId = ${folderId}`;
 
-  const lastReset = changes.findLastIndex((change) => !("type" in change));
+  const lastReset = changes.findLastIndex(isReset);
 
   for (const [position, change] of changes.entries()) {
-    if (position < lastReset || !("value" in change)) continue;
+    if (position < lastReset || !isUpsert(change)) continue;
     const text = change.value.text ?? (yield* blobText(change.value.hash));
 
     if (text !== undefined)
@@ -89,7 +72,7 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
   const sql = yield* SqlClient.SqlClient;
 
   for (const [position, change] of prepared.entries()) {
-    if (!("type" in change)) {
+    if (isReset(change)) {
       yield* clearIndexFolder(folderId);
       continue;
     }
@@ -97,7 +80,7 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
     yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId} AND path = ${change.key}`;
     yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId} AND path = ${change.key}`;
 
-    if ("value" in change) {
+    if (isUpsert(change)) {
       const value = change.value;
 
       const row = {

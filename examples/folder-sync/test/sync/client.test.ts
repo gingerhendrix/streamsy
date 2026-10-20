@@ -3,7 +3,7 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Effect, Layer, Result, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { BlobMissing, remoteLayer, StaleFile, SyncRemote } from "../../sync/client.ts";
+import { remoteLayer, StaleFile, SyncBlobMissing, SyncRemote } from "../../sync/client.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { captureLocal } from "../../sync/local.ts";
 import { FileSystem } from "effect";
@@ -111,7 +111,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         expect(Schema.is(StaleFile)(stale)).toBe(true);
         status = 409;
         responseBody = { error: "blob-missing", hash: content.hash };
-        expect(Schema.is(BlobMissing)(yield* Effect.flip(remote.push(op)))).toBe(true);
+        expect(Schema.is(SyncBlobMissing)(yield* Effect.flip(remote.push(op)))).toBe(true);
 
         for (const [code, retryable] of [
           [401, false],

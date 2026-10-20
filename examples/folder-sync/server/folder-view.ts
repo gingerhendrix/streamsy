@@ -2,7 +2,7 @@ import { StreamAddress } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Schema } from "effect";
 import { File, Head } from "./domain.ts";
-import { FileMessage } from "./projections.ts";
+import { FileMessage, isReset, isUpsert } from "./messages.ts";
 import { Files, FolderKey } from "./streams.ts";
 
 /** The offset of a change with no `offset` header. A read from it scans the whole stream. */
@@ -59,11 +59,11 @@ export const fileOf = (path: string, live: LiveFile): File => ({
  * used version again.
  */
 export const applyFileMessage = (view: FolderView, message: FileMessage): FolderView => {
-  if (!("type" in message)) return { last: view.last, files: new Map() };
+  if (isReset(message)) return { last: view.last, files: new Map() };
   const files = new Map(view.files);
   files.delete(message.key);
 
-  if (!("value" in message)) return { last: view.last, files };
+  if (!isUpsert(message)) return { last: view.last, files };
   const { headers, value } = message;
 
   files.set(message.key, {

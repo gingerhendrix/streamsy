@@ -24,15 +24,3 @@ export type FileChange = StreamAddress.CollectionsChange<typeof Files.collection
 export type FolderChange = StreamAddress.CollectionsChange<typeof Folders.collections>;
 
 export const streams = Streamsy.group(Folders, Files);
-
-/** The public ls row keeps its existing shape, independently of the source streams. */
-export const ListedFile = Schema.Struct({
-  id: Schema.String,
-  folderId: FolderId,
-  ...File.fields,
-  updatedAt: Schema.String,
-});
-
-export type ListedFile = typeof ListedFile.Type;
-
-export const fileKey = (folderId: string, path: string) => JSON.stringify([folderId, path]);

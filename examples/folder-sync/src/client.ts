@@ -1,8 +1,9 @@
 import { Schema } from "effect";
+import { decodeText, hex } from "../server/bytes.ts";
 import { CommitFile, File, Head, inlineText } from "../server/domain.ts";
-import { FolderKey } from "../server/streams.ts";
-import { SearchResult } from "../server/search-result.ts";
-import { encodeFilePath } from "../sync/decisions.ts";
+import { SearchResult } from "../server/index-rows.ts";
+import { FileMessage, isReset, isUpsert, type FileChange } from "../server/messages.ts";
+import { blobUrl, fileUrl, folderStreamUrl, streamRead } from "../server/routes.ts";
 
 export interface Selection {
   folderId: string;
@@ -25,37 +26,7 @@ export const browserTransport = (options: Partial<Transport> = {}): Transport =>
   writerHeaders: options.writerHeaders ?? writerHeaders,
 });
 
-export const fileUrl = ({ folderId, path }: Selection) =>
-  `/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}`;
-
-export const folderStreamUrl = (folderId: string) =>
-  `/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
-
-const ChangeHeaders = Schema.Struct({
-  txid: Schema.String,
-  timestamp: Schema.optionalKey(Schema.String),
-});
-
-const FileChange = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("file"),
-    key: Schema.String,
-    value: File,
-    headers: Schema.Struct({ ...ChangeHeaders.fields, operation: Schema.Literal("upsert") }),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("file"),
-    key: Schema.String,
-    headers: Schema.Struct({ ...ChangeHeaders.fields, operation: Schema.Literal("delete") }),
-  }),
-]);
-
-const HistoryMessage = Schema.Union([
-  FileChange,
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
-
-export type History = ReadonlyArray<typeof FileChange.Type>;
+export type History = ReadonlyArray<FileChange>;
 
 /** Native browser transport keeps AbortSignal and raw byte semantics at this boundary. */
 export const request = (
@@ -88,16 +59,6 @@ export const request = (
     });
   });
 
-export const readableText = (bytes: Uint8Array): string | null => {
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-
-    return text.includes("\0") ? null : text;
-  } catch {
-    return null;
-  }
-};
-
 /** History is a normal, paginated replay of the folder State stream. */
 // oxlint-disable-next-line effecttsgo/async-function -- Browser history consumes native fetch pages with navigation cancellation.
 export async function history(
@@ -106,14 +67,11 @@ export async function history(
   transport = browserTransport(),
 ): Promise<History> {
   let offset = "-1";
-  let rows: Array<typeof FileChange.Type> = [];
+  let rows: Array<FileChange> = [];
 
   while (true) {
     const response = await transport.fetch(
-      new URL(
-        `${folderStreamUrl(folderId)}?offset=${encodeURIComponent(offset)}`,
-        transport.origin,
-      ),
+      new URL(streamRead(folderStreamUrl(folderId), offset), transport.origin),
       // Even the last page at a fixed offset can grow as new changes are appended.
       { signal, cache: "no-cache" },
     );
@@ -130,10 +88,10 @@ export async function history(
     const messages =
       response.status === 204
         ? []
-        : Schema.decodeUnknownSync(Schema.Array(HistoryMessage))(await response.json());
+        : Schema.decodeUnknownSync(Schema.Array(FileMessage))(await response.json());
 
     for (const change of messages) {
-      if (!("key" in change)) rows = [];
+      if (isReset(change)) rows = [];
       else if (change.key === path) rows.push(change);
     }
 
@@ -187,10 +145,10 @@ export async function readFile(
 
   if (selection.at !== undefined) {
     const change = (await history(selection, signal, transport)).find(
-      (row) => "value" in row && row.value.version === selection.at,
+      (row) => isUpsert(row) && row.value.version === selection.at,
     );
 
-    file = change !== undefined && "value" in change ? change.value : undefined;
+    file = change !== undefined && isUpsert(change) ? change.value : undefined;
   }
 
   if (file === undefined) throw new Error("File not found");
@@ -198,11 +156,11 @@ export async function readFile(
   const text =
     file.text !== undefined
       ? file.text
-      : readableText(
+      : (decodeText(
           new Uint8Array(
-            await (await request(`/api/blobs/${file.hash}`, { signal }, transport)).arrayBuffer(),
+            await (await request(blobUrl(file.hash), { signal }, transport)).arrayBuffer(),
           ),
-        );
+        ) ?? null);
 
   return {
     version: file.version,
@@ -223,10 +181,7 @@ export const textContent = (text: string) => {
   const bytes = new TextEncoder().encode(text);
 
   return crypto.subtle.digest("SHA-256", bytes).then((digest) => {
-    const hash = [...new Uint8Array(digest)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-
+    const hash = hex(new Uint8Array(digest));
     const inline = inlineText(bytes);
 
     let content: Pick<CommitFile, "hash" | "size" | "text"> = { hash, size: bytes.length };
@@ -248,7 +203,7 @@ export async function saveFile(
 ) {
   const upload = () =>
     request(
-      `/api/blobs/${file.hash}`,
+      blobUrl(file.hash),
       {
         method: "PUT",
         headers: transport.writerHeaders(),
@@ -267,7 +222,7 @@ export async function saveFile(
   const body = JSON.stringify(input);
 
   const response = await request(
-    fileUrl({ folderId, path: file.path }),
+    fileUrl(folderId, file.path),
     {
       method: "PUT",
       headers,

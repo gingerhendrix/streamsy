@@ -7,6 +7,7 @@ import {
   FolderConflict,
   InvalidFile,
   MissingFile,
+  Precondition,
   PreconditionFailed,
   prepareContent,
 } from "../server/domain.ts";
@@ -61,20 +62,27 @@ for (const [name, storage] of [
             txid: "two",
           };
 
-          expect((yield* store.commit(folder, "a", one, { absent: true })).version).toBe(1);
+          expect((yield* store.commit(folder, "a", one, Precondition.IfAbsent())).version).toBe(1);
           expect((yield* store.commit(folder, "b", two)).version).toBe(2);
-          yield* store.remove(folder, "a", { txid: "delete", author: "test" }, { version: 1 });
-          expect(yield* Effect.flip(store.read(folder, "a"))).toBeInstanceOf(MissingFile);
-          expect((yield* store.commit(folder, "a", two, { absent: true })).version).toBe(3);
-          expect(yield* Effect.flip(store.commit(folder, "a", one, { version: 1 }))).toBeInstanceOf(
-            PreconditionFailed,
+          yield* store.remove(
+            folder,
+            "a",
+            { txid: "delete", author: "test" },
+            Precondition.IfMatch({ version: 1 }),
           );
+          expect(yield* Effect.flip(store.read(folder, "a"))).toBeInstanceOf(MissingFile);
+          expect((yield* store.commit(folder, "a", two, Precondition.IfAbsent())).version).toBe(3);
           expect(
-            yield* Effect.flip(store.commit(folder, "a", one, { absent: true })),
+            yield* Effect.flip(
+              store.commit(folder, "a", one, Precondition.IfMatch({ version: 1 })),
+            ),
+          ).toBeInstanceOf(PreconditionFailed);
+          expect(
+            yield* Effect.flip(store.commit(folder, "a", one, Precondition.IfAbsent())),
           ).toBeInstanceOf(PreconditionFailed);
           expect(
             yield* Effect.flip(
-              store.remove(folder, "a", { txid: "bad", author: "test" }, { absent: true }),
+              store.remove(folder, "a", { txid: "bad", author: "test" }, Precondition.IfAbsent()),
             ),
           ).toBeInstanceOf(InvalidFile);
           const changes = (yield* files.collect({ folderId: folder })).items;
@@ -118,10 +126,10 @@ for (const [name, storage] of [
             txid: "first",
           };
 
-          const accepted = yield* store.commit("retry", "a", one, { absent: true });
+          const accepted = yield* store.commit("retry", "a", one, Precondition.IfAbsent());
           const tail = (yield* files.head({ folderId: "retry" })).nextOffset;
           expect(
-            yield* store.commit("retry", "a", { ...one, txid: "second" }, { absent: true }),
+            yield* store.commit("retry", "a", { ...one, txid: "second" }, Precondition.IfAbsent()),
           ).toEqual(accepted);
           expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(tail);
 
@@ -131,14 +139,19 @@ for (const [name, storage] of [
             txid: "moved",
           };
 
-          yield* store.commit("retry", "a", two, { version: 1 });
+          yield* store.commit("retry", "a", two, Precondition.IfMatch({ version: 1 }));
           expect(
-            yield* Effect.flip(store.commit("retry", "a", one, { absent: true })),
+            yield* Effect.flip(store.commit("retry", "a", one, Precondition.IfAbsent())),
           ).toBeInstanceOf(PreconditionFailed);
           yield* store.remove("retry", "a", { author: "test", txid: "delete" });
           const deletedTail = (yield* files.head({ folderId: "retry" })).nextOffset;
           expect(
-            yield* store.remove("retry", "a", { author: "test", txid: "repeat" }, { version: 1 }),
+            yield* store.remove(
+              "retry",
+              "a",
+              { author: "test", txid: "repeat" },
+              Precondition.IfMatch({ version: 1 }),
+            ),
           ).toEqual({});
           expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(deletedTail);
         }),
@@ -175,9 +188,14 @@ for (const [name, storage] of [
         for (const [index, path] of names.entries()) {
           expect(yield* Effect.flip(store.read("proto", path))).toBeInstanceOf(MissingFile);
           const first = yield* body(`first ${path}`, `create-${index}`);
-          const created = yield* store.commit("proto", path, first, { absent: true });
+          const created = yield* store.commit("proto", path, first, Precondition.IfAbsent());
           const second = yield* body(`second ${path}`, `update-${index}`);
-          yield* store.commit("proto", path, second, { version: created.version });
+          yield* store.commit(
+            "proto",
+            path,
+            second,
+            Precondition.IfMatch({ version: created.version }),
+          );
           expect((yield* store.read("proto", path)).value.text).toBe(`second ${path}`);
         }
 
@@ -336,8 +354,12 @@ for (const [name, storage] of [
 
             return yield* Effect.all(
               [
-                Effect.result(racers.commit("race", "a", left, { version: 1 })),
-                Effect.result(racers.commit("race", "a", right, { version: 1 })),
+                Effect.result(
+                  racers.commit("race", "a", left, Precondition.IfMatch({ version: 1 })),
+                ),
+                Effect.result(
+                  racers.commit("race", "a", right, Precondition.IfMatch({ version: 1 })),
+                ),
               ],
               { concurrency: "unbounded" },
             );

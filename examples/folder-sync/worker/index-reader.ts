@@ -1,12 +1,12 @@
 import { Context, Effect, Layer, Schema, Semaphore } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "../server/blob-store.ts";
+import { FileMessage, isUpsert } from "../server/messages.ts";
 import {
   applyIndexChanges,
   clearIndexFolder,
-  FileMessage,
   prepareIndexChanges,
-} from "../server/projections.ts";
+} from "../server/search-index.ts";
 import { FolderKey, Folders } from "../server/streams.ts";
 
 class IndexReadFailure extends Schema.TaggedError<IndexReadFailure>()("IndexReadFailure", {
@@ -117,7 +117,7 @@ export const makeIndexReader = (
         const rows = (yield* registry.collect({})).items;
 
         for (const change of rows) {
-          if (!("value" in change)) continue;
+          if (!isUpsert(change)) continue;
           yield* folder(change.value.folderId).pipe(
             Effect.catchCause((cause) => {
               failed = true;

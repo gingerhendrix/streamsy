@@ -3,6 +3,7 @@ import { Effect, FileSystem, Layer, Path, Stream, Option } from "effect";
 import { Predicate } from "effect";
 import { BlobFailure, BlobStore } from "./blob-store.ts";
 import { FILE_LIMIT, FileTooLarge, InvalidFile } from "./domain.ts";
+import { hashStream } from "./hash-stream.ts";
 
 const failure = (cause: unknown) => new BlobFailure({ message: String(cause) });
 
@@ -49,20 +50,14 @@ export const diskBlobs = (directory: string) =>
                 .open(temporary, { flag: "w" })
                 .pipe(Effect.mapError(failure));
 
-              const digest = new Bun.CryptoHasher("sha256");
-              let size = 0;
-              yield* body.pipe(
-                Stream.runForEach((chunk): Effect.Effect<void, BlobFailure | FileTooLarge> => {
-                  size += chunk.length;
-
-                  if (size > FILE_LIMIT) return Effect.fail(new FileTooLarge({ size }));
-                  digest.update(chunk);
-
-                  return output.writeAll(chunk).pipe(Effect.mapError(failure));
-                }),
+              const written = yield* hashStream(
+                body,
+                FILE_LIMIT,
+                (size) => new FileTooLarge({ size }),
+                (chunk) => output.writeAll(chunk).pipe(Effect.mapError(failure)),
               );
 
-              if (digest.digest("hex") !== hash)
+              if (written.hash !== hash)
                 return yield* new InvalidFile({ message: "Blob hash mismatch" });
               yield* output.sync.pipe(Effect.mapError(failure));
               yield* fs

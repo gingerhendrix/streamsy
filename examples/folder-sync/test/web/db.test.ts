@@ -1,7 +1,8 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/new-promise -- These browser integration tests exercise native StreamDB promises and an in-process HTTP fetch boundary. */
 import { expect, test } from "vitest";
 import { createFileDb, createFolderDb, editFile } from "../../src/db.ts";
-import { fileUrl, folderStreamUrl, history, readFile, textContent } from "../../src/client.ts";
+import { fileUrl, folderStreamUrl } from "../../server/routes.ts";
+import { history, readFile, textContent } from "../../src/client.ts";
 import { protocolHost, writerToken } from "../protocol-host.ts";
 
 const origin = "http://browser.test";
@@ -34,7 +35,7 @@ const fixture = () => {
     expect(folder.status).toBe(200);
     const content = await textContent(text);
 
-    const file = await fetcher(new URL(fileUrl({ folderId, path: "guide/a.md" }), origin), {
+    const file = await fetcher(new URL(fileUrl(folderId, "guide/a.md"), origin), {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json", "if-none-match": "*" },
       body: JSON.stringify({ txid: "first-write", author: "seed", ...content }),
@@ -156,14 +157,11 @@ test("412 rolls back the optimistic row while preserving the newer server versio
     const before = db.collections.files.get("guide/a.md")!;
     const content = await textContent("other writer");
 
-    const response = await f.fetcher(
-      new URL(fileUrl({ folderId: "conflict", path: before.path }), origin),
-      {
-        method: "PUT",
-        headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
-        body: JSON.stringify({ txid: "other-writer", author: "other", ...content }),
-      },
-    );
+    const response = await f.fetcher(new URL(fileUrl("conflict", before.path), origin), {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
+      body: JSON.stringify({ txid: "other-writer", author: "other", ...content }),
+    });
 
     expect(response.status).toBe(200);
     await db.utils.awaitTxId("other-writer");
@@ -291,14 +289,11 @@ test("history paginates, filters paths, and leaves deletes unversioned", async (
   await f.create("history", "first");
 
   try {
-    const deleted = await f.fetcher(
-      `${origin}${fileUrl({ folderId: "history", path: "guide/a.md" })}`,
-      {
-        method: "DELETE",
-        headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
-        body: JSON.stringify({ txid: "deleted", author: "browser" }),
-      },
-    );
+    const deleted = await f.fetcher(`${origin}${fileUrl("history", "guide/a.md")}`, {
+      method: "DELETE",
+      headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
+      body: JSON.stringify({ txid: "deleted", author: "browser" }),
+    });
 
     expect(deleted.status).toBe(200);
     const rows = await history({ folderId: "history", path: "guide/a.md" }, undefined, f.options);

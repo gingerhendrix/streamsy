@@ -7,8 +7,8 @@ import { Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
-import { FolderKey, ListedFile } from "../../server/streams.ts";
-import { SearchResult } from "../../server/search-result.ts";
+import { FolderKey } from "../../server/streams.ts";
+import { ListedFile, SearchResult } from "../../server/index-rows.ts";
 import { CreateFolder, File, Head } from "../../server/domain.ts";
 import { CHECKPOINT_EVERY } from "../../server/folder-store.ts";
 

@@ -1,17 +1,18 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { CommitBoundary, DurableState, StorageFault, Streamsy } from "@streamsy/core";
+import { StorageFault, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, DateTime, Effect, Layer, Schema } from "effect";
+import { Cause, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { HealthLive, jsonBody } from "../server/api.ts";
-import { CreateFolder, FolderConflict, FolderId } from "../server/domain.ts";
+import { CreateFolder, FolderId } from "../server/domain.ts";
 import { FileIndexLive } from "../server/file-index.ts";
+import { registerFolder } from "../server/folder-registry.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
-import { initialiseSearch } from "../server/projections.ts";
+import { initialiseSearch } from "../server/search-index.ts";
 import { IndexReader, indexReaderLayer } from "./index-reader.ts";
-import { Folder, Folders } from "../server/streams.ts";
+import { Folders } from "../server/streams.ts";
 import type { Env } from "./env.ts";
 import { objectStorage } from "./storage.ts";
 
@@ -22,46 +23,9 @@ const IndexInternal = Layer.mergeAll(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const input = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
-      const registry = yield* Folders;
-      const boundary = yield* CommitBoundary;
 
-      const folder = yield* boundary.withTransaction(
-        Effect.gen(function* () {
-          const state = yield* registry.fold(
-            {},
-            () => new Map<string, Folder>(),
-            (rows, change) => {
-              if ("value" in change) rows.set(change.key, change.value);
-              else rows.delete(change.key);
-
-              return rows;
-            },
-          );
-
-          const current = state.state.get(input.folderId);
-
-          if (current !== undefined) {
-            if (current.title !== input.title)
-              return yield* new FolderConflict({ message: "Folder title differs" });
-
-            return current;
-          }
-
-          const value = { folderId: input.folderId, title: input.title };
-
-          const changes = DurableState.changes(Folders.at({}), { offset: state.offset }, [
-            DurableState.upsert("folder", value, {
-              headers: { txid: input.txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
-            }),
-          ]);
-
-          yield* registry.append({}, changes, { expectedOffset: state.offset });
-
-          return value;
-        }),
-      );
-
-      return HttpServerResponse.jsonUnsafe(folder);
+      // The folder object creates the Files stream after this registration (P17).
+      return HttpServerResponse.jsonUnsafe(yield* registerFolder(input));
     }).pipe(
       Effect.catchTags({
         FolderConflict: ({ message }) =>

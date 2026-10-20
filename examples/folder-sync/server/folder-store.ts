@@ -1,17 +1,8 @@
 import { CommitBoundary, DurableState, StreamAddress } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import {
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Option,
-  Schema,
-  Semaphore,
-  Stream,
-} from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
 import { BlobStore } from "./blob-store.ts";
+import { collectBytes } from "./bytes.ts";
 import {
   BlobMissing,
   CommitFile,
@@ -19,20 +10,20 @@ import {
   DeleteFile,
   File,
   FileTooLarge,
-  FolderConflict,
   FolderId,
   Head,
   INLINE_LIMIT,
   FILE_LIMIT,
   InvalidFile,
   MissingFile,
+  Precondition,
   PreconditionFailed,
   WriteConflict,
   normalisePath,
   inlineText,
   sha256,
-  type Precondition,
 } from "./domain.ts";
+import { registerFolder } from "./folder-registry.ts";
 import {
   fileOf,
   folderView,
@@ -41,7 +32,7 @@ import {
   type FolderView,
   type LiveFile,
 } from "./folder-view.ts";
-import { FileMessage } from "./projections.ts";
+import { FileMessage, isUpsert } from "./messages.ts";
 import { Files, Folders } from "./streams.ts";
 
 /** Save the folder view after this many landed writes, and on the first write in a process. */
@@ -50,8 +41,11 @@ export const CHECKPOINT_EVERY = 32;
 const invalid = () => new InvalidFile({ message: "Invalid request" });
 
 const condition = (head: Head | undefined, precondition: Precondition) =>
-  precondition === undefined ||
-  ("absent" in precondition ? head === undefined : head?.version === precondition.version)
+  Precondition.$match(precondition, {
+    Unconditional: () => true,
+    IfMatch: ({ version }) => head?.version === version,
+    IfAbsent: () => head === undefined,
+  })
     ? Effect.void
     : Effect.fail(new PreconditionFailed({ head: head ?? null }));
 
@@ -77,7 +71,8 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   // The view reads the Files stream and the checkpoint at each call.
   const context = yield* Effect.context<CheckpointStore | Files>();
-  const checkpointing = yield* Semaphore.make(1);
+  // One save at a time for each folder. A long save for one folder does not skip a save for another.
+  const checkpointing = new Map<string, Semaphore.Semaphore>();
   // Writes since this process saved each folder's view. A missing folder has no save yet.
   const unsaved = new Map<string, number>();
 
@@ -129,7 +124,14 @@ const make = Effect.gen(function* () {
       // One writer per checkpoint key. A save that is running already covers this write.
       // The count restarts before the save, so a save that fails runs again after
       // CHECKPOINT_EVERY more writes, not on each write.
-      yield* checkpointing.withPermitsIfAvailable(1)(
+      let gate = checkpointing.get(folderId);
+
+      if (gate === undefined) {
+        gate = Semaphore.makeUnsafe(1);
+        checkpointing.set(folderId, gate);
+      }
+
+      yield* gate.withPermitsIfAvailable(1)(
         Effect.suspend(() => {
           unsaved.set(folderId, 0);
 
@@ -170,7 +172,7 @@ const make = Effect.gen(function* () {
         for (const message of page.messages) {
           const change = yield* decodeChange(decoder.decode(message.data));
 
-          if ("value" in change && change.key === path && change.value.version === live.version)
+          if (isUpsert(change) && change.key === path && change.value.version === live.version)
             return Option.fromUndefinedOr(change.value.text);
         }
 
@@ -197,45 +199,15 @@ const make = Effect.gen(function* () {
     title: string,
     txid: string,
   ) {
-    yield* Schema.decodeEffect(CreateFolder)({ folderId, title, txid }).pipe(
+    const input = yield* Schema.decodeEffect(CreateFolder)({ folderId, title, txid }).pipe(
       Effect.mapError(invalid),
     );
 
-    return yield* boundary.withTransaction(
-      Effect.gen(function* () {
-        const state = yield* folders.fold(
-          {},
-          () => new Map<string, typeof Folders.collections.folder.schema.Type>(),
-          (rows, change) => {
-            if ("value" in change) rows.set(change.key, change.value);
-            else rows.delete(change.key);
-
-            return rows;
-          },
-        );
-
-        const existing = state.state.get(folderId);
-
-        if (existing !== undefined) {
-          if (existing.title !== title)
-            return yield* new FolderConflict({ message: "Folder title differs" });
-
-          return existing;
-        }
-
-        const value = { folderId, title };
-        yield* initialiseFolder(folderId).pipe(Effect.provideService(Files, files));
-
-        const changes = DurableState.changes(Folders.at({}), { offset: state.offset }, [
-          DurableState.upsert("folder", value, {
-            headers: { txid, timestamp: DateTime.formatIso(yield* DateTime.now) },
-          }),
-        ]);
-
-        yield* folders.append({}, changes, { expectedOffset: state.offset });
-
-        return value;
-      }),
+    // One host owns the registry and the folder, so the stream and the registration commit together.
+    return yield* registerFolder(input, initialiseFolder(folderId)).pipe(
+      Effect.provideService(Files, files),
+      Effect.provideService(Folders, folders),
+      Effect.provideService(CommitBoundary, boundary),
     );
   });
 
@@ -243,7 +215,7 @@ const make = Effect.gen(function* () {
     folderId: string,
     path: string,
     input: CommitFile,
-    precondition?: Precondition,
+    precondition: Precondition = Precondition.Unconditional(),
   ) {
     const normalized = yield* normalisePath(path);
     const body = yield* Schema.decodeEffect(CommitFile)(input).pipe(Effect.mapError(invalid));
@@ -272,13 +244,11 @@ const make = Effect.gen(function* () {
         const content = yield* blobs.get(body.hash);
 
         if (content === undefined) return yield* new BlobMissing({ hash: body.hash });
-        const bytes = new Uint8Array(body.size);
-        let offset = 0;
-        yield* Stream.runForEach(content.body, (chunk) =>
-          Effect.sync(() => {
-            bytes.set(chunk, offset);
-            offset += chunk.length;
-          }),
+
+        const bytes = yield* collectBytes(
+          content.body,
+          INLINE_LIMIT,
+          (size) => new FileTooLarge({ size }),
         );
 
         if (inlineText(bytes) !== undefined)
@@ -319,12 +289,12 @@ const make = Effect.gen(function* () {
     folderId: string,
     path: string,
     input: DeleteFile,
-    precondition?: Precondition,
+    precondition: Precondition = Precondition.Unconditional(),
   ) {
     const normalized = yield* normalisePath(path);
     const body = yield* Schema.decodeEffect(DeleteFile)(input).pipe(Effect.mapError(invalid));
 
-    if (precondition !== undefined && "absent" in precondition)
+    if (Precondition.$is("IfAbsent")(precondition))
       return yield* new InvalidFile({ message: "Delete does not accept If-None-Match" });
     yield* requireFolder(folderId);
     const timestamp = DateTime.formatIso(yield* DateTime.now);

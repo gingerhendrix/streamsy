@@ -2,7 +2,11 @@ import { it } from "@effect/vitest";
 import { expect } from "vitest";
 import { Deferred, Effect, Fiber, Logger } from "effect";
 import { TestClock } from "effect/testing";
-import { IndexBootstrapUnavailable, supervise, superviseFolder } from "../server/file-index.ts";
+import {
+  IndexBootstrapUnavailable,
+  supervise,
+  superviseFolder,
+} from "../server/index-followers.ts";
 
 it.effect("index supervision restarts a defective follower and remains scoped", () =>
   Effect.gen(function* () {

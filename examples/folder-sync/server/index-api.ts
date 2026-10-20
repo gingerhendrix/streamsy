@@ -7,8 +7,8 @@ import {
   HttpApiGroup,
   HttpApiMiddleware,
 } from "effect/http-api";
-import { FileIndex, SearchResult } from "./file-index.ts";
-import { ListedFile } from "./streams.ts";
+import { FileIndex } from "./file-index.ts";
+import { ListedFile, SearchResult } from "./index-rows.ts";
 
 class IndexBadRequest extends Schema.TaggedError<IndexBadRequest>()(
   "IndexBadRequest",

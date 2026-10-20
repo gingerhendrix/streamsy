@@ -11,9 +11,8 @@ export const conflictBase = (known: KnownHead | undefined) => known?.localVersio
 export const isEcho = (hash: string | null, known: KnownHead | undefined, pending = false) =>
   hash === (known?.localHash ?? null) || (!pending && hash === known?.hash);
 
-export const feedReset = (cursor: string, tail: string) => cursor !== "-1" && cursor > tail;
-
-export const encodeFilePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+/** A saved cursor past the stream tail means that the server lost history. */
+export const historyRewound = (cursor: string, tail: string) => cursor !== "-1" && cursor > tail;
 
 export interface SyncOptions {
   readonly server: string;

@@ -1,4 +1,5 @@
-import { Crypto, Effect, Schema } from "effect";
+import { Crypto, Data, Effect, Schema } from "effect";
+import { decodeText, hex } from "./bytes.ts";
 
 export const INLINE_LIMIT = 64 * 1024;
 
@@ -118,26 +119,23 @@ export class PreconditionFailed extends Schema.TaggedError<PreconditionFailed>()
   { head: Schema.NullOr(Head) },
 ) {}
 
-export type Precondition = { readonly version: number } | { readonly absent: true } | undefined;
+/** The write precondition from `If-Match` or `If-None-Match: *`. */
+export type Precondition = Data.TaggedEnum<{
+  Unconditional: {};
+  IfMatch: { readonly version: number };
+  IfAbsent: {};
+}>;
+
+export const Precondition = Data.taggedEnum<Precondition>();
 
 export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
   const crypto = yield* Crypto.Crypto;
-  const digest = yield* crypto.digest("SHA-256", bytes);
 
-  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex(yield* crypto.digest("SHA-256", bytes));
 });
 
-export const inlineText = (bytes: Uint8Array): string | undefined => {
-  if (bytes.length > INLINE_LIMIT) return undefined;
-
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-
-    return text.includes("\0") ? undefined : text;
-  } catch {
-    return undefined;
-  }
-};
+export const inlineText = (bytes: Uint8Array): string | undefined =>
+  bytes.length > INLINE_LIMIT ? undefined : decodeText(bytes);
 
 export const prepareContent = Effect.fn("File.prepareContent")(function* (bytes: Uint8Array) {
   if (bytes.length > FILE_LIMIT) return yield* new FileTooLarge({ size: bytes.length });

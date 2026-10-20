@@ -4,7 +4,8 @@ import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "../../src/MarkdownLink.tsx";
 import { Snippet } from "../../src/Snippet.tsx";
 import { fileTree } from "../../src/Tree.tsx";
-import { readableText, fileUrl } from "../../src/client.ts";
+import { decodeText } from "../../server/bytes.ts";
+import { fileUrl } from "../../server/routes.ts";
 
 test("search snippet content is text even inside highlighted matches", () => {
   const html = renderToStaticMarkup(
@@ -43,12 +44,10 @@ test("file tree keeps opaque folder ids and handles file-directory name collisio
 });
 
 test("text decoding preserves BOM and detects binary; file URLs encode IDs and path segments", () => {
-  expect(readableText(new Uint8Array([239, 187, 191, 97]))).toBe("\ufeffa");
-  expect(readableText(new Uint8Array([255]))).toBeNull();
-  expect(readableText(new Uint8Array([0]))).toBeNull();
-  expect(fileUrl({ folderId: "docs/雪", path: "a/100%.md" })).toBe(
-    "/api/folders/docs%2F%E9%9B%AA/files/a/100%25.md",
-  );
+  expect(decodeText(new Uint8Array([239, 187, 191, 97]))).toBe("\ufeffa");
+  expect(decodeText(new Uint8Array([255]))).toBeUndefined();
+  expect(decodeText(new Uint8Array([0]))).toBeUndefined();
+  expect(fileUrl("docs/雪", "a/100%.md")).toBe("/api/folders/docs%2F%E9%9B%AA/files/a/100%25.md");
 });
 
 test("Markdown links cannot navigate away from a draft", () => {

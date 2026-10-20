@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "./MarkdownLink.tsx";
 import { draftReads } from "./draft-reads.ts";
-import { fileUrl, historyReader, readFile } from "./client.ts";
+import { isUpsert } from "../server/messages.ts";
+import { fileUrl } from "../server/routes.ts";
+import { historyReader, readFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
 import { editFile, type FileDb } from "./db.ts";
 
@@ -115,7 +117,7 @@ export function FilePanel({
 
   const download =
     selection.at === undefined || file === null
-      ? fileUrl(selection)
+      ? fileUrl(selection.folderId, selection.path)
       : file.inline && file.text !== null
         ? `data:application/octet-stream;charset=utf-8,${encodeURIComponent(file.text)}`
         : `/api/blobs/${file.hash}`;
@@ -220,8 +222,8 @@ export function FilePanel({
           File history <span>{rows.length} changes</span>
         </h3>
         {rows.toReversed().map((change, index) => (
-          <div key={`${change.headers.txid}:${index}`} className="history-entry">
-            {"value" in change ? (
+          <div key={`${change.headers.txid ?? ""}:${index}`} className="history-entry">
+            {isUpsert(change) ? (
               <>
                 <button onClick={() => open({ ...selection, at: change.value.version })}>
                   {change.value.version}

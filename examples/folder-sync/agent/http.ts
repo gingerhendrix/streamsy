@@ -3,8 +3,8 @@
 /* oxlint-disable effecttsgo/global-fetch -- Injectable standard Request transport also serves in-process hosts. */
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Session and operation IDs are transport metadata. */
 /* oxlint-disable effecttsgo/extends-native-error -- just-bash requires thrown errno errors, shared with the typed tools edge. */
-import { StreamAddress } from "@streamsy/core";
 import { Duration, Effect, Result, Schedule, Schema } from "effect";
+import { hex } from "../server/bytes.ts";
 import {
   FILE_LIMIT,
   FolderId,
@@ -13,10 +13,16 @@ import {
   inlineText,
   Path as FilePath,
 } from "../server/domain.ts";
-import { Folder, FolderKey } from "../server/streams.ts";
-import { SearchResult } from "../server/search-result.ts";
+import { SearchResult } from "../server/index-rows.ts";
+import { applyChanges, FileMessage, FolderMessage, isReset, isUpsert } from "../server/messages.ts";
+import {
+  blobUrl,
+  fileUrl,
+  folderStreamUrl,
+  FOLDERS_STREAM_URL,
+  streamRead,
+} from "../server/routes.ts";
 import { folderRoot } from "../sync/layout.ts";
-import { encodeFilePath } from "../sync/decisions.ts";
 
 export type Errno =
   | "EINVAL"
@@ -85,16 +91,6 @@ const Written = Schema.Struct({
   version: Schema.optionalKey(Version),
   txid: Schema.optionalKey(Schema.String),
 });
-
-const FileMessage = Schema.Union([
-  StreamAddress.stateChange({ type: "file", schema: File }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
-
-const FolderMessage = Schema.Union([
-  StreamAddress.stateChange({ type: "folder", schema: Folder }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
 
 const statusCode = (status: number): Errno => {
   switch (status) {
@@ -233,10 +229,6 @@ export class FolderHttpFileSystem {
 
     return target;
   }
-  private url(folderId: string, file: string, kind = "files") {
-    return `/api/folders/${encodeURIComponent(folderId)}/${kind}/${encodeFilePath(file)}`;
-  }
-
   private async request(
     route: string,
     init: RequestInit = {},
@@ -320,12 +312,7 @@ export class FolderHttpFileSystem {
     while (true) {
       const from = this.folderCursor;
 
-      const response = await this.request(
-        `/streams/folders?offset=${encodeURIComponent(from)}`,
-        {},
-        signal,
-        [410],
-      );
+      const response = await this.request(streamRead(FOLDERS_STREAM_URL, from), {}, signal, [410]);
 
       if (from !== this.folderCursor) continue;
 
@@ -345,12 +332,12 @@ export class FolderHttpFileSystem {
       if (from !== this.folderCursor) continue;
 
       for (const change of changes) {
-        if (!("type" in change)) {
+        if (isReset(change)) {
           this.roots.clear();
           this.skippedFolders.clear();
           this.files.clear();
           this.cursors.clear();
-        } else if ("value" in change) await this.addFolder(change.value.folderId, true);
+        } else if (isUpsert(change)) await this.addFolder(change.value.folderId, true);
         else {
           this.roots.delete(change.key);
           this.files.delete(change.key);
@@ -370,10 +357,9 @@ export class FolderHttpFileSystem {
   private async refreshFolder(folderId: string, signal?: AbortSignal) {
     while (true) {
       const from = this.cursors.get(folderId) ?? "-1";
-      const key = Schema.encodeSync(FolderKey)(folderId);
 
       const response = await this.request(
-        `/streams/folders/${key}/files?offset=${encodeURIComponent(from)}`,
+        streamRead(folderStreamUrl(folderId), from),
         {},
         signal,
         [410, 404],
@@ -395,13 +381,7 @@ export class FolderHttpFileSystem {
 
       if (from !== (this.cursors.get(folderId) ?? "-1")) continue;
 
-      const files = this.files.get(folderId) ?? new Map<string, File>();
-
-      for (const change of changes) {
-        if (!("type" in change)) files.clear();
-        else if ("value" in change) files.set(change.key, change.value);
-        else files.delete(change.key);
-      }
+      const files = applyChanges(this.files.get(folderId) ?? new Map<string, File>(), changes);
 
       const cursor = response.headers.get("stream-next-offset");
 
@@ -492,9 +472,7 @@ export class FolderHttpFileSystem {
 
     const bytes =
       row.text === undefined
-        ? new Uint8Array(
-            await (await this.request(`/api/blobs/${row.hash}`, {}, signal)).arrayBuffer(),
-          )
+        ? new Uint8Array(await (await this.request(blobUrl(row.hash), {}, signal)).arrayBuffer())
         : new TextEncoder().encode(row.text);
 
     this.observedVersions.set(target.resolved, row.version);
@@ -610,15 +588,14 @@ export class FolderHttpFileSystem {
     let text: string | undefined;
 
     if (bytes !== null) {
-      const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
-      hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      hash = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))));
       text = inlineText(bytes);
     }
 
     const upload = async () => {
       if (bytes === null || hash === undefined) throw new FileSystemError("EIO", path);
       await this.request(
-        `/api/blobs/${hash}`,
+        blobUrl(hash),
         {
           method: "PUT",
           headers:
@@ -645,7 +622,7 @@ export class FolderHttpFileSystem {
     };
 
     let response = await this.request(
-      this.url(target.folderId, target.file),
+      fileUrl(target.folderId, target.file),
       init,
       options.signal,
       [409],
@@ -659,7 +636,7 @@ export class FolderHttpFileSystem {
 
       if (missing.hash !== hash) throw new FileSystemError("EIO", path);
       await upload();
-      response = await this.request(this.url(target.folderId, target.file), init, options.signal);
+      response = await this.request(fileUrl(target.folderId, target.file), init, options.signal);
     }
 
     const receipt = await this.decode(response, Written);

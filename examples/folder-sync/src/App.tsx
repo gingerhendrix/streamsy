@@ -3,7 +3,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { createFileDb, createFolderDb } from "./db.ts";
 import type { FileDb, FolderDb } from "./db.ts";
 import type { Folder } from "../server/streams.ts";
-import type { SearchResult } from "../server/search-result.ts";
+import type { SearchResult } from "../server/index-rows.ts";
 import { search } from "./client.ts";
 import type { Selection } from "./client.ts";
 import { Tree, fileTree } from "./Tree.tsx";

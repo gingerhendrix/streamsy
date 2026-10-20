@@ -2,6 +2,7 @@
 import { lstat } from "node:fs/promises";
 import { Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
 import { FILE_LIMIT } from "../server/domain.ts";
+import { hashStream } from "../server/hash-stream.ts";
 import { ignoredPath } from "./decisions.ts";
 
 export class LocalFailure extends Schema.TaggedError<LocalFailure>()("LocalFailure", {
@@ -142,29 +143,14 @@ export const cacheBody = Effect.fn("SyncLocal.cacheBody")(function* <E>(
     Effect.gen(function* () {
       const temporary = yield* fs.makeTempFileScoped({ directory, prefix: ".capture-" });
       const output = yield* fs.open(temporary, { flag: "w" });
-      const digest = new Bun.CryptoHasher("sha256");
-      let size = 0;
-      yield* body.pipe(
-        Stream.runForEach(
-          (
-            chunk,
-          ): Effect.Effect<
-            void,
-            SkippedLocal | Effect.Error<ReturnType<typeof output.writeAll>>
-          > => {
-            size += chunk.length;
 
-            if (size > FILE_LIMIT)
-              return Effect.fail(
-                new SkippedLocal({ path: temporary, message: "Skipping file over 64 MiB" }),
-              );
-            digest.update(chunk);
-
-            return output.writeAll(chunk);
-          },
-        ),
+      const { hash, size } = yield* hashStream(
+        body,
+        FILE_LIMIT,
+        () => new SkippedLocal({ path: temporary, message: "Skipping file over 64 MiB" }),
+        (chunk) => output.writeAll(chunk),
       );
-      const hash = digest.digest("hex");
+
       const source = yield* safePath(root, `.folder-sync/content/${hash}`);
 
       if (!(yield* fs.exists(source))) yield* fs.rename(temporary, source);
@@ -188,22 +174,12 @@ export const captureLocal = Effect.fn("SyncLocal.capture")(
         message: `Skipping file over 64 MiB: ${absolute}`,
       });
 
-    const digest = new Bun.CryptoHasher("sha256");
-    let size = 0;
-    yield* fs.stream(absolute).pipe(
-      Stream.runForEach((chunk) => {
-        size += chunk.length;
-
-        if (size > FILE_LIMIT)
-          return Effect.fail(
-            new SkippedLocal({ path: absolute, message: `Skipping file over 64 MiB: ${absolute}` }),
-          );
-        digest.update(chunk);
-
-        return Effect.void;
-      }),
+    const { hash, size } = yield* hashStream(
+      fs.stream(absolute),
+      FILE_LIMIT,
+      () => new SkippedLocal({ path: absolute, message: `Skipping file over 64 MiB: ${absolute}` }),
     );
-    const hash = digest.digest("hex");
+
     const source = yield* safePath(root, `.folder-sync/content/${hash}`);
 
     if (yield* fs.exists(source)) return { hash, size, source };

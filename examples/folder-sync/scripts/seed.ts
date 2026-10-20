@@ -2,7 +2,7 @@ import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { prepareContent, Version } from "../server/domain.ts";
-import { encodeFilePath } from "../sync/decisions.ts";
+import { fileUrl } from "../server/routes.ts";
 
 class SeedFailure extends Schema.TaggedError<SeedFailure>()("SeedFailure", {
   message: Schema.String,
@@ -53,7 +53,7 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
     const bytes = yield* fs.readFile(absolute);
     const content = yield* prepareContent(bytes);
     const hash = content.hash;
-    const url = `${root}/api/folders/${encodeURIComponent(location.folderId)}/files/${encodeFilePath(location.path)}`;
+    const url = `${root}${fileUrl(location.folderId, location.path)}`;
 
     const key = yield* Schema.encodeEffect(
       Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),

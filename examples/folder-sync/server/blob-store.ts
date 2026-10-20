@@ -1,4 +1,5 @@
 import { Context, Crypto, Effect, Layer, Schema, Stream } from "effect";
+import { collectBytes } from "./bytes.ts";
 import { FILE_LIMIT, FileTooLarge, InvalidFile, sha256 } from "./domain.ts";
 
 export class BlobFailure extends Schema.TaggedError<BlobFailure>()("BlobFailure", {
@@ -32,25 +33,7 @@ export const memoryBlobs = Layer.effect(
     return BlobStore.of({
       put: Effect.fn("BlobStore.memory.put")(function* (hash, body) {
         if (blobs.has(hash)) return undefined;
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        yield* body.pipe(
-          Stream.runForEach((chunk) => {
-            size += chunk.length;
-
-            if (size > FILE_LIMIT) return Effect.fail(new FileTooLarge({ size }));
-            chunks.push(chunk);
-
-            return Effect.void;
-          }),
-        );
-        const bytes = new Uint8Array(size);
-        let offset = 0;
-
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.length;
-        }
+        const bytes = yield* collectBytes(body, FILE_LIMIT, (size) => new FileTooLarge({ size }));
 
         const actual = yield* sha256(bytes).pipe(
           Effect.provideService(Crypto.Crypto, crypto),

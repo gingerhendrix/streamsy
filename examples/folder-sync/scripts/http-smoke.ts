@@ -3,8 +3,8 @@ import { spawnServer } from "@streamsy/test-support/server";
 import { Config, Console, Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { prepareContent, Head } from "../server/domain.ts";
-import { FolderKey, ListedFile } from "../server/streams.ts";
-import { SearchResult } from "../server/search-result.ts";
+import { FolderKey } from "../server/streams.ts";
+import { ListedFile, SearchResult } from "../server/index-rows.ts";
 import { testDirectory } from "./test-directory.ts";
 
 class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {

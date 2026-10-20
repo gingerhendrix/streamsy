@@ -1,9 +1,15 @@
 import { Offset } from "@streamsy/core";
 import { Context, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { File, Head, INLINE_LIMIT, inlineText, VersionFromString } from "../server/domain.ts";
-import { Folder, FolderKey } from "../server/streams.ts";
-import { encodeFilePath } from "./decisions.ts";
+import { Head, INLINE_LIMIT, inlineText, VersionFromString } from "../server/domain.ts";
+import { FileMessage, FolderMessage } from "../server/messages.ts";
+import {
+  blobUrl,
+  fileUrl,
+  folderStreamUrl,
+  FOLDERS_STREAM_URL,
+  streamRead,
+} from "../server/routes.ts";
 import type { Pending } from "./state.ts";
 
 export class RemoteFailure extends Schema.TaggedError<RemoteFailure>()("RemoteFailure", {
@@ -16,37 +22,10 @@ export class StaleFile extends Schema.TaggedError<StaleFile>()("StaleFile", {
   head: Schema.NullOr(Head),
 }) {}
 
-export class BlobMissing extends Schema.TaggedError<BlobMissing>()("SyncBlobMissing", {}) {}
-
-const headers = Schema.Struct({
-  operation: Schema.Literals(["upsert", "delete"]),
-  txid: Schema.String,
-});
-
-export const FileMessage = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("file"),
-    key: Schema.String,
-    value: Schema.optionalKey(File),
-    headers,
-  }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
-
-export type FileMessage = typeof FileMessage.Type;
-
-const FolderMessage = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("folder"),
-    key: Schema.String,
-    value: Schema.optionalKey(Folder),
-    headers,
-  }),
-  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
-]);
+export class SyncBlobMissing extends Schema.TaggedError<SyncBlobMissing>()("SyncBlobMissing", {}) {}
 
 const receipt = Schema.Struct({
-  version: Schema.optionalKey(File.fields.version),
+  version: Schema.optionalKey(Head.fields.version),
   txid: Schema.optionalKey(Schema.String),
   hash: Schema.optionalKey(Head.fields.hash),
 });
@@ -67,12 +46,6 @@ const makeRemote = (server: string, token?: string) =>
     const fs = yield* FileSystem.FileSystem;
     const root = server.replace(/\/$/, "");
 
-    const fileUrl = (folderId: string, path: string) =>
-      `${root}/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}`;
-
-    const streamUrl = (folderId: string) =>
-      `${root}/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
-
     const request = Effect.fn("SyncRemote.request")(function* (
       req: HttpClientRequest.HttpClientRequest,
     ) {
@@ -89,9 +62,7 @@ const makeRemote = (server: string, token?: string) =>
       S extends Schema.ConstraintDecoder<unknown>,
     >(url: string, schema: S, offset: string, live: boolean) {
       const response = yield* request(
-        HttpClientRequest.get(
-          `${url}?offset=${encodeURIComponent(offset)}${live ? "&live=long-poll" : ""}`,
-        ),
+        HttpClientRequest.get(`${root}${streamRead(url, offset, live)}`),
       );
 
       if (response.status === 410) return { rows: [], cursor: "-1", upToDate: false, reset: true };
@@ -110,13 +81,15 @@ const makeRemote = (server: string, token?: string) =>
     });
 
     const folders = (offset: string, live: boolean) =>
-      pageAt(`${root}/streams/folders`, FolderMessage, offset, live);
+      pageAt(FOLDERS_STREAM_URL, FolderMessage, offset, live);
 
     const page = (folderId: string, offset: string, live: boolean) =>
-      pageAt(streamUrl(folderId), FileMessage, offset, live);
+      pageAt(folderStreamUrl(folderId), FileMessage, offset, live);
 
     const tail = Effect.fn("SyncRemote.tail")(function* (folderId: string) {
-      const response = yield* request(HttpClientRequest.head(streamUrl(folderId)));
+      const response = yield* request(
+        HttpClientRequest.head(`${root}${folderStreamUrl(folderId)}`),
+      );
 
       if (response.status !== 200) return yield* reject(response.status);
 
@@ -124,7 +97,7 @@ const makeRemote = (server: string, token?: string) =>
     });
 
     const body = Effect.fn("SyncRemote.body")(function* (hash: string) {
-      const response = yield* request(HttpClientRequest.get(`${root}/api/blobs/${hash}`));
+      const response = yield* request(HttpClientRequest.get(`${root}${blobUrl(hash)}`));
 
       if (response.status !== 200) return yield* reject(response.status);
 
@@ -132,7 +105,7 @@ const makeRemote = (server: string, token?: string) =>
     });
 
     const head = Effect.fn("SyncRemote.head")(function* (folderId: string, path: string) {
-      const response = yield* request(HttpClientRequest.get(fileUrl(folderId, path)));
+      const response = yield* request(HttpClientRequest.get(`${root}${fileUrl(folderId, path)}`));
 
       if (response.status === 404) return null;
 
@@ -152,7 +125,7 @@ const makeRemote = (server: string, token?: string) =>
       if (operation.source === null || operation.hash === null) return yield* Effect.void;
 
       const response = yield* request(
-        HttpClientRequest.put(`${root}/api/blobs/${operation.hash}`, {
+        HttpClientRequest.put(`${root}${blobUrl(operation.hash)}`, {
           // FetchHttpClient drops explicit Content-Length on Effect streams.
           // Bun's file Blob streams the immutable source and supplies its known length.
           body: HttpBody.raw(Bun.file(operation.source), {
@@ -195,10 +168,10 @@ const makeRemote = (server: string, token?: string) =>
       const condition =
         operation.base === null ? { "if-none-match": "*" } : { "if-match": `"${operation.base}"` };
 
+      const url = `${root}${fileUrl(operation.folderId, operation.path)}`;
+
       const req =
-        operation.source === null
-          ? HttpClientRequest.delete(fileUrl(operation.folderId, operation.path))
-          : HttpClientRequest.put(fileUrl(operation.folderId, operation.path));
+        operation.source === null ? HttpClientRequest.delete(url) : HttpClientRequest.put(url);
 
       const response = yield* request(
         req.pipe(
@@ -221,7 +194,7 @@ const makeRemote = (server: string, token?: string) =>
           yield* response.json,
         );
 
-        if (error.error === "blob-missing") return yield* new BlobMissing();
+        if (error.error === "blob-missing") return yield* new SyncBlobMissing();
 
         return yield* reject(409, error.error);
       }

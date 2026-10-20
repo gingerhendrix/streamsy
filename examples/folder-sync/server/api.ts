@@ -8,9 +8,10 @@ import {
   FILE_LIMIT,
   Hash,
   InvalidFile,
+  Precondition,
   VersionFromString,
-  type Precondition,
 } from "./domain.ts";
+import { collectBytes } from "./bytes.ts";
 import { FolderStore } from "./folder-store.ts";
 
 const json = HttpServerResponse.jsonUnsafe;
@@ -26,24 +27,8 @@ export const jsonBody = Effect.fn("Api.jsonBody")(function* (
 
   if (length !== undefined && Number(length) > JSON_BODY_LIMIT)
     return yield* new JsonBodyTooLarge();
-  let size = 0;
 
-  const chunks = yield* request.stream.pipe(
-    Stream.tap((chunk) => {
-      size += chunk.length;
-
-      return size > JSON_BODY_LIMIT ? Effect.fail(new JsonBodyTooLarge()) : Effect.void;
-    }),
-    Stream.runCollect,
-  );
-
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
+  const bytes = yield* collectBytes(request.stream, JSON_BODY_LIMIT, () => new JsonBodyTooLarge());
 
   return yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
     new TextDecoder().decode(bytes),
@@ -61,12 +46,11 @@ const precondition = Effect.fn("Api.precondition")(function* (
 
   if (absent !== undefined) {
     if (absent !== "*") return yield* new InvalidFile({ message: "Expected If-None-Match: *" });
-    const result: Precondition = { absent: true };
 
-    return result;
+    return Precondition.IfAbsent();
   }
 
-  if (match === undefined) return undefined;
+  if (match === undefined) return Precondition.Unconditional();
 
   if (!/^"[1-9]\d*"$/.test(match))
     return yield* new InvalidFile({ message: "Expected a quoted version in If-Match" });
@@ -75,7 +59,7 @@ const precondition = Effect.fn("Api.precondition")(function* (
     Effect.mapError(() => new InvalidFile({ message: "Invalid version" })),
   );
 
-  return { version };
+  return Precondition.IfMatch({ version });
 });
 
 const make = Effect.gen(function* () {

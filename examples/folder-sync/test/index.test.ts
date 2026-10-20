@@ -5,17 +5,18 @@ import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projecti
 import { Effect, Layer, Logger, Result, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
-import { FileIndex, FileIndexLive, IndexLive, runIndex } from "../server/file-index.ts";
+import { FileIndex, FileIndexLive } from "../server/file-index.ts";
+import { IndexLive, runIndex } from "../server/index-followers.ts";
 import {
   applyIndexChanges,
   initialiseSearch,
   prepareIndexChanges,
   search,
   SEARCH_LIMIT,
-  type FileMessage,
-} from "../server/projections.ts";
+} from "../server/search-index.ts";
+import type { FileMessage } from "../server/messages.ts";
 import { BlobStore } from "../server/blob-store.ts";
-import { prepareContent } from "../server/domain.ts";
+import { Precondition, prepareContent } from "../server/domain.ts";
 import { Files, Folders } from "../server/streams.ts";
 import { makeIndexReader } from "../worker/index-reader.ts";
 import { sqliteHost } from "../server/storage.ts";
@@ -455,7 +456,7 @@ layer(graph, { excludeTestServices: true })((it) => {
           txid: "second",
           author: "Zoë",
         },
-        { version: 1 },
+        Precondition.IfMatch({ version: 1 }),
       );
       yield* until(index.search("newneedle"), (rows) => rows.length === 1);
       expect(yield* index.search("oldneedle")).toEqual([]);
