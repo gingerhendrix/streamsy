@@ -330,6 +330,11 @@ export class FolderHttpFileSystem {
       if (from !== this.folderCursor) continue;
 
       if (response.status === 410) {
+        if (from === "-1") throw new FileSystemError("EIO", "Folder bootstrap offset is gone");
+        this.roots.clear();
+        this.skippedFolders.clear();
+        this.files.clear();
+        this.cursors.clear();
         this.folderCursor = "-1";
         continue;
       }
@@ -339,13 +344,20 @@ export class FolderHttpFileSystem {
 
       if (from !== this.folderCursor) continue;
 
-      if (changes.some((change) => !("type" in change))) {
-        this.folderCursor = "-1";
-        continue;
+      for (const change of changes) {
+        if (!("type" in change)) {
+          this.roots.clear();
+          this.skippedFolders.clear();
+          this.files.clear();
+          this.cursors.clear();
+        } else if ("value" in change) await this.addFolder(change.value.folderId, true);
+        else {
+          this.roots.delete(change.key);
+          this.files.delete(change.key);
+          this.cursors.delete(change.key);
+        }
       }
 
-      for (const change of changes)
-        if ("value" in change) await this.addFolder(change.value.folderId, true);
       const cursor = response.headers.get("stream-next-offset");
 
       if (cursor === null) throw new FileSystemError("EIO", "Missing folder cursor");
@@ -372,6 +384,7 @@ export class FolderHttpFileSystem {
       if (response.status === 404) return;
 
       if (response.status === 410) {
+        if (from === "-1") throw new FileSystemError("EIO", "File bootstrap offset is gone");
         this.cursors.delete(folderId);
         this.files.delete(folderId);
         continue;
@@ -382,18 +395,11 @@ export class FolderHttpFileSystem {
 
       if (from !== (this.cursors.get(folderId) ?? "-1")) continue;
 
-      if (changes.some((change) => !("type" in change))) {
-        this.cursors.delete(folderId);
-        this.files.delete(folderId);
-        continue;
-      }
-
       const files = this.files.get(folderId) ?? new Map<string, File>();
 
       for (const change of changes) {
-        if (!("type" in change)) continue;
-
-        if ("value" in change) files.set(change.key, change.value);
+        if (!("type" in change)) files.clear();
+        else if ("value" in change) files.set(change.key, change.value);
         else files.delete(change.key);
       }
 

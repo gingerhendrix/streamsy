@@ -1,4 +1,9 @@
-import { createStateSchema } from "@durable-streams/state";
+import {
+  createStateSchema,
+  isChangeEvent,
+  isControlEvent,
+  type StateEvent,
+} from "@durable-streams/state";
 import { createStreamDB } from "@durable-streams/state/db";
 import { Schema } from "effect";
 import { File, type Head } from "../server/domain.ts";
@@ -37,6 +42,74 @@ const connectionFor = (transport: Transport, options: DbOptions) =>
           }),
   );
 
+/** State 0.3.2 truncates outside a TanStack sync transaction. Express the same
+ * reset as deletes of source keys, then let StreamDB commit the suffix normally.
+ * Track source keys so pending bootstrap rows and optimistic rows stay distinct.
+ */
+const resetBatch = (type: string) => {
+  const keys = new Set<string>();
+
+  return (batch: { items: ReadonlyArray<StateEvent> }) => {
+    const items: StateEvent[] = [];
+
+    for (const event of batch.items) {
+      if (isControlEvent(event) && event.headers.control === "reset") {
+        for (const key of keys) items.push({ type, key, headers: { operation: "delete" } });
+        keys.clear();
+      } else {
+        // Keep prior events so their real txids are acknowledged by StreamDB.
+        items.push(event);
+
+        if (!isChangeEvent(event) || event.type !== type) continue;
+
+        if (event.headers.operation === "delete") keys.delete(event.key);
+        else keys.add(event.key);
+      }
+    }
+
+    batch.items = items;
+  };
+};
+
+/** The client treats 410 as terminal. Replay through its ordinary fetch boundary
+ * and prepend a State reset so the existing StreamDB clears before the new rows.
+ */
+const replayGone = (fetcher: typeof globalThis.fetch): typeof globalThis.fetch =>
+  Object.assign(
+    // oxlint-disable-next-line effecttsgo/async-function -- StreamDB uses native fetch and Response at the browser boundary.
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetcher(input, init);
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+
+      if (response.status !== 410 || url.searchParams.get("offset") === "-1") return response;
+      await response.body?.cancel();
+      url.searchParams.set("offset", "-1");
+      url.searchParams.delete("live");
+      url.searchParams.delete("cursor");
+      const replay = await fetcher(new Request(url, request));
+
+      if (!replay.ok) return replay;
+
+      const items =
+        replay.status === 204
+          ? []
+          : Schema.decodeUnknownSync(Schema.Array(Schema.Unknown))(await replay.json());
+
+      const headers = new Headers(replay.headers);
+      headers.delete("content-length");
+      headers.delete("content-encoding");
+      headers.delete("etag");
+      headers.set("cache-control", "no-store");
+      headers.set("content-type", "application/json");
+
+      return new Response(JSON.stringify([{ headers: { control: "reset" } }, ...items]), {
+        headers,
+      });
+    },
+    { preconnect: fetcher.preconnect },
+  );
+
 export const createFolderDb = (options: DbOptions = {}) => {
   const transport = browserTransport(options);
   const connection = connectionFor(transport, options);
@@ -46,9 +119,10 @@ export const createFolderDb = (options: DbOptions = {}) => {
       url: new URL("/streams/folders", transport.origin).href,
       contentType: "application/json",
       warnOnHttp: false,
-      fetch: connection.fetch,
+      fetch: replayGone(connection.fetch),
     },
     state: folderState,
+    onBeforeBatch: resetBatch("folder"),
   });
 
   return Object.assign(streamDb, { connection });
@@ -71,9 +145,10 @@ export const createFileDb = (folderId: string, options: DbOptions = {}) => {
       url: new URL(folderStreamUrl(folderId), transport.origin).href,
       contentType: "application/json",
       warnOnHttp: false,
-      fetch: connection.fetch,
+      fetch: replayGone(connection.fetch),
     },
     state: fileState,
+    onBeforeBatch: resetBatch("file"),
     actions: ({ db }) => ({
       edit: {
         onMutate: ({ file }: EditFile) => {

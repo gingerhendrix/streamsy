@@ -2,11 +2,11 @@
 import { expect, test } from "vitest";
 import { FolderHttpFileSystem } from "../../agent/http.ts";
 
-const response = (rows: object[]) =>
+const response = (rows: object[], cursor = "0000000000000001_0000000000000000") =>
   new Response(JSON.stringify(rows), {
     headers: {
       "content-type": "application/json",
-      "stream-next-offset": "0000000000000001_0000000000000000",
+      "stream-next-offset": cursor,
       "stream-up-to-date": "true",
     },
   });
@@ -155,10 +155,48 @@ test("anonymous blob uploads and commits omit Authorization", async () => {
   expect(writes.every((request) => !request.headers.has("authorization"))).toBe(true);
 });
 
-test("stream reset and 410 clear the local folder map and replay from -1", async () => {
-  let stage = 0;
+const fileChange = (path: string, version = 1) => ({
+  type: "file",
+  key: path,
+  value: { path, version, hash: "a".repeat(64), size: 1, author: "test", text: path },
+  headers: { operation: "upsert", txid: `file:${path}:${version}` },
+});
+
+const reset = { headers: { control: "reset" } };
+
+const firstCursor = "0000000000000001_0000000000000000";
+
+const nextCursor = "0000000000000002_0000000000000000";
+
+test("a stored file reset clears earlier changes and advances to the following page", async () => {
   const offsets: string[] = [];
-  const hash = "a".repeat(64);
+
+  const fs = await FolderHttpFileSystem.create({
+    server: "http://localhost",
+    folders: ["docs"],
+    fetch: async (request) => {
+      const offset = new URL(request.url).searchParams.get("offset") ?? "";
+      offsets.push(offset);
+
+      if (offset === "-1") return response([fileChange("old")]);
+
+      if (offset === firstCursor)
+        return response([fileChange("discard"), reset, fileChange("kept", 2)], nextCursor);
+
+      return response([fileChange("later", 3)], "0000000000000003_0000000000000000");
+    },
+  });
+
+  expect(await fs.list("/docs")).toEqual([{ name: "kept", kind: "file" }]);
+  expect(await fs.list("/docs")).toEqual([
+    { name: "kept", kind: "file" },
+    { name: "later", kind: "file" },
+  ]);
+  expect(offsets).toEqual(["-1", firstCursor, nextCursor]);
+});
+
+test("410 clears the file map and reads a replacement from -1", async () => {
+  const offsets: string[] = [];
 
   const fs = await FolderHttpFileSystem.create({
     server: "http://localhost",
@@ -166,24 +204,67 @@ test("stream reset and 410 clear the local folder map and replay from -1", async
     fetch: async (request) => {
       offsets.push(new URL(request.url).searchParams.get("offset") ?? "");
 
-      if (stage++ === 0)
-        return response([
-          {
-            type: "file",
-            key: "a",
-            value: { path: "a", version: 1, hash, size: 1, author: "test", text: "a" },
-            headers: { operation: "upsert", txid: "one" },
-          },
-        ]);
+      if (offsets.length === 1) return response([fileChange("old")]);
 
-      if (stage === 2) return new Response(null, { status: 410 });
+      if (offsets.length === 2) return new Response(null, { status: 410 });
 
-      if (stage === 3) return response([{ headers: { control: "reset" } }]);
-
-      return response([]);
+      return response([reset, fileChange("replacement", 2)], nextCursor);
     },
   });
 
-  expect(await fs.list("/docs")).toEqual([]);
-  expect(offsets.slice(1, 4)).toEqual(["0000000000000001_0000000000000000", "-1", "-1"]);
+  expect(await fs.list("/docs")).toEqual([{ name: "replacement", kind: "file" }]);
+  expect(offsets).toEqual(["-1", firstCursor, "-1"]);
+});
+
+const folder = (folderId: string) => ({
+  type: "folder",
+  key: folderId,
+  value: { folderId, title: folderId },
+  headers: { operation: "upsert", txid: folderId },
+});
+
+for (const expired of [false, true]) {
+  test(`registry ${expired ? "410 replays" : "stored reset advances"} and clears old folders`, async () => {
+    const offsets: string[] = [];
+
+    const fs = await FolderHttpFileSystem.create({
+      server: "http://localhost",
+      fetch: async (request) => {
+        const url = new URL(request.url);
+
+        if (url.pathname !== "/streams/folders") return empty();
+        offsets.push(url.searchParams.get("offset") ?? "");
+
+        if (offsets.length === 1) return response([folder("old")]);
+
+        if (expired && offsets.length === 2) return new Response(null, { status: 410 });
+
+        return response([folder("discard"), reset, folder("new")], nextCursor);
+      },
+    });
+
+    expect(await fs.list("/")).toEqual([{ name: "new", kind: "directory" }]);
+    expect(await fs.list("/")).toEqual([{ name: "new", kind: "directory" }]);
+    expect(offsets).toEqual(
+      expired ? ["-1", firstCursor, "-1", nextCursor] : ["-1", firstCursor, nextCursor],
+    );
+  });
+}
+
+test("410 at the bootstrap offset fails instead of looping", async () => {
+  for (const folders of [undefined, ["docs"]]) {
+    let calls = 0;
+    await expect(
+      FolderHttpFileSystem.create({
+        server: "http://localhost",
+        folders,
+        fetch: async () => {
+          calls++;
+
+          return new Response(null, { status: 410 });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EIO" });
+    expect(calls).toBe(1);
+  }
 });

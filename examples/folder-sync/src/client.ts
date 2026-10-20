@@ -116,6 +116,7 @@ export async function history(
     );
 
     if (response.status === 410) {
+      if (offset === "-1") throw new Error("History bootstrap offset is gone");
       rows = [];
       offset = "-1";
       continue;
@@ -128,14 +129,9 @@ export async function history(
         ? []
         : Schema.decodeUnknownSync(Schema.Array(HistoryMessage))(await response.json());
 
-    if (messages.some((change) => "control" in change.headers)) {
-      rows = [];
-      offset = "-1";
-      continue;
-    }
-
     for (const change of messages) {
-      if ("key" in change && change.key === path) rows.push(change);
+      if (!("key" in change)) rows = [];
+      else if (change.key === path) rows.push(change);
     }
 
     if (response.headers.get("stream-up-to-date") === "true") return rows;

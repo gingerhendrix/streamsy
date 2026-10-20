@@ -353,3 +353,222 @@ test("history paginates, filters paths, and leaves deletes unversioned", async (
   expect(offsets).toEqual(["-1", "cursor"]);
   expect(rows).toHaveLength(2);
 });
+
+const resetPage = (items: object[], offset: string, upToDate: boolean) => {
+  const response = Response.json(items, { headers: { "stream-next-offset": offset } });
+
+  if (upToDate) response.headers.set("stream-up-to-date", "true");
+
+  return response;
+};
+
+const historyChange = (version: number) => ({
+  type: "file",
+  key: "a",
+  value: { path: "a", version, hash: "a".repeat(64), size: 1, author: "test", text: "a" },
+  headers: { operation: "upsert", txid: `write:${version}` },
+});
+
+test("history clears at a stored reset, retains its suffix and advances forward", async () => {
+  const offsets: string[] = [];
+
+  const fetcher = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const offset = new URL(input instanceof Request ? input.url : String(input)).searchParams.get(
+        "offset",
+      );
+
+      offsets.push(offset ?? "");
+
+      if (offset === "-1")
+        return resetPage(
+          [historyChange(1), { headers: { control: "reset" } }, historyChange(2)],
+          "next",
+          false,
+        );
+
+      return resetPage([historyChange(3)], "end", true);
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  );
+
+  const rows = await history({ folderId: "docs", path: "a" }, undefined, {
+    origin,
+    fetch: fetcher,
+    writerHeaders: () => ({}),
+  });
+
+  expect(rows.map((row) => ("value" in row ? row.value.version : null))).toEqual([2, 3]);
+  expect(offsets).toEqual(["-1", "next"]);
+});
+
+test("history 410 drops the old replay and requests -1 once", async () => {
+  const offsets: string[] = [];
+
+  const fetcher = Object.assign(
+    async (input: RequestInfo | URL) => {
+      offsets.push(
+        new URL(input instanceof Request ? input.url : String(input)).searchParams.get("offset") ??
+          "",
+      );
+
+      if (offsets.length === 1) return resetPage([historyChange(1)], "expired", false);
+
+      if (offsets.length === 2) return new Response(null, { status: 410 });
+
+      return resetPage([historyChange(2)], "end", true);
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  );
+
+  const transport = { origin, fetch: fetcher, writerHeaders: () => ({}) };
+  const rows = await history({ folderId: "docs", path: "a" }, undefined, transport);
+  expect(rows.map((row) => ("value" in row ? row.value.version : null))).toEqual([2]);
+  expect(offsets).toEqual(["-1", "expired", "-1"]);
+  transport.fetch = Object.assign(async () => new Response(null, { status: 410 }), {
+    preconnect: globalThis.fetch.preconnect,
+  });
+  await expect(history({ folderId: "docs", path: "a" }, undefined, transport)).rejects.toThrow(
+    "History bootstrap offset is gone",
+  );
+});
+
+for (const kind of ["file", "folder"] as const) {
+  const change = (key: string, version: number) =>
+    kind === "file"
+      ? { ...historyChange(version), key, value: { ...historyChange(version).value, path: key } }
+      : {
+          type: "folder",
+          key,
+          value: { folderId: key, title: key },
+          headers: { operation: "upsert", txid: `write:${version}` },
+        };
+
+  const open = (fetcher: typeof globalThis.fetch) => {
+    const options = { origin, fetch: fetcher, writerHeaders: () => ({}) };
+
+    if (kind === "file") {
+      const db = createFileDb(`reset-${kind}`, options);
+
+      return { db, keys: () => [...db.collections.files.keys()].toSorted() };
+    }
+
+    const db = createFolderDb(options);
+
+    return { db, keys: () => [...db.collections.folders.keys()].toSorted() };
+  };
+
+  test(`${kind} StreamDB resets pending bootstrap rows and keeps the following changes`, async () => {
+    const offsets: string[] = [];
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL) => {
+        const offset =
+          new URL(input instanceof Request ? input.url : String(input)).searchParams.get(
+            "offset",
+          ) ?? "";
+
+        offsets.push(offset);
+
+        if (offset === "-1") return resetPage([change("old", 1)], "first", false);
+
+        if (offset === "first")
+          return resetPage(
+            [change("discard", 2), { headers: { control: "reset" } }, change("kept", 3)],
+            "second",
+            false,
+          );
+
+        const final = resetPage([change("later", 4)], "end", true);
+        final.headers.set("stream-closed", "true");
+
+        return final;
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    );
+
+    const { db, keys } = open(fetcher);
+
+    try {
+      await db.preload();
+      await db.utils.awaitTxId("write:4");
+      await db.utils.awaitTxId("write:2");
+      expect(keys()).toEqual(["kept", "later"]);
+      expect(db.offset).toBe("end");
+      expect(offsets).toEqual(["-1", "first", "second"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test(`${kind} StreamDB accepts a reset as the first stored message`, async () => {
+    let calls = 0;
+
+    const fetcher = Object.assign(
+      async () => {
+        calls++;
+        const page = resetPage([{ headers: { control: "reset" } }, change("kept", 1)], "end", true);
+        page.headers.set("stream-closed", "true");
+
+        return page;
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    );
+
+    const { db, keys } = open(fetcher);
+
+    try {
+      await db.preload();
+      expect(keys()).toEqual(["kept"]);
+      expect(calls).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  for (const live of [false, true]) {
+    test(`${kind} StreamDB 410 during ${live ? "live tail" : "catch-up"} clears and replays from -1`, async () => {
+      const offsets: string[] = [];
+      let expiredLive: string | null = null;
+
+      const fetcher = Object.assign(
+        async (input: RequestInfo | URL) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          offsets.push(url.searchParams.get("offset") ?? "");
+
+          if (offsets.length === 1) return resetPage([change("old", 1)], "expired", live);
+
+          if (offsets.length === 2) {
+            expiredLive = url.searchParams.get("live");
+
+            return new Response(null, { status: 410 });
+          }
+
+          expect(url.searchParams.has("live")).toBe(false);
+          const final = resetPage([change("new", 2)], "end", true);
+          final.headers.set("stream-closed", "true");
+          // A decompressed fetch response can retain these headers. The adapter
+          // must remove them when it adds the reset to the JSON body.
+          final.headers.set("content-length", "1");
+          final.headers.set("content-encoding", "gzip");
+
+          return final;
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      );
+
+      const { db, keys } = open(fetcher);
+
+      try {
+        await db.preload();
+        await db.utils.awaitTxId("write:2");
+        expect(keys()).toEqual(["new"]);
+        expect(db.offset).toBe("end");
+        expect(offsets).toEqual(["-1", "expired", "-1"]);
+        expect(expiredLive).toBe(live ? "long-poll" : null);
+      } finally {
+        db.close();
+      }
+    });
+  }
+}
