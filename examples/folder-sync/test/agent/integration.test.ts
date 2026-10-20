@@ -154,3 +154,47 @@ test("agent blob uploads precede reference commits and session shell commands st
     await host.stop();
   }
 });
+
+test("listed unread files can be deleted with If-Match and stale listings return ESTALE", async () => {
+  const host = protocolHost();
+  const requests: Request[] = [];
+
+  try {
+    await create(host, "docs");
+    const writer = await createAgentFileSystem(options(host));
+    await writer.core.mutate("/docs/delete.txt", encoded("delete me"));
+    await writer.core.mutate("/docs/stale.txt", encoded("keep the edit"));
+
+    const agent = await createAgentFileSystem({
+      ...options(host),
+      fetch: (request) => {
+        requests.push(request.clone());
+
+        return host.fetch(request);
+      },
+    });
+
+    expect(await agent.core.list("/docs")).toEqual([
+      { name: "delete.txt", kind: "file" },
+      { name: "stale.txt", kind: "file" },
+    ]);
+    await agent.core.mutate("/docs/delete.txt", null);
+    const removed = requests.filter((request) => request.method === "DELETE").at(-1);
+    expect(removed?.headers.get("if-match")).toBe('"1"');
+    expect(removed?.headers.get("if-none-match")).toBeNull();
+    expect(await writer.core.stat("/docs/delete.txt")).toBeUndefined();
+
+    await writer.core.mutate("/docs/stale.txt", encoded("newer edit"));
+    await expect(agent.core.mutate("/docs/stale.txt", null)).rejects.toMatchObject({
+      code: "ESTALE",
+    });
+    const stale = requests.filter((request) => request.method === "DELETE").at(-1);
+    expect(stale?.headers.get("if-match")).toBe('"2"');
+    expect(new TextDecoder().decode((await writer.core.read("/docs/stale.txt")).bytes)).toBe(
+      "newer edit",
+    );
+    expect(requests.some((request) => request.url.includes("/api/blobs/"))).toBe(false);
+  } finally {
+    await host.stop();
+  }
+});

@@ -556,7 +556,13 @@ export class FolderHttpFileSystem {
 
   async mutate(path: string, bytes: Uint8Array | null, options: MutationOptions = {}) {
     const target = this.assertWritable(path);
-    const observedVersion = options.observedVersion ?? this.observedVersions.get(target.resolved);
+
+    // A listed entry is enough to identify a delete. Pin it before metadata refreshes.
+    // Content writes still need a read observation or an explicit precondition.
+    const observedVersion =
+      options.observedVersion ??
+      this.observedVersions.get(target.resolved) ??
+      (bytes === null ? this.files.get(target.folderId)?.get(target.file)?.version : undefined);
 
     if (options.signal?.aborted) throw new FileSystemError("ECANCELED", path);
 
