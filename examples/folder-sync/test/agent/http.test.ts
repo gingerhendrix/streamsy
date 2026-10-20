@@ -268,3 +268,31 @@ test("410 at the bootstrap offset fails instead of looping", async () => {
     expect(calls).toBe(1);
   }
 });
+
+test("a nested write reads each folder stream once, not once for each parent", async () => {
+  const reads: string[] = [];
+
+  const fs = await FolderHttpFileSystem.create({
+    server: "http://localhost",
+    folders: ["docs"],
+    writable: ["docs"],
+    fetch: async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname.startsWith("/streams/")) {
+        reads.push(url.pathname);
+
+        return empty();
+      }
+
+      return Response.json({ version: 1, txid: "t" });
+    },
+  });
+
+  reads.length = 0;
+  await fs.mutate("/docs/a/b/c/new.md", new TextEncoder().encode("text"), {
+    createParents: true,
+  });
+
+  expect(reads).toEqual(["/streams/folders/646f6373/files"]);
+});

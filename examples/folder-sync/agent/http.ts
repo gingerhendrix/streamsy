@@ -424,30 +424,65 @@ export class FolderHttpFileSystem {
     return { files, directories };
   }
 
-  async head(path: string, signal?: AbortSignal): Promise<FileHead | undefined> {
+  /** The head of a path in the folder maps as they are now. No network call. */
+  private cachedHead(path: string): FileHead | undefined {
     const target = this.locate(path);
 
-    if (target === undefined) return undefined;
-
-    await this.refreshFolder(target.folderId, signal);
-    const row = this.files.get(target.folderId)?.get(target.file);
+    const row =
+      target === undefined ? undefined : this.files.get(target.folderId)?.get(target.file);
 
     return row === undefined
       ? undefined
       : { version: row.version, size: row.size, deleted: false, mtimeMs: null };
   }
 
-  async stat(path: string, signal?: AbortSignal): Promise<NodeStat | undefined> {
-    const resolved = this.resolve(path);
-    const snapshot = await this.snapshot(signal);
-    const head = await this.head(resolved, signal);
+  /** A path in one snapshot: a file, a directory, or nothing. No network call. */
+  private statIn(directories: ReadonlySet<string>, resolved: string): NodeStat | undefined {
+    const head = this.cachedHead(resolved);
 
     if (head !== undefined && !head.deleted) return { kind: "file", ...head };
 
-    if (snapshot.directories.has(resolved))
+    if (directories.has(resolved))
       return { kind: "directory", size: 0, version: null, mtimeMs: null };
 
     return undefined;
+  }
+
+  /** The parents of a path that do not exist in one snapshot, nearest last. No network call. */
+  private missingParentsIn(directories: ReadonlySet<string>, path: string) {
+    const missing: string[] = [];
+    const resolved = this.resolve(path);
+    let parent = resolved.slice(0, resolved.lastIndexOf("/")) || "/";
+
+    while (parent !== "/") {
+      const stat = this.statIn(directories, parent);
+
+      if (stat !== undefined) {
+        if (stat.kind !== "directory") throw new FileSystemError("ENOTDIR", parent);
+        break;
+      }
+
+      missing.unshift(parent);
+      parent = parent.slice(0, parent.lastIndexOf("/")) || "/";
+    }
+
+    return missing;
+  }
+
+  async head(path: string, signal?: AbortSignal): Promise<FileHead | undefined> {
+    const target = this.locate(path);
+
+    if (target === undefined) return undefined;
+
+    await this.refreshFolder(target.folderId, signal);
+
+    return this.cachedHead(path);
+  }
+
+  async stat(path: string, signal?: AbortSignal): Promise<NodeStat | undefined> {
+    const { directories } = await this.snapshot(signal);
+
+    return this.statIn(directories, this.resolve(path));
   }
 
   async read(path: string, signal?: AbortSignal) {
@@ -503,29 +538,17 @@ export class FolderHttpFileSystem {
   }
 
   async missingParents(path: string, signal?: AbortSignal) {
-    const missing: string[] = [];
-    let parent = this.resolve(path).slice(0, this.resolve(path).lastIndexOf("/")) || "/";
+    const { directories } = await this.snapshot(signal);
 
-    while (parent !== "/") {
-      const stat = await this.stat(parent, signal);
-
-      if (stat !== undefined) {
-        if (stat.kind !== "directory") throw new FileSystemError("ENOTDIR", parent);
-        break;
-      }
-
-      missing.unshift(parent);
-      parent = parent.slice(0, parent.lastIndexOf("/")) || "/";
-    }
-
-    return missing;
+    return this.missingParentsIn(directories, path);
   }
 
   async mkdir(path: string, recursive = false, signal?: AbortSignal) {
     const target = this.assertWritable(path);
+    const { directories } = await this.snapshot(signal);
 
-    if (await this.stat(path, signal)) throw new FileSystemError("EEXIST", path);
-    const parents = await this.missingParents(path, signal);
+    if (this.statIn(directories, target.resolved)) throw new FileSystemError("EEXIST", path);
+    const parents = this.missingParentsIn(directories, path);
 
     if (!recursive && parents.length > 0) throw new FileSystemError("ENOENT", path);
 
@@ -536,6 +559,79 @@ export class FolderHttpFileSystem {
 
     this.emptyDirectories.add(target.resolved);
     await this.snapshot(signal);
+  }
+
+  /**
+   * The conditional headers of a write. A content write without a read or an
+   * explicit precondition must be a create. A delete always needs a version.
+   */
+  private conditionHeaders(
+    path: string,
+    bytes: Uint8Array | null,
+    head: FileHead | undefined,
+    condition: MutationOptions["precondition"],
+    observedVersion: number | undefined,
+  ) {
+    const exists = head !== undefined && !head.deleted;
+
+    if (condition?.kind === "absent" && exists) throw new FileSystemError("EEXIST", path);
+
+    if (condition?.kind === "version" && (!exists || String(head?.version) !== condition.version))
+      throw new FileSystemError("ESTALE", path);
+
+    if (bytes === null && !exists) throw new FileSystemError("ENOENT", path);
+    const base = condition?.kind === "version" ? Number(condition.version) : observedVersion;
+
+    // A delete needs an observed version too; If-None-Match is not valid on DELETE.
+    if (bytes === null && base === undefined) throw new FileSystemError("ESTALE", path);
+    const headers = new Headers({ "content-type": "application/json" });
+
+    if (condition?.kind === "absent" || base === undefined) {
+      if (bytes !== null) headers.set("if-none-match", "*");
+    } else headers.set("if-match", `"${base}"`);
+
+    if (this.options.token !== undefined)
+      headers.set("authorization", `Bearer ${this.options.token}`);
+
+    return headers;
+  }
+
+  private async uploadBlob(hash: string, bytes: Uint8Array, signal?: AbortSignal) {
+    await this.request(
+      blobUrl(hash),
+      {
+        method: "PUT",
+        headers:
+          this.options.token === undefined ? {} : { authorization: `Bearer ${this.options.token}` },
+        body: new Uint8Array(bytes),
+      },
+      signal,
+    );
+  }
+
+  /** Commit a write. A `409 blob-missing` for this content uploads the blob and commits once more. */
+  private async commit(
+    target: { folderId: string; file: string },
+    init: RequestInit,
+    upload: (() => Promise<void>) | undefined,
+    hash: string | undefined,
+    signal?: AbortSignal,
+  ) {
+    const url = fileUrl(target.folderId, target.file);
+    const response = await this.request(url, init, signal, [409]);
+
+    if (response.status !== 409) return this.decode(response, Written);
+
+    const missing = await this.decode(
+      response,
+      Schema.Struct({ error: Schema.Literal("blob-missing"), hash: Schema.String }),
+    );
+
+    if (upload === undefined || missing.hash !== hash)
+      throw new FileSystemError("EIO", target.file);
+    await upload();
+
+    return this.decode(await this.request(url, init, signal), Written);
   }
 
   async mutate(path: string, bytes: Uint8Array | null, options: MutationOptions = {}) {
@@ -551,95 +647,54 @@ export class FolderHttpFileSystem {
     if (options.signal?.aborted) throw new FileSystemError("ECANCELED", path);
 
     if (bytes !== null && bytes.length > FILE_LIMIT) throw new FileSystemError("EFBIG", path);
-    const stat = await this.stat(path, options.signal);
 
-    if (stat?.kind === "directory") throw new FileSystemError("EISDIR", path);
-    const head = await this.head(path, options.signal);
-    const exists = head !== undefined && !head.deleted;
-    const condition = options.precondition;
+    // One refresh of the registry and every folder. The checks below read that one view.
+    const { directories } = await this.snapshot(options.signal);
 
-    if (condition?.kind === "absent" && exists) throw new FileSystemError("EEXIST", path);
+    if (this.statIn(directories, target.resolved)?.kind === "directory")
+      throw new FileSystemError("EISDIR", path);
 
-    if (condition?.kind === "version" && (!exists || String(head?.version) !== condition.version))
-      throw new FileSystemError("ESTALE", path);
+    const headers = this.conditionHeaders(
+      path,
+      bytes,
+      this.cachedHead(target.resolved),
+      options.precondition,
+      observedVersion,
+    );
 
-    if (bytes === null && !exists) throw new FileSystemError("ENOENT", path);
-    const parents = await this.missingParents(path, options.signal);
+    const parents = this.missingParentsIn(directories, path);
 
     if (parents.length > 0 && !options.createParents) throw new FileSystemError("ENOENT", path);
 
     for (const parent of parents) this.assertWritable(parent);
-
-    const headers = new Headers({ "content-type": "application/json" });
-
-    const base = condition?.kind === "version" ? Number(condition.version) : observedVersion;
-
-    // A delete needs an observed version too; If-None-Match is not valid on DELETE.
-    if (bytes === null && base === undefined) throw new FileSystemError("ESTALE", path);
-
-    if (condition?.kind === "absent" || base === undefined) {
-      if (bytes !== null) headers.set("if-none-match", "*");
-    } else headers.set("if-match", `"${base}"`);
-
-    if (this.options.token !== undefined)
-      headers.set("authorization", `Bearer ${this.options.token}`);
     const txid = crypto.randomUUID();
-    let hash: string | undefined;
-    let text: string | undefined;
 
-    if (bytes !== null) {
-      hash = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))));
-      text = inlineText(bytes);
-    }
+    const hash =
+      bytes === null
+        ? undefined
+        : hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))));
 
-    const upload = async () => {
-      if (bytes === null || hash === undefined) throw new FileSystemError("EIO", path);
-      await this.request(
-        blobUrl(hash),
-        {
-          method: "PUT",
-          headers:
-            this.options.token === undefined
-              ? {}
-              : { authorization: `Bearer ${this.options.token}` },
-          body: new Uint8Array(bytes),
-        },
-        options.signal,
-      );
-    };
+    const text = bytes === null ? undefined : inlineText(bytes);
 
-    if (bytes !== null && text === undefined) await upload();
+    const upload =
+      bytes === null || hash === undefined
+        ? undefined
+        : () => this.uploadBlob(hash, bytes, options.signal);
+
+    if (upload !== undefined && text === undefined) await upload();
 
     const content =
       bytes === null
         ? { txid, author: "agent" }
         : { txid, author: "agent", hash, size: bytes.length, text };
 
-    const init = {
-      method: bytes === null ? "DELETE" : "PUT",
-      headers,
-      body: JSON.stringify(content),
-    };
-
-    let response = await this.request(
-      fileUrl(target.folderId, target.file),
-      init,
+    const receipt = await this.commit(
+      target,
+      { method: bytes === null ? "DELETE" : "PUT", headers, body: JSON.stringify(content) },
+      upload,
+      hash,
       options.signal,
-      [409],
     );
-
-    if (response.status === 409) {
-      const missing = await this.decode(
-        response,
-        Schema.Struct({ error: Schema.Literal("blob-missing"), hash: Schema.String }),
-      );
-
-      if (missing.hash !== hash) throw new FileSystemError("EIO", path);
-      await upload();
-      response = await this.request(fileUrl(target.folderId, target.file), init, options.signal);
-    }
-
-    const receipt = await this.decode(response, Written);
 
     if (bytes !== null && receipt.version === undefined) throw new FileSystemError("EIO", path);
 
