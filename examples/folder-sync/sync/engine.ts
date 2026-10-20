@@ -102,6 +102,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       message: "This mirror belongs to another server or selection. Use another --dir.",
     });
   yield* state.set("configuration", configuration);
+  yield* state.set("ready", "false");
   let origin = yield* state.get("origin");
 
   if (origin === undefined) {
@@ -173,8 +174,6 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     bootstrap = false,
   ) {
     const known = yield* state.head(folderId, file);
-    const local = yield* captureLocal(root, filePath(folderId, file));
-    const hash = local?.hash ?? null;
     const remoteHash = value?.hash ?? null;
     const pending = yield* hasPending(folderId, file);
 
@@ -184,6 +183,11 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
       return;
     }
+
+    // Download before observing the working file: editors keep writing while a blob read waits.
+    const content = value === null ? null : yield* cache(value);
+    const local = yield* captureLocal(root, filePath(folderId, file));
+    const hash = local?.hash ?? null;
 
     if (local !== null && hash !== remoteHash && !isEcho(hash, known)) {
       if (writable(folderId)) {
@@ -234,8 +238,6 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       }
     }
 
-    const content = value === null ? null : yield* cache(value);
-
     const row: Known = {
       folderId,
       path: file,
@@ -250,7 +252,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     yield* state.save({ ...row, localHash: remoteHash, localVersion: row.version });
   }, skip);
 
-  const initialiseFolder = Effect.fn("Sync.initialiseFolder")(function* (folderId: string) {
+  const guardFolder = Effect.fn("Sync.guardFolder")(function* (folderId: string) {
     const saved = yield* state.get(`cursor:${folderId}`);
     const tail = yield* remote.tail(folderId);
 
@@ -258,6 +260,12 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       return yield* new HistoryRewound({
         message: `Server history went backwards: ${folderId} cursor ${saved} is past tail ${tail}. Sync stopped. Restore the server history or use a new --dir.`,
       });
+
+    return saved;
+  });
+
+  const initialiseFolder = Effect.fn("Sync.initialiseFolder")(function* (folderId: string) {
+    const saved = yield* guardFolder(folderId);
 
     if (saved !== undefined) return yield* Effect.void;
     const files = new Map<string, File>();
@@ -443,21 +451,15 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     if (page.reset || page.rows.some((row) => !("type" in row))) {
       yield* state.set("foldersCursor", "-1");
 
-      return;
+      return false;
     }
 
     for (const change of page.rows)
       if ("type" in change && change.value !== undefined) yield* addFolder(change.value.folderId);
     yield* state.set("foldersCursor", page.cursor);
+
+    return page.upToDate;
   });
-
-  // Reattach saved folders before following new registrations. The HEAD guard precedes disk changes.
-  for (const folderId of yield* state.folders()) yield* addFolder(folderId);
-  yield* discover(false);
-
-  for (const folderId of [...(options.folders ?? []), ...options.writable])
-    yield* addFolder(folderId);
-  yield* state.set("ready", "true");
 
   const scan = Effect.fn("Sync.scan")(function* () {
     for (const [folderId, relative] of roots) {
@@ -513,6 +515,38 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       author: "server",
     });
   });
+
+  // Check every saved folder before installing any file from a resumed mirror.
+  const savedFolders = (yield* state.folders()).filter(selected);
+
+  for (const folderId of savedFolders) yield* guardFolder(folderId);
+
+  for (const folderId of savedFolders) yield* addFolder(folderId);
+
+  while (!(yield* discover(false))) {
+    /* Drain the registry before declaring this mirror ready. */
+  }
+
+  for (const folderId of [...(options.folders ?? []), ...options.writable])
+    yield* addFolder(folderId);
+
+  yield* gate.withPermit(
+    Effect.gen(function* () {
+      for (const row of yield* state.heads()) {
+        if (
+          !selected(row.folderId) ||
+          row.localVersion === row.version ||
+          (yield* hasPending(row.folderId, row.path))
+        )
+          continue;
+        // An interrupted install or conflict refresh left the disk on an older observation.
+        // Capture edits made while stopped before replacing anything or advancing their base.
+        yield* observe(row.folderId, row.path);
+        yield* refresh(row.folderId, row.path);
+      }
+    }),
+  );
+  yield* state.set("ready", "true");
 
   const deliver = Effect.fn("Sync.deliver")(function* () {
     const operation = (yield* state.pending())[0];

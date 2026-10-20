@@ -174,45 +174,50 @@ export const cacheBody = Effect.fn("SyncLocal.cacheBody")(function* <E>(
   );
 });
 
-export const captureLocal = Effect.fn("SyncLocal.capture")(function* (
-  root: string,
-  relative: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const absolute = yield* safePath(root, relative);
+export const captureLocal = Effect.fn("SyncLocal.capture")(
+  function* (root: string, relative: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const absolute = yield* safePath(root, relative);
 
-  if ((yield* pathKind(absolute)) !== "file") return null;
-  const info = yield* fs.stat(absolute);
+    if ((yield* pathKind(absolute)) !== "file") return null;
+    const info = yield* fs.stat(absolute);
 
-  if (info.size > BigInt(FILE_LIMIT))
-    return yield* new SkippedLocal({
-      path: absolute,
-      message: `Skipping file over 64 MiB: ${absolute}`,
-    });
+    if (info.size > BigInt(FILE_LIMIT))
+      return yield* new SkippedLocal({
+        path: absolute,
+        message: `Skipping file over 64 MiB: ${absolute}`,
+      });
 
-  const digest = new Bun.CryptoHasher("sha256");
-  let size = 0;
-  yield* fs.stream(absolute).pipe(
-    Stream.runForEach((chunk) => {
-      size += chunk.length;
+    const digest = new Bun.CryptoHasher("sha256");
+    let size = 0;
+    yield* fs.stream(absolute).pipe(
+      Stream.runForEach((chunk) => {
+        size += chunk.length;
 
-      if (size > FILE_LIMIT)
-        return Effect.fail(
-          new SkippedLocal({ path: absolute, message: `Skipping file over 64 MiB: ${absolute}` }),
-        );
-      digest.update(chunk);
+        if (size > FILE_LIMIT)
+          return Effect.fail(
+            new SkippedLocal({ path: absolute, message: `Skipping file over 64 MiB: ${absolute}` }),
+          );
+        digest.update(chunk);
 
-      return Effect.void;
-    }),
-  );
-  const hash = digest.digest("hex");
-  const source = yield* safePath(root, `.folder-sync/content/${hash}`);
+        return Effect.void;
+      }),
+    );
+    const hash = digest.digest("hex");
+    const source = yield* safePath(root, `.folder-sync/content/${hash}`);
 
-  if (yield* fs.exists(source)) return { hash, size, source };
+    if (yield* fs.exists(source)) return { hash, size, source };
 
-  // Capture again only for new content. The capture hashes its own bytes, including any intervening edit.
-  return yield* cacheBody(root, fs.stream(absolute));
-});
+    // Capture again only for new content. The capture hashes its own bytes, including any intervening edit.
+    return yield* cacheBody(root, fs.stream(absolute));
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed(null) : Effect.fail(error),
+      ),
+    ),
+);
 
 export const replaceSource = Effect.fn("SyncLocal.replaceSource")(function* (
   root: string,

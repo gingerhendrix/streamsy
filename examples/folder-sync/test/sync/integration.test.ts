@@ -9,7 +9,7 @@ import { prepareContent } from "../../server/domain.ts";
 import { conflictPath, encodeFilePath } from "../../sync/decisions.ts";
 import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
-import { cacheBody, captureLocal } from "../../sync/local.ts";
+import { cacheBody, captureLocal, replaceSource } from "../../sync/local.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 import { spawnServer, token } from "./host.ts";
 
@@ -23,6 +23,8 @@ const until = <A, E, R>(work: Effect.Effect<A, E, R>, ready: (value: A) => boole
       schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 500 })),
     }),
   );
+
+const registryPageCursor = Schema.decodeSync(Offset)("0000000000000001_0000000000000000");
 
 const text = (value: string) => new TextEncoder().encode(value);
 
@@ -500,6 +502,269 @@ layer(runtime, { excludeTestServices: true })((it) => {
       );
       yield* Fiber.interrupt(daemon);
     }),
+  );
+
+  for (const editedWhileStopped of [false, true])
+    it.effect(
+      `conflict retarget crash with a current cursor recovers ${editedWhileStopped ? "and preserves stopped edits" : "the original path"}`,
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("sync-retarget-restart-");
+          const server = yield* host(directory);
+          const fs = yield* FileSystem.FileSystem;
+          yield* create(server.url, "daily/demo");
+          yield* create(server.url, "ro");
+          const initial = yield* put(server.url, "daily/demo", "a.md", "baseline", "initial");
+          const mirror = `${directory}/mirror`;
+          const state = yield* initialiseMirror(mirror);
+          yield* fs.makeDirectory(`${mirror}/daily/demo`, { recursive: true });
+          yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "conflicted local bytes");
+          const content = yield* captureLocal(mirror, "daily/demo/a.md");
+
+          if (content === null) return yield* Effect.die("Missing local fixture");
+          const human = yield* put(server.url, "daily/demo", "a.md", "human head", "human");
+          const humanContent = yield* prepareContent(text("human head"));
+          yield* state.enqueue(
+            {
+              folderId: "daily/demo",
+              path: "a.md",
+              txid: "attempt",
+              base: initial.version,
+              ...content,
+              uploaded: 0,
+            },
+            {
+              folderId: "daily/demo",
+              path: "a.md",
+              version: human.version,
+              hash: humanContent.hash,
+              localHash: content.hash,
+              localVersion: initial.version,
+            },
+          );
+          yield* state.addFolder("daily/demo");
+          yield* state.set("origin", "recovery-client");
+          const remote = yield* remoteFor(server.url);
+          const currentCursor = yield* remote.tail("daily/demo");
+          yield* state.set("cursor:daily/demo", currentCursor);
+          const op = (yield* state.pending())[0];
+
+          if (op === undefined) return yield* Effect.die("Missing pending fixture");
+          const copy = conflictPath("a.md", "recovery-client");
+          // Exact durable boundary: retarget and disk copy landed, then the process stopped before refresh(original).
+          yield* state.conflict(op.seq, copy, "copy-attempt");
+          yield* replaceSource(mirror, `daily/demo/${copy}`, content.source);
+          yield* state.save({
+            folderId: "daily/demo",
+            path: copy,
+            version: null,
+            hash: null,
+            localHash: content.hash,
+            localVersion: null,
+          });
+          yield* state.set(`restore:${op.seq}`, "");
+
+          if (editedWhileStopped)
+            yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "edited while stopped");
+
+          let initialRead: string | undefined;
+
+          const observed = SyncRemote.of({
+            ...remote,
+            page: (folder, offset, live) => {
+              if (folder === "daily/demo" && initialRead === undefined) initialRead = offset;
+
+              return remote.page(folder, offset, live);
+            },
+          });
+
+          const daemon = yield* runSync(options(server.url, mirror)).pipe(
+            Effect.provideService(SyncState, state),
+            Effect.provideService(SyncRemote, observed),
+            Effect.forkScoped,
+          );
+
+          yield* until(state.get("ready"), (ready) => ready === "true");
+          expect(initialRead).toBe(currentCursor);
+
+          if (!editedWhileStopped)
+            expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("human head");
+          yield* until(
+            read(server.url, "daily/demo", copy),
+            (value) => value === "conflicted local bytes",
+          );
+
+          if (editedWhileStopped)
+            yield* until(
+              read(server.url, "daily/demo", conflictPath("a.md", "recovery-client", 1)),
+              (value) => value === "edited while stopped",
+            );
+          yield* until(
+            fs.readFileString(`${mirror}/daily/demo/a.md`),
+            (value) => value === "human head",
+          );
+          yield* until(state.pending(), (rows) => rows.length === 0);
+          yield* Fiber.interrupt(daemon);
+
+          return yield* Effect.void;
+        }),
+    );
+
+  it.effect("an edit during a paused blob download becomes a committed conflict copy", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-download-edit-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      yield* put(server.url, "daily/demo", "a.md", "old bytes", "initial");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      const downloading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const modified = SyncRemote.of({
+        ...remote,
+        body: (hash) =>
+          remote
+            .body(hash)
+            .pipe(
+              Effect.map((body) =>
+                Stream.unwrap(
+                  Deferred.succeed(downloading, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as(body),
+                  ),
+                ),
+              ),
+            ),
+      });
+
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, modified),
+        Effect.forkScoped,
+      );
+
+      yield* until(state.get("ready"), (ready) => ready === "true");
+      const binary = new Uint8Array(128 * 1024).fill(3);
+      const content = yield* prepareContent(binary);
+
+      const uploaded = yield* HttpClient.put(`${server.url}/api/blobs/${content.hash}`, {
+        body: HttpBody.uint8Array(binary),
+      });
+
+      expect(uploaded.status).toBe(200);
+      yield* uploaded.text;
+
+      const committed = yield* HttpClient.put(fileUrl(server.url, "daily/demo", "a.md"), {
+        body: HttpBody.jsonUnsafe({ ...content, author: "test", txid: "remote-binary" }),
+      });
+
+      expect(committed.status).toBe(200);
+      yield* committed.text;
+      yield* Deferred.await(downloading);
+      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "edited during download");
+      yield* Deferred.succeed(release, undefined);
+      const origin = yield* state.get("origin");
+
+      if (origin === undefined) return yield* Effect.die("Missing client identity");
+      yield* until(
+        read(server.url, "daily/demo", conflictPath("a.md", origin)),
+        (value) => value === "edited during download",
+      );
+      yield* until(state.pending(), (rows) => rows.length === 0);
+      expect(new Uint8Array(yield* fs.readFile(`${mirror}/daily/demo/a.md`))).toEqual(binary);
+      yield* Fiber.interrupt(daemon);
+
+      return yield* Effect.void;
+    }),
+  );
+
+  it.effect(
+    "registry paging holds readiness false until every existing folder and local create is caught up",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-registry-pages-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        yield* put(server.url, "ro", "existing.md", "second page contents", "existing");
+        const mirror = `${directory}/mirror`;
+        const state = yield* initialiseMirror(mirror);
+        yield* state.set("ready", "true");
+        yield* fs.makeDirectory(`${mirror}/daily/demo`, { recursive: true });
+        yield* fs.writeFileString(`${mirror}/daily/demo/new.md`, "present before bootstrap");
+        const remote = yield* remoteFor(server.url);
+        const page = yield* remote.folders("-1", false);
+        const finalRegistryCursor = yield* Schema.decodeEffect(Offset)(page.cursor);
+        const rows = page.rows.filter((row) => "type" in row);
+        expect(rows).toHaveLength(2);
+        const waiting = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let calls = 0;
+
+        const modified = SyncRemote.of({
+          ...remote,
+          folders: (offset, live) =>
+            Effect.gen(function* () {
+              calls++;
+
+              if (calls === 1)
+                return {
+                  ...page,
+                  rows: rows.slice(0, 1),
+                  upToDate: false,
+                  cursor: registryPageCursor,
+                };
+
+              if (calls === 2) {
+                expect(offset).toBe(registryPageCursor);
+                expect(live).toBe(false);
+                yield* Deferred.succeed(waiting, undefined);
+                yield* Deferred.await(release);
+
+                return {
+                  ...page,
+                  cursor: finalRegistryCursor,
+                  rows: rows.slice(1),
+                  upToDate: true,
+                };
+              }
+
+              return yield* remote.folders(offset, live);
+            }),
+        });
+
+        const daemon = yield* runSync({
+          server: server.url,
+          directory: mirror,
+          writable: ["daily/demo"],
+          token,
+          settleMillis: 30,
+        }).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, modified),
+          Effect.forkScoped,
+        );
+
+        yield* Deferred.await(waiting);
+        expect(yield* state.get("ready")).toBe("false");
+        expect(yield* fs.exists(`${mirror}/ro/existing.md`)).toBe(false);
+        yield* Deferred.succeed(release, undefined);
+        yield* until(state.get("ready"), (ready) => ready === "true");
+        expect(yield* fs.readFileString(`${mirror}/ro/existing.md`)).toBe("second page contents");
+        yield* until(
+          read(server.url, "daily/demo", "new.md"),
+          (value) => value === "present before bootstrap",
+        );
+        expect(yield* fs.readFileString(`${mirror}/daily/demo/new.md`)).toBe(
+          "present before bootstrap",
+        );
+        yield* Fiber.interrupt(daemon);
+      }),
   );
 
   it.effect(
