@@ -38,7 +38,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           const created = yield* HttpClient.post(`${host.url}/api/folders`, {
             headers: { authorization: "Bearer correct-token" },
-            body: yield* HttpBody.json({ folderId: "docs", title: "Docs" }),
+            body: yield* HttpBody.json({ txid: "create:docs", folderId: "docs", title: "Docs" }),
           });
 
           expect(created.status).toBe(200);
@@ -76,20 +76,25 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           expect(yield* cli.exitCode).toBe(ChildProcessSpawner.ExitCode(1));
           const messages = (yield* Fiber.join(output)).join("");
-          expect(messages).toContain("Writer authorization failed");
-          expect(messages).toContain("Pending writes remain queued");
+          expect(messages).toContain("Server answered 401");
           expect(messages).not.toContain("wrong-token");
           const context = yield* Layer.build(stateLayer(`${mirror}/.folder-sync/state.sqlite`));
           const state = yield* SyncState.pipe(Effect.provideContext(context));
           const pending = yield* state.pending();
           expect(pending).toHaveLength(1);
           expect(pending[0]?.path).toBe("local.md");
-          expect(new TextDecoder().decode(pending[0]?.bytes ?? new Uint8Array())).toBe(
-            "pending local bytes",
-          );
+          const source = pending[0]?.source;
+
+          if (source === undefined || source === null)
+            return yield* Effect.die("Missing retained source");
+          expect(yield* fs.readFileString(source)).toBe("pending local bytes");
           expect(yield* state.rejected()).toEqual([]);
-          const history = yield* HttpClient.get(`${host.url}/api/folders/docs/history/local.md`);
-          expect(yield* history.json).toEqual([]);
+
+          const initial = yield* HttpClient.get(
+            `${host.url}/streams/folders/646f6373/files?offset=-1`,
+          );
+
+          expect(yield* initial.json).toEqual([]);
 
           const restarted = yield* spawner.spawn(
             ChildProcess.make(
@@ -114,11 +119,19 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           const restartedOutput = yield* restarted.all.pipe(Stream.runDrain, Effect.forkScoped);
           yield* until(state.pending(), (rows) => rows.length === 0);
-          const accepted = yield* HttpClient.get(`${host.url}/api/folders/docs/history/local.md`);
+
+          const accepted = yield* HttpClient.get(
+            `${host.url}/streams/folders/646f6373/files?offset=-1`,
+          );
+
           expect(yield* accepted.json).toHaveLength(1);
+          const read = yield* HttpClient.get(`${host.url}/api/folders/docs/files/local.md`);
+          expect(yield* read.text).toBe("pending local bytes");
           yield* restarted.kill({ killSignal: "SIGTERM" });
           expect(yield* restarted.exitCode).toBe(ChildProcessSpawner.ExitCode(130));
           yield* Fiber.join(restartedOutput);
+
+          return yield* Effect.void;
         }),
       { timeout: 15000 },
     );

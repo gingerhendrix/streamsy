@@ -21,6 +21,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         );
 
         const body = yield* Schema.encodeEffect(Schema.fromJsonString(CreateFolder))({
+          txid: "create:docs",
           folderId: "docs",
           title: "Docs",
         });

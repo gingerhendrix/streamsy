@@ -1,17 +1,57 @@
+import { StreamAddress } from "@streamsy/core";
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Effect, Layer, Schedule, Schema } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
-import { ManifestFile, Change, Folder } from "../../server/streams.ts";
+import { FolderKey, ListedFile } from "../../server/streams.ts";
 import { SearchResult } from "../../server/search-result.ts";
-import { CreateFolder, Version } from "../../server/domain.ts";
+import { CreateFolder, File, Head } from "../../server/domain.ts";
 
 const token = "worker-test-token";
 
 const headers = { authorization: `Bearer ${token}` };
+
+const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
+
+const content = (text: string, txid: string) => ({
+  txid,
+  author: "test",
+  hash: digest(text),
+  size: new TextEncoder().encode(text).length,
+  text,
+});
+
+const fileUrl = (url: string, folderId: string, path = "a.md") =>
+  `${url}/api/folders/${encodeURIComponent(folderId)}/files/${path}`;
+
+const streamUrl = (url: string, folderId: string) =>
+  `${url}/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
+
+const jsonPost = (
+  url: string,
+  body: typeof CreateFolder.Type | { fail: boolean } | { dropPings: boolean },
+) => HttpClient.post(url, { headers, body: HttpBody.jsonUnsafe(body) });
+
+const create = (url: string, folderId: string, title = folderId) =>
+  jsonPost(`${url}/api/folders`, { txid: `create:${folderId}`, folderId, title });
+
+const commit = (url: string, folderId: string, text: string, txid: string, version?: number) =>
+  HttpClient.put(fileUrl(url, folderId), {
+    headers: version === undefined ? headers : { ...headers, "if-match": `"${version}"` },
+    body: HttpBody.jsonUnsafe(content(text, txid)),
+  });
+
+const remove = (url: string, folderId: string, version: number) =>
+  HttpClient.del(fileUrl(url, folderId), {
+    headers: { ...headers, "if-match": `"${version}"` },
+    body: HttpBody.jsonUnsafe({ txid: `delete:${version}`, author: "test" }),
+  });
+
+const head = (response: HttpClientResponse.HttpClientResponse) =>
+  response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Head)));
 
 class Waiting extends Schema.TaggedError<Waiting>()("WorkerTestWaiting", {}) {}
 
@@ -20,189 +60,174 @@ const until = <A, E, R>(effect: Effect.Effect<A, E, R>, ready: (value: A) => boo
     Effect.filterOrFail(ready, () => new Waiting()),
     Effect.retry({
       while: Schema.is(Waiting),
-      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 100 })),
+      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 200 })),
     }),
   );
 
-const worker = Effect.gen(function* () {
-  const directory = yield* testDirectory("worker-host-");
-
-  return yield* Effect.acquireRelease(
+const launch = (directory: string) =>
+  Effect.acquireRelease(
     Effect.promise(() => startWorker(directory, token, 0, true)),
     (runtime) => Effect.promise(runtime.stop),
   );
-});
+
+const worker = testDirectory("worker-host-").pipe(Effect.flatMap(launch));
+
+const listed = (url: string) =>
+  HttpClient.get(`${url}/api/ls`).pipe(
+    Effect.flatMap((response) => response.json),
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ListedFile))),
+  );
+
+const changes = (url: string, folderId: string) =>
+  HttpClient.get(`${streamUrl(url, folderId)}?offset=-1`).pipe(
+    Effect.tap((response) => Effect.sync(() => expect(response.status, folderId).toBe(200))),
+    Effect.flatMap((response) => response.json),
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Array(StreamAddress.stateChange({ type: "file", schema: File })),
+      ),
+    ),
+  );
 
 layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
   (it) => {
     it.effect(
-      "workerd deduplicates an outbox replay after intake persisted but its response failed",
+      "workerd serves State streams read-only and retries the current hash without appending",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
-
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "lost-response", title: "Replay" }),
-          });
-
-          yield* create.text;
-
-          const configured = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false, afterPersist: true }),
-          });
-
-          yield* configured.text;
-
-          const put = yield* HttpClient.put(`${host.url}/api/folders/lost-response/files/a.md`, {
-            headers: {
-              ...headers,
-              "x-file-op-id": "lost",
-              "x-file-author": "test",
-              "x-file-origin": "test",
-            },
-            body: HttpBody.text("dedupneedle"),
-          });
-
-          expect(put.status).toBe(200);
-          yield* put.text;
-
-          const pending = yield* HttpClient.get(
-            `${host.url}/api/admin/pending?folder=lost-response`,
-            { headers },
-          );
-
-          expect(yield* pending.json).toEqual([expect.objectContaining({ state: "pending" })]);
-          const feed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
-          const before = yield* feed.json;
+          expect((yield* create(host.url, "docs")).status).toBe(200);
+          const written = yield* head(yield* commit(host.url, "docs", "one", "first"));
+          expect(written).toEqual({ version: 1, hash: digest("one"), txid: "first" });
+          const before = yield* changes(host.url, "docs");
           expect(before).toHaveLength(1);
-
-          const restored = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false }),
+          expect(before[0]).toMatchObject({
+            type: "file",
+            key: "a.md",
+            value: { version: 1, text: "one" },
+            headers: { operation: "upsert", txid: "first" },
           });
+          expect(yield* head(yield* commit(host.url, "docs", "one", "retry", 99))).toEqual(written);
+          expect(yield* changes(host.url, "docs")).toEqual(before);
+          const read = yield* HttpClient.get(fileUrl(host.url, "docs"));
+          expect(read.headers.etag).toBe('"1"');
+          expect(yield* read.text).toBe("one");
 
-          yield* restored.text;
-          // The folder alarm retries the notice. Nothing here calls the scheduled handler.
-          yield* until(
-            Effect.gen(function* () {
-              const response = yield* HttpClient.get(
-                `${host.url}/api/admin/pending?folder=lost-response`,
-                { headers },
-              );
+          for (const url of [`${host.url}/streams/folders`, streamUrl(host.url, "docs")]) {
+            for (const request of [HttpClient.post, HttpClient.put, HttpClient.del]) {
+              const response = yield* request(url, { body: HttpBody.text("invalid") });
+              expect(response.status).toBe(405);
+              yield* response.text;
+            }
+          }
 
-              return yield* Schema.decodeUnknownEffect(
-                Schema.Array(Schema.Struct({ state: Schema.String })),
-              )(yield* response.json);
-            }),
-            (entries) => entries.every((row) => row.state !== "pending"),
-          );
-          const replayed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
-          expect(yield* replayed.json).toEqual(before);
-          expect(replayed.headers["stream-up-to-date"]).toBe("true");
-          expect(replayed.headers["stream-next-offset"]).toBe(feed.headers["stream-next-offset"]);
-          const hits = yield* HttpClient.get(`${host.url}/api/search?q=dedupneedle`);
-          expect(yield* hits.json).toHaveLength(1);
+          expect((yield* commit(host.url, "docs", "two", "stale", 99)).status).toBe(412);
+          expect((yield* remove(host.url, "docs", 1)).status).toBe(200);
+          const deleted = yield* changes(host.url, "docs");
+          expect(deleted.at(-1)).toMatchObject({
+            type: "file",
+            key: "a.md",
+            headers: { operation: "delete" },
+          });
+          expect(deleted.at(-1)).not.toHaveProperty("value");
+          const absent = yield* remove(host.url, "docs", 1);
+          expect(yield* absent.json).toEqual({});
+          expect(yield* changes(host.url, "docs")).toEqual(deleted);
         }),
       { timeout: 15000 },
     );
+
     it.effect(
-      "workerd persists notices and wakes folders while projection reads fail",
+      "workerd rolls back the append, head and counter when head persistence fails",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
+          yield* create(host.url, "atomic");
+          yield* head(yield* commit(host.url, "atomic", "original", "first"));
+          const before = yield* changes(host.url, "atomic");
 
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "fault", title: "Fault" }),
+          const configured = yield* jsonPost(`${host.url}/api/admin/test-head?folder=atomic`, {
+            fail: true,
           });
 
-          expect(create.status).toBe(200);
-          yield* create.text;
-
-          const configured = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false, projection: true }),
-          });
-
+          expect(configured.status).toBe(200);
           yield* configured.text;
-
-          const put = yield* HttpClient.put(`${host.url}/api/folders/fault/files/a.md`, {
-            headers: {
-              ...headers,
-              "x-file-op-id": "fault",
-              "x-file-author": "test",
-              "x-file-origin": "test",
-            },
-            body: HttpBody.text("projectionneedle"),
-          });
-
-          expect(put.status).toBe(200);
-          yield* put.text;
-
-          // The folder alarm delivers the notice. Intake persists it while the projection fails.
-          yield* until(
-            Effect.gen(function* () {
-              const pending = yield* HttpClient.get(`${host.url}/api/admin/pending?folder=fault`, {
-                headers,
-              });
-
-              return yield* Schema.decodeUnknownEffect(
-                Schema.Array(Schema.Struct({ state: Schema.String })),
-              )(yield* pending.json);
-            }),
-            (entries) => entries.every((row) => row.state !== "pending"),
-          );
-          const wake = yield* HttpClient.post(`${host.url}/api/admin/wake`, { headers });
-          expect(wake.status).toBe(200);
-          yield* wake.text;
-          const stalled = yield* HttpClient.get(`${host.url}/api/ls`);
-          expect(stalled.status).toBe(503);
-          expect(stalled.headers["retry-after"]).toBe("1");
-          yield* stalled.text;
-
-          const restored = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false }),
-          });
-
-          yield* restored.text;
-          const rows = yield* HttpClient.get(`${host.url}/api/ls`);
-          expect(yield* rows.json).toHaveLength(1);
-          const hits = yield* HttpClient.get(`${host.url}/api/search?q=projectionneedle`);
-          expect(yield* hits.json).toHaveLength(1);
-
-          for (let attempt = 0; attempt < 2; attempt++) {
-            const feed = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
-            expect(yield* feed.json).toHaveLength(1);
-            expect(feed.headers["stream-up-to-date"]).toBe("true");
-          }
+          const failed = yield* commit(host.url, "atomic", "failed", "failed", 1);
+          expect(failed.status).toBe(500);
+          yield* failed.text;
+          expect(yield* changes(host.url, "atomic")).toEqual(before);
+          const read = yield* HttpClient.get(fileUrl(host.url, "atomic"));
+          expect(read.headers.etag).toBe('"1"');
+          expect(yield* read.text).toBe("original");
+          yield* jsonPost(`${host.url}/api/admin/test-head?folder=atomic`, { fail: false });
+          expect(
+            yield* head(yield* commit(host.url, "atomic", "accepted", "second", 1)),
+          ).toMatchObject({ version: 2, txid: "second" });
+          expect(yield* changes(host.url, "atomic")).toHaveLength(2);
         }),
       { timeout: 15000 },
     );
+
     it.effect(
-      "workerd validates folder limits and content type before registry changes",
+      "the hourly cron catches up source cursors after lost pings, including deletes",
+      () =>
+        Effect.gen(function* () {
+          const host = yield* worker;
+          const folderId = "daily/opaque-雪";
+          yield* create(host.url, folderId);
+          const disabled = yield* jsonPost(`${host.url}/api/admin/test-index`, { dropPings: true });
+          expect(disabled.status).toBe(200);
+          yield* disabled.text;
+          yield* head(yield* commit(host.url, folderId, "cronneedle", "lost-ping"));
+          expect(yield* listed(host.url)).toEqual([]);
+          const before = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
+          expect(yield* before.json).toEqual([]);
+          const runtime = yield* Effect.promise(() => host.mf.getWorker());
+          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          expect(yield* listed(host.url)).toMatchObject([{ folderId, path: "a.md", version: 1 }]);
+          const hits = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
+          expect(yield* hits.json).toHaveLength(1);
+          yield* remove(host.url, folderId, 1);
+          expect(yield* listed(host.url)).toHaveLength(1);
+          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          expect(yield* listed(host.url)).toEqual([]);
+          const removed = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
+          expect(yield* removed.json).toEqual([]);
+          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          expect(yield* changes(host.url, folderId)).toHaveLength(2);
+        }),
+      { timeout: 15000 },
+    );
+
+    it.effect(
+      "workerd validates folder boundaries and preserves slash ids in the registry",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
 
-          for (const folderId of ["a".repeat(101), "雪".repeat(84)]) {
-            const response = yield* HttpClient.post(`${host.url}/api/folders`, {
-              headers,
-              body: yield* HttpBody.json({ folderId, title: "Rejected" }),
-            });
+          for (const folderId of ["a".repeat(101), "雪".repeat(84)])
+            expect((yield* create(host.url, folderId)).status).toBe(400);
+          expect(
+            (yield* jsonPost(`${host.url}/api/folders`, {
+              txid: "invalid",
+              folderId: "ghost",
+              title: "",
+            })).status,
+          ).toBe(400);
 
-            expect(response.status).toBe(400);
-            expect(yield* response.text).toContain(
-              "100 decoded UTF-16 code units and 249 UTF-8 bytes",
-            );
-          }
+          const malformed = yield* HttpClient.post(`${host.url}/api/folders`, {
+            headers,
+            body: HttpBody.text("{", "application/json"),
+          });
+
+          expect(malformed.status).toBe(400);
+          yield* malformed.text;
 
           const unsupported = yield* HttpClient.post(`${host.url}/api/folders`, {
             headers,
             body: HttpBody.text(
               yield* Schema.encodeEffect(Schema.fromJsonString(CreateFolder))({
+                txid: "text",
                 folderId: "ghost",
                 title: "Ghost",
               }),
@@ -211,33 +236,8 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
           expect(unsupported.status).toBe(415);
           yield* unsupported.text;
-
-          const malformed = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers: { ...headers, "content-type": "application/json" },
-            body: HttpBody.text("{", "application/json"),
-          });
-
-          expect(malformed.status).toBe(400);
-          yield* malformed.text;
-
-          const invalidTitle = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "invalid-title", title: "" }),
-          });
-
-          expect(invalidTitle.status).toBe(400);
-          yield* invalidTitle.text;
-          const namespace = yield* Effect.promise(() => host.mf.getDurableObjectNamespace("INDEX"));
-
-          const registry = yield* Effect.promise(() =>
-            namespace.get(namespace.idFromName("index")).fetch("https://internal/__registry"),
-          );
-
-          expect(
-            yield* Schema.decodeUnknownEffect(Schema.Array(Folder))(
-              yield* Effect.promise(() => registry.json()),
-            ),
-          ).toEqual([]);
+          const empty = yield* HttpClient.get(`${host.url}/streams/folders?offset=-1`);
+          expect(yield* empty.json).toEqual([]);
 
           for (const folderId of [
             "a".repeat(100),
@@ -246,255 +246,59 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             "雪".repeat(83),
             "😀".repeat(50),
           ]) {
-            const created = yield* HttpClient.post(`${host.url}/api/folders`, {
-              headers,
-              body: yield* HttpBody.json({ folderId, title: "Boundary" }),
-            });
-
-            expect(created.status).toBe(200);
-            yield* created.text;
-            const url = `${host.url}/api/folders/${encodeURIComponent(folderId)}/files/a`;
-
-            const put = yield* HttpClient.put(url, {
-              headers: {
-                ...headers,
-                "x-file-op-id": "boundary",
-                "x-file-author": "test",
-                "x-file-origin": "test",
-              },
-              body: HttpBody.text(folderId),
-            });
-
-            expect(put.status).toBe(200);
-            yield* put.text;
-            const read = yield* HttpClient.get(url);
-            expect(read.status).toBe(200);
+            expect((yield* create(host.url, folderId, "Boundary")).status).toBe(200);
+            expect((yield* create(host.url, folderId, "Boundary")).status).toBe(200);
+            expect((yield* create(host.url, folderId, "Different")).status).toBe(409);
+            expect((yield* commit(host.url, folderId, folderId, "boundary")).status).toBe(200);
+            const read = yield* HttpClient.get(fileUrl(host.url, folderId));
             expect(yield* read.text).toBe(folderId);
-
-            const history = yield* HttpClient.get(
-              `${host.url}/api/folders/${encodeURIComponent(folderId)}/history/a`,
-            );
-
-            expect(history.status).toBe(200);
-            yield* history.text;
-
-            const deletion = yield* HttpClient.del(url, {
-              headers: {
-                ...headers,
-                "x-file-op-id": "delete",
-                "x-file-author": "test",
-                "x-file-origin": "test",
-              },
-            });
-
-            expect(deletion.status).toBe(200);
-            yield* deletion.text;
-          }
-        }),
-      { timeout: 15000 },
-    );
-    it.effect(
-      "workerd recovers durable notices through the folder alarm exactly once",
-      () =>
-        Effect.gen(function* () {
-          const host = yield* worker;
-          const folderId = "2026-10-10/most-of-the-durable-filesystem-sync-search";
-
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId, title: "Long opaque id" }),
-          });
-
-          expect(create.status).toBe(200);
-          yield* create.text;
-
-          const blocked = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: true }),
-          });
-
-          expect(blocked.status).toBe(200);
-          yield* blocked.text;
-          const file = `${host.url}/api/folders/${encodeURIComponent(folderId)}/files/a.md`;
-
-          const receipt = yield* HttpClient.put(file, {
-            headers: {
-              ...headers,
-              "x-file-op-id": "recovery",
-              "x-file-author": "test",
-              "x-file-origin": "test",
-            },
-            body: HttpBody.text("recoverneedle"),
-          });
-
-          expect(receipt.status).toBe(200);
-
-          const written = yield* Schema.decodeUnknownEffect(Schema.Struct({ version: Version }))(
-            yield* receipt.json,
-          );
-
-          const pending = yield* HttpClient.get(
-            `${host.url}/api/admin/pending?folder=${encodeURIComponent(folderId)}`,
-            { headers },
-          );
-
-          const entries = yield* Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ state: Schema.String, idempotencyKey: Schema.String })),
-          )(yield* pending.json);
-
-          expect(entries).toEqual([
-            { state: "pending", idempotencyKey: `${folderId}/${written.version}` },
-          ]);
-          const before = yield* HttpClient.get(`${host.url}/api/ls`);
-          expect(yield* before.json).toEqual([]);
-
-          const restored = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false }),
-          });
-
-          yield* restored.text;
-
-          // The folder alarm fires at the outbox's durable backoff instant. No folder request or cron drives recovery.
-          const rows = yield* until(
-            Effect.gen(function* () {
-              const response = yield* HttpClient.get(`${host.url}/api/ls`);
-
-              return yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
-                yield* response.json,
-              );
-            }),
-            (found) => found.length === 1,
-          );
-
-          expect(rows[0]?.version).toBe(written.version);
-          // The hourly backstop wakes the folder again and must not deliver the notice twice.
-          const runtime = yield* Effect.promise(() => host.mf.getWorker());
-          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
-          const changes = yield* HttpClient.get(`${host.url}/streams/changes?offset=-1`);
-          const feed = yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* changes.json);
-          expect(feed).toHaveLength(1);
-          expect(feed[0]?.version).toBe(written.version);
-          expect(changes.headers["stream-up-to-date"]).toBe("true");
-          const search = yield* HttpClient.get(`${host.url}/api/search?q=recoverneedle`);
-          expect(
-            (yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(yield* search.json))[0]
-              ?.version,
-          ).toBe(written.version);
-          const ls = yield* HttpClient.get(`${host.url}/api/ls`);
-          yield* ls.text;
-          expect(ls.headers["stream-next-offset"]).toBe(changes.headers["stream-next-offset"]);
-          expect(ls.headers["stream-epoch"]).toBe(changes.headers["stream-epoch"]);
-        }),
-      { timeout: 15000 },
-    );
-
-    it.effect(
-      "workerd advances the folder head checkpoint from the folder alarm",
-      () =>
-        Effect.gen(function* () {
-          const host = yield* worker;
-
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "head", title: "Head" }),
-          });
-
-          expect(create.status).toBe(200);
-          yield* create.text;
-
-          const head = HttpClient.get(`${host.url}/api/admin/head?folder=head`, { headers }).pipe(
-            Effect.flatMap((response) => response.json),
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(Schema.Struct({ seq: Schema.Int, offset: Schema.String })),
-            ),
-          );
-
-          const empty = yield* head;
-          expect(empty.seq).toBe(0);
-
-          for (const [index, path] of ["a.md", "b.md", "c.md"].entries()) {
-            const put = yield* HttpClient.put(`${host.url}/api/folders/head/files/${path}`, {
-              headers: {
-                ...headers,
-                "x-file-op-id": `head-${index}`,
-                "x-file-author": "test",
-                "x-file-origin": "test",
-              },
-              body: HttpBody.text(`head ${path}`),
-            });
-
-            expect(put.status).toBe(200);
-            yield* put.text;
+            expect(yield* changes(host.url, folderId)).toHaveLength(1);
           }
 
-          // No read or cron runs the projection. Only the head wakeup writes this checkpoint.
-          const advanced = yield* until(head, (stored) => stored.seq === 3);
-          expect(advanced.offset > empty.offset).toBe(true);
-
-          const read = yield* HttpClient.get(`${host.url}/api/folders/head/files/b.md`);
-          expect(yield* read.text).toBe("head b.md");
-          expect(read.headers["x-file-version"]).toBe("2");
-          expect(yield* head).toEqual(advanced);
+          const registry = yield* HttpClient.get(`${host.url}/streams/folders?offset=-1`);
+          expect(yield* registry.json).toHaveLength(5);
         }),
       { timeout: 15000 },
     );
 
     it.effect(
-      "workerd enforces write auth and supports SQLite ranking, safe snippets, bad-query errors and portable globs",
+      "workerd enforces auth and indexes pinged writes with ranking, safe snippets and portable globs",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
-
-          const denied = yield* HttpClient.post(`${host.url}/api/folders`, {
-            body: yield* HttpBody.json({ folderId: "docs", title: "Docs" }),
-          });
-
-          expect(denied.status).toBe(401);
-          yield* denied.text;
 
           for (const authorization of [
-            "Bearer worker-test-tokem",
+            undefined,
+            "Bearer wrong",
             "Bearer short",
-            "Bearer worker-test-token-extra",
+            `Bearer ${token}-extra`,
             "Bearer",
-            "Bearer WORKER-TEST-TOKEN",
+            `Bearer ${token.toUpperCase()}`,
           ]) {
-            const wrong = yield* HttpClient.post(`${host.url}/api/folders`, {
-              headers: { authorization },
-              body: yield* HttpBody.json({ folderId: "denied", title: "Denied" }),
+            const denied = yield* HttpClient.post(`${host.url}/api/folders`, {
+              headers: authorization === undefined ? {} : { authorization },
+              body: HttpBody.jsonUnsafe({ txid: "denied", folderId: "denied", title: "Denied" }),
             });
 
-            expect(wrong.status).toBe(401);
-            expect(yield* wrong.text).toContain("Writer authorization required");
+            expect(denied.status).toBe(401);
+            yield* denied.text;
           }
 
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "docs", title: "Docs" }),
-          });
-
-          expect(create.status).toBe(200);
-          yield* create.text;
+          yield* create(host.url, "docs");
 
           for (const [path, text] of [
             ["a.md", "needle " + "filler ".repeat(100)],
             ["z.md", "<img src=x> needle needle needle"],
           ] as const) {
-            const response = yield* HttpClient.put(`${host.url}/api/folders/docs/files/${path}`, {
-              headers: {
-                ...headers,
-                "x-file-op-id": path,
-                "x-file-author": "test",
-                "x-file-origin": "test",
-              },
-              body: HttpBody.text(text),
-            });
-
-            expect(response.status).toBe(200);
-            yield* response.text;
+            expect(
+              (yield* HttpClient.put(fileUrl(host.url, "docs", path), {
+                headers,
+                body: HttpBody.jsonUnsafe(content(text, path)),
+              })).status,
+            ).toBe(200);
           }
 
+          yield* until(listed(host.url), (rows) => rows.length === 2);
           const response = yield* HttpClient.get(`${host.url}/api/search?q=needle`);
 
           const hits = yield* Schema.decodeUnknownEffect(Schema.Array(SearchResult))(
@@ -505,116 +309,163 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
           expect(hits[0]?.snippet.some((part) => part.match)).toBe(true);
 
-          for (const query of ['"unterminated', "foo:bar", "AND", "NEAR(", "a OR"]) {
-            const invalid = yield* HttpClient.get(
-              `${host.url}/api/search?q=${encodeURIComponent(query)}`,
+          for (const query of ['"unterminated', "foo:bar", "AND", "NEAR(", "a OR"])
+            expect(
+              (yield* HttpClient.get(`${host.url}/api/search?q=${encodeURIComponent(query)}`))
+                .status,
+            ).toBe(400);
+
+          for (const glob of ["**/z.*", "[!a]*.md"]) {
+            const filtered = yield* HttpClient.get(
+              `${host.url}/api/ls?glob=${encodeURIComponent(glob)}&folder=docs`,
             );
 
-            expect(invalid.status).toBe(400);
-            yield* invalid.text;
+            const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ListedFile))(
+              yield* filtered.json,
+            );
+
+            expect(rows.map((row) => row.path)).toEqual(["z.md"]);
           }
 
-          const listed = yield* HttpClient.get(`${host.url}/api/ls?glob=**%2Fz.*&folder=docs`);
-
-          const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
-            yield* listed.json,
-          );
-
-          expect(rows.map((row) => row.path)).toEqual(["z.md"]);
+          expect((yield* HttpClient.get(`${host.url}/api/ls?glob=%5B`)).status).toBe(400);
           const html = yield* HttpClient.get(host.url);
-          expect(html.status).toBe(200);
           expect(yield* html.text).toContain("/assets/");
-
-          const broken = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false, projection: true }),
-          });
-
-          yield* broken.text;
-          const stalled = yield* HttpClient.get(`${host.url}/api/ls`);
-          expect(stalled.status).toBe(503);
-          expect(stalled.headers["retry-after"]).toBe("1");
-          yield* stalled.text;
-
-          const repair = yield* HttpClient.post(`${host.url}/api/admin/test-intake`, {
-            headers,
-            body: yield* HttpBody.json({ fail: false }),
-          });
-
-          yield* repair.text;
-          const healthy = yield* HttpClient.get(`${host.url}/api/ls`);
-          expect(healthy.status).toBe(200);
-          yield* healthy.text;
+          yield* remove(host.url, "docs", 1);
+          yield* until(listed(host.url), (rows) => rows.length === 1);
         }),
       { timeout: 15000 },
     );
+
     it.effect(
-      "workerd restarts with folder receipts, binary R2 bytes, the registry and index epoch intact",
+      "Worker indexing caps blob text, skips binary and missing blobs, and resumes persisted cursors",
       () =>
         Effect.gen(function* () {
-          const directory = yield* testDirectory("worker-restart-");
+          const directory = yield* testDirectory("worker-index-restart-");
+          const host = yield* launch(directory);
+          yield* create(host.url, "blobs");
+          yield* jsonPost(`${host.url}/api/admin/test-index`, { dropPings: true });
+          const prefix = "capneedle ";
+          const large = prefix + "x".repeat(1024 * 1024 - prefix.length - 1) + "☃ beyondcapneedle";
 
-          const host = yield* Effect.acquireRelease(
-            Effect.promise(() => startWorker(directory, token)),
-            (runtime) => Effect.promise(runtime.stop),
-          );
+          const entries = [
+            { path: "large", bytes: new TextEncoder().encode(large) },
+            { path: "binary", bytes: new TextEncoder().encode("binaryneedle\0") },
+            { path: "missing", bytes: new TextEncoder().encode("missingneedle\0") },
+          ];
 
-          const create = yield* HttpClient.post(`${host.url}/api/folders`, {
-            headers,
-            body: yield* HttpBody.json({ folderId: "daily/demo", title: "Docs" }),
-          });
+          const hashes: string[] = [];
 
-          yield* create.text;
-          const file = "/api/folders/daily%2Fdemo/files/binary";
-          const bytes = new Uint8Array([0, 255, 1]);
+          for (const { path, bytes } of entries) {
+            const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+            hashes.push(hash);
 
-          const metadata = {
-            ...headers,
-            "x-file-op-id": "binary",
-            "x-file-author": "test",
-            "x-file-origin": "test",
-          };
+            const uploaded = yield* HttpClient.put(`${host.url}/api/blobs/${hash}`, {
+              headers,
+              body: HttpBody.uint8Array(bytes),
+            });
 
-          const put = yield* HttpClient.put(`${host.url}${file}`, {
-            headers: metadata,
-            body: HttpBody.uint8Array(bytes),
-          });
+            expect(uploaded.status).toBe(200);
+            yield* uploaded.text;
 
-          const receipt = yield* Schema.decodeUnknownEffect(Schema.Struct({ version: Version }))(
-            yield* put.json,
-          );
+            const committed = yield* HttpClient.put(fileUrl(host.url, "blobs", path), {
+              headers,
+              body: HttpBody.jsonUnsafe({ txid: path, author: "test", hash, size: bytes.length }),
+            });
 
-          const before = yield* HttpClient.get(`${host.url}/api/ls`);
-          yield* before.text;
-          const epoch = before.headers["stream-epoch"];
+            expect(committed.status).toBe(200);
+            yield* committed.text;
+          }
+
+          const bucket = yield* Effect.promise(() => host.mf.getR2Bucket("BLOBS"));
+          const missingHash = hashes[2];
+          const largeHash = hashes[0];
+
+          if (missingHash === undefined || largeHash === undefined)
+            return yield* Effect.die("Missing test blob hash");
+          yield* Effect.promise(() => bucket.delete(missingHash));
+          const runtime = yield* Effect.promise(() => host.mf.getWorker());
+          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          expect((yield* listed(host.url)).map((row) => row.path)).toEqual([
+            "binary",
+            "large",
+            "missing",
+          ]);
+
+          for (const [query, count] of [
+            ["capneedle", 1],
+            ["beyondcapneedle", 0],
+            ["binaryneedle", 0],
+            ["missingneedle", 0],
+          ] as const) {
+            const response = yield* HttpClient.get(`${host.url}/api/search?q=${query}`);
+            expect(yield* response.json, query).toHaveLength(count);
+          }
+
+          // Removing an already indexed blob exposes an accidental replay after restart:
+          // replay would replace its searchable row with metadata only.
+          yield* Effect.promise(() => bucket.delete(largeHash));
           yield* Effect.promise(host.stop);
-
-          const restarted = yield* Effect.acquireRelease(
-            Effect.promise(() => startWorker(directory, token)),
-            (runtime) => Effect.promise(runtime.stop),
-          );
-
-          const head = yield* HttpClient.get(`${restarted.url}${file}`);
-          expect(new Uint8Array(yield* head.arrayBuffer)).toEqual(bytes);
-          expect(head.headers["x-file-version"]).toBe(String(receipt.version));
-
-          const replay = yield* HttpClient.put(`${restarted.url}${file}`, {
-            headers: metadata,
-            body: HttpBody.uint8Array(bytes),
-          });
-
-          expect(yield* replay.json).toEqual(receipt);
-          const listed = yield* HttpClient.get(`${restarted.url}/api/ls`);
-          expect(listed.headers["stream-epoch"]).toBe(epoch);
-          expect(yield* listed.json).toHaveLength(1);
+          const restarted = yield* launch(directory);
+          yield* head(yield* commit(restarted.url, "blobs", "freshneedle", "after-restart"));
           const wake = yield* HttpClient.post(`${restarted.url}/api/admin/wake`, { headers });
           expect(wake.status).toBe(200);
           yield* wake.text;
-          const changes = yield* HttpClient.get(`${restarted.url}/streams/changes?offset=-1`);
-          expect(yield* changes.json).toHaveLength(1);
-          expect(changes.headers["stream-up-to-date"]).toBe("true");
+          expect(yield* listed(restarted.url)).toHaveLength(4);
+
+          for (const query of ["capneedle", "freshneedle"]) {
+            const response = yield* HttpClient.get(`${restarted.url}/api/search?q=${query}`);
+            expect(yield* response.json, query).toHaveLength(1);
+          }
+
+          return yield* Effect.void;
         }),
-      { timeout: 15000 },
+      { timeout: 20000 },
+    );
+
+    it.effect(
+      "DO restarts preserve the counter after deletion and reject stale pre-recreation versions",
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("worker-restart-");
+          const host = yield* launch(directory);
+          yield* create(host.url, "daily/demo", "Docs");
+          expect(
+            yield* head(yield* commit(host.url, "daily/demo", "first", "first")),
+          ).toMatchObject({ version: 1 });
+          yield* remove(host.url, "daily/demo", 1);
+          yield* Effect.promise(host.stop);
+          const restarted = yield* launch(directory);
+          expect((yield* HttpClient.get(fileUrl(restarted.url, "daily/demo"))).status).toBe(404);
+
+          const second = yield* head(
+            yield* commit(restarted.url, "daily/demo", "second", "second"),
+          );
+
+          expect(second.version).toBe(2);
+          expect((yield* commit(restarted.url, "daily/demo", "stale", "stale", 1)).status).toBe(
+            412,
+          );
+          expect((yield* remove(restarted.url, "daily/demo", 1)).status).toBe(412);
+          expect(
+            yield* head(yield* commit(restarted.url, "daily/demo", "second", "retry", 1)),
+          ).toEqual(second);
+          yield* Effect.promise(restarted.stop);
+          const again = yield* launch(directory);
+          expect(
+            yield* head(yield* commit(again.url, "daily/demo", "third", "third", 2)),
+          ).toMatchObject({ version: 3 });
+          const retained = yield* changes(again.url, "daily/demo");
+          expect(
+            retained.map((change) => ("value" in change ? change.value.version : null)),
+          ).toEqual([1, null, 2, 3]);
+          const wake = yield* HttpClient.post(`${again.url}/api/admin/wake`, { headers });
+          expect(wake.status).toBe(200);
+          yield* wake.text;
+          expect(yield* listed(again.url)).toMatchObject([{ folderId: "daily/demo", version: 3 }]);
+          const registry = yield* HttpClient.get(`${again.url}/streams/folders?offset=-1`);
+          expect(yield* registry.json).toHaveLength(1);
+        }),
+      { timeout: 20000 },
     );
   },
 );
