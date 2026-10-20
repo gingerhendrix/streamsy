@@ -6,7 +6,6 @@ import {
   DateTime,
   Effect,
   Layer,
-  Option,
   Schema,
   Semaphore,
   Stream,
@@ -119,11 +118,15 @@ const make = Effect.gen(function* () {
       if (count < CHECKPOINT_EVERY) return;
 
       // One writer per checkpoint key. A save that is running already covers this write.
-      const saved = yield* checkpointing.withPermitsIfAvailable(1)(
-        Projection.run(folderView.at({ folderId })),
-      );
+      // The count restarts before the save, so a save that fails runs again after
+      // CHECKPOINT_EVERY more writes, not on each write.
+      yield* checkpointing.withPermitsIfAvailable(1)(
+        Effect.suspend(() => {
+          unsaved.set(folderId, 0);
 
-      if (Option.isSome(saved)) unsaved.set(folderId, 0);
+          return Projection.run(folderView.at({ folderId }));
+        }),
+      );
     },
     Effect.catch((error) => Effect.logWarning("Folder view checkpoint failed", error)),
   );

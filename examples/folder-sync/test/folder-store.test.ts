@@ -1,7 +1,7 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { DurableState, CommitBoundary } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { Deferred, Effect, Layer, Result } from "effect";
 import {
   FolderConflict,
@@ -164,6 +164,47 @@ for (const [name, storage] of [
         expect(yield* Effect.flip(store.read("rebuild", "b"))).toBeInstanceOf(MissingFile);
         // The deleted version 2 is still in the retained stream, so the next write gets 3.
         expect((yield* store.commit("rebuild", "b", one)).version).toBe(3);
+      }),
+    );
+    it.effect("a failing checkpoint save runs once per CHECKPOINT_EVERY writes", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        const checkpoints = yield* CheckpointStore;
+        yield* store.create("unsaved", "Unsaved", "create");
+        let saves = 0;
+
+        const failing = CheckpointStore.of({
+          ...checkpoints,
+          compareAndSet: () =>
+            Effect.suspend(() => {
+              saves++;
+
+              return Effect.fail(
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "storage-failure",
+                  message: "row too large",
+                }),
+              );
+            }),
+        });
+
+        const context = yield* Layer.build(Layer.fresh(FolderStoreLive)).pipe(
+          Effect.provideService(CheckpointStore, failing),
+        );
+
+        const writes = CHECKPOINT_EVERY * 2 + 1;
+
+        yield* Effect.gen(function* () {
+          const writer = yield* FolderStore;
+
+          for (let index = 1; index <= writes; index++)
+            yield* writer.commit("unsaved", `f${index}`, yield* body(`text ${index}`, `t${index}`));
+        }).pipe(Effect.provideContext(context));
+
+        // The first write, write CHECKPOINT_EVERY + 1 and write 2 * CHECKPOINT_EVERY + 1.
+        expect(saves).toBe(3);
+        expect((yield* store.read("unsaved", `f${writes}`)).head.version).toBe(writes);
       }),
     );
     it.effect("a checkpoint that lags the tail still gives the tail's heads", () =>
