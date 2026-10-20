@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
-import { createFileDb } from "./db.ts";
-import type { FileDb } from "./db.ts";
+import { createFileDb, createFolderDb } from "./db.ts";
+import type { FileDb, FolderDb } from "./db.ts";
+import type { Folder } from "../server/streams.ts";
 import type { SearchResult } from "../server/search-result.ts";
 import { search } from "./client.ts";
 import type { Selection } from "./client.ts";
@@ -9,7 +10,23 @@ import { Tree, fileTree } from "./Tree.tsx";
 import { Snippet } from "./Snippet.tsx";
 import { FilePanel } from "./FilePanel.tsx";
 
-function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
+function FolderBrowser({
+  db,
+  loadMs,
+  folderId,
+  folders,
+  selection,
+  open,
+  openFolder,
+}: {
+  db: FileDb;
+  loadMs: number;
+  folderId: string;
+  folders: ReadonlyArray<Folder>;
+  selection: Selection | null;
+  open: (selection: Selection) => void;
+  openFolder: (folderId: string) => void;
+}) {
   const online = useSyncExternalStore(db.connection.subscribe, db.connection.isOnline);
 
   const { data } = useLiveQuery((q) =>
@@ -17,7 +34,6 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
   );
 
   const [token, setToken] = useState(() => localStorage.getItem("folder-sync-writer-token") ?? "");
-  const [selection, setSelection] = useState<Selection | null>(null);
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [searchRevision, setSearchRevision] = useState(0);
@@ -47,9 +63,7 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
     return () => controller.abort();
   }, [submitted, searchRevision]);
 
-  const current = data.find(
-    (file) => file.folderId === selection?.folderId && file.path === selection.path,
-  );
+  const current = data.find((file) => file.path === selection?.path);
 
   return (
     <main className="shell">
@@ -81,8 +95,24 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
             <span>{data.length}</span>
           </div>
           <p className="muted">Your files, with every version.</p>
-          <Tree branch={fileTree(data)} selection={selection} open={setSelection} />
-          <p className="load-time">Manifest loaded in {Math.round(loadMs)} ms</p>
+          <ul className="tree" aria-label="Folders">
+            {folders.map((folder) => (
+              <li key={folder.folderId}>
+                <button
+                  className={folder.folderId === folderId ? "selected" : ""}
+                  onClick={() => openFolder(folder.folderId)}
+                >
+                  {folder.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <Tree
+            branch={fileTree(data.map((file) => ({ ...file, folderId })))}
+            selection={selection}
+            open={open}
+          />
+          <p className="load-time">Folders loaded in {Math.round(loadMs)} ms</p>
         </nav>
         <div className="content">
           <form
@@ -120,9 +150,7 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
                 <button
                   className="search-hit"
                   key={`${hit.folderId}/${hit.path}`}
-                  onClick={() =>
-                    setSelection({ folderId: hit.folderId, path: hit.path, at: hit.version })
-                  }
+                  onClick={() => open({ folderId: hit.folderId, path: hit.path, at: hit.version })}
                 >
                   <strong>
                     {hit.folderId} / {hit.path}
@@ -138,8 +166,9 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
             <FilePanel
               key={JSON.stringify(selection)}
               selection={selection}
+              db={db}
               headVersion={current?.version}
-              open={setSelection}
+              open={open}
             />
           ) : (
             <div className="welcome">
@@ -166,13 +195,71 @@ function Browser({ db, loadMs }: { db: FileDb; loadMs: number }) {
   );
 }
 
+function Browser({ db, loadMs }: { db: FolderDb; loadMs: number }) {
+  const { data: folders } = useLiveQuery((q) =>
+    q.from({ folder: db.collections.folders }).orderBy(({ folder }) => folder.title, "asc"),
+  );
+
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [chosenFolder, setChosenFolder] = useState<string | null>(null);
+  const folderId = selection?.folderId ?? chosenFolder ?? folders[0]?.folderId;
+  const [opened, setOpened] = useState<{ folderId: string; db: FileDb } | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (folderId === undefined) return undefined;
+    let cancelled = false;
+    const created = createFileDb(folderId);
+    setError("");
+    void created
+      .preload()
+      .then(() => {
+        if (!cancelled) setOpened({ folderId, db: created });
+      })
+      .catch((failure: Error) => {
+        if (!cancelled) setError(failure.message);
+      });
+
+    return () => {
+      cancelled = true;
+      created.close();
+    };
+  }, [folderId]);
+
+  return opened !== null && opened.folderId === folderId ? (
+    <FolderBrowser
+      key={folderId}
+      db={opened.db}
+      loadMs={loadMs}
+      folderId={opened.folderId}
+      folders={folders}
+      selection={selection}
+      open={setSelection}
+      openFolder={(next) => {
+        setChosenFolder(next);
+        setSelection(null);
+      }}
+    />
+  ) : (
+    <main className="loading">
+      <h1>Folder sync</h1>
+      <p>
+        {error ||
+          (folderId === undefined
+            ? "No folders yet. Load the docs corpus with bun run seed to get started."
+            : "Loading folder files…")}
+      </p>
+    </main>
+  );
+}
+
 export function App() {
-  const [db, setDb] = useState<FileDb | null>(null);
+  const [db, setDb] = useState<FolderDb | null>(null);
   const [loadMs, setLoadMs] = useState(0);
   const [error, setError] = useState("");
   useEffect(() => {
     let cancelled = false;
-    const created = createFileDb();
+    const created = createFolderDb();
     const started = performance.now();
     void created
       .preload()
@@ -196,7 +283,7 @@ export function App() {
   ) : (
     <main className="loading">
       <h1>Folder sync</h1>
-      <p>{error || "Loading file manifest…"}</p>
+      <p>{error || "Loading folders…"}</p>
     </main>
   );
 }

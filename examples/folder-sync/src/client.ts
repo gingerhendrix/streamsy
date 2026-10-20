@@ -1,5 +1,6 @@
 import { Schema } from "effect";
-import { FileOp, Version, VersionFromString } from "../server/domain.ts";
+import { CommitFile, File, Head, inlineText } from "../server/domain.ts";
+import { FolderKey } from "../server/streams.ts";
 import { SearchResult } from "../server/search-result.ts";
 import { encodeFilePath } from "../sync/decisions.ts";
 
@@ -9,31 +10,81 @@ export interface Selection {
   at?: number;
 }
 
-export const fileUrl = ({ folderId, path, at }: Selection) =>
-  `/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}${at === undefined ? "" : `?at=${encodeURIComponent(at)}`}`;
+export interface Transport {
+  origin: string;
+  fetch: typeof globalThis.fetch;
+  writerHeaders: () => HeadersInit;
+}
 
-export const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
+/** Browser defaults are resolved only when needed, so tests can supply a native host. */
+export const browserTransport = (options: Partial<Transport> = {}): Transport => ({
+  origin: options.origin ?? window.location.origin,
+  fetch: options.fetch ?? globalThis.fetch,
+  writerHeaders: options.writerHeaders ?? writerHeaders,
+});
 
-export type History = typeof History.Type;
+export const fileUrl = ({ folderId, path }: Selection) =>
+  `/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}`;
 
-export const Receipt = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
+export const folderStreamUrl = (folderId: string) =>
+  `/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
 
-export type Receipt = typeof Receipt.Type;
+const ChangeHeaders = Schema.Struct({
+  txid: Schema.String,
+  timestamp: Schema.optionalKey(Schema.String),
+});
 
-const ErrorBody = Schema.Struct({ error: Schema.String });
+const FileChange = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    key: Schema.String,
+    value: File,
+    headers: Schema.Struct({ ...ChangeHeaders.fields, operation: Schema.Literal("upsert") }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    key: Schema.String,
+    headers: Schema.Struct({ ...ChangeHeaders.fields, operation: Schema.Literal("delete") }),
+  }),
+]);
+
+const HistoryMessage = Schema.Union([
+  FileChange,
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
+
+export type History = ReadonlyArray<typeof FileChange.Type>;
 
 /** Native browser transport keeps AbortSignal and raw byte semantics at this boundary. */
-export const request = (url: string, init?: RequestInit): Promise<Response> => {
-  // oxlint-disable-next-line effecttsgo/global-fetch -- Native browser API adapter, including cancellation on navigation.
-  return fetch(url, init).then((response) => {
+export const request = (
+  url: string,
+  init?: RequestInit,
+  transport = browserTransport(),
+): Promise<Response> =>
+  transport.fetch(new URL(url, transport.origin), init).then((response) => {
     if (response.ok) return response;
 
-    return response.json().then((body) => {
-      const decoded = Schema.decodeUnknownSync(ErrorBody)(body);
-      throw new Error(decoded.error);
+    if (response.status === 412)
+      throw new Error(
+        "The file changed on the server. Keep your draft and open the current version before saving again.",
+      );
+
+    return response.text().then((body) => {
+      let message = `Request failed with status ${response.status}`;
+
+      try {
+        const decoded = Schema.decodeUnknownSync(Schema.Struct({ error: Schema.String }))(
+          JSON.parse(body),
+        );
+
+        message = decoded.error;
+      } catch {
+        // A proxy may return an HTML error page instead of the API error shape.
+      }
+
+      throw new Error(message);
     });
   });
-};
 
 export const readableText = (bytes: Uint8Array): string | null => {
   try {
@@ -45,53 +96,167 @@ export const readableText = (bytes: Uint8Array): string | null => {
   }
 };
 
-export const readFile = (selection: Selection, signal: AbortSignal) =>
-  request(fileUrl(selection), { signal }).then((response) => {
-    const version = Schema.decodeUnknownSync(VersionFromString)(
-      response.headers.get("x-file-version"),
+/** History is a normal, paginated replay of the folder State stream. */
+// oxlint-disable-next-line effecttsgo/async-function -- Browser history consumes native fetch pages with navigation cancellation.
+export async function history(
+  { folderId, path }: Selection,
+  signal?: AbortSignal,
+  transport = browserTransport(),
+): Promise<History> {
+  let offset = "-1";
+  let rows: Array<typeof FileChange.Type> = [];
+
+  while (true) {
+    const response = await transport.fetch(
+      new URL(
+        `${folderStreamUrl(folderId)}?offset=${encodeURIComponent(offset)}`,
+        transport.origin,
+      ),
+      { signal },
     );
 
-    return response.arrayBuffer().then((buffer) => ({
-      version,
-      text: readableText(new Uint8Array(buffer)),
-      size: buffer.byteLength,
-    }));
-  });
+    if (response.status === 410) {
+      rows = [];
+      offset = "-1";
+      continue;
+    }
 
-export type OpenFile = Awaited<ReturnType<typeof readFile>>;
+    if (!response.ok) throw new Error(`History read failed with status ${response.status}`);
 
-export const history = ({ folderId, path }: Selection, signal?: AbortSignal) =>
-  request(`/api/folders/${encodeURIComponent(folderId)}/history/${encodeFilePath(path)}`, {
-    signal,
-  })
-    .then((response) => response.json())
-    .then(Schema.decodeUnknownSync(History));
+    const messages =
+      response.status === 204
+        ? []
+        : Schema.decodeUnknownSync(Schema.Array(HistoryMessage))(await response.json());
+
+    if (messages.some((change) => "control" in change.headers)) {
+      rows = [];
+      offset = "-1";
+      continue;
+    }
+
+    for (const change of messages) {
+      if ("key" in change && change.key === path) rows.push(change);
+    }
+
+    if (response.headers.get("stream-up-to-date") === "true") return rows;
+    const next = response.headers.get("stream-next-offset");
+
+    if (next === null || next === offset)
+      throw new Error("History read did not advance its cursor");
+    offset = next;
+  }
+}
+
+export interface OpenFile {
+  version: number;
+  hash: string;
+  size: number;
+  text: string | null;
+  inline: boolean;
+}
+
+// oxlint-disable-next-line effecttsgo/async-function -- Browser file reads use native blob responses and AbortSignal cancellation.
+export async function readFile(
+  selection: Selection,
+  current: File | undefined,
+  signal: AbortSignal,
+  transport = browserTransport(),
+): Promise<OpenFile> {
+  let file = current;
+
+  if (selection.at !== undefined) {
+    const change = (await history(selection, signal, transport)).find(
+      (row) => "value" in row && row.value.version === selection.at,
+    );
+
+    file = change !== undefined && "value" in change ? change.value : undefined;
+  }
+
+  if (file === undefined) throw new Error("File not found");
+
+  const text =
+    file.text !== undefined
+      ? file.text
+      : readableText(
+          new Uint8Array(
+            await (await request(`/api/blobs/${file.hash}`, { signal }, transport)).arrayBuffer(),
+          ),
+        );
+
+  return {
+    version: file.version,
+    hash: file.hash,
+    size: file.size,
+    text,
+    inline: file.text !== undefined,
+  };
+}
 
 export const search = (q: string, signal: AbortSignal) =>
   request(`/api/search?q=${encodeURIComponent(q)}`, { signal })
     .then((response) => response.json())
     .then(Schema.decodeUnknownSync(Schema.Array(SearchResult)));
 
-export const saveFile = (
-  selection: Selection,
-  text: string,
+/** Hashing uses Web Crypto, shared by browsers and Bun's browser-client tests. */
+export const textContent = (text: string) => {
+  const bytes = new TextEncoder().encode(text);
+
+  return crypto.subtle.digest("SHA-256", bytes).then((digest) => {
+    const hash = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    const inline = inlineText(bytes);
+
+    let content: Pick<CommitFile, "hash" | "size" | "text"> = { hash, size: bytes.length };
+
+    if (inline !== undefined) content = { ...content, text: inline };
+
+    return content;
+  });
+};
+
+// oxlint-disable-next-line effecttsgo/async-function -- The optimistic mutation awaits native upload and commit responses.
+export async function saveFile(
+  folderId: string,
+  file: File,
   base: number,
-  author: string,
-  opId: string,
-) =>
-  request(fileUrl({ folderId: selection.folderId, path: selection.path }), {
-    method: "PUT",
-    headers: {
-      ...writerHeaders(),
-      "x-file-base": String(base),
-      "x-file-op-id": encodeURIComponent(opId),
-      "x-file-author": encodeURIComponent(author.trim() || "anonymous"),
-      "x-file-origin": encodeURIComponent("browser"),
+  txid: string,
+  transport: Transport,
+  bytes: Uint8Array,
+) {
+  const upload = () =>
+    request(
+      `/api/blobs/${file.hash}`,
+      {
+        method: "PUT",
+        headers: transport.writerHeaders(),
+        body: new Uint8Array(bytes),
+      },
+      transport,
+    );
+
+  if (file.text === undefined) await upload();
+  const headers = new Headers(transport.writerHeaders());
+  headers.set("content-type", "application/json");
+  headers.set("if-match", `"${base}"`);
+  let input: CommitFile = { txid, author: file.author, hash: file.hash, size: file.size };
+
+  if (file.text !== undefined) input = { ...input, text: file.text };
+  const body = JSON.stringify(input);
+
+  const response = await request(
+    fileUrl({ folderId, path: file.path }),
+    {
+      method: "PUT",
+      headers,
+      body,
     },
-    body: new TextEncoder().encode(text),
-  })
-    .then((response) => response.json())
-    .then(Schema.decodeUnknownSync(Receipt));
+    transport,
+  );
+
+  return Schema.decodeUnknownSync(Head)(await response.json());
+}
 
 /** Browser-only writer setting. Reads stay public. */
 export const writerHeaders = (): Record<string, string> => {

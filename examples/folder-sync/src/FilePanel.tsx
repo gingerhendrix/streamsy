@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "./MarkdownLink.tsx";
 import { draftReads } from "./draft-reads.ts";
-import { fileUrl, history, readFile, saveFile } from "./client.ts";
+import { fileUrl, history, readFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
+import { editFile, type FileDb } from "./db.ts";
 
 export function FilePanel({
   selection,
+  db,
   headVersion,
   open,
 }: {
   selection: Selection;
+  db: FileDb;
   headVersion: number | undefined;
   open: (selection: Selection) => void;
 }) {
@@ -22,9 +25,10 @@ export function FilePanel({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [readError, setReadError] = useState("");
+  const [reload, setReload] = useState(0);
   const dirty = file !== null && file.text !== null && file.text !== draft;
   const reads = useRef(draftReads());
-  const retry = useRef<{ text: string; base: number; author: string; opId: string } | null>(null);
+  const retry = useRef<{ text: string; base: number; author: string; txid: string } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,7 +45,7 @@ export function FilePanel({
     if (dirty || saving) return undefined;
     const applyRead = reads.current.begin();
     const controller = new AbortController();
-    void readFile(selection, controller.signal)
+    void readFile(selection, db.collections.files.get(selection.path), controller.signal)
       .then((loaded) => {
         if (controller.signal.aborted) return;
         applyRead(() => {
@@ -60,9 +64,9 @@ export function FilePanel({
       });
 
     return () => controller.abort();
-    // A new manifest version refreshes a clean view. Draft edits retain the version they opened.
+    // A new file version refreshes a clean view. Draft edits retain the version they opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, headVersion, saving]);
+  }, [selection, headVersion, saving, reload]);
 
   const save = () => {
     if (!file || file.text === null || saving) return;
@@ -74,24 +78,37 @@ export function FilePanel({
       attempt.base !== file.version ||
       attempt.author !== author
     ) {
-      // oxlint-disable-next-line effecttsgo/crypto-random-uuid -- Browser write boundary creates a durable replay key for this attempted save.
-      attempt = { text: draft, base: file.version, author, opId: crypto.randomUUID() };
+      // oxlint-disable-next-line effecttsgo/crypto-random-uuid -- Browser write boundary creates a transaction id for this attempted save.
+      attempt = { text: draft, base: file.version, author, txid: crypto.randomUUID() };
       retry.current = attempt;
     }
 
     const sent = attempt;
     setSaving(true);
     setMessage("");
-    void saveFile(selection, sent.text, sent.base, sent.author, sent.opId)
-      .then((receipt) => {
-        // The accepted receipt becomes the base of the next save, before the manifest catches up.
+    void editFile(
+      db,
+      {
+        path: selection.path,
+        version: sent.base,
+        hash: file.hash,
+        size: file.size,
+        author: sent.author,
+      },
+      sent.text,
+      sent.author,
+      sent.txid,
+    )
+      .then((accepted) => {
         setFile({
           text: sent.text,
-          size: new TextEncoder().encode(sent.text).length,
-          version: receipt.version,
+          size: accepted.size,
+          hash: accepted.hash,
+          version: accepted.version,
+          inline: accepted.inline,
         });
         retry.current = null;
-        setMessage(receipt.overwrote ? "Saved; replaced a change you did not see" : "Saved");
+        setMessage("Saved");
 
         return history(selection).then(setRows);
       })
@@ -99,14 +116,12 @@ export function FilePanel({
       .finally(() => setSaving(false));
   };
 
-  const selectedOperation = rows.find(
-    (row) => row.version === (selection.at ?? file?.version),
-  )?.operation;
-
   const download =
-    selectedOperation?.type === "put" && "blob" in selectedOperation
-      ? `/api/blobs/${selectedOperation.blob}`
-      : fileUrl(selection);
+    selection.at === undefined || file === null
+      ? fileUrl(selection)
+      : file.inline && file.text !== null
+        ? `data:application/octet-stream;charset=utf-8,${encodeURIComponent(file.text)}`
+        : `/api/blobs/${file.hash}`;
 
   const markdown = /\.mdx?$/i.test(selection.path);
 
@@ -177,6 +192,21 @@ export function FilePanel({
             <button className="primary" disabled={saving || !dirty} onClick={save}>
               {saving ? "Saving…" : "Save"}
             </button>
+            {dirty && (
+              <button
+                disabled={saving}
+                onClick={() => {
+                  reads.current.edited();
+                  retry.current = null;
+                  setFile(null);
+                  setDraft("");
+                  setMessage("");
+                  setReload((value) => value + 1);
+                }}
+              >
+                Discard draft and reload
+              </button>
+            )}
           </div>
         </div>
       ) : markdown ? (
@@ -190,22 +220,21 @@ export function FilePanel({
       )}
       <aside className="history">
         <h3>
-          File history <span>{rows.length} versions</span>
+          File history <span>{rows.length} changes</span>
         </h3>
-        {rows.toReversed().map(({ version, operation }) => (
-          <div key={version} className="history-entry">
-            <button onClick={() => open({ ...selection, at: version })}>{version}</button>
-            <span>
-              {operation.type === "delete" ? "Deleted" : "Written"} by {operation.author} ·{" "}
-              {operation.updatedAt ?? "earlier log"}
-            </span>
-            {operation.overwrote && (
-              <p>
-                replaced a change you did not see ·{" "}
-                <button onClick={() => open({ ...selection, at: operation.overwrote })}>
-                  View replaced version
+        {rows.toReversed().map((change, index) => (
+          <div key={`${change.headers.txid}:${index}`} className="history-entry">
+            {"value" in change ? (
+              <>
+                <button onClick={() => open({ ...selection, at: change.value.version })}>
+                  {change.value.version}
                 </button>
-              </p>
+                <span>
+                  Written by {change.value.author} · {change.headers.timestamp ?? "earlier log"}
+                </span>
+              </>
+            ) : (
+              <span>Deleted · {change.headers.timestamp ?? "earlier log"}</span>
             )}
           </div>
         ))}

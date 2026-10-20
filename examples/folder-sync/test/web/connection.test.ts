@@ -32,7 +32,7 @@ for (const event of ["online", "visibilitychange"]) {
     connection.subscribe(() => {
       if (!connection.isOnline()) failed();
     });
-    const read = connection.fetch("http://localhost/streams/manifest?offset=known");
+    const read = connection.fetch("http://localhost/streams/folders/646f6373/files?offset=known");
     await offline;
     target.dispatchEvent(new Event(event));
     expect(await (await read).text()).toBe("live");
@@ -67,7 +67,11 @@ test("closing the stream aborts its offline retry wait", async () => {
 
   connection.subscribe(failed);
   const controller = new AbortController();
-  const read = connection.fetch("http://localhost/streams/manifest", { signal: controller.signal });
+
+  const read = connection.fetch("http://localhost/streams/folders/646f6373/files", {
+    signal: controller.signal,
+  });
+
   const ended = read.catch((error: Error) => error);
   await offline;
   controller.abort();

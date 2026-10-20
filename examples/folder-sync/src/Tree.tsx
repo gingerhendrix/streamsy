@@ -1,13 +1,15 @@
-import type { ManifestFile } from "../server/streams.ts";
+import type { File } from "../server/domain.ts";
 import type { Selection } from "./client.ts";
+
+export type TreeFile = File & { folderId: string };
 
 export interface Branch {
   name: string;
   children: Map<string, Branch>;
-  file?: ManifestFile;
+  file?: TreeFile;
 }
 
-export const fileTree = (files: ReadonlyArray<ManifestFile>) => {
+export const fileTree = (files: ReadonlyArray<TreeFile>) => {
   const root: Branch = { name: "", children: new Map() };
 
   for (const file of files) {
