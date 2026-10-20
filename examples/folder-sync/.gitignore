@@ -6,3 +6,4 @@ public/web/
 mirror-*/
 public/worker/
 .alchemy/
+*.sqlite.blobs/

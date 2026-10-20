@@ -1,226 +1,190 @@
-import { BunHttpServer } from "@effect/platform-bun";
-import { OffsetMismatch, StorageFault, StreamId } from "@streamsy/core";
-import { it } from "@effect/vitest";
-import { afterAll, expect } from "vitest";
-import { Effect, Layer, Schema } from "effect";
-import { HttpRouter } from "effect/http";
-import { ApiLive } from "../server/api.ts";
-import { FileOp, Version } from "../server/domain.ts";
-import { FolderStoreLive, Initialise, NoWriteHook, WriteHook } from "../server/folder-store.ts";
-import { memoryHost, sqliteHost } from "../server/storage.ts";
+/* oxlint-disable effecttsgo/async-function -- Native HTTP protocol boundary tests. */
+import { Schema } from "effect";
+import { test, expect } from "vitest";
+import { FILE_LIMIT, INLINE_LIMIT } from "../server/domain.ts";
+import { protocolHost, writerToken } from "./protocol-host.ts";
 
-const web = HttpRouter.toWebHandler(
-  ApiLive.pipe(
-    Layer.provide(Initialise),
-    Layer.provide(FolderStoreLive),
-    Layer.provide(NoWriteHook),
-    Layer.provide([memoryHost, BunHttpServer.layerHttpServices]),
-  ),
-  { disableLogger: true },
-);
+const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
-afterAll(() => web.dispose());
+const call = (
+  host: ReturnType<typeof protocolHost>,
+  path: string,
+  method = "GET",
+  body?: Schema.Json,
+  headers: Record<string, string> = {},
+) => {
+  const init: RequestInit = {
+    method,
+    headers: {
+      authorization: `Bearer ${writerToken}`,
+      "content-type": "application/json",
+      ...headers,
+    },
+  };
 
-const send = (request: Request) => Effect.promise(() => web.handler(request));
+  if (body !== undefined) init.body = Schema.is(Schema.String)(body) ? body : JSON.stringify(body);
 
-const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
-
-const metadata = {
-  "x-file-op-id": encodeURIComponent("op/雪%"),
-  "x-file-author": encodeURIComponent("Zoë"),
-  "x-file-origin": encodeURIComponent("client/雪%"),
+  return host.fetch(new Request(`http://localhost${path}`, init));
 };
 
-const create = (folderId: string) =>
-  send(
-    new Request("http://localhost/api/folders", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: Schema.encodeSync(
-        Schema.fromJsonString(Schema.Struct({ folderId: Schema.String, title: Schema.String })),
-      )({ folderId, title: "API test" }),
-    }),
-  );
+const commit = (text: string, txid: string) => ({
+  txid,
+  author: "Zoë",
+  hash: digest(text),
+  size: new TextEncoder().encode(text).length,
+  text,
+});
 
-it.live("folder ID boundaries work after URL decoding and invalid creates answer 400", () =>
-  Effect.gen(function* () {
-    for (const folderId of [
-      "a".repeat(100),
-      "/".repeat(100),
-      "%".repeat(100),
-      "雪".repeat(83),
-      "😀".repeat(50),
-    ]) {
-      expect((yield* create(folderId)).status).toBe(200);
-      const url = `http://localhost/api/folders/${encodeURIComponent(folderId)}/files/a`;
-      expect(
-        (yield* send(new Request(url, { method: "PUT", headers: metadata, body: folderId })))
-          .status,
-      ).toBe(200);
-      const read = yield* send(new Request(url));
-      expect(read.status).toBe(200);
-      expect(yield* Effect.promise(() => read.text())).toBe(folderId);
-      expect(
-        (yield* send(
-          new Request(`http://localhost/api/folders/${encodeURIComponent(folderId)}/history/a`),
-        )).status,
-      ).toBe(200);
-      expect(
-        (yield* send(
-          new Request(url, {
-            method: "DELETE",
-            headers: { ...metadata, "x-file-op-id": "delete" },
-          }),
-        )).status,
-      ).toBe(200);
-    }
+test("JSON writes, ETags, preconditions, no-op txids and State stream reads", async () => {
+  const host = protocolHost();
 
-    for (const folderId of ["a".repeat(101), "雪".repeat(84)]) {
-      const rejected = yield* create(folderId);
-      expect(rejected.status).toBe(400);
-      expect(yield* Effect.promise(() => rejected.text())).toContain(
-        "100 decoded UTF-16 code units and 249 UTF-8 bytes",
+  try {
+    const created = { txid: "create", folderId: "docs/雪", title: "Docs" };
+    expect((await call(host, "/api/folders", "POST", created)).status).toBe(200);
+    expect((await call(host, "/api/folders", "POST", created)).status).toBe(200);
+    expect(
+      (await call(host, "/api/folders", "POST", { ...created, title: "Different" })).status,
+    ).toBe(409);
+    const url = "/api/folders/docs%2F%E9%9B%AA/files/a";
+    const first = await call(host, url, "PUT", commit("one", "first"), { "if-none-match": "*" });
+    expect(first.status).toBe(200);
+    expect(first.headers.get("etag")).toBe('"1"');
+    const firstHead = await first.json();
+    const noop = await call(host, url, "PUT", commit("one", "other"), { "if-none-match": "*" });
+    expect(noop.status).toBe(200);
+    expect(await noop.json()).toEqual(firstHead);
+
+    const staleCreate = await call(host, url, "PUT", commit("two", "second"), {
+      "if-none-match": "*",
+    });
+
+    expect(staleCreate.status).toBe(412);
+    expect(await staleCreate.json()).toEqual(firstHead);
+    expect(
+      (await call(host, url, "PUT", commit("two", "second"), { "if-match": '"1"' })).status,
+    ).toBe(200);
+    expect(
+      (await call(host, url, "PUT", commit("one", "first"), { "if-match": '"1"' })).status,
+    ).toBe(412);
+    const read = await call(host, url);
+    expect(await read.text()).toBe("two");
+    expect(read.headers.get("etag")).toBe('"2"');
+    expect(
+      (await call(host, url, "DELETE", { txid: "bad", author: "test" }, { "if-none-match": "*" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await call(host, url, "DELETE", { txid: "delete", author: "test" }, { "if-match": '"2"' }))
+        .status,
+    ).toBe(200);
+    expect((await call(host, url)).status).toBe(404);
+    const absent = await call(host, url, "PUT", commit("three", "third"), { "if-match": '"2"' });
+    expect(absent.status).toBe(412);
+    expect(await absent.json()).toEqual({ head: null });
+    expect(
+      (
+        await call(host, url, "PUT", commit("three", "third"), { "if-none-match": "*" })
+      ).headers.get("etag"),
+    ).toBe('"3"');
+    expect(
+      (await call(host, url, "PUT", commit("one", "first"), { "if-match": '"1"' })).status,
+    ).toBe(412);
+    const stream = "/streams/folders/646f63732fe99baa/files";
+    const changes = await (await call(host, `${stream}?offset=-1`)).json();
+    expect(changes.map((row: { headers: { operation: string } }) => row.headers.operation)).toEqual(
+      ["upsert", "upsert", "delete", "upsert"],
+    );
+    expect(changes.map((row: { value?: { version: number } }) => row.value?.version)).toEqual([
+      1,
+      2,
+      undefined,
+      3,
+    ]);
+    expect(changes[0].headers.txid).toBe("first");
+
+    for (const target of ["/streams/folders", stream])
+      for (const method of ["PUT", "POST", "DELETE"])
+        expect((await call(host, target, method, "[]")).status).toBe(405);
+    expect((await call(host, "/api/folders/docs/history/a")).status).toBe(404);
+    expect(
+      (await call(host, url, "PUT", { ...commit("bad", "bad"), hash: digest("wrong") })).status,
+    ).toBe(400);
+    expect((await call(host, url, "PUT", commit("null\0", "bad"))).status).toBe(400);
+    expect(
+      (await call(host, url, "PUT", commit("x".repeat(INLINE_LIMIT + 1), "large-inline"))).status,
+    ).toBe(400);
+    expect(
+      (await call(host, url, "PUT", { ...commit("x", "oversize"), size: FILE_LIMIT + 1 })).status,
+    ).toBe(413);
+  } finally {
+    await host.stop();
+  }
+});
+
+test("blob routes verify hashes, sizes and existence; bytes use immutable reads", async () => {
+  const host = protocolHost();
+
+  try {
+    await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    const hash = digest("binary\0");
+    const blob = `/api/blobs/${hash}`;
+    const reference = { txid: "blob", author: "test", hash, size: 7 };
+    const file = "/api/folders/docs/files/binary";
+    const missing = await call(host, file, "PUT", reference);
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toEqual({ error: "blob-missing", hash });
+    expect((await call(host, blob, "HEAD")).status).toBe(404);
+    expect((await call(host, blob, "PUT", "wrong")).status).toBe(400);
+    expect((await call(host, blob, "HEAD")).status).toBe(404);
+    expect((await call(host, blob, "PUT", "binary\0")).status).toBe(200);
+    const head = await call(host, blob, "HEAD");
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-length")).toBe("7");
+    expect((await call(host, blob, "PUT", "ignored repeat")).status).toBe(200);
+    const bytes = await call(host, blob);
+    expect(await bytes.text()).toBe("binary\0");
+    expect(bytes.headers.get("cache-control")).toContain("immutable");
+    expect((await call(host, file, "PUT", { ...reference, size: 8 })).status).toBe(409);
+    expect((await call(host, file, "PUT", reference)).status).toBe(200);
+    const content = await call(host, file);
+    expect(await content.text()).toBe("binary\0");
+    expect(content.headers.get("etag")).toBe('"1"');
+    expect(
+      (
+        await call(host, `/api/blobs/${digest("new")}`, "PUT", "", {
+          "content-length": String(FILE_LIMIT + 1),
+        })
+      ).status,
+    ).toBe(413);
+    expect((await call(host, file, "PUT", commit("x".repeat(INLINE_LIMIT), "exact"))).status).toBe(
+      200,
+    );
+  } finally {
+    await host.stop();
+  }
+});
+
+test("every write requires the writer token; reads stay public", async () => {
+  const host = protocolHost();
+
+  try {
+    for (const authorization of ["", "Bearer wrong"]) {
+      const response = await call(
+        host,
+        "/api/folders",
+        "POST",
+        { txid: "auth", folderId: "docs", title: "Docs" },
+        { authorization },
       );
+
+      expect(response.status).toBe(401);
     }
-  }),
-);
-
-it.live("metadata headers round trip Unicode and literal percent signs on PUT and DELETE", () =>
-  Effect.gen(function* () {
-    yield* create("metadata");
-    const url = "http://localhost/api/folders/metadata/files/a";
-    const put = yield* send(new Request(url, { method: "PUT", headers: metadata, body: "text" }));
-    expect(put.status).toBe(200);
-
-    const deletion = yield* send(
-      new Request(url, {
-        method: "DELETE",
-        headers: { ...metadata, "x-file-op-id": encodeURIComponent("delete/雪%") },
-      }),
-    );
-
-    expect(deletion.status).toBe(200);
-    const response = yield* send(new Request("http://localhost/api/folders/metadata/history/a"));
-
-    const history = yield* Schema.decodeUnknownEffect(History)(
-      yield* Effect.promise(() => response.json()),
-    );
 
     expect(
-      history.map(({ operation }) => ({
-        author: operation.author,
-        origin: operation.origin,
-        opId: operation.opId,
-      })),
-    ).toEqual([
-      { author: "Zoë", origin: "client/雪%", opId: "op/雪%" },
-      { author: "Zoë", origin: "client/雪%", opId: "delete/雪%" },
-    ]);
-  }),
-);
-
-it.live(
-  "invalid percent escapes, invalid UTF-8 and invalid decoded metadata answer 400 without writes",
-  () =>
-    Effect.gen(function* () {
-      yield* create("invalid-metadata");
-      const url = "http://localhost/api/folders/invalid-metadata/files/a";
-
-      for (const method of ["PUT", "DELETE"]) {
-        for (const header of ["x-file-op-id", "x-file-author", "x-file-origin"]) {
-          for (const value of ["%", "%GG", "%C3", "%FF", "%00", ""]) {
-            const request = new Request(url, { method, headers: { ...metadata, [header]: value } });
-            expect((yield* send(request)).status).toBe(400);
-          }
-        }
-      }
-
-      const response = yield* send(
-        new Request("http://localhost/api/folders/invalid-metadata/history/a"),
-      );
-
-      expect(
-        yield* Schema.decodeUnknownEffect(History)(yield* Effect.promise(() => response.json())),
-      ).toEqual([]);
-    }),
-);
-
-for (const [host, storage] of [
-  ["memory", memoryHost],
-  ["sqlite", sqliteHost(":memory:")],
-] as const) {
-  it.live(
-    `${host}: hook storage and append failures answer 500 and preserve the previous head`,
-    () =>
-      Effect.gen(function* () {
-        for (const fault of [
-          new StorageFault({
-            operation: "hook.append",
-            message: "disk unavailable",
-            retryable: true,
-          }),
-          new OffsetMismatch({ id: StreamId.make("hook-events"), expected: "a", actual: "b" }),
-        ]) {
-          const edge = yield* Effect.acquireRelease(
-            Effect.sync(() =>
-              HttpRouter.toWebHandler(
-                ApiLive.pipe(
-                  Layer.provide(Initialise),
-                  Layer.provide(FolderStoreLive),
-                  Layer.provide(
-                    Layer.succeed(WriteHook, {
-                      committed: (_folderId, operation) =>
-                        operation.opId === "failing" ? Effect.fail(fault) : Effect.void,
-                    }),
-                  ),
-                  Layer.provide([storage, BunHttpServer.layerHttpServices]),
-                ),
-                { disableLogger: true },
-              ),
-            ),
-            (server) => Effect.promise(() => server.dispose()),
-          );
-
-          const call = (request: Request) => Effect.promise(() => edge.handler(request));
-
-          const folder = yield* call(
-            new Request("http://localhost/api/folders", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: '{"folderId":"hook","title":"Hook"}',
-            }),
-          );
-
-          expect(folder.status).toBe(200);
-          const url = "http://localhost/api/folders/hook/files/a";
-
-          const initial = yield* call(
-            new Request(url, { method: "PUT", headers: metadata, body: "initial" }),
-          );
-
-          expect(initial.status).toBe(200);
-
-          const failed = yield* call(
-            new Request(url, {
-              method: "PUT",
-              headers: { ...metadata, "x-file-op-id": "failing" },
-              body: "must roll back",
-            }),
-          );
-
-          expect(failed.status).toBe(500);
-          expect(yield* Effect.promise(() => failed.json())).toMatchObject({
-            error: "Storage failure",
-          });
-          const head = yield* call(new Request(url));
-          expect(yield* Effect.promise(() => head.text())).toBe("initial");
-          const response = yield* call(new Request("http://localhost/api/folders/hook/history/a"));
-          expect(
-            yield* Schema.decodeUnknownEffect(History)(
-              yield* Effect.promise(() => response.json()),
-            ),
-          ).toHaveLength(1);
-        }
-      }),
-  );
-}
+      (await call(host, "/streams/folders?offset=-1", "GET", undefined, { authorization: "" }))
+        .status,
+    ).toBe(200);
+  } finally {
+    await host.stop();
+  }
+});

@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Layer, Path, Stream } from "effect";
+import { Effect, FileSystem, Layer, Path, Stream, Option } from "effect";
 import { Predicate } from "effect";
 import { BlobFailure, BlobStore } from "./blob-store.ts";
 import { FILE_LIMIT, FileTooLarge, InvalidFile } from "./domain.ts";
@@ -17,11 +17,12 @@ export const diskBlobs = (directory: string) =>
 
       const head = Effect.fn("BlobStore.disk.head")(function* (hash: string) {
         return yield* fs.stat(path.join(directory, hash)).pipe(
-          Effect.map((info) => Number(info.size)),
+          Effect.map((info) => Option.some(Number(info.size))),
           Effect.catchIf(
             (error) => Predicate.isTagged(error.reason, "NotFound"),
-            () => Effect.void,
+            () => Effect.succeed(Option.none<number>()),
           ),
+          Effect.map(Option.getOrUndefined),
           Effect.mapError(failure),
         );
       });
@@ -66,6 +67,8 @@ export const diskBlobs = (directory: string) =>
               yield* fs
                 .rename(temporary, path.join(directory, hash))
                 .pipe(Effect.mapError(failure));
+
+              return undefined;
             }),
           );
         }),

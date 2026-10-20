@@ -91,7 +91,10 @@ const make = Effect.gen(function* () {
 
         return size === undefined
           ? json({ error: "Blob not found" }, { status: 404 })
-          : HttpServerResponse.empty({ headers: { ...headers, "content-length": String(size) } });
+          : HttpServerResponse.empty({
+              status: 200,
+              headers: { ...headers, "content-length": String(size) },
+            });
       }
 
       if (method === "GET") {
