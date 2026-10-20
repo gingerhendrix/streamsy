@@ -6,5 +6,4 @@ export interface Env {
   readonly BLOBS: R2Bucket;
   readonly ASSETS: Fetcher;
   readonly WRITER_TOKEN: string;
-  readonly TEST_HOOKS?: string;
 }

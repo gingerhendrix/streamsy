@@ -2,7 +2,7 @@
 import { Schema } from "effect";
 import { test, expect } from "vitest";
 import { FILE_LIMIT, INLINE_LIMIT } from "../server/domain.ts";
-import { JSON_BODY_LIMIT } from "../server/api.ts";
+import { JSON_BODY_LIMIT } from "../server/http.ts";
 import { protocolHost, writerToken } from "./protocol-host.ts";
 
 const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");

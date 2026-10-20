@@ -1,4 +1,4 @@
-import { StreamGone, ZERO_OFFSET } from "@streamsy/core";
+import { StorageFault, StreamGone, ZERO_OFFSET } from "@streamsy/core";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -18,7 +18,8 @@ import type { FileMessage } from "../server/messages.ts";
 import { BlobStore } from "../server/blob-store.ts";
 import { Precondition, prepareContent } from "../server/domain.ts";
 import { Files, Folders } from "../server/streams.ts";
-import { makeIndexReader } from "../worker/index-reader.ts";
+import { IndexRunner, IndexRunnerLive } from "../worker/index-runner.ts";
+import { registerFolder } from "../server/folder-registry.ts";
 import { sqliteHost } from "../server/storage.ts";
 
 class NotReady extends Schema.TaggedError<NotReady>()("NotReady", {}) {}
@@ -216,91 +217,67 @@ layer(graph, { excludeTestServices: true })((it) => {
     }),
   );
 
-  it.effect("Worker reset applies the rest of the page and lets another folder catch up", () =>
+  it.effect("Worker runner indexes registered folders and skips one with no stream yet", () =>
     Effect.gen(function* () {
       yield* initialiseSearch;
-      const sql = yield* SqlClient.SqlClient;
       const store = yield* FolderStore;
       const index = yield* FileIndex;
-      yield* store.create("reset-worker", "Reset", "reset");
-      yield* store.create("other-worker", "Other", "other");
-      yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_cursors (folderId TEXT PRIMARY KEY, cursor TEXT NOT NULL)`;
-      yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, dropPings INTEGER NOT NULL)`;
-      yield* sql`INSERT INTO folder_sync_test VALUES (1, 0) ON CONFLICT DO NOTHING`;
-      const reads: string[] = [];
+      const content = yield* prepareContent(new TextEncoder().encode("needle"));
+      yield* store.create("runner-a", "A", "runner-a");
+      // The Worker registers a folder before its object creates the stream.
+      yield* registerFolder({ folderId: "runner-pending", title: "Pending", txid: "pending" });
+      yield* store.commit("runner-a", "a.md", { ...content, author: "test", txid: "a" });
 
-      const reader = yield* makeIndexReader((folderId, _key, cursor) => {
-        if (!["reset-worker", "other-worker"].includes(folderId))
-          return Promise.resolve(new Response(null, { status: 404 }));
-        reads.push(`${folderId}:${cursor}`);
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each test builds one runner over the shared test graph.
+      const runner = yield* IndexRunner.pipe(Effect.provide(IndexRunnerLive));
+      yield* runner.catchup;
 
-        const rows =
-          folderId === "reset-worker"
-            ? [fileMessage("before"), reset, fileMessage("after")]
-            : [fileMessage("other")];
+      const paths = index
+        .list({ folder: "runner-a" })
+        .pipe(Effect.map((rows) => rows.map((row) => row.path)));
 
-        return Promise.resolve(
-          Response.json(cursor === "-1" ? rows : [], {
-            headers: { "stream-next-offset": "0000000000000001", "stream-up-to-date": "true" },
-          }),
-        );
-      });
+      expect(yield* paths).toEqual(["a.md"]);
 
-      yield* reader.catchup;
-      expect((yield* index.list({ folder: "reset-worker" })).map((row) => row.path)).toEqual([
-        "after",
-      ]);
-      expect((yield* index.list({ folder: "other-worker" })).map((row) => row.path)).toEqual([
-        "other",
-      ]);
-      expect(reads).toHaveLength(2);
-      yield* reader.catchup;
-      expect(reads.slice(2).every((read) => !read.endsWith(":-1"))).toBe(true);
+      // A ping folds on from the saved checkpoint.
+      yield* store.commit("runner-a", "b.md", { ...content, author: "test", txid: "b" });
+      yield* runner.moved("runner-a");
+      expect(yield* paths).toEqual(["a.md", "b.md"]);
+      yield* runner.moved("runner-pending");
     }),
   );
 
-  it.effect(
-    "Worker 410 retries -1 once; an unavailable bootstrap does not block other folders",
-    () =>
-      Effect.gen(function* () {
-        yield* initialiseSearch;
-        const sql = yield* SqlClient.SqlClient;
-        const store = yield* FolderStore;
-        const index = yield* FileIndex;
-        yield* store.create("gone-worker", "Gone", "gone");
-        yield* store.create("healthy-worker", "Healthy", "healthy");
-        yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_cursors (folderId TEXT PRIMARY KEY, cursor TEXT NOT NULL)`;
-        yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, dropPings INTEGER NOT NULL)`;
-        yield* sql`INSERT INTO folder_sync_test VALUES (1, 0) ON CONFLICT DO NOTHING`;
-        yield* sql`INSERT INTO folder_sync_cursors VALUES ('gone-worker', 'old')`;
-        const offsets: string[] = [];
-        let bootstrapGone = false;
+  it.effect("Worker catch-up reports a failing folder and still indexes the others", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      const files = yield* Files;
+      const content = yield* prepareContent(new TextEncoder().encode("needle"));
+      yield* store.create("runner-broken", "Broken", "runner-broken");
+      yield* store.create("runner-healthy", "Healthy", "runner-healthy");
+      yield* store.commit("runner-healthy", "h.md", { ...content, author: "test", txid: "h" });
+      const broken = Files.at({ folderId: "runner-broken" }).id;
 
-        const reader = yield* makeIndexReader((folderId, _key, cursor) => {
-          if (!["gone-worker", "healthy-worker"].includes(folderId))
-            return Promise.resolve(new Response(null, { status: 404 }));
+      const runner = yield* IndexRunner.pipe(
+        // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The runner reads through a Files service with one failing folder.
+        Effect.provide(IndexRunnerLive),
+        Effect.provideService(Files, {
+          ...files,
+          wire: {
+            ...files.wire,
+            read: (id, options) =>
+              id === broken
+                ? Effect.fail(
+                    new StorageFault({ operation: "read", message: "down", retryable: true }),
+                  )
+                : files.wire.read(id, options),
+          },
+        }),
+      );
 
-          if (folderId === "gone-worker") {
-            offsets.push(cursor);
-
-            if (cursor !== "-1" || bootstrapGone)
-              return Promise.resolve(new Response(null, { status: 410 }));
-          }
-
-          return Promise.resolve(
-            Response.json([fileMessage(folderId)], {
-              headers: { "stream-next-offset": "next", "stream-up-to-date": "true" },
-            }),
-          );
-        });
-
-        yield* reader.catchup;
-        expect(offsets).toEqual(["old", "-1"]);
-        bootstrapGone = true;
-        expect(Result.isFailure(yield* Effect.result(reader.catchup))).toBe(true);
-        expect(offsets.slice(2)).toEqual(["next", "-1"]);
-        expect(yield* index.list({ folder: "healthy-worker" })).toHaveLength(1);
-      }),
+      expect(Result.isFailure(yield* Effect.result(runner.catchup))).toBe(true);
+      expect(yield* index.list({ folder: "runner-healthy" })).toHaveLength(1);
+    }),
   );
 
   it.effect("blob page preparation stages each prefix before fetching the next", () =>

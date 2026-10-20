@@ -1,63 +1,115 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault, Streamsy } from "@streamsy/core";
+import { RemoteStreams } from "@streamsy/core/remote";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { SqlClient } from "effect/sql";
-import { HealthLive, jsonBody } from "../server/api.ts";
+import { Cause, ConfigProvider, Context, Effect, Layer, Option, Schema } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse,
+} from "effect/http";
+import { HealthLive } from "../server/api.ts";
 import { CreateFolder, FolderId } from "../server/domain.ts";
 import { FileIndexLive } from "../server/file-index.ts";
 import { registerFolder } from "../server/folder-registry.ts";
+import { createFailures, FolderCreateFailed, folderRoutes } from "../server/folder-routes.ts";
+import { jsonBody, WriterTokenLive } from "../server/http.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
 import { initialiseSearch } from "../server/search-index.ts";
-import { IndexReader, indexReaderLayer } from "./index-reader.ts";
-import { Folders } from "../server/streams.ts";
+import { Files, FolderKey, Folders } from "../server/streams.ts";
 import type { Env } from "./env.ts";
+import { IndexRunner, IndexRunnerLive } from "./index-runner.ts";
+import { folderObject } from "./placement.ts";
 import { objectStorage } from "./storage.ts";
 
-const IndexInternal = Layer.mergeAll(
-  HttpRouter.add(
-    "POST",
-    "/__register",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const input = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
+/** Creates a registered folder's `Files` stream in its folder object. */
+class FolderStreams extends Context.Service<
+  FolderStreams,
+  {
+    readonly create: (input: {
+      readonly folderId: string;
+      readonly title: string;
+      readonly txid: string;
+    }) => Effect.Effect<void, FolderCreateFailed>;
+  }
+>()("FolderSync/FolderStreams") {}
 
-      // The folder object creates the Files stream after this registration (P17).
-      return HttpServerResponse.jsonUnsafe(yield* registerFolder(input));
-    }).pipe(
-      Effect.catchTags({
-        FolderConflict: ({ message }) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: message }, { status: 409 })),
-        JsonBodyTooLarge: () =>
-          Effect.succeed(
-            HttpServerResponse.jsonUnsafe(
-              { error: "JSON write bodies must be at most 512 KiB" },
-              { status: 413 },
-            ),
+const folderStreams = (env: Env) =>
+  Layer.succeed(
+    FolderStreams,
+    FolderStreams.of({
+      create: (input) =>
+        Schema.encodeEffect(Schema.fromJsonString(CreateFolder))(input).pipe(
+          Effect.catchTag("SchemaError", (cause) => Effect.fail(new FolderCreateFailed({ cause }))),
+          Effect.flatMap((body) =>
+            Effect.tryPromise({
+              try: (signal) =>
+                folderObject(env, input.folderId)
+                  .fetch("https://internal/__create", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body,
+                    signal,
+                  })
+                  .then((response) => {
+                    if (!response.ok) throw new Error(`Folder create answered ${response.status}`);
+
+                    return response.text();
+                  }),
+              catch: (cause) => new FolderCreateFailed({ cause }),
+            }),
           ),
-        SchemaError: () =>
-          Effect.succeed(
-            HttpServerResponse.jsonUnsafe({ error: "Invalid request" }, { status: 400 }),
-          ),
-        HttpServerError: () =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: "Invalid body" }, { status: 400 })),
-      }),
-      Effect.orDie,
+          Effect.asVoid,
+        ),
+    }),
+  );
+
+/** An HTTP client whose stream reads go to the folder object that owns each stream. */
+const folderObjectClient = (env: Env) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.map(HttpClient.HttpClient, (client) =>
+      HttpClient.transform(client, (response) =>
+        Effect.provideService(response, FetchHttpClient.Fetch, (input, init) => {
+          const request = new Request(input, init);
+          const match = /^\/streams\/folders\/([^/]+)\/files$/.exec(new URL(request.url).pathname);
+
+          return Option.match(Schema.decodeOption(FolderKey)(match?.[1] ?? ""), {
+            onNone: () => Promise.resolve(new Response(null, { status: 404 })),
+            onSome: (folderId) => folderObject(env, folderId).fetch(request),
+          });
+        }),
+      ),
+    ),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** `Files` on the index object reads every folder through its owner. */
+const remoteFiles = (env: Env) =>
+  RemoteStreams.layer(Streamsy.group(Files), { baseUrl: "https://internal/streams" }).pipe(
+    Layer.provide(folderObjectClient(env)),
+  );
+
+const IndexInternal = Layer.mergeAll(
+  // The Worker edge checked the token, and this route checks it again.
+  // Registration comes first: a crash leaves a discoverable folder that a retry can finish.
+  HttpRouter.addAll(
+    folderRoutes((input) =>
+      createFailures(
+        registerFolder(input).pipe(
+          Effect.tap(() => Effect.flatMap(FolderStreams, (streams) => streams.create(input))),
+        ),
+      ),
     ),
   ),
   HttpRouter.add(
     "POST",
     "/__moved",
     Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-
-      const input = yield* Schema.decodeUnknownEffect(Schema.Struct({ folderId: FolderId }))(
-        yield* request.json,
-      );
-
-      yield* (yield* IndexReader).moved(input.folderId);
+      const input = yield* jsonBody(Schema.Struct({ folderId: FolderId }));
+      yield* (yield* IndexRunner).moved(input.folderId);
 
       return HttpServerResponse.text("indexed");
     }).pipe(Effect.orDie),
@@ -66,7 +118,7 @@ const IndexInternal = Layer.mergeAll(
     "POST",
     "/__catchup",
     Effect.gen(function* () {
-      yield* (yield* IndexReader).catchup;
+      yield* (yield* IndexRunner).catchup;
 
       return HttpServerResponse.text("indexed");
     }).pipe(
@@ -79,46 +131,25 @@ const IndexInternal = Layer.mergeAll(
       ),
     ),
   ),
-  HttpRouter.add(
-    "POST",
-    "/__test/index",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-
-      const input = yield* Schema.decodeUnknownEffect(Schema.Struct({ dropPings: Schema.Boolean }))(
-        yield* request.json,
-      );
-
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE folder_sync_test SET dropPings = ${Number(input.dropPings)} WHERE id = 1`;
-
-      return HttpServerResponse.text("configured");
-    }).pipe(Effect.orDie),
-  ),
 );
 
 const indexInitialise = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* initialiseSearch;
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_cursors (folderId TEXT PRIMARY KEY, cursor TEXT NOT NULL)`;
-    yield* sql`CREATE TABLE IF NOT EXISTS folder_sync_test (id INTEGER PRIMARY KEY, dropPings INTEGER NOT NULL)`;
-    yield* sql`INSERT INTO folder_sync_test VALUES (1, 0) ON CONFLICT DO NOTHING`;
     yield* (yield* Folders).create({});
   }),
 );
 
 const indexLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(
-    FileIndexLive,
-    indexReaderLayer((folderId, key, cursor) =>
-      env.FOLDERS.get(env.FOLDERS.idFromName(folderId)).fetch(
-        `https://internal/streams/folders/${key}/files?offset=${encodeURIComponent(cursor)}`,
+  Layer.mergeAll(FileIndexLive, IndexRunnerLive, folderStreams(env), WriterTokenLive).pipe(
+    Layer.provideMerge(indexInitialise),
+    Layer.provideMerge(remoteFiles(env)),
+    Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders))),
+    Layer.provideMerge(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({ FOLDER_SYNC_WRITER_TOKEN: env.WRITER_TOKEN }),
       ),
     ),
-  ).pipe(
-    Layer.provideMerge(indexInitialise),
-    Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders))),
     Layer.catchCause((cause) =>
       Layer.effectContext(
         Effect.fail(

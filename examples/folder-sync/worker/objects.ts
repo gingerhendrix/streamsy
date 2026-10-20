@@ -1,12 +1,14 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault } from "@streamsy/core";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, ConfigProvider, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { ApiRequestLive, HealthLive, jsonBody } from "../server/api.ts";
+import { Cause, ConfigProvider, Effect, Layer } from "effect";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { FolderApiRequestLive, HealthLive } from "../server/api.ts";
 import { CreateFolder } from "../server/domain.ts";
 import { FolderStoreLive, initialiseFolder } from "../server/folder-store.ts";
 import { mountFiles } from "../server/file-stream.ts";
+import { jsonBody, WriterTokenLive } from "../server/http.ts";
+import { indexObject } from "./placement.ts";
 import { objectStorage } from "./storage.ts";
 import type { Env } from "./env.ts";
 
@@ -14,8 +16,7 @@ const FolderInternal = HttpRouter.add(
   "POST",
   "/__create",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const body = yield* Schema.decodeUnknownEffect(CreateFolder)(yield* jsonBody(request));
+    const body = yield* jsonBody(CreateFolder);
     yield* initialiseFolder(body.folderId);
 
     return HttpServerResponse.jsonUnsafe({ folderId: body.folderId, title: body.title });
@@ -25,7 +26,7 @@ const FolderInternal = HttpRouter.add(
 const folderLayer = (state: DurableObjectState, env: Env) => {
   const storage = objectStorage(state, env);
 
-  return FolderStoreLive.pipe(
+  return Layer.merge(FolderStoreLive, WriterTokenLive).pipe(
     Layer.provideMerge(storage),
     Layer.provideMerge(
       ConfigProvider.layer(
@@ -47,7 +48,7 @@ const folderLayer = (state: DurableObjectState, env: Env) => {
 };
 
 const FolderApp = Layer.mergeAll(
-  ApiRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
+  FolderApiRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
   HealthLive,
   FolderInternal,
   mountFiles(),
@@ -65,9 +66,10 @@ export class FolderObject extends StreamsyObject.make<
     if (response.ok && ["PUT", "DELETE"].includes(request.method) && match?.[1]) {
       const folderId = decodeURIComponent(match[1]);
       this.ctx.waitUntil(
-        this.env.INDEX.get(this.env.INDEX.idFromName("index"))
+        indexObject(this.env)
           .fetch("https://internal/__moved", {
             method: "POST",
+            headers: { "content-type": "application/json" },
             body: JSON.stringify({ folderId }),
           })
           .then((result) => {

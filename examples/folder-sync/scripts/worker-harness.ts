@@ -10,7 +10,8 @@ export const startWorker = async (
 ) => {
   const mf = new Miniflare({
     name: "folder-sync",
-    scriptPath: `${import.meta.dir}/../public/worker/index.js`,
+    // The test entry is the production entry plus the switches in test/worker/test-worker.ts.
+    scriptPath: `${import.meta.dir}/../public/worker/${testHooks ? "test-worker" : "index"}.js`,
     modules: true,
     compatibilityDate: "2026-08-06",
     compatibilityFlags: ["nodejs_compat"],
@@ -24,7 +25,7 @@ export const startWorker = async (
     durableObjectsPersist: `${directory}/objects`,
     r2Buckets: ["BLOBS"],
     r2Persist: `${directory}/r2`,
-    bindings: { WRITER_TOKEN: token, TEST_HOOKS: String(testHooks) },
+    bindings: { WRITER_TOKEN: token },
     assets: {
       directory: `${import.meta.dir}/../public/web`,
       binding: "ASSETS",

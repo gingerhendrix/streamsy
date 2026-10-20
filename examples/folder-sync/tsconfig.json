@@ -15,5 +15,5 @@
     "vite.config.ts",
     "vitest.config.ts"
   ],
-  "exclude": ["worker"]
+  "exclude": ["worker", "test/worker/test-worker.ts"]
 }
