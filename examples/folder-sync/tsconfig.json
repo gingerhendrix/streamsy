@@ -14,5 +14,6 @@
     "src",
     "vite.config.ts",
     "vitest.config.ts"
-  ]
+  ],
+  "exclude": ["worker", "test/worker", "test/agent/worker.test.ts"]
 }

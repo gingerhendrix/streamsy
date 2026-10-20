@@ -1,7 +1,7 @@
 import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { sha256, Version } from "../server/domain.ts";
+import { prepareContent, Version } from "../server/domain.ts";
 import { encodeFilePath } from "../sync/decisions.ts";
 
 class SeedFailure extends Schema.TaggedError<SeedFailure>()("SeedFailure", {
@@ -39,6 +39,7 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
     if (!created.has(location.folderId)) {
       const response = yield* HttpClient.post(`${root}/api/folders`, {
         body: HttpBody.jsonUnsafe({
+          txid: `seed-folder:${location.folderId}`,
           folderId: location.folderId,
           title: `Streamsy ${location.folderId.slice(5)}`,
         }),
@@ -50,27 +51,27 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
     }
 
     const bytes = yield* fs.readFile(absolute);
-    const hash = yield* sha256(bytes);
+    const content = yield* prepareContent(bytes);
+    const hash = content.hash;
     const url = `${root}/api/folders/${encodeURIComponent(location.folderId)}/files/${encodeFilePath(location.path)}`;
-    const head = yield* HttpClient.get(url);
-
-    if (head.status !== 200 && head.status !== 404)
-      return yield* new SeedFailure({ message: `Head read answered ${head.status}` });
-    const base = head.headers["x-file-version"];
 
     const key = yield* Schema.encodeEffect(
       Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
     )([location.folderId, location.path, hash]);
 
-    const headers = {
-      "x-file-author": encodeURIComponent("docs seed"),
-      "x-file-origin": encodeURIComponent("seed"),
-      "x-file-op-id": encodeURIComponent(`seed:${key}`),
-    };
+    if (content.text === undefined) {
+      const upload = yield* HttpClient.put(`${root}/api/blobs/${hash}`, {
+        body: HttpBody.uint8Array(bytes),
+      });
+
+      if (upload.status !== 200)
+        return yield* new SeedFailure({
+          message: `${relative}: blob upload answered ${upload.status}`,
+        });
+    }
 
     const response = yield* HttpClient.put(url, {
-      headers: base === undefined ? headers : { ...headers, "x-file-base": base },
-      body: HttpBody.uint8Array(bytes),
+      body: HttpBody.jsonUnsafe({ ...content, txid: `seed:${key}`, author: "docs seed" }),
     });
 
     if (response.status !== 200)

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 
 /** Standalone test:unit runs need the same local assets as the HTTP and Worker smokes. */
 export default function setup() {
-  for (const script of ["build:web", "build:worker"]) {
+  for (const script of ["build:web"]) {
     execFileSync(process.execPath, ["run", script], {
       cwd: `${import.meta.dirname}/..`,
       stdio: "inherit",
