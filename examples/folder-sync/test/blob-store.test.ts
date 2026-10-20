@@ -57,16 +57,28 @@ layer(BunServices.layer)((it) => {
       const directory = yield* testDirectory("blob-restart-");
       const fs = yield* FileSystem.FileSystem;
       const hash = "0".repeat(64);
+      const bytes = new Uint8Array([0, 1, 255]);
+      const storedHash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
       yield* Effect.scoped(
         Effect.gen(function* () {
           const context = yield* Layer.build(diskBlobs(directory));
           yield* Effect.gen(function* () {
             const blobs = yield* BlobStore;
             yield* Effect.flip(blobs.put(hash, Stream.succeed(new Uint8Array([1]))));
+            yield* blobs.put(storedHash, Stream.succeed(bytes));
           }).pipe(Effect.provideContext(context));
         }),
       );
-      expect(yield* fs.readDirectory(directory)).toEqual([]);
+      expect(yield* fs.readDirectory(directory)).toEqual([storedHash]);
+      const reopened = yield* Layer.build(Layer.fresh(diskBlobs(directory)));
+      yield* Effect.gen(function* () {
+        const blobs = yield* BlobStore;
+        expect(yield* blobs.head(storedHash)).toBe(bytes.length);
+        const content = yield* blobs.get(storedHash);
+        if (content === undefined) return yield* Effect.die("Missing reopened blob");
+        const chunks = yield* Stream.runCollect(content.body);
+        expect(Array.from(chunks).flatMap((chunk) => [...chunk])).toEqual([...bytes]);
+      }).pipe(Effect.provideContext(reopened));
     }),
   );
 });
