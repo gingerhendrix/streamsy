@@ -81,7 +81,10 @@ layer(graph, { excludeTestServices: true })((it) => {
       const logger = Logger.make(({ message }) => warnings.push(message));
       const projection = search.at({ folderId: "lost-blob" });
       yield* Projection.run(projection).pipe(
-        Effect.provideService(BlobStore, { ...blobs, get: () => Effect.void }),
+        Effect.provideService(BlobStore, {
+          ...blobs,
+          get: () => Effect.void.pipe(Effect.as(undefined)),
+        }),
         Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
       );
       expect(yield* index.list({ folder: "lost-blob" })).toMatchObject([{ path: "lost" }]);
