@@ -5,61 +5,91 @@ import { SyncState, stateLayer } from "../../sync/state.ts";
 
 layer(stateLayer(":memory:"))((it) => {
   it.effect(
-    "rejecting a rebased save settles the observed version and retains the rejected bytes",
+    "settlement rebases queued observations and rejection retains an immutable content source",
     () =>
       Effect.gen(function* () {
         const state = yield* SyncState;
-        const version = 1;
-        const hash = "a".repeat(64);
 
         const known = {
           folderId: "docs",
           path: "a.md",
-          version,
-          localVersion: version,
-          hash,
-          localHash: hash,
+          version: 1,
+          localVersion: 1,
+          hash: "a".repeat(64),
+          localHash: "b".repeat(64),
         };
 
-        yield* state.enqueue(
-          {
-            folderId: "docs",
-            path: "a.md",
-            base: version,
-            opId: "save1",
-            bytes: new TextEncoder().encode("save1"),
-            hash,
-          },
-          known,
-        );
-        yield* state.enqueue(
-          {
-            folderId: "docs",
-            path: "a.md",
-            base: version,
-            opId: "save2",
-            bytes: new TextEncoder().encode("save2"),
-            hash,
-          },
-          known,
-        );
+        for (const txid of ["first", "second"])
+          yield* state.enqueue(
+            {
+              folderId: "docs",
+              path: "a.md",
+              txid,
+              base: 1,
+              hash: "b".repeat(64),
+              size: 9,
+              source: "/cache/immutable",
+              uploaded: 0,
+            },
+            known,
+          );
         const first = (yield* state.pending())[0];
 
-        if (first === undefined) return yield* Effect.die("Missing first save");
-        const receipt = 2;
-        yield* state.dropAndRebase(first.seq, known, version, receipt);
+        if (first === undefined) return yield* Effect.die("Missing pending observation");
+        yield* state.settle(first, 2);
         const second = (yield* state.pending())[0];
+        expect(second?.base).toBe(2);
 
-        if (second === undefined) return yield* Effect.die("Missing second save");
-        yield* state.reject(second.seq, 413, "rejected save");
-        expect((yield* state.head("docs", "a.md"))?.version).toBe(receipt);
-        expect((yield* state.head("docs", "a.md"))?.localVersion).toBe(receipt);
+        if (second === undefined) return yield* Effect.die("Missing rebased observation");
+        yield* state.reject(second.seq, 413, "too large");
         expect(yield* state.pending()).toEqual([]);
-        expect(new TextDecoder().decode((yield* state.rejected())[0]?.bytes ?? undefined)).toBe(
-          "save2",
-        );
+        expect((yield* state.rejected())[0]).toMatchObject({
+          source: "/cache/immutable",
+          size: 9,
+          status: 413,
+        });
+        expect((yield* state.head("docs", "a.md"))?.localVersion).toBe(2);
 
         return yield* Effect.void;
       }),
+  );
+  it.effect("conflict retargeting preserves source and records recoverable disk intent", () =>
+    Effect.gen(function* () {
+      const state = yield* SyncState;
+      yield* state.enqueue(
+        {
+          folderId: "docs",
+          path: "b.md",
+          txid: "conflict",
+          base: 3,
+          hash: "c".repeat(64),
+          size: 7,
+          source: "/cache/c",
+          uploaded: 1,
+        },
+        {
+          folderId: "docs",
+          path: "b.md",
+          version: 3,
+          hash: "a".repeat(64),
+          localHash: "c".repeat(64),
+          localVersion: 3,
+        },
+      );
+      const op = (yield* state.pending())[0];
+
+      if (op === undefined) return yield* Effect.die("Missing conflict");
+      yield* state.conflict(op.seq, "b.conflict-copy.md", "copy");
+      expect((yield* state.pending())[0]).toMatchObject({
+        path: "b.conflict-copy.md",
+        txid: "copy",
+        base: null,
+        source: "/cache/c",
+        uploaded: 1,
+      });
+      expect(yield* state.get(`restore:${op.seq}`)).toBe("b.conflict-copy.md");
+
+      return yield* Effect.void;
+    }),
   );
 });

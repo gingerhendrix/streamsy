@@ -1,9 +1,8 @@
 import { Offset } from "@streamsy/core";
-import type { HttpClientError } from "effect/http/HttpClientError";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { FileOp, Hash, Version, VersionFromString } from "../server/domain.ts";
-import { Change, ManifestFile } from "../server/streams.ts";
+import { File, Head, INLINE_LIMIT, inlineText, VersionFromString } from "../server/domain.ts";
+import { Folder, FolderKey } from "../server/streams.ts";
 import { encodeFilePath } from "./decisions.ts";
 import type { Pending } from "./state.ts";
 
@@ -13,222 +12,231 @@ export class RemoteFailure extends Schema.TaggedError<RemoteFailure>()("RemoteFa
   status: Schema.Int,
 }) {}
 
-const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
+export class StaleFile extends Schema.TaggedError<StaleFile>()("StaleFile", {
+  head: Schema.NullOr(Head),
+}) {}
 
-const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
+export class BlobMissing extends Schema.TaggedError<BlobMissing>()("SyncBlobMissing", {}) {}
 
-export interface RemoteHead {
-  readonly version: number | null;
-  readonly hash: string | null;
-  readonly bytes: Uint8Array | null;
-}
+const headers = Schema.Struct({
+  operation: Schema.Literals(["upsert", "delete"]),
+  txid: Schema.String,
+});
 
-const reject = (status: number) =>
-  new RemoteFailure({ message: `Server answered ${status}`, retryable: false, status });
+export const FileMessage = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    key: Schema.String,
+    value: Schema.optionalKey(File),
+    headers,
+  }),
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
 
-const cursor = (headers: Readonly<Record<string, string>>) =>
-  Schema.decodeUnknownEffect(Offset)(headers["stream-next-offset"]);
+export type FileMessage = typeof FileMessage.Type;
 
-export const remoteLayer = (server: string, token?: string) =>
-  Layer.effect(
-    SyncRemote,
-    Effect.gen(function* () {
-      const client = yield* HttpClient.HttpClient;
-      const root = server.replace(/\/$/, "");
+const FolderMessage = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("folder"),
+    key: Schema.String,
+    value: Schema.optionalKey(Folder),
+    headers,
+  }),
+  Schema.Struct({ headers: Schema.Struct({ control: Schema.Literal("reset") }) }),
+]);
 
-      const fileUrl = (folderId: string, path: string) =>
-        `${root}/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}`;
+const receipt = Schema.Struct({
+  version: Schema.optionalKey(File.fields.version),
+  txid: Schema.String,
+  hash: Schema.optionalKey(Head.fields.hash),
+});
 
-      const request = Effect.fn("SyncRemote.request")(function* (
-        req: HttpClientRequest.HttpClientRequest,
-      ) {
-        const response = yield* client
-          .execute(token === undefined ? req : HttpClientRequest.bearerToken(req, token))
-          .pipe(
-            Effect.mapError(
-              (cause) => new RemoteFailure({ message: String(cause), retryable: true, status: 0 }),
-            ),
-          );
+const reject = (status: number, message = `Server answered ${status}`) =>
+  new RemoteFailure({
+    status,
+    message,
+    retryable: status === 0 || status >= 500 || [408, 429].includes(status),
+  });
 
-        if (
-          response.status >= 500 ||
-          response.status === 408 ||
-          response.status === 409 ||
-          response.status === 429
-        )
-          return yield* new RemoteFailure({
-            message: `Server answered ${response.status}`,
-            retryable: true,
-            status: response.status,
-          });
+const cursor = (values: Readonly<Record<string, string>>) =>
+  Schema.decodeUnknownEffect(Offset)(values["stream-next-offset"]);
 
-        if (response.status === 401 || response.status === 403)
-          return yield* new RemoteFailure({
-            message:
-              "Writer authorization failed; correct FOLDER_SYNC_WRITER_TOKEN or --token and restart. Pending writes remain queued",
-            retryable: false,
-            status: response.status,
-          });
+const makeRemote = (server: string, token?: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const fs = yield* FileSystem.FileSystem;
+    const root = server.replace(/\/$/, "");
 
-        if (response.status === 400) {
-          const message = yield* response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ error: Schema.String }))),
-            Effect.map((body) => body.error),
-            Effect.orElseSucceed(() => "Server answered 400"),
-          );
+    const fileUrl = (folderId: string, path: string) =>
+      `${root}/api/folders/${encodeURIComponent(folderId)}/files/${encodeFilePath(path)}`;
 
-          return yield* new RemoteFailure({ message, retryable: false, status: 400 });
-        }
+    const streamUrl = (folderId: string) =>
+      `${root}/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
 
-        return response;
-      });
-
-      const snapshot = Effect.gen(function* () {
-        const response = yield* request(HttpClientRequest.get(`${root}/api/ls`));
-
-        if (response.status !== 200) return yield* reject(response.status);
-
-        return {
-          files: yield* Schema.decodeUnknownEffect(Schema.Array(ManifestFile))(
-            yield* response.json,
-          ),
-          cursor: yield* cursor(response.headers),
-          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
-        };
-      });
-
-      const tail = Effect.gen(function* () {
-        const response = yield* request(HttpClientRequest.head(`${root}/streams/changes`));
-
-        if (response.status !== 200) return yield* reject(response.status);
-
-        return {
-          cursor: yield* cursor(response.headers),
-          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
-        };
-      });
-
-      const page = Effect.fn("SyncRemote.page")(function* (offset: string, live: boolean) {
-        const response = yield* request(
-          HttpClientRequest.get(
-            `${root}/streams/changes?offset=${encodeURIComponent(offset)}${live ? "&live=long-poll" : ""}`,
+    const request = Effect.fn("SyncRemote.request")(function* (
+      req: HttpClientRequest.HttpClientRequest,
+    ) {
+      return yield* client
+        .execute(token === undefined ? req : HttpClientRequest.bearerToken(req, token))
+        .pipe(
+          Effect.mapError(
+            (cause) => new RemoteFailure({ message: String(cause), retryable: true, status: 0 }),
           ),
         );
+    });
 
-        if (response.status !== 200 && response.status !== 204)
-          return yield* reject(response.status);
+    const pageAt = Effect.fn("SyncRemote.pageAt")(function* <
+      S extends Schema.ConstraintDecoder<unknown>,
+    >(url: string, schema: S, offset: string, live: boolean) {
+      const response = yield* request(
+        HttpClientRequest.get(
+          `${url}?offset=${encodeURIComponent(offset)}${live ? "&live=long-poll" : ""}`,
+        ),
+      );
 
-        return {
-          rows:
-            response.status === 204
-              ? []
-              : yield* Schema.decodeUnknownEffect(Schema.Array(Change))(yield* response.json),
-          cursor: yield* cursor(response.headers),
-          epoch: yield* Schema.decodeUnknownEffect(Schema.String)(response.headers["stream-epoch"]),
-          upToDate: response.headers["stream-up-to-date"] === "true",
-        };
-      });
+      if (response.status === 410) return { rows: [], cursor: "-1", upToDate: false, reset: true };
 
-      const head = Effect.fn("SyncRemote.head")(function* (
-        folderId: string,
-        path: string,
-        minVersion?: number,
-      ): Effect.fn.Return<RemoteHead, RemoteFailure | RemoteDecodeError> {
-        const response = yield* request(
-          HttpClientRequest.get(
-            `${fileUrl(folderId, path)}${minVersion === undefined ? "" : `?minVersion=${encodeURIComponent(minVersion)}`}`,
+      if (![200, 204].includes(response.status)) return yield* reject(response.status);
+
+      return {
+        rows:
+          response.status === 204
+            ? []
+            : yield* Schema.decodeUnknownEffect(Schema.Array(schema))(yield* response.json),
+        cursor: yield* cursor(response.headers),
+        upToDate: response.headers["stream-up-to-date"] === "true",
+        reset: false,
+      };
+    });
+
+    const folders = (offset: string, live: boolean) =>
+      pageAt(`${root}/streams/folders`, FolderMessage, offset, live);
+
+    const page = (folderId: string, offset: string, live: boolean) =>
+      pageAt(streamUrl(folderId), FileMessage, offset, live);
+
+    const tail = Effect.fn("SyncRemote.tail")(function* (folderId: string) {
+      const response = yield* request(HttpClientRequest.head(streamUrl(folderId)));
+
+      if (response.status !== 200) return yield* reject(response.status);
+
+      return yield* cursor(response.headers);
+    });
+
+    const body = Effect.fn("SyncRemote.body")(function* (hash: string) {
+      const response = yield* request(HttpClientRequest.get(`${root}/api/blobs/${hash}`));
+
+      if (response.status !== 200) return yield* reject(response.status);
+
+      return response.stream.pipe(Stream.mapError((cause) => reject(0, String(cause))));
+    });
+
+    const head = Effect.fn("SyncRemote.head")(function* (folderId: string, path: string) {
+      const response = yield* request(HttpClientRequest.get(fileUrl(folderId, path)));
+
+      if (response.status === 404) return null;
+
+      if (response.status !== 200) return yield* reject(response.status);
+
+      const version = yield* Schema.decodeUnknownEffect(VersionFromString)(
+        response.headers.etag?.replace(/^"|"$/g, ""),
+      );
+
+      return {
+        version,
+        body: response.stream.pipe(Stream.mapError((cause) => reject(0, String(cause)))),
+      };
+    });
+
+    const upload = Effect.fn("SyncRemote.upload")(function* (operation: Pending) {
+      if (operation.source === null || operation.hash === null) return yield* Effect.void;
+
+      const response = yield* request(
+        HttpClientRequest.put(`${root}/api/blobs/${operation.hash}`, {
+          body: HttpBody.stream(
+            fs.stream(operation.source),
+            "application/octet-stream",
+            operation.size,
           ),
+        }),
+      );
+
+      if (response.status !== 200) return yield* reject(response.status);
+      yield* response.text;
+
+      return yield* Effect.void;
+    });
+
+    const push = Effect.fn("SyncRemote.push")(function* (operation: Pending) {
+      let text: string | undefined;
+
+      if (operation.source !== null && operation.size <= INLINE_LIMIT)
+        text = inlineText(yield* fs.readFile(operation.source));
+
+      const content = {
+        txid: operation.txid,
+        author: "sync CLI",
+        hash: operation.hash,
+        size: operation.size,
+      };
+
+      const payload =
+        operation.source === null
+          ? { txid: operation.txid, author: "sync CLI" }
+          : text === undefined
+            ? content
+            : { ...content, text };
+
+      const condition =
+        operation.base === null
+          ? operation.source === null
+            ? {}
+            : { "if-none-match": "*" }
+          : { "if-match": `"${operation.base}"` };
+
+      const req =
+        operation.source === null
+          ? HttpClientRequest.delete(fileUrl(operation.folderId, operation.path))
+          : HttpClientRequest.put(fileUrl(operation.folderId, operation.path));
+
+      const response = yield* request(
+        req.pipe(
+          HttpClientRequest.setHeaders(condition),
+          HttpClientRequest.bodyJsonUnsafe(payload),
+        ),
+      );
+
+      if (response.status === 412) {
+        const raw = yield* response.json;
+        const missing = Schema.decodeUnknownOption(Schema.Struct({ head: Schema.Null }))(raw);
+
+        if (Option.isSome(missing)) return yield* new StaleFile({ head: null });
+
+        return yield* new StaleFile({ head: yield* Schema.decodeUnknownEffect(Head)(raw) });
+      }
+
+      if (response.status === 409) {
+        const error = yield* Schema.decodeUnknownEffect(Schema.Struct({ error: Schema.String }))(
+          yield* response.json,
         );
 
-        if (response.status === 200) {
-          const version = yield* Schema.decodeUnknownEffect(VersionFromString)(
-            response.headers["x-file-version"],
-          );
+        if (error.error === "blob-missing") return yield* new BlobMissing();
 
-          const hash = yield* Schema.decodeUnknownEffect(Hash)(
-            response.headers.etag?.replace(/^"|"$/g, ""),
-          );
+        return yield* reject(409, error.error);
+      }
 
-          return { version, hash, bytes: new Uint8Array(yield* response.arrayBuffer) };
-        }
+      if (response.status !== 200) return yield* reject(response.status);
 
-        if (response.status !== 404) return yield* reject(response.status);
-        const historyUrl = `${root}/api/folders/${encodeURIComponent(folderId)}/history/${encodeFilePath(path)}`;
-        const history = yield* request(HttpClientRequest.get(historyUrl));
+      return yield* Schema.decodeUnknownEffect(receipt)(yield* response.json);
+    });
 
-        if (history.status === 404) return { version: null, hash: null, bytes: null };
-
-        if (history.status !== 200) return yield* reject(history.status);
-        const last = (yield* Schema.decodeUnknownEffect(History)(yield* history.json)).at(-1);
-
-        // A recreation raced the 404. Retry the head rather than treating a live operation as a delete.
-        if (last?.operation.type === "put") return yield* head(folderId, path, last.version);
-
-        return { version: last?.version ?? null, hash: null, bytes: null };
-      });
-
-      const push = Effect.fn("SyncRemote.push")(function* (operation: Pending, origin: string) {
-        const common = {
-          "x-file-op-id": encodeURIComponent(operation.opId),
-          "x-file-author": encodeURIComponent("sync CLI"),
-          "x-file-origin": encodeURIComponent(origin),
-        };
-
-        const headers =
-          operation.base === null ? common : { ...common, "x-file-base": String(operation.base) };
-
-        const url = fileUrl(operation.folderId, operation.path);
-
-        const req =
-          operation.bytes === null
-            ? HttpClientRequest.delete(url, { headers })
-            : HttpClientRequest.put(url, { headers, body: HttpBody.uint8Array(operation.bytes) });
-
-        const response = yield* request(req);
-
-        // A new local delete can race a remote delete. There is already no live head to delete.
-        if (response.status === 404 && operation.bytes === null) return { version: null };
-
-        if (response.status !== 200) return yield* reject(response.status);
-
-        return yield* Schema.decodeUnknownEffect(Written)(yield* response.json);
-      });
-
-      return SyncRemote.of({ snapshot, tail, page, head, push });
-    }),
-  );
-
-type RemoteDecodeError = HttpClientError | Schema.SchemaError;
+    return { folders, page, tail, body, head, upload, push };
+  });
 
 export class SyncRemote extends Context.Service<
   SyncRemote,
-  {
-    readonly snapshot: Effect.Effect<
-      { files: ReadonlyArray<ManifestFile>; cursor: string; epoch: string },
-      RemoteFailure | RemoteDecodeError
-    >;
-    readonly tail: Effect.Effect<
-      { cursor: string; epoch: string },
-      RemoteFailure | RemoteDecodeError
-    >;
-    readonly page: (
-      offset: string,
-      live: boolean,
-    ) => Effect.Effect<
-      { rows: ReadonlyArray<Change>; cursor: string; upToDate: boolean; epoch: string },
-      RemoteFailure | RemoteDecodeError
-    >;
-    readonly head: (
-      folderId: string,
-      path: string,
-      minVersion?: number,
-    ) => Effect.Effect<RemoteHead, RemoteFailure | RemoteDecodeError>;
-    readonly push: (
-      operation: Pending,
-      origin: string,
-    ) => Effect.Effect<
-      { version: number | null; overwrote?: number },
-      RemoteFailure | RemoteDecodeError
-    >;
-  }
+  Effect.Success<ReturnType<typeof makeRemote>>
 >()("FolderSync/SyncRemote") {}
+
+export const remoteLayer = (server: string, token?: string) =>
+  Layer.effect(SyncRemote, makeRemote(server, token));

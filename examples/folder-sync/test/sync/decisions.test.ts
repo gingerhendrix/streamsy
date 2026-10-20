@@ -1,12 +1,10 @@
 import { expect, test } from "vitest";
 import {
-  applyChange,
   backupPath,
   conflictBase,
   encodeFilePath,
   feedReset,
   folderDirectory,
-  headRewound,
   isEcho,
   ignoredPath,
 } from "../../sync/decisions.ts";
@@ -27,26 +25,10 @@ test("echo checks distinguish a pending edit reverted to the server's bytes", ()
   expect(isEcho("c", head)).toBe(false);
 });
 
-test("apply decisions ignore duplicate and older per-folder versions", () => {
-  expect(applyChange(head, head.version)).toBe(false);
-  expect(applyChange(head, 1)).toBe(false);
-  expect(applyChange(head, 3)).toBe(true);
-  expect(applyChange(undefined, head.version)).toBe(true);
-  expect(applyChange({ ...head, version: 9 }, 10)).toBe(true);
-  expect(applyChange({ ...head, version: 12 }, 9)).toBe(false);
+test("write bases retain the version observed on disk", () => {
   expect(conflictBase(head)).toBe(head.version);
-  expect(conflictBase({ ...head, hash: null, localHash: null })).toBe(head.version);
   expect(conflictBase(undefined)).toBeNull();
   expect(conflictBase({ ...head, localVersion: 1 })).toBe(1);
-});
-
-test("a head older than the known version, or missing after one, means history went backwards", () => {
-  expect(headRewound(head, 1)).toBe(true);
-  expect(headRewound(head, null)).toBe(true);
-  expect(headRewound(head, head.version)).toBe(false);
-  expect(headRewound(head, 3)).toBe(false);
-  expect(headRewound({ ...head, version: null }, 1)).toBe(false);
-  expect(headRewound(undefined, null)).toBe(false);
 });
 
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {

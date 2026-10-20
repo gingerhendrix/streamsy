@@ -10,7 +10,11 @@ export const spawnServer = (options: Parameters<typeof bunServer>[0]) =>
   Effect.gen(function* () {
     const worker = yield* Config.Boolean("FOLDER_SYNC_TEST_WORKER").pipe(Config.withDefault(false));
 
-    if (!worker) return yield* bunServer(options);
+    if (!worker)
+      return yield* bunServer({
+        ...options,
+        env: { ...options.env, FOLDER_SYNC_WRITER_TOKEN: token },
+      });
 
     const directory =
       options.env?.FOLDER_SYNC_DB === undefined

@@ -16,8 +16,8 @@ const Summary = Schema.Struct({
   seq: Schema.Int,
   folderId: Schema.String,
   path: Schema.String,
-  opId: Schema.String,
-  base: Schema.NullOr(Schema.String),
+  txid: Schema.String,
+  base: Schema.NullOr(Schema.Int),
   size: Schema.Int,
   status: Schema.Int,
   reason: Schema.String,
@@ -42,7 +42,7 @@ export const listRejected = (directory: string) => {
     const sql = yield* SqlClient.SqlClient;
 
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Summary))(
-      yield* sql`SELECT seq, folderId, path, opId, base, coalesce(length(bytes), 0) AS size, status, reason FROM rejected ORDER BY seq`,
+      yield* sql`SELECT seq, folderId, path, txid, base, size, status, reason FROM rejected ORDER BY seq`,
     );
 
     yield* Console.log(

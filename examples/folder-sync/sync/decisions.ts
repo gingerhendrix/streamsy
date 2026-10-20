@@ -6,19 +6,12 @@ export interface KnownHead {
   readonly localVersion: number | null;
 }
 
-export const applyChange = (known: KnownHead | undefined, version: number) =>
-  known?.version == null || version > known.version;
-
 export const conflictBase = (known: KnownHead | undefined) => known?.localVersion ?? null;
 
 export const isEcho = (hash: string | null, known: KnownHead | undefined, pending = false) =>
   hash === (known?.localHash ?? null) || (!pending && hash === known?.hash);
 
-export const feedReset = (cursor: string, tail: string) => cursor > tail;
-
-/** Within one epoch the server log only grows, so an older head means its history was lost. */
-export const headRewound = (known: KnownHead | undefined, version: number | null) =>
-  known?.version != null && (version === null || version < known.version);
+export const feedReset = (cursor: string, tail: string) => cursor !== "-1" && cursor > tail;
 
 export const encodeFilePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 

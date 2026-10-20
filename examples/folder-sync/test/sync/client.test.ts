@@ -1,138 +1,135 @@
+import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Layer, Match, Result, Schema } from "effect";
+import { Effect, Layer, Result, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
+import { BlobMissing, remoteLayer, StaleFile, SyncRemote } from "../../sync/client.ts";
+import { testDirectory } from "../../scripts/test-directory.ts";
+import { captureLocal } from "../../sync/local.ts";
+import { FileSystem } from "effect";
 
-const version = 1;
+const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const cursor = "0000000000000001_0000000000000000";
 
-layer(Layer.empty, { excludeTestServices: true })((it) => {
+layer(BunServices.layer, { excludeTestServices: true })((it) => {
   it.effect(
-    "204 retains the cursor; 5xx and minVersion 503 remain retryable; URLs and metadata are encoded",
+    "folder URLs, reset/410, preconditions, receipts and write statuses follow the protocol",
     () =>
       Effect.gen(function* () {
         let status = 204;
-        let seenUrl = "";
-        let seenBase: string | undefined;
-        let seenToken: string | undefined;
-        let seenOrigin: string | undefined;
+
+        type MockBody =
+          | ReadonlyArray<{ headers: { control: "reset" } }>
+          | { version?: number; txid?: string; hash?: string; head?: null; error?: string };
+
+        let responseBody: MockBody = {};
+
+        const requests: Array<{
+          url: string;
+          headers: Readonly<Record<string, string>>;
+          method: string;
+        }> = [];
 
         const http = HttpClient.make((request, url) =>
           Effect.sync(() => {
-            seenUrl = url.href;
-            seenToken = request.headers.authorization;
-            seenBase = request.headers["x-file-base"];
-            seenOrigin = request.headers["x-file-origin"];
+            requests.push({ url: url.href, headers: request.headers, method: request.method });
 
             return HttpClientResponse.fromWeb(
               request,
-              new Response(
-                Match.value(status).pipe(
-                  Match.when(200, () => `{"version":${version}}`),
-                  Match.when(400, () =>
-                    Schema.encodeSync(
-                      Schema.fromJsonString(Schema.Struct({ error: Schema.String })),
-                    )({
-                      error:
-                        "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
-                    }),
-                  ),
-                  Match.orElse(() => null),
-                ),
-                {
-                  status,
-                  headers: {
-                    "stream-next-offset": cursor,
-                    "stream-epoch": "test-epoch",
-                    "stream-up-to-date": "true",
-                  },
-                },
-              ),
+              new Response(status === 204 ? null : encodeBody(responseBody), {
+                status,
+                headers: { "stream-next-offset": cursor, "stream-up-to-date": "true" },
+              }),
             );
           }),
         );
 
         const context = yield* Layer.build(
-          remoteLayer("http://sync.test", "writer-token").pipe(
+          remoteLayer("http://sync.test", "token").pipe(
             Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
           ),
         );
 
         const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-        const empty = yield* remote.page(cursor, true);
-        expect(empty).toEqual({ rows: [], cursor, upToDate: true, epoch: "test-epoch" });
-        expect(seenUrl).toContain("live=long-poll");
+        expect(yield* remote.page("daily/demo", cursor, true)).toEqual({
+          rows: [],
+          cursor,
+          upToDate: true,
+          reset: false,
+        });
+        expect(requests.at(-1)?.url).toContain("/streams/folders/6461696c792f64656d6f/files?");
+        status = 410;
+        expect((yield* remote.page("daily/demo", cursor, false)).reset).toBe(true);
+        status = 200;
+        responseBody = [{ headers: { control: "reset" } }];
+        expect((yield* remote.page("daily/demo", cursor, false)).rows).toEqual([
+          { headers: { control: "reset" } },
+        ]);
+        const directory = yield* testDirectory("client-source-");
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${directory}/.folder-sync`, { recursive: true });
+        yield* fs.writeFileString(`${directory}/a`, "text");
+        const content = yield* captureLocal(directory, "a");
 
-        for (const code of [408, 409, 429, 500, 503]) {
+        if (content === null) return yield* Effect.die("Missing source");
+
+        const op = {
+          seq: 1,
+          folderId: "daily/demo",
+          path: "a%2Fb.md",
+          txid: "my-txid",
+          base: 4,
+          ...content,
+          uploaded: 0,
+        };
+
+        responseBody = { version: 5, txid: "first-txid", hash: content.hash };
+        expect((yield* remote.push(op)).txid).toBe("first-txid");
+        expect(requests.at(-1)).toMatchObject({
+          method: "PUT",
+          headers: {
+            "if-match": '"4"',
+            authorization: "Bearer token",
+            "content-type": "application/json",
+          },
+        });
+        expect(requests.at(-1)?.url).toContain("/folders/daily%2Fdemo/files/a%252Fb.md");
+        yield* remote.push({ ...op, base: null });
+        expect(requests.at(-1)?.headers["if-none-match"]).toBe("*");
+        status = 412;
+        responseBody = { head: null };
+        const stale = yield* Effect.flip(remote.push(op));
+        expect(Schema.is(StaleFile)(stale)).toBe(true);
+        status = 409;
+        responseBody = { error: "blob-missing", hash: content.hash };
+        expect(Schema.is(BlobMissing)(yield* Effect.flip(remote.push(op)))).toBe(true);
+
+        for (const [code, retryable] of [
+          [401, false],
+          [403, false],
+          [400, false],
+          [413, false],
+          [500, true],
+          [503, true],
+          [429, true],
+        ] as const) {
           status = code;
-
-          const result = yield* remote
-            .head("daily/demo", "docs/雪 100%.md", version)
-            .pipe(Effect.result);
-
+          const result = yield* remote.push(op).pipe(Effect.result);
           expect(Result.isFailure(result)).toBe(true);
 
-          if (Result.isFailure(result)) {
-            expect(result.failure).toBeInstanceOf(RemoteFailure);
-            expect(result.failure).toMatchObject({ retryable: true, status: code });
-          }
-
-          expect(seenUrl).toContain(
-            "/folders/daily%2Fdemo/files/docs/%E9%9B%AA%20100%25.md?minVersion=",
-          );
+          if (Result.isFailure(result))
+            expect(result.failure).toMatchObject({ status: code, retryable });
         }
 
         status = 200;
-        yield* remote.push(
-          {
-            seq: 1,
-            folderId: "daily/demo",
-            path: "a%2Fb.md",
-            base: version,
-            opId: "op/雪",
-            bytes: new TextEncoder().encode("text"),
-            hash: "a".repeat(64),
-          },
-          "client/雪",
-        );
-        expect(seenUrl).toContain("/files/a%252Fb.md");
-        expect(seenBase).toBe(String(version));
-        expect(seenOrigin).toBe(encodeURIComponent("client/雪"));
-        expect(seenToken).toBe("Bearer writer-token");
+        responseBody = { txid: "deleted" };
+        expect(yield* remote.push({ ...op, source: null, hash: null, size: 0 })).toEqual({
+          txid: "deleted",
+        });
+        expect(requests.at(-1)?.method).toBe("DELETE");
 
-        for (const code of [401, 403]) {
-          status = code;
-          const failure = yield* Effect.flip(remote.page(cursor, false));
-          expect(failure).toMatchObject({ retryable: false, status: code });
-          expect(String(failure)).toContain("Pending writes remain queued");
-        }
-
-        status = 400;
-
-        const invalid = yield* remote
-          .push(
-            {
-              seq: 2,
-              folderId: "docs",
-              path: "a",
-              base: null,
-              opId: "invalid",
-              bytes: new Uint8Array(),
-              hash: "a".repeat(64),
-            },
-            "test",
-          )
-          .pipe(Effect.result);
-
-        if (Result.isFailure(invalid))
-          expect(invalid.failure).toMatchObject({
-            retryable: false,
-            status: 400,
-            message: "Folder IDs must be at most 100 decoded UTF-16 code units and 249 UTF-8 bytes",
-          });
-        else throw new Error("Expected a rejected write");
+        return yield* Effect.void;
       }),
   );
 });

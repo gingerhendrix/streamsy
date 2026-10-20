@@ -1,19 +1,75 @@
+import { Offset } from "@streamsy/core";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { spawnServer, token } from "./host.ts";
-import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
-import { Offset } from "@streamsy/core";
-import { FILE_LIMIT, FileOp, Version } from "../../server/domain.ts";
+import { prepareContent } from "../../server/domain.ts";
 import { conflictPath, encodeFilePath } from "../../sync/decisions.ts";
-import { runSync, sync as startSync } from "../../sync/engine.ts";
+import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
+import { cacheBody, captureLocal } from "../../sync/local.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
+import { spawnServer, token } from "./host.ts";
 
-const sync = (options: Parameters<typeof startSync>[0]) => startSync({ ...options, token });
+class Waiting extends Schema.TaggedError<Waiting>()("SyncTestWaiting", {}) {}
+
+const until = <A, E, R>(work: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
+  work.pipe(
+    Effect.filterOrFail(ready, () => new Waiting()),
+    Effect.retry({
+      while: Schema.is(Waiting),
+      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 500 })),
+    }),
+  );
+
+const text = (value: string) => new TextEncoder().encode(value);
+
+const fileUrl = (server: string, folder: string, file: string) =>
+  `${server}/api/folders/${encodeURIComponent(folder)}/files/${encodeFilePath(file)}`;
+
+const create = Effect.fn("SyncTest.create")(function* (server: string, folderId: string) {
+  const response = yield* HttpClient.post(`${server}/api/folders`, {
+    body: HttpBody.jsonUnsafe({ folderId, title: folderId, txid: `create-${folderId}` }),
+  });
+
+  expect(response.status).toBe(200);
+  yield* response.text;
+});
+
+const put = Effect.fn("SyncTest.put")(function* (
+  server: string,
+  folder: string,
+  file: string,
+  value: string,
+  txid: string,
+) {
+  const content = yield* prepareContent(text(value));
+
+  const response = yield* HttpClient.put(fileUrl(server, folder, file), {
+    body: HttpBody.jsonUnsafe({ ...content, txid, author: "test" }),
+  });
+
+  expect(response.status).toBe(200);
+
+  return yield* Schema.decodeUnknownEffect(
+    Schema.Struct({ version: Schema.Int, txid: Schema.String }),
+  )(yield* response.json);
+});
+
+const read = (server: string, folder: string, file: string) =>
+  HttpClient.get(fileUrl(server, folder, file)).pipe(
+    Effect.flatMap((response) =>
+      response.status === 404 ? Effect.succeed("<missing>") : response.text,
+    ),
+  );
+
+const inspect = Effect.fn("SyncTest.inspect")(function* (directory: string) {
+  const context = yield* Layer.build(stateLayer(`${directory}/.folder-sync/state.sqlite`));
+
+  return yield* SyncState.pipe(Effect.provideContext(context));
+});
 
 const clientLayer = Layer.effect(
   HttpClient.HttpClient,
@@ -22,1256 +78,460 @@ const clientLayer = Layer.effect(
   ),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-class Waiting extends Schema.TaggedError<Waiting>()("SyncTestWaiting", {}) {}
+const runtime = Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer);
 
-const until = <A, E, R>(effect: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
-  effect.pipe(
-    Effect.filterOrFail(ready, () => new Waiting()),
-    Effect.retry({
-      while: Schema.is(Waiting),
-      schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 600 })),
+const host = (directory: string) =>
+  spawnServer({
+    cwd: `${import.meta.dirname}/../..`,
+    entry: "server/index.ts",
+    env: { FOLDER_SYNC_DB: `${directory}/server.sqlite` },
+  });
+
+const options = (
+  server: string,
+  directory: string,
+  writable: ReadonlyArray<string> = ["daily/demo"],
+) => ({ server, directory, folders: ["daily/demo", "ro"], writable, token, settleMillis: 30 });
+
+const remoteFor = Effect.fn("SyncTest.remote")(function* (server: string) {
+  const context = yield* Layer.build(
+    remoteLayer(server, token).pipe(Layer.provide(FetchHttpClient.layer)),
+  );
+
+  return yield* SyncRemote.pipe(Effect.provideContext(context));
+});
+
+const initialiseMirror = Effect.fn("SyncTest.initialiseMirror")(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.makeDirectory(`${directory}/.folder-sync`, { recursive: true });
+
+  return yield* inspect(directory);
+});
+
+layer(runtime, { excludeTestServices: true })((it) => {
+  it.effect(
+    "two clients converge through create, edit, delete, restart and read-only edit preservation",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-protocol-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        yield* create(server.url, "excluded");
+        yield* put(server.url, "daily/demo", "seed.md", "seed", "seed");
+        yield* put(server.url, "ro", "read.md", "read only", "ro");
+        const a = `${directory}/a`;
+        const b = `${directory}/b`;
+        let clientA = yield* sync(options(server.url, a)).pipe(Effect.forkScoped);
+        yield* sync(options(server.url, b)).pipe(Effect.forkScoped);
+
+        const local = (file: string) =>
+          fs.readFileString(file).pipe(Effect.orElseSucceed(() => "<missing>"));
+
+        yield* until(local(`${a}/daily/demo/seed.md`), (value) => value === "seed");
+        yield* until(local(`${b}/daily/demo/seed.md`), (value) => value === "seed");
+        expect(yield* fs.exists(`${a}/excluded`)).toBe(false);
+        yield* fs.writeFileString(`${a}/daily/demo/new.md`, "created locally");
+        yield* until(local(`${b}/daily/demo/new.md`), (value) => value === "created locally");
+        yield* fs.writeFileString(`${b}/daily/demo/new.md`, "edited on second");
+        yield* until(local(`${a}/daily/demo/new.md`), (value) => value === "edited on second");
+        yield* fs.remove(`${a}/daily/demo/new.md`);
+        yield* until(fs.exists(`${b}/daily/demo/new.md`), (exists) => !exists);
+        yield* put(server.url, "daily/demo", "remote.md", "created remotely", "remote");
+        yield* until(local(`${a}/daily/demo/remote.md`), (value) => value === "created remotely");
+        yield* put(server.url, "daily/demo", "remote.md", "edited remotely", "remote-edit");
+        yield* until(local(`${b}/daily/demo/remote.md`), (value) => value === "edited remotely");
+
+        const deleted = yield* HttpClient.del(fileUrl(server.url, "daily/demo", "remote.md"), {
+          body: HttpBody.jsonUnsafe({ txid: "remote-delete", author: "test" }),
+        });
+
+        expect(deleted.status).toBe(200);
+        yield* until(fs.exists(`${a}/daily/demo/remote.md`), (exists) => !exists);
+        yield* Fiber.interrupt(clientA);
+        yield* put(server.url, "daily/demo", "seed.md", "while stopped", "offline");
+        clientA = yield* sync(options(server.url, a)).pipe(Effect.forkScoped);
+        yield* until(local(`${a}/daily/demo/seed.md`), (value) => value === "while stopped");
+        yield* fs.writeFileString(`${a}/ro/read.md`, "preserve this edit");
+        yield* until(local(`${a}/ro/read.md`), (value) => value === "read only");
+        expect(yield* local(`${a}/.folder-sync/rejected/ro/read.md`)).toBe("preserve this edit");
+        const state = yield* inspect(a);
+        expect(yield* state.get("cursor:daily/demo")).toBeDefined();
+        expect(yield* state.get("cursor:ro")).toBeDefined();
+        expect(yield* state.get("epoch")).toBeUndefined();
+        yield* Fiber.interrupt(clientA);
+      }),
+  );
+
+  it.effect("a 412 preserves immutable local bytes in a committed conflict sibling", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-conflict-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      yield* put(server.url, "daily/demo", "a.md", "original", "original");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      let raced = false;
+
+      const modified = SyncRemote.of({
+        ...remote,
+        push: (op) =>
+          Effect.gen(function* () {
+            if (!raced && op.path === "a.md") {
+              raced = true;
+              yield* put(server.url, "daily/demo", "a.md", "human wins", "human").pipe(
+                // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Test fixture injects a separately owned authenticated request runtime.
+                Effect.provide(runtime),
+                Effect.orDie,
+              );
+            }
+
+            return yield* remote.push(op);
+          }),
+      });
+
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, modified),
+        Effect.forkScoped,
+      );
+
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "local conflict");
+      const origin = yield* state.get("origin");
+
+      if (origin === undefined) return yield* Effect.die("Missing origin");
+      const copy = conflictPath("a.md", origin);
+      yield* until(read(server.url, "daily/demo", copy), (value) => value === "local conflict");
+      yield* until(
+        fs.readFileString(`${mirror}/daily/demo/a.md`),
+        (value) => value === "human wins",
+      );
+      expect(yield* fs.readFileString(`${mirror}/daily/demo/${copy}`)).toBe("local conflict");
+      expect(yield* state.rejected()).toEqual([]);
+      yield* Fiber.interrupt(daemon);
+
+      return yield* Effect.void;
     }),
   );
 
-const text = (value: string) => new TextEncoder().encode(value);
-
-const Written = Schema.Struct({ version: Version, overwrote: Schema.optionalKey(Version) });
-
-const History = Schema.Array(Schema.Struct({ version: Version, operation: FileOp }));
-
-const meta = (opId: string, base?: string) => {
-  const common = { "x-file-op-id": opId, "x-file-author": "test", "x-file-origin": "test" };
-
-  return base === undefined ? common : { ...common, "x-file-base": base };
-};
-
-const fileUrl = (server: string, folder: string, file: string) =>
-  `${server}/api/folders/${encodeURIComponent(folder)}/files/${encodeFilePath(file)}`;
-
-const put = Effect.fn("SyncTest.put")(function* (
-  server: string,
-  folder: string,
-  file: string,
-  value: string,
-  opId: string,
-) {
-  const response = yield* HttpClient.put(fileUrl(server, folder, file), {
-    headers: meta(opId),
-    body: HttpBody.uint8Array(text(value)),
-  });
-
-  expect(response.status).toBe(200);
-
-  return yield* Schema.decodeUnknownEffect(Written)(yield* response.json);
-});
-
-const history = Effect.fn("SyncTest.history")(function* (
-  server: string,
-  folder: string,
-  file: string,
-) {
-  const response = yield* HttpClient.get(
-    `${server}/api/folders/${encodeURIComponent(folder)}/history/${encodeFilePath(file)}`,
-  );
-
-  return yield* Schema.decodeUnknownEffect(History)(yield* response.json);
-});
-
-const feedEpoch = Effect.fn("SyncTest.feedEpoch")(function* (server: string) {
-  const response = yield* HttpClient.head(`${server}/streams/changes`);
-
-  return response.headers["stream-epoch"];
-});
-
-const create = Effect.fn("SyncTest.create")(function* (server: string, folderId: string) {
-  const response = yield* HttpClient.post(`${server}/api/folders`, {
-    body: yield* HttpBody.json({ folderId, title: folderId }),
-  });
-
-  expect(response.status).toBe(200);
-  yield* response.text;
-});
-
-const inspect = Effect.fn("SyncTest.inspect")(function* (directory: string) {
-  const context = yield* Layer.build(stateLayer(`${directory}/.folder-sync/state.sqlite`));
-
-  return yield* SyncState.pipe(Effect.provideContext(context));
-});
-
-layer(Layer.mergeAll(BunServices.layer, BunCrypto.layer, clientLayer), {
-  excludeTestServices: true,
-})((it) => {
   it.effect(
-    "two mirrors converge across offline replay, CLI restart, deletes, renames and read-only edits",
+    "pending content survives a working-file edit and a CLI restart; rejection retains its cache source",
     () =>
       Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-integration-");
+        const directory = yield* testDirectory("sync-pending-");
+        const server = yield* host(directory);
         const fs = yield* FileSystem.FileSystem;
-        const a = `${directory}/a`;
-        const b = `${directory}/b`;
-        const database = `${directory}/server.sqlite`;
-        const cwd = `${import.meta.dirname}/../..`;
-
-        const server = yield* spawnServer({
-          cwd,
-          entry: "server/index.ts",
-          env: { FOLDER_SYNC_DB: database },
-        });
-
-        const folder = "daily/demo";
-        yield* create(server.url, folder);
-        yield* create(server.url, "ro");
-        yield* create(server.url, "excluded");
-        const initial = yield* put(server.url, folder, "seed.md", "seed", "seed");
-        yield* put(server.url, "ro", "read.md", "read only", "readonly");
-        yield* put(server.url, "excluded", "secret.md", "excluded", "excluded");
-
-        const options = (mirror: string) => ({
-          server: server.url,
-          directory: mirror,
-          folders: [folder, "ro"],
-          writable: [folder],
-          settleMillis: 60,
-        });
-
-        let clientA = yield* sync(options(a)).pipe(Effect.forkScoped);
-        const clientB = yield* sync(options(b)).pipe(Effect.forkScoped);
-
-        const read = (absolute: string) =>
-          fs.readFileString(absolute).pipe(Effect.orElseSucceed(() => "<missing>"));
-
-        yield* until(read(`${a}/${folder}/seed.md`), (value) => value === "seed");
-        yield* until(read(`${b}/${folder}/seed.md`), (value) => value === "seed");
-        const stateA = yield* inspect(a);
-        const stateB = yield* inspect(b);
-        yield* until(stateA.get("ready"), (value) => value === "true");
-        yield* until(stateB.get("ready"), (value) => value === "true");
-        expect(yield* fs.exists(`${a}/excluded`)).toBe(false);
-        expect(yield* fs.exists(`${b}/excluded`)).toBe(false);
-
-        // Observe three completed scanner passes. A pulled file must never append back.
-        for (const state of [stateA, stateB]) {
-          for (let pass = 0; pass < 3; pass++) {
-            const before = yield* state.get("lastScan");
-            yield* until(state.get("lastScan"), (value) => value !== before);
-          }
-
-          expect(yield* state.pending()).toEqual([]);
-        }
-
-        expect(yield* history(server.url, folder, "seed.md")).toHaveLength(1);
-        expect((yield* stateA.head(folder, "seed.md"))?.version).toBe(initial.version);
-
-        yield* fs.writeFileString(`${a}/${folder}/a.md`, "from A");
-        yield* fs.writeFileString(`${b}/${folder}/b.md`, "from B");
-        yield* until(read(`${b}/${folder}/a.md`), (value) => value === "from A");
-        yield* until(read(`${a}/${folder}/b.md`), (value) => value === "from B");
-
-        yield* fs.writeFileString(`${a}/${folder}/.editor-tmp`, "renamed content");
-        yield* fs.rename(`${a}/${folder}/.editor-tmp`, `${a}/${folder}/雪 100%.md`);
-        yield* until(read(`${b}/${folder}/雪 100%.md`), (value) => value === "renamed content");
-        expect(yield* history(server.url, folder, ".editor-tmp")).toEqual([]);
-        expect(yield* history(server.url, folder, "雪 100%.md")).toHaveLength(1);
-        // Only the mirror's own root state directory is ignored, not similarly named user files.
-        yield* fs.makeDirectory(`${a}/${folder}/.folder-sync`, { recursive: true });
-        yield* fs.writeFileString(`${a}/${folder}/.folder-sync/user.md`, "user hidden file");
-        yield* until(
-          read(`${b}/${folder}/.folder-sync/user.md`),
-          (value) => value === "user hidden file",
-        );
-
-        yield* fs.remove(`${a}/${folder}/seed.md`);
-        yield* until(read(`${b}/${folder}/seed.md`), (value) => value === "<missing>");
-        const deleted = yield* until(stateB.head(folder, "seed.md"), (row) => row?.hash === null);
-        expect(deleted?.version).not.toBeNull();
-        yield* fs.writeFileString(`${b}/${folder}/seed.md`, "recreated");
-        yield* until(read(`${a}/${folder}/seed.md`), (value) => value === "recreated");
-        const recreated = (yield* history(server.url, folder, "seed.md")).at(-1);
-        expect(recreated?.operation.base).toBe(deleted?.version ?? null);
-        expect(recreated?.operation.overwrote).toBeUndefined();
-
-        yield* fs.writeFileString(`${a}/ro/read.md`, "must restore");
-        yield* until(read(`${a}/ro/read.md`), (value) => value === "read only");
-        expect(yield* history(server.url, "ro", "read.md")).toHaveLength(1);
-        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read.md`)).toBe(
-          "must restore",
-        );
-        yield* fs.writeFileString(`${a}/ro/read.md`, "second restore");
-        yield* until(read(`${a}/ro/read.md`), (value) => value === "read only");
-        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/read-1.md`)).toBe(
-          "second restore",
-        );
-        yield* fs.writeFileString(`${a}/ro/extra.md`, "remove local extra");
-        yield* until(fs.exists(`${a}/ro/extra.md`), (value) => !value);
-        expect(yield* fs.readFileString(`${a}/.folder-sync/rejected/ro/extra.md`)).toBe(
-          "remove local extra",
-        );
-
-        yield* server.stop;
-        yield* fs.writeFileString(`${a}/${folder}/offline-a.md`, "offline A");
-        yield* fs.writeFileString(`${b}/${folder}/offline-b.md`, "offline B");
-        yield* fs.writeFileString(`${a}/${folder}/shared.md`, "offline shared A");
-        yield* fs.writeFileString(`${b}/${folder}/shared.md`, "offline shared B");
-        yield* until(
-          stateA.pending(),
-          (rows) =>
-            rows.some((row) => row.path === "offline-a.md") &&
-            rows.some((row) => row.path === "shared.md"),
-        );
-        yield* until(
-          stateB.pending(),
-          (rows) =>
-            rows.some((row) => row.path === "offline-b.md") &&
-            rows.some((row) => row.path === "shared.md"),
-        );
-        const savedIds = (yield* stateA.pending()).map((row) => row.opId);
-        yield* Fiber.interrupt(clientA);
-        clientA = yield* sync(options(a)).pipe(Effect.forkScoped);
-        const scanBeforeRestart = yield* stateA.get("lastScan");
-        yield* until(stateA.get("lastScan"), (value) => value !== scanBeforeRestart);
-        expect((yield* stateA.pending()).map((row) => row.opId)).toEqual(savedIds);
-
-        const restart = yield* spawnServer({
-          cwd,
-          entry: "server/index.ts",
-          port: server.port,
-          env: { FOLDER_SYNC_DB: database },
-        });
-
-        yield* until(read(`${b}/${folder}/offline-a.md`), (value) => value === "offline A");
-        yield* until(read(`${a}/${folder}/offline-b.md`), (value) => value === "offline B");
-        yield* until(stateA.pending(), (rows) => rows.length === 0);
-        yield* until(stateB.pending(), (rows) => rows.length === 0);
-        const serverShared = yield* HttpClient.get(fileUrl(restart.url, folder, "shared.md"));
-        const winningBytes = yield* serverShared.text;
-        yield* until(read(`${a}/${folder}/shared.md`), (value) => value === winningBytes);
-        yield* until(read(`${b}/${folder}/shared.md`), (value) => value === winningBytes);
-        const sharedHistory = yield* history(restart.url, folder, "shared.md");
-        expect(sharedHistory).toHaveLength(2);
-        expect(sharedHistory[0]?.operation.overwrote).toBeUndefined();
-        expect(sharedHistory[1]?.operation.overwrote).toBe(sharedHistory[0]?.version);
-        expect(yield* history(restart.url, folder, "offline-a.md")).toHaveLength(1);
-        expect(yield* history(restart.url, folder, "offline-b.md")).toHaveLength(1);
-        yield* Fiber.interrupt(clientA);
-        yield* Fiber.interrupt(clientB);
-        yield* restart.stop;
-      }),
-    { timeout: 40000 },
-  );
-  it.effect(
-    "lost responses and 503 reads replay the same opId and preserve intervening writes",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-replay-");
-        const fs = yield* FileSystem.FileSystem;
-        const mirror = `${directory}/mirror`;
-        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
-        yield* create(server.url, "docs");
-        yield* put(server.url, "docs", "a.md", "original", "original");
-
-        const context = yield* Layer.build(
-          Layer.merge(
-            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-          ),
-        );
-
-        const state = yield* SyncState.pipe(Effect.provideContext(context));
-        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-        yield* until(remote.snapshot, (snapshot) => snapshot.files.length === 1);
-        const lost = yield* Deferred.make<void>();
-        const releaseRetry = yield* Deferred.make<void>();
-        const attempts: string[] = [];
-        let failHead = true;
-        const http = yield* HttpClient.HttpClient;
-
-        const intercepted = SyncRemote.of({
-          ...remote,
-          push: (operation, origin) =>
-            Effect.gen(function* () {
-              attempts.push(operation.opId);
-
-              if (attempts.length > 1) yield* Deferred.await(releaseRetry);
-              const receipt = yield* remote.push(operation, origin);
-
-              if (attempts.length === 1) {
-                // The server accepted A, then B changed the head before A learned its receipt.
-                yield* put(server.url, "docs", "a.md", "from B", "external-B").pipe(
-                  Effect.provideService(HttpClient.HttpClient, http),
-                );
-                yield* Deferred.succeed(lost, undefined);
-
-                return yield* new RemoteFailure({
-                  message: "response lost after commit",
-                  status: 503,
-                  retryable: true,
-                });
-              }
-
-              return receipt;
-            }),
-          head: (folder, file, minVersion) =>
-            Effect.suspend(() => {
-              if (minVersion !== undefined && failHead) {
-                failHead = false;
-
-                return Effect.fail(
-                  new RemoteFailure({
-                    message: "minVersion temporarily unavailable",
-                    status: 503,
-                    retryable: true,
-                  }),
-                );
-              }
-
-              return remote.head(folder, file, minVersion);
-            }),
-        });
-
-        const daemon = yield* runSync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: ["docs"],
-          settleMillis: 60,
-        }).pipe(
-          Effect.provideService(SyncRemote, intercepted),
-          Effect.provideContext(context),
-          Effect.forkScoped,
-        );
-
-        yield* until(state.get("ready"), (value) => value === "true");
-        yield* fs.writeFileString(`${mirror}/docs/a.md`, "from A");
-        yield* Deferred.await(lost);
-        const pending = yield* state.pending();
-        expect(pending).toHaveLength(1);
-        expect(pending[0]?.opId).toBe(attempts[0]);
-        yield* Deferred.succeed(releaseRetry, undefined);
-        yield* until(state.pending(), (rows) => rows.length === 0);
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("from B");
-        expect(attempts.length).toBeGreaterThanOrEqual(3);
-        expect(new Set(attempts).size).toBe(1);
-        expect(
-          (yield* history(server.url, "docs", "a.md")).map((row) =>
-            row.operation.type === "put" && "inline" in row.operation ? row.operation.inline : "",
-          ),
-        ).toEqual(["original", "from A", "from B"]);
-        const before = yield* state.get("lastScan");
-        yield* until(state.get("lastScan"), (value) => value !== before);
-        expect(yield* state.pending()).toEqual([]);
-        const replayHistory = yield* history(server.url, "docs", "a.md");
-        expect(replayHistory).toHaveLength(3);
-        expect(replayHistory[0]?.operation.overwrote).toBeUndefined();
-        expect(replayHistory[1]?.operation.overwrote).toBeUndefined();
-        expect(replayHistory[2]?.operation.overwrote).toBe(replayHistory[1]?.version);
-        expect(replayHistory.filter((row) => row.operation.opId === attempts[0])).toHaveLength(1);
-        yield* Fiber.interrupt(daemon);
-        yield* server.stop;
-      }),
-    { timeout: 20000 },
-  );
-  it.effect(
-    "a remote write after the delivery head read still reaches the mirror",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-delivery-race-");
-        const mirror = `${directory}/mirror`;
-        const fs = yield* FileSystem.FileSystem;
-        const http = yield* HttpClient.HttpClient;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
-        yield* create(server.url, "docs");
-        yield* put(server.url, "docs", "a.md", "seed", "seed");
-        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
-
-        const context = yield* Layer.build(
-          Layer.merge(
-            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-          ),
-        );
-
-        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-        const state = yield* SyncState.pipe(Effect.provideContext(context));
-        let delivered: number | null = null;
-        let external: number | undefined;
-        const fetched = yield* Deferred.make<void>();
-
-        const wrapped = SyncRemote.of({
-          ...remote,
-          push: (op, origin) =>
-            Effect.gen(function* () {
-              const receipt = yield* remote.push(op, origin);
-              delivered = receipt.version;
-              // Ensure A's feed page settles while its outbox entry is still pending.
-              yield* until(remote.snapshot, (snapshot) =>
-                snapshot.files.some((row) => row.version === receipt.version),
-              ).pipe(Effect.orDie);
-              const target = yield* remote.tail;
-              yield* until(
-                state.get("cursor"),
-                (cursor) => cursor !== undefined && cursor >= target.cursor,
-              ).pipe(Effect.orDie);
-
-              return receipt;
-            }),
-          page: (cursor, live) =>
-            remote.page(cursor, live).pipe(
-              Effect.tap((page) =>
-                Effect.gen(function* () {
-                  if (page.rows.some((row) => row.version === external))
-                    yield* Deferred.succeed(fetched, undefined);
-                }),
-              ),
-            ),
-          head: (folder, file, minVersion) =>
-            Effect.gen(function* () {
-              const head = yield* remote.head(folder, file, minVersion);
-
-              if (delivered !== null && minVersion === delivered) {
-                delivered = null;
-
-                const receipt = yield* put(server.url, "docs", "a.md", "from B", "B").pipe(
-                  Effect.provideService(HttpClient.HttpClient, http),
-                );
-
-                external = receipt.version;
-                // B is fetched while delivery retains A's entry. Under the old lock order
-                // the feed could skip B; with the gate held it must wait for A to settle.
-                yield* Deferred.await(fetched);
-                yield* until(remote.snapshot, (snapshot) =>
-                  snapshot.files.some((row) => row.version === external),
-                ).pipe(Effect.orDie);
-              }
-
-              return head;
-            }),
-        });
-
-        const daemon = yield* runSync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: ["docs"],
-        }).pipe(
-          Effect.provideService(SyncRemote, wrapped),
-          Effect.provideContext(context),
-          Effect.forkScoped,
-        );
-
-        yield* until(state.get("ready"), (value) => value === "true");
-        yield* until(
-          fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
-          (value) => value === "seed",
-        );
-        yield* fs.writeFileString(`${mirror}/docs/a.md`, "from A");
-        yield* until(fs.readFileString(`${mirror}/docs/a.md`), (value) => value === "from B");
-        yield* until(state.pending(), (rows) => rows.length === 0);
-        expect((yield* state.head("docs", "a.md"))?.version).toBe(external);
-        yield* Fiber.interrupt(daemon);
-        yield* server.stop;
-      }),
-    { timeout: 20000 },
-  );
-  it.effect(
-    "fresh bootstrap adopts identical files and preserves stale bytes as conflict siblings",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-existing-");
-        const mirror = `${directory}/mirror`;
-        const fs = yield* FileSystem.FileSystem;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
-        yield* create(server.url, "docs");
-        const same = yield* put(server.url, "docs", "same.md", "identical", "same");
-        const stale = yield* put(server.url, "docs", "stale.md", "new on server", "stale");
-        yield* fs.makeDirectory(`${mirror}/docs`, { recursive: true });
-        yield* fs.writeFileString(`${mirror}/docs/same.md`, "identical");
-        yield* fs.writeFileString(`${mirror}/docs/stale.md`, "old local copy");
-        yield* fs.writeFileString(`${mirror}/docs/new.md`, "local new file");
-
-        const daemon = yield* sync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: ["docs"],
-        }).pipe(Effect.forkScoped);
-
-        yield* until(
-          fs.readFileString(`${mirror}/docs/stale.md`),
-          (value) => value === "new on server",
-        );
-        const state = yield* inspect(mirror);
-        const origin = yield* state.get("origin");
-        const copy = `stale.conflict-${origin}.md`;
-        yield* until(history(server.url, "docs", copy), (rows) => rows.length === 1);
-        yield* until(history(server.url, "docs", "new.md"), (rows) => rows.length === 1);
-        expect(yield* fs.readFileString(`${mirror}/docs/${copy}`)).toBe("old local copy");
-        expect((yield* state.head("docs", "same.md"))?.version).toBe(same.version);
-        expect(yield* history(server.url, "docs", "same.md")).toHaveLength(1);
-        expect(yield* history(server.url, "docs", "stale.md")).toEqual([
-          expect.objectContaining({
-            version: stale.version,
-            operation: expect.objectContaining({ inline: "new on server" }),
-          }),
-        ]);
-        yield* Fiber.interrupt(daemon);
-        yield* server.stop;
-      }),
-    { timeout: 20000 },
-  );
-  it.effect(
-    "two offline saves rebase onto their own receipts without unseen overwrite marks",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-own-saves-");
-        const mirror = `${directory}/mirror`;
-        const fs = yield* FileSystem.FileSystem;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
-        yield* create(server.url, "docs");
-        const seed = yield* put(server.url, "docs", "a.md", "seed", "seed");
-        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
-
-        const context = yield* Layer.build(
-          Layer.merge(
-            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-          ),
-        );
-
-        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-        const state = yield* SyncState.pipe(Effect.provideContext(context));
-        const reconnect = yield* Deferred.make<void>();
-        let offline = true;
-
-        const wrapped = SyncRemote.of({
-          ...remote,
-          push: (op, origin) =>
-            Effect.gen(function* () {
-              if (offline) yield* Deferred.await(reconnect);
-
-              return yield* remote.push(op, origin);
-            }),
-        });
-
-        const daemon = yield* runSync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: ["docs"],
-        }).pipe(
-          Effect.provideService(SyncRemote, wrapped),
-          Effect.provideContext(context),
-          Effect.forkScoped,
-        );
-
-        yield* until(state.get("ready"), (value) => value === "true");
-        yield* until(state.head("docs", "a.md"), (head) => head?.localVersion === seed.version);
-        yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 1");
-        yield* until(state.pending(), (rows) => rows.length === 1);
-        yield* fs.writeFileString(`${mirror}/docs/a.md`, "save 2");
-        const queued = yield* until(state.pending(), (rows) => rows.length === 2);
-        expect(queued.map((row) => row.base)).toEqual([seed.version, seed.version]);
-        offline = false;
-        yield* Deferred.succeed(reconnect, undefined);
-        yield* until(state.pending(), (rows) => rows.length === 0);
-        const rows = yield* history(server.url, "docs", "a.md");
-        expect(rows).toHaveLength(3);
-        expect(rows[1]?.operation.base).toBe(seed.version);
-        expect(rows[2]?.operation.base).toBe(rows[1]?.version);
-        expect(rows.every((row) => row.operation.overwrote === undefined)).toBe(true);
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("save 2");
-        yield* Fiber.interrupt(daemon);
-        yield* server.stop;
-      }),
-    { timeout: 20000 },
-  );
-  it.effect(
-    "oversize files, symlinks and rejected writes leave other files syncing",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-skips-");
-        const mirror = `${directory}/mirror`;
-        const fs = yield* FileSystem.FileSystem;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
-        yield* create(server.url, "docs");
-
-        const daemon = yield* sync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs", "missing"],
-          writable: ["docs", "missing"],
-        }).pipe(Effect.forkScoped);
-
-        yield* until(fs.exists(`${mirror}/.folder-sync/state.sqlite`), Boolean);
-        const state = yield* inspect(mirror);
-        yield* until(state.get("ready"), (value) => value === "true");
-        yield* fs.writeFile(`${mirror}/docs/large.bin`, new Uint8Array(FILE_LIMIT + 1));
-        yield* fs.writeFileString(`${directory}/outside.md`, "outside");
-        yield* fs.symlink(`${directory}/outside.md`, `${mirror}/docs/link.md`);
-        yield* fs.symlink(`${directory}/absent.md`, `${mirror}/docs/broken.md`);
-        yield* fs.writeFileString(`${mirror}/missing/reject.md`, "retained rejected bytes");
-        const rejected = yield* until(state.rejected(), (rows) => rows.length === 1);
-        expect(rejected[0]?.status).toBe(404);
-        expect(new TextDecoder().decode(rejected[0]?.bytes ?? new Uint8Array())).toBe(
-          "retained rejected bytes",
-        );
-        yield* fs.writeFileString(`${mirror}/docs/good.md`, "still syncing");
-        yield* until(history(server.url, "docs", "good.md"), (rows) => rows.length === 1);
-        yield* until(state.pending(), (rows) => rows.length === 0);
-
-        for (const file of ["large.bin", "link.md", "broken.md"])
-          expect(yield* history(server.url, "docs", file)).toHaveLength(0);
-        expect(yield* fs.readFileString(`${directory}/outside.md`)).toBe("outside");
-        const scan = yield* state.get("lastScan");
-        yield* until(state.get("lastScan"), (value) => value !== scan);
-        expect(yield* state.rejected()).toHaveLength(1);
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-        const listing = yield* spawner.string(
-          ChildProcess.make("bun", ["sync/index.ts", "rejected", "--dir", mirror], {
-            cwd: `${import.meta.dirname}/../..`,
-          }),
-        );
-
-        expect(listing).toContain('"status":404');
-        expect(listing).toContain('"path":"reject.md"');
-        expect(listing).not.toContain("retained rejected bytes");
-        expect(yield* state.rejected()).toHaveLength(1);
-        yield* Fiber.interrupt(daemon);
-        yield* server.stop;
-      }),
-    { timeout: 20000 },
-  );
-  it.effect(
-    "the CLI executable accepts flags and the runner supports custom folder mappings",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-cli-");
-        const fs = yield* FileSystem.FileSystem;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-        });
-
         yield* create(server.url, "daily/demo");
-        yield* put(server.url, "daily/demo", "a.md", "CLI seed", "seed");
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-        const cli = yield* spawner.spawn(
-          ChildProcess.make(
-            "bun",
-            [
-              "sync/index.ts",
-              "--token",
-              token,
-              "--server",
-              server.url,
-              "--dir",
-              `${directory}/cli`,
-              "--folders",
-              "daily/demo",
-              "--write",
-              "daily/demo",
-            ],
-            { cwd: `${import.meta.dirname}/../..` },
-          ),
-        );
-
-        const read = (absolute: string) =>
-          fs.readFileString(absolute).pipe(Effect.orElseSucceed(() => "<missing>"));
-
-        yield* until(read(`${directory}/cli/daily/demo/a.md`), (value) => value === "CLI seed");
-        yield* fs.writeFileString(`${directory}/cli/daily/demo/new.md`, "CLI write");
-        yield* until(history(server.url, "daily/demo", "new.md"), (rows) => rows.length === 1);
-
-        const mapped = yield* sync({
-          server: server.url,
-          directory: `${directory}/mapped`,
-          folders: ["daily/demo"],
-          writable: [],
-          folderDirectory: () => "docs",
-        }).pipe(Effect.forkScoped);
-
-        yield* until(read(`${directory}/mapped/docs/new.md`), (value) => value === "CLI write");
-        expect(yield* fs.exists(`${directory}/mapped/daily`)).toBe(false);
-        yield* Fiber.interrupt(mapped);
-        yield* cli.kill({ killSignal: "SIGTERM" });
-        expect(yield* cli.exitCode).toBe(ChildProcessSpawner.ExitCode(130));
-        yield* server.stop;
-      }),
-    { timeout: 15000 },
-  );
-  it.effect(
-    "an interrupted pull finishes on restart without pushing an echo",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-interrupted-pull-");
-        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "ro");
         const mirror = `${directory}/mirror`;
-        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+        const state = yield* initialiseMirror(mirror);
+        const remote = yield* remoteFor(server.url);
+        const waiting = yield* Deferred.make<void>();
 
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
+        const offline = SyncRemote.of({
+          ...remote,
+          push: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never)),
         });
 
-        yield* create(server.url, "docs");
-        const original = yield* put(server.url, "docs", "a.md", "original", "original");
-
-        const context = yield* Layer.build(
-          Layer.merge(
-            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-          ),
-        );
-
-        const state = yield* SyncState.pipe(Effect.provideContext(context));
-        const interrupted = yield* Deferred.make<void>();
-        let blockRename = false;
-
-        const wrapped = FileSystem.FileSystem.of({
-          ...fs,
-          rename: (from, to) =>
-            blockRename && to === `${mirror}/docs/a.md`
-              ? Deferred.succeed(interrupted, undefined).pipe(Effect.andThen(Effect.never))
-              : fs.rename(from, to),
-        });
-
-        const options = {
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: ["docs"],
-        };
-
-        const daemon = yield* runSync(options).pipe(
-          Effect.provideService(FileSystem.FileSystem, wrapped),
-          Effect.provideContext(context),
+        const first = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, offline),
           Effect.forkScoped,
         );
 
         yield* until(state.get("ready"), (value) => value === "true");
-        yield* until(state.head("docs", "a.md"), (head) => head?.localVersion === original.version);
-        blockRename = true;
-        const replacement = yield* put(server.url, "docs", "a.md", "replacement", "replacement");
-        yield* Deferred.await(interrupted);
-        yield* Fiber.interrupt(daemon);
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("original");
-        const unfinished = yield* state.head("docs", "a.md");
-        expect(unfinished?.version).toBe(replacement.version);
-        expect(unfinished?.localVersion).toBe(original.version);
+        yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "captured first");
+        yield* Deferred.await(waiting);
+        const pending = (yield* state.pending())[0];
+        expect(pending?.source).toBeDefined();
 
-        const restarted = yield* runSync(options).pipe(
-          Effect.provideContext(context),
+        if (pending?.source == null) return yield* Effect.die("Missing durable source");
+        yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "changed later");
+        expect(yield* fs.readFileString(pending.source)).toBe("captured first");
+        yield* Fiber.interrupt(first);
+
+        const resumed = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, remote),
           Effect.forkScoped,
         );
 
-        yield* until(
-          state.head("docs", "a.md"),
-          (head) => head?.localVersion === replacement.version,
-        );
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("replacement");
-        const before = yield* state.get("lastScan");
-        yield* until(state.get("lastScan"), (value) => value !== before);
-        expect(yield* state.pending()).toEqual([]);
-        expect(yield* history(server.url, "docs", "a.md")).toHaveLength(2);
-        yield* Fiber.interrupt(restarted);
-        yield* server.stop;
-      }),
-    { timeout: 15000 },
-  );
-  it.effect(
-    "a new feed epoch bootstraps a replacement server even when its cursor and versions equal the old feed",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-epoch-");
-        const mirror = `${directory}/mirror`;
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+        yield* until(read(server.url, "daily/demo", "a.md"), (value) => value === "changed later");
+        yield* until(state.pending(), (rows) => rows.length === 0);
+        yield* Fiber.interrupt(resumed);
 
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-          env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
-        });
-
-        yield* create(server.url, "docs");
-        const initial = yield* put(server.url, "docs", "a.md", "old index", "old");
-
-        const context = yield* Layer.build(
-          Layer.merge(
-            stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-            remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-          ),
-        );
-
-        const state = yield* SyncState.pipe(Effect.provideContext(context));
-        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-
-        yield* until(remote.snapshot, (snapshot) =>
-          snapshot.files.some((row) => row.version === initial.version),
-        );
-
-        const blocked = yield* Deferred.make<void>();
-        const resume = yield* Deferred.make<void>();
-        let pauseReads = false;
-        let bootstraps = 0;
-
-        const read = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          Effect.gen(function* () {
-            if (pauseReads) {
-              yield* Deferred.succeed(blocked, undefined);
-              yield* Deferred.await(resume);
-            }
-
-            return yield* effect;
-          });
-
-        const daemon = yield* runSync({
-          server: server.url,
-          directory: mirror,
-          folders: ["docs"],
-          writable: [],
-        }).pipe(
-          Effect.provideService(SyncRemote, {
-            ...remote,
-            snapshot: read(remote.snapshot).pipe(Effect.tap(() => Effect.sync(() => bootstraps++))),
-            tail: read(remote.tail),
-            head: (...args) => read(remote.head(...args)),
-            page: (cursor) => read(remote.page(cursor, false)),
-          }),
-          Effect.provideContext(context),
-          Effect.forkScoped,
-        );
-
-        yield* until(state.get("ready"), (value) => value === "true");
-
-        const oldEpoch = yield* Schema.decodeUnknownEffect(Schema.String)(
-          yield* state.get("epoch"),
-        );
-
-        const oldCursor = yield* Schema.decodeUnknownEffect(Offset)(yield* state.get("cursor"));
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("old index");
-        expect(bootstraps).toBe(1);
-
-        // Stop at a read boundary before switching servers. The replacement must expose
-        // equal cursors and versions before the daemon can observe its different epoch.
-        pauseReads = true;
-        yield* Deferred.await(blocked);
-        yield* server.stop;
-
-        const replacement = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
-          port: server.port,
-          env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
-        });
-
-        yield* create(replacement.url, "docs");
-        const replaced = yield* put(replacement.url, "docs", "a.md", "replacement index", "new");
-        expect(replaced.version).toBe(initial.version);
-
-        const snapshot = yield* until(remote.snapshot, (value) =>
-          value.files.some((row) => row.version === replaced.version),
-        );
-
-        expect(snapshot.cursor).toBe(oldCursor);
-        expect(snapshot.epoch).not.toBe(oldEpoch);
-        pauseReads = false;
-        yield* Deferred.succeed(resume, undefined);
-        yield* until(
-          Effect.gen(function* () {
-            return { epoch: yield* state.get("epoch"), ready: yield* state.get("ready") };
-          }),
-          (value) => value.epoch === snapshot.epoch && value.ready === "true",
-        );
-        expect(bootstraps).toBe(2);
-        expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("replacement index");
-        expect(yield* fs.readFileString(`${mirror}/.folder-sync/rejected/docs/a.md`)).toBe(
-          "old index",
-        );
-        expect(yield* state.get("cursor")).toBe(oldCursor);
-        expect(yield* state.pending()).toEqual([]);
-        yield* Fiber.interrupt(daemon);
-        yield* replacement.stop;
-      }),
-    { timeout: 20000 },
-  );
-
-  for (const { writable, older } of [
-    { writable: true, older: false },
-    { writable: false, older: false },
-    { writable: true, older: true },
-  ]) {
-    it.effect(
-      `a new feed epoch preserves synced files after an ${older ? "older" : "empty"} replacement in a ${writable ? "writable" : "read-only"} folder`,
-      () =>
-        Effect.gen(function* () {
-          const directory = yield* testDirectory("sync-epoch-empty-");
-          const mirror = `${directory}/mirror`;
-          const files = older ? ["a.md", "b.md", "c.md"] : ["a.md", "b.md"];
-          const fs = yield* FileSystem.FileSystem;
-          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
-
-          const server = yield* spawnServer({
-            cwd: `${import.meta.dirname}/../..`,
-            entry: "server/index.ts",
-            env: { FOLDER_SYNC_DB: `${directory}/old.sqlite` },
-          });
-
-          yield* create(server.url, "docs");
-
-          for (const file of files)
-            yield* put(server.url, "docs", file, `original ${file}`, `old-${file}`);
-
-          const context = yield* Layer.build(
-            Layer.merge(
-              stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-              remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
+        const rejecting = SyncRemote.of({
+          ...remote,
+          push: () =>
+            Effect.fail(
+              new RemoteFailure({ status: 400, retryable: false, message: "rejected fixture" }),
             ),
-          );
+        });
 
-          const state = yield* SyncState.pipe(Effect.provideContext(context));
-          const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-          yield* until(remote.snapshot, (snapshot) => snapshot.files.length === files.length);
-          const blocked = yield* Deferred.make<void>();
-          const resume = yield* Deferred.make<void>();
-          const deliver = yield* Deferred.make<void>();
-          let pauseReads = false;
-          let pauseWrites = false;
+        const last = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, rejecting),
+          Effect.forkScoped,
+        );
 
-          const read = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        yield* fs.writeFileString(`${mirror}/daily/demo/rejected.md`, "retained rejected bytes");
+        const rows = yield* until(state.rejected(), (rejected) => rejected.length === 1);
+        expect(rows[0]?.size).toBe(23);
+        const source = rows[0]?.source;
+
+        if (source == null) return yield* Effect.die("Missing rejected source");
+        expect(yield* fs.readFileString(source)).toBe("retained rejected bytes");
+        yield* Fiber.interrupt(last);
+
+        return yield* Effect.void;
+      }),
+  );
+
+  it.effect(
+    "an interrupted pull replays its intent without treating unchanged old disk bytes as an edit",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-interrupted-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        const initial = yield* put(server.url, "daily/demo", "a.md", "old bytes", "first");
+        const mirror = `${directory}/mirror`;
+        const first = yield* sync(options(server.url, mirror)).pipe(Effect.forkScoped);
+
+        const state = yield* until(
+          inspect(mirror).pipe(Effect.orElseSucceed(() => null)),
+          (value) => value !== null,
+        );
+
+        if (state === null) return yield* Effect.die("Missing state");
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* Fiber.interrupt(first);
+        const known = yield* state.head("daily/demo", "a.md");
+
+        if (known === undefined) return yield* Effect.die("Missing known head");
+        const next = yield* put(server.url, "daily/demo", "a.md", "new bytes", "second");
+        const content = yield* prepareContent(text("new bytes"));
+        yield* state.save({
+          ...known,
+          version: next.version,
+          hash: content.hash,
+          localVersion: initial.version,
+        });
+        expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("old bytes");
+        const restarted = yield* sync(options(server.url, mirror)).pipe(Effect.forkScoped);
+        yield* until(
+          fs.readFileString(`${mirror}/daily/demo/a.md`),
+          (value) => value === "new bytes",
+        );
+        expect(yield* state.pending()).toEqual([]);
+        expect(
+          (yield* fs.readDirectory(`${mirror}/daily/demo`)).filter((name) =>
+            name.includes("conflict"),
+          ),
+        ).toEqual([]);
+        yield* Fiber.interrupt(restarted);
+
+        return yield* Effect.void;
+      }),
+  );
+
+  for (const reset of ["410", "reset"] as const)
+    it.effect(`${reset} resets a folder cursor and reconciles a full replay`, () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory(`sync-${reset}-`);
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        yield* put(server.url, "daily/demo", "a.md", "before", "before");
+        const mirror = `${directory}/mirror`;
+        const state = yield* initialiseMirror(mirror);
+        const remote = yield* remoteFor(server.url);
+        const injected = yield* Deferred.make<void>();
+        let replayed = false;
+        let resetSent = false;
+
+        const modified = SyncRemote.of({
+          ...remote,
+          page: (folder, offset, live) =>
             Effect.gen(function* () {
-              if (pauseReads) {
-                yield* Deferred.succeed(blocked, undefined);
-                yield* Deferred.await(resume);
+              if (folder === "daily/demo" && live && !resetSent) {
+                resetSent = true;
+                yield* put(server.url, "daily/demo", "a.md", "after reset", "after").pipe(
+                  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test fixture owns a separately authenticated request runtime.
+                  Effect.provide(runtime),
+                  Effect.orDie,
+                );
+                yield* Deferred.succeed(injected, undefined);
+
+                return {
+                  rows: reset === "reset" ? [{ headers: { control: "reset" as const } }] : [],
+                  cursor: yield* remote.tail(folder),
+                  reset: reset === "410",
+                  upToDate: false,
+                };
               }
 
-              return yield* effect;
-            });
+              if (resetSent && offset === "-1") replayed = true;
 
-          const daemon = yield* runSync({
-            server: server.url,
-            directory: mirror,
-            folders: ["docs"],
-            writable: writable ? ["docs"] : [],
-          }).pipe(
-            Effect.provideService(SyncRemote, {
-              ...remote,
-              snapshot: read(remote.snapshot),
-              tail: read(remote.tail),
-              head: (...args) => read(remote.head(...args)),
-              page: (cursor) => read(remote.page(cursor, false)),
-              push: (...args) =>
-                Effect.gen(function* () {
-                  if (pauseWrites) yield* Deferred.await(deliver);
-
-                  return yield* remote.push(...args);
-                }),
+              return yield* remote.page(folder, offset, live);
             }),
-            Effect.provideContext(context),
-            Effect.forkScoped,
-          );
-
-          yield* until(state.get("ready"), (value) => value === "true");
-          const oldEpoch = yield* state.get("epoch");
-
-          for (const file of files)
-            expect(yield* fs.readFileString(`${mirror}/docs/${file}`)).toBe(`original ${file}`);
-          pauseReads = true;
-          pauseWrites = true;
-          yield* Deferred.await(blocked);
-          yield* server.stop;
-
-          const replacement = yield* spawnServer({
-            cwd: `${import.meta.dirname}/../..`,
-            entry: "server/index.ts",
-            port: server.port,
-            env: { FOLDER_SYNC_DB: `${directory}/new.sqlite` },
-          });
-
-          if (older) {
-            yield* create(replacement.url, "docs");
-            yield* put(replacement.url, "docs", "a.md", "original a.md", "same");
-            yield* put(replacement.url, "docs", "b.md", "older b.md", "different");
-          }
-
-          const snapshot = yield* until(
-            remote.snapshot,
-            (value) => value.files.length === (older ? 2 : 0),
-          );
-
-          if (!older) expect(snapshot.files).toEqual([]);
-          expect(snapshot.epoch).not.toBe(oldEpoch);
-          pauseReads = false;
-          yield* Deferred.succeed(resume, undefined);
-          yield* until(
-            Effect.gen(function* () {
-              return { epoch: yield* state.get("epoch"), ready: yield* state.get("ready") };
-            }),
-            (value) => value.epoch === snapshot.epoch && value.ready === "true",
-          );
-          const pending = yield* state.pending();
-
-          if (writable) {
-            expect(pending).toHaveLength(2);
-
-            const origin = yield* Schema.decodeUnknownEffect(Schema.String)(
-              yield* state.get("origin"),
-            );
-
-            const conflict = conflictPath("b.md", origin);
-
-            const uploads = older
-              ? [
-                  { path: "c.md", bytes: "original c.md" },
-                  { path: conflict, bytes: "original b.md" },
-                ]
-              : files.map((file) => ({ path: file, bytes: `original ${file}` }));
-
-            for (const upload of uploads) {
-              expect(yield* fs.readFileString(`${mirror}/docs/${upload.path}`)).toBe(upload.bytes);
-              expect(pending.find((entry) => entry.path === upload.path)).toMatchObject({
-                base: null,
-                bytes: text(upload.bytes),
-              });
-            }
-
-            if (older) {
-              expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("original a.md");
-              expect(yield* fs.readFileString(`${mirror}/docs/b.md`)).toBe("older b.md");
-            }
-
-            // Empty replacements have no registry either. Only recreate the folder
-            // after the local bytes and base-null outbox have been verified.
-            if (!older) yield* create(replacement.url, "docs");
-            pauseWrites = false;
-            yield* Deferred.succeed(deliver, undefined);
-            yield* until(state.pending(), (entries) => entries.length === 0);
-
-            for (const upload of uploads) {
-              expect((yield* remote.head("docs", upload.path)).bytes).toEqual(text(upload.bytes));
-              const rows = yield* history(replacement.url, "docs", upload.path);
-              expect(rows).toHaveLength(1);
-              expect(rows[0]?.operation.base).toBeNull();
-              expect(rows[0]?.operation.overwrote).toBeUndefined();
-            }
-
-            if (older) {
-              // Matching heads are adopted and differing heads remain authoritative.
-              expect(yield* history(replacement.url, "docs", "a.md")).toHaveLength(1);
-              expect(yield* history(replacement.url, "docs", "b.md")).toHaveLength(1);
-              expect((yield* remote.head("docs", "b.md")).bytes).toEqual(text("older b.md"));
-            }
-          } else {
-            expect(pending).toEqual([]);
-
-            for (const file of files) {
-              expect(yield* fs.readFileString(`${mirror}/.folder-sync/rejected/docs/${file}`)).toBe(
-                `original ${file}`,
-              );
-              expect(yield* fs.exists(`${mirror}/docs/${file}`)).toBe(false);
-              expect((yield* remote.head("docs", file)).bytes).toBeNull();
-            }
-          }
-
-          yield* Fiber.interrupt(daemon);
-          yield* replacement.stop;
-        }),
-      { timeout: 20000 },
-    );
-  }
-
-  it.effect(
-    "writer authorization failures stop the daemon and leave its write in the outbox",
-    () =>
-      Effect.gen(function* () {
-        const directory = yield* testDirectory("sync-auth-");
-        const fs = yield* FileSystem.FileSystem;
-
-        const server = yield* spawnServer({
-          cwd: `${import.meta.dirname}/../..`,
-          entry: "server/index.ts",
         });
 
-        yield* create(server.url, "docs");
-        yield* put(server.url, "docs", "a.md", "initial", "initial");
+        const daemon = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, modified),
+          Effect.forkScoped,
+        );
 
-        for (const status of [401, 403]) {
-          const mirror = `${directory}/mirror-${status}`;
-          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
-
-          const context = yield* Layer.build(
-            Layer.merge(
-              stateLayer(`${mirror}/.folder-sync/state.sqlite`),
-              remoteLayer(server.url, token).pipe(Layer.provide(FetchHttpClient.layer)),
-            ),
-          );
-
-          const state = yield* SyncState.pipe(Effect.provideContext(context));
-          const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
-
-          const daemon = yield* runSync({
-            server: server.url,
-            directory: mirror,
-            folders: ["docs"],
-            writable: ["docs"],
-            settleMillis: 20,
-          }).pipe(
-            Effect.provideService(SyncRemote, {
-              ...remote,
-              push: () =>
-                Effect.fail(
-                  new RemoteFailure({
-                    status,
-                    retryable: false,
-                    message: "Writer authorization failed; pending writes remain queued",
-                  }),
-                ),
-            }),
-            Effect.provideContext(context),
-            Effect.forkScoped,
-          );
-
-          yield* until(state.get("ready"), (value) => value === "true");
-          yield* until(
-            fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
-            (value) => value === "initial",
-          );
-          yield* fs.writeFileString(`${mirror}/docs/a.md`, "pending edit");
-          const failure = yield* Effect.flip(Fiber.join(daemon));
-          expect(failure).toMatchObject({ status });
-          expect(yield* state.pending()).toHaveLength(1);
-          expect(yield* state.rejected()).toEqual([]);
-          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("pending edit");
-        }
-
-        yield* server.stop;
+        yield* Deferred.await(injected);
+        yield* until(
+          fs.readFileString(`${mirror}/daily/demo/a.md`),
+          (value) => value === "after reset",
+        );
+        expect(replayed).toBe(true);
+        yield* Fiber.interrupt(daemon);
       }),
-    { timeout: 20000 },
+    );
+
+  it.effect("HEAD rewind stops before changing disk; opaque folder mapping remains stable", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-rewind-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      yield* put(server.url, "daily/demo", "a.md", "kept", "first");
+      const mirror = `${directory}/mirror`;
+
+      const first = yield* sync({
+        ...options(server.url, mirror),
+        folderDirectory: (id) => (id === "daily/demo" ? "mapped" : id),
+      }).pipe(Effect.forkScoped);
+
+      const state = yield* until(
+        inspect(mirror).pipe(Effect.orElseSucceed(() => null)),
+        (value) => value !== null,
+      );
+
+      if (state === null) return yield* Effect.die("Missing state");
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* Fiber.interrupt(first);
+      const remote = yield* remoteFor(server.url);
+
+      const result = yield* runSync({
+        ...options(server.url, mirror),
+        folderDirectory: (id) => (id === "daily/demo" ? "mapped" : id),
+      }).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, {
+          ...remote,
+          tail: () =>
+            Effect.succeed(Schema.decodeSync(Offset)("0000000000000000_0000000000000000")),
+        }),
+        Effect.result,
+      );
+
+      expect(result).toMatchObject({ failure: { _tag: "HistoryRewound" } });
+      expect(yield* fs.readFileString(`${mirror}/mapped/a.md`)).toBe("kept");
+
+      const changed = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, remote),
+        Effect.result,
+      );
+
+      expect(changed).toMatchObject({ failure: { _tag: "LocalFailure" } });
+
+      return yield* Effect.void;
+    }),
   );
 
-  for (const writable of [true, false]) {
-    it.effect(
-      `a backup restored with the same epoch stops a ${writable ? "writable" : "read-only"} mirror and keeps its newer bytes`,
-      () =>
-        Effect.gen(function* () {
-          const directory = yield* testDirectory("sync-restore-");
-          const fs = yield* FileSystem.FileSystem;
-          const mirror = `${directory}/mirror`;
-          const data = `${directory}/server`;
-          const backup = `${directory}/backup`;
-          const cwd = `${import.meta.dirname}/../..`;
-          const env = { FOLDER_SYNC_DB: `${data}/files.sqlite` };
+  it.effect("binary upload and second-client pull recover an actual blob-missing 409", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-binary-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      const mirror = `${directory}/writer`;
+      const reader = `${directory}/reader`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      let uploads = 0;
 
-          const options = {
-            directory: mirror,
-            folders: ["docs"],
-            writable: writable ? ["docs"] : [],
-          };
+      const modified = SyncRemote.of({
+        ...remote,
+        upload: (op) => {
+          uploads++;
 
-          yield* fs.makeDirectory(data, { recursive: true });
-          yield* fs.makeDirectory(`${mirror}/.folder-sync`, { recursive: true });
+          // Simulate a lost upload acknowledgment with no stored object. The commit then returns 409.
+          return uploads === 1 ? Effect.void : remote.upload(op);
+        },
+      });
 
-          const first = yield* spawnServer({ cwd, entry: "server/index.ts", env });
-          yield* create(first.url, "docs");
-          yield* put(first.url, "docs", "a.md", "version one", "one");
-          // The epoch row is created on first read. The backup must hold it.
-          const epoch = yield* feedEpoch(first.url);
-          yield* first.stop;
-          yield* fs.copy(data, backup);
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, modified),
+        Effect.forkScoped,
+      );
 
-          const server = yield* spawnServer({
-            cwd,
-            entry: "server/index.ts",
-            port: first.port,
-            env,
-          });
+      yield* sync(options(server.url, reader, [])).pipe(Effect.forkScoped);
+      yield* until(state.get("ready"), (value) => value === "true");
+      const bytes = new Uint8Array(512 * 1024);
 
-          const daemon = yield* sync({ ...options, server: server.url }).pipe(Effect.forkScoped);
-          const state = yield* inspect(mirror);
-          yield* until(state.get("ready"), (value) => value === "true");
-          yield* until(
-            fs.readFileString(`${mirror}/docs/a.md`).pipe(Effect.orElseSucceed(() => "<missing>")),
-            (value) => value === "version one",
-          );
-          const restoredCursor = yield* state.get("cursor");
+      for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+      yield* fs.writeFile(`${mirror}/daily/demo/large.bin`, bytes);
+      const local = `${reader}/daily/demo/large.bin`;
+      yield* until(fs.exists(local), (exists) => exists);
+      expect(new Uint8Array(yield* fs.readFile(local))).toEqual(bytes);
+      expect(uploads).toBe(2);
+      yield* fs.writeFile(`${mirror}/daily/demo/nul.bin`, new Uint8Array([65, 0, 66]));
+      yield* until(fs.exists(`${reader}/daily/demo/nul.bin`), (exists) => exists);
+      expect(new Uint8Array(yield* fs.readFile(`${reader}/daily/demo/nul.bin`))).toEqual(
+        new Uint8Array([65, 0, 66]),
+      );
+      yield* Fiber.interrupt(daemon);
+    }),
+  );
 
-          // The newest bytes reach the server after the backup point.
-          if (writable) yield* fs.writeFileString(`${mirror}/docs/a.md`, "version two");
-          else yield* put(server.url, "docs", "a.md", "version two", "two");
+  it.effect(
+    "symlinks and oversized files are skipped and large content cache snapshots remain immutable",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-safety-");
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${directory}/.folder-sync`, { recursive: true });
+        yield* fs.writeFileString(`${directory}/outside`, "never touched");
+        yield* fs.symlink(`${directory}/outside`, `${directory}/link`);
+        expect(yield* captureLocal(directory, "link").pipe(Effect.result)).toMatchObject({
+          failure: { _tag: "SkippedLocal" },
+        });
+        const chunk = new Uint8Array(64 * 1024).fill(123);
 
-          const two = yield* until(
-            history(server.url, "docs", "a.md"),
-            (rows) => rows.length === 2,
-          );
+        const cached = yield* cacheBody(
+          directory,
+          Stream.fromIterable(Array.from({ length: 32 }, () => chunk)),
+        );
 
-          yield* until(
-            Effect.gen(function* () {
-              return {
-                head: yield* state.head("docs", "a.md"),
-                cursor: yield* state.get("cursor"),
-                pending: (yield* state.pending()).length,
-              };
-            }),
-            (value) =>
-              value.head?.version === two[1]?.version &&
-              value.cursor !== restoredCursor &&
-              value.pending === 0,
-          );
-          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
+        expect(cached.size).toBe(2 * 1024 * 1024);
+        yield* fs.writeFileString(`${directory}/working`, "newer working bytes");
+        expect(Number((yield* fs.stat(cached.source)).size)).toBe(cached.size);
 
-          yield* server.stop;
-          yield* fs.remove(data, { recursive: true });
-          yield* fs.copy(backup, data);
+        const tooLarge = yield* cacheBody(
+          directory,
+          Stream.fromIterable(Array.from({ length: 1025 }, () => chunk)),
+        ).pipe(Effect.result);
 
-          const restored = yield* spawnServer({
-            cwd,
-            entry: "server/index.ts",
-            port: first.port,
-            env,
-          });
-
-          expect(yield* feedEpoch(restored.url)).toBe(epoch);
-          const failure = yield* Effect.flip(Fiber.join(daemon));
-          expect(failure).toMatchObject({ _tag: "HistoryRewound" });
-          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
-          expect(yield* fs.exists(`${mirror}/.folder-sync/rejected`)).toBe(false);
-          expect((yield* history(restored.url, "docs", "a.md")).length).toBe(1);
-
-          // A restart sees the same rewind and stays stopped.
-          const again = yield* Effect.flip(sync({ ...options, server: restored.url }));
-          expect(again).toMatchObject({ _tag: "HistoryRewound" });
-          expect(yield* fs.readFileString(`${mirror}/docs/a.md`)).toBe("version two");
-          yield* restored.stop;
-        }),
-      { timeout: 30000 },
-    );
-  }
+        expect(tooLarge).toMatchObject({ failure: { _tag: "SkippedLocal" } });
+        expect(yield* fs.readFileString(`${directory}/outside`)).toBe("never touched");
+      }),
+  );
 });

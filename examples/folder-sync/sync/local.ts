@@ -1,6 +1,6 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem.stat follows symlinks; lstat is needed before reading or replacing a mirror path.
 import { lstat } from "node:fs/promises";
-import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
 import { FILE_LIMIT } from "../server/domain.ts";
 import { ignoredPath } from "./decisions.ts";
 
@@ -109,60 +109,6 @@ export const safePath = Effect.fn("SyncLocal.safePath")(function* (root: string,
   return current;
 });
 
-export const localBytes = Effect.fn("SyncLocal.read")(
-  function* (root: string, relative: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const absolute = yield* safePath(root, relative);
-
-    if (!(yield* fs.exists(absolute))) return null;
-    const info = yield* fs.stat(absolute);
-
-    if (info.type !== "File") return null;
-
-    if (info.size > BigInt(FILE_LIMIT))
-      return yield* new SkippedLocal({
-        path: absolute,
-        message: `Skipping file over 8 MiB: ${absolute}`,
-      });
-
-    return yield* fs.readFile(absolute);
-  },
-  (effect) =>
-    effect.pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged("NotFound")(error.reason) ? Effect.succeed(null) : Effect.fail(error),
-      ),
-    ),
-);
-
-/** Atomic replacement keeps watchers from observing partly written content. */
-export const replaceLocal = Effect.fn("SyncLocal.replace")(function* (
-  root: string,
-  relative: string,
-  bytes: Uint8Array | null,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const absolute = yield* safePath(root, relative);
-
-  if (bytes === null) {
-    if ((yield* pathKind(absolute)) === "file") yield* fs.remove(absolute, { force: true });
-
-    return;
-  }
-
-  yield* fs.makeDirectory(path.dirname(absolute), { recursive: true });
-
-  // Scratch stays under the ignored state directory, on the same filesystem as the mirror.
-  const temp = yield* fs.makeTempFileScoped({
-    directory: path.join(root, ".folder-sync"),
-    prefix: "pull-",
-  });
-
-  yield* fs.writeFile(temp, bytes);
-  yield* fs.rename(temp, absolute);
-}, Effect.scoped);
-
 /** Each daemon keeps its own warning signatures. lstat also fingerprints dangling symlinks. */
 export const skipWarnings = Effect.sync(() => {
   const warned = new Map<string, string>();
@@ -181,4 +127,118 @@ export const skipWarnings = Effect.sync(() => {
       warned.set(file, signature);
       yield* Effect.logWarning(message);
     });
+});
+
+/** Cache immutable observations before enqueuing. Large sources never enter SQLite or a full buffer. */
+export const cacheBody = Effect.fn("SyncLocal.cacheBody")(function* <E>(
+  root: string,
+  body: Stream.Stream<Uint8Array, E>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* safePath(root, ".folder-sync/content");
+  yield* fs.makeDirectory(directory, { recursive: true });
+
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const temporary = yield* fs.makeTempFileScoped({ directory, prefix: ".capture-" });
+      const output = yield* fs.open(temporary, { flag: "w" });
+      const digest = new Bun.CryptoHasher("sha256");
+      let size = 0;
+      yield* body.pipe(
+        Stream.runForEach(
+          (
+            chunk,
+          ): Effect.Effect<
+            void,
+            SkippedLocal | Effect.Error<ReturnType<typeof output.writeAll>>
+          > => {
+            size += chunk.length;
+
+            if (size > FILE_LIMIT)
+              return Effect.fail(
+                new SkippedLocal({ path: temporary, message: "Skipping file over 64 MiB" }),
+              );
+            digest.update(chunk);
+
+            return output.writeAll(chunk);
+          },
+        ),
+      );
+      const hash = digest.digest("hex");
+      const source = yield* safePath(root, `.folder-sync/content/${hash}`);
+
+      if (!(yield* fs.exists(source))) yield* fs.rename(temporary, source);
+
+      return { hash, size, source };
+    }),
+  );
+});
+
+export const captureLocal = Effect.fn("SyncLocal.capture")(function* (
+  root: string,
+  relative: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const absolute = yield* safePath(root, relative);
+
+  if ((yield* pathKind(absolute)) !== "file") return null;
+  const info = yield* fs.stat(absolute);
+
+  if (info.size > BigInt(FILE_LIMIT))
+    return yield* new SkippedLocal({
+      path: absolute,
+      message: `Skipping file over 64 MiB: ${absolute}`,
+    });
+
+  const digest = new Bun.CryptoHasher("sha256");
+  let size = 0;
+  yield* fs.stream(absolute).pipe(
+    Stream.runForEach((chunk) => {
+      size += chunk.length;
+
+      if (size > FILE_LIMIT)
+        return Effect.fail(
+          new SkippedLocal({ path: absolute, message: `Skipping file over 64 MiB: ${absolute}` }),
+        );
+      digest.update(chunk);
+
+      return Effect.void;
+    }),
+  );
+  const hash = digest.digest("hex");
+  const source = yield* safePath(root, `.folder-sync/content/${hash}`);
+
+  if (yield* fs.exists(source)) return { hash, size, source };
+
+  // Capture again only for new content. The capture hashes its own bytes, including any intervening edit.
+  return yield* cacheBody(root, fs.stream(absolute));
+});
+
+export const replaceSource = Effect.fn("SyncLocal.replaceSource")(function* (
+  root: string,
+  relative: string,
+  source: string | null,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const absolute = yield* safePath(root, relative);
+
+  if (source === null) {
+    if ((yield* pathKind(absolute)) === "file") yield* fs.remove(absolute, { force: true });
+
+    return;
+  }
+
+  yield* fs.makeDirectory(path.dirname(absolute), { recursive: true });
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const temporary = yield* fs.makeTempFileScoped({
+        directory: path.join(root, ".folder-sync"),
+        prefix: "pull-",
+      });
+
+      yield* fs.copyFile(source, temporary);
+      yield* fs.rename(temporary, absolute);
+    }),
+  );
 });

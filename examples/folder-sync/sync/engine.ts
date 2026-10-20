@@ -5,69 +5,52 @@ import {
   Duration,
   Effect,
   FileSystem,
+  FiberSet,
   Layer,
   Path,
+  Predicate,
   Schedule,
   Schema,
-  Predicate,
   Semaphore,
   Stream,
 } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { normalisePath, sha256 } from "../server/domain.ts";
-import { SyncRemote, remoteLayer } from "./client.ts";
+import { INLINE_LIMIT, inlineText, normalisePath, type File } from "../server/domain.ts";
+import { SyncRemote, remoteLayer, type FileMessage } from "./client.ts";
 import {
-  applyChange,
+  backupPath,
   conflictBase,
+  conflictPath,
   feedReset,
   folderDirectory,
-  headRewound,
-  isEcho,
   ignoredPath,
-  conflictPath,
-  backupPath,
+  isEcho,
+  type SyncOptions,
 } from "./decisions.ts";
-import type { SyncOptions } from "./decisions.ts";
 import {
+  cacheBody,
+  captureLocal,
   LocalFailure,
-  SkippedLocal,
-  localBytes,
   localFiles,
-  replaceLocal,
-  safePath,
   pathKind,
+  replaceSource,
+  safePath,
   skipWarnings,
+  SkippedLocal,
 } from "./local.ts";
 import { folderRoot } from "./layout.ts";
-import { SyncState, stateLayer } from "./state.ts";
-import type { Known } from "./state.ts";
+import { SyncState, stateLayer, type Known } from "./state.ts";
 
-/** The server lost history it had already sent. Syncing on would mix two timelines. */
 export class HistoryRewound extends Schema.TaggedError<HistoryRewound>()("HistoryRewound", {
   message: Schema.String,
 }) {}
-
-const rewound = (detail: string) =>
-  new HistoryRewound({
-    message: `Server history went backwards: ${detail}. Sync stopped before it replaced the local copy. Rotate the server feed epoch to resync, or mirror into a new --dir.`,
-  });
-
-const skipLocal =
-  (warn: (file: string, message: string) => Effect.Effect<void>) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.catchIf(Schema.is(SkippedLocal), (error) => warn(error.path, error.message)),
-    );
-
-const hashBytes = (bytes: Uint8Array | null) =>
-  bytes === null ? Effect.succeed(null) : sha256(bytes);
 
 const retryRemote = <A, E, R>(work: Effect.Effect<A, E, R>) =>
   work.pipe(
     Effect.retry({
       while: (error) =>
         Schema.is(Schema.Struct({ retryable: Schema.Literal(true) }))(error) ||
-        Predicate.isTagged("HttpClientError")(error),
+        Predicate.isTagged(error, "HttpClientError"),
       schedule: Schedule.exponential("100 millis").pipe(
         Schedule.modifyDelay(({ duration }) =>
           Effect.succeed(Math.min(Duration.toMillis(duration), 3000)),
@@ -76,24 +59,27 @@ const retryRemote = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     }),
   );
 
-/** One owner serializes mirror decisions; network long-polls and outbox sends stay outside it. */
+/** One owner protects filesystem observations and durable cursor settlement. Network tails wait outside it. */
 export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const root = path.resolve(options.directory);
   const state = yield* SyncState;
   const remote = yield* SyncRemote;
+  const root = path.resolve(options.directory);
   const gate = yield* Semaphore.make(1);
   const warn = yield* skipWarnings;
-  const skip = skipLocal(warn);
 
-  const selected = (folderId: string) =>
-    options.folders === undefined || options.folders.includes(folderId);
+  const skip = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+    work.pipe(Effect.catchIf(Schema.is(SkippedLocal), (error) => warn(error.path, error.message)));
 
-  const writable = (folderId: string) => options.writable.includes(folderId);
+  const selected = (id: string) => options.folders === undefined || options.folders.includes(id);
+  const writable = (id: string) => options.writable.includes(id);
   const mapping = options.folderDirectory ?? folderDirectory;
   const roots = new Map<string, string>();
+
+  const filePath = (folderId: string, file: string) =>
+    path.join(roots.get(folderId) ?? mapping(folderId), file);
 
   const configuration = yield* Schema.encodeEffect(
     Schema.fromJsonString(
@@ -125,8 +111,307 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
   const clientId = origin;
 
+  const hasPending = Effect.fn("Sync.hasPending")(function* (folderId: string, file: string) {
+    return (yield* state.pending()).some((op) => op.folderId === folderId && op.path === file);
+  });
+
+  const cache = Effect.fn("Sync.cache")(function* (value: File) {
+    const source = yield* safePath(root, `.folder-sync/content/${value.hash}`);
+
+    if (yield* fs.exists(source)) return { source, hash: value.hash, size: value.size };
+
+    const content =
+      value.text === undefined
+        ? yield* remote.body(value.hash)
+        : Stream.succeed(new TextEncoder().encode(value.text));
+
+    const captured = yield* cacheBody(root, content);
+
+    if (captured.hash !== value.hash || captured.size !== value.size)
+      return yield* new LocalFailure({ message: `Content hash or size mismatch: ${value.path}` });
+
+    return captured;
+  });
+
+  const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
+    if (ignoredPath(file)) return;
+    const normalized = yield* normalisePath(file);
+    const local = yield* captureLocal(root, filePath(folderId, normalized));
+    const hash = local?.hash ?? null;
+    const known = yield* state.head(folderId, normalized);
+    const pending = yield* hasPending(folderId, normalized);
+
+    if (isEcho(hash, known, pending)) return;
+
+    if (!writable(folderId)) return;
+    yield* state.enqueue(
+      {
+        folderId,
+        path: normalized,
+        txid: yield* crypto.randomUUIDv4(),
+        base: conflictBase(known),
+        hash,
+        size: local?.size ?? 0,
+        source: local?.source ?? null,
+        uploaded: 0,
+      },
+      {
+        folderId,
+        path: normalized,
+        version: known?.version ?? null,
+        hash: known?.hash ?? null,
+        localHash: hash,
+        localVersion: known?.localVersion ?? null,
+      },
+    );
+  }, skip);
+
+  const install = Effect.fn("Sync.install")(function* (
+    folderId: string,
+    file: string,
+    value: File | null,
+    bootstrap = false,
+  ) {
+    const known = yield* state.head(folderId, file);
+    const local = yield* captureLocal(root, filePath(folderId, file));
+    const hash = local?.hash ?? null;
+    const remoteHash = value?.hash ?? null;
+    const pending = yield* hasPending(folderId, file);
+
+    if (pending) {
+      if (known !== undefined)
+        yield* state.save({ ...known, version: value?.version ?? null, hash: remoteHash });
+
+      return;
+    }
+
+    if (local !== null && hash !== remoteHash && !isEcho(hash, known)) {
+      if (writable(folderId)) {
+        if (!bootstrap && known !== undefined) {
+          yield* observe(folderId, file);
+          yield* state.save({
+            ...known,
+            version: value?.version ?? null,
+            hash: remoteHash,
+            localHash: hash,
+          });
+
+          return;
+        }
+
+        let copy = conflictPath(file, clientId);
+        let suffix = 0;
+
+        while (yield* fs.exists(path.join(root, filePath(folderId, copy))))
+          copy = conflictPath(file, clientId, ++suffix);
+        yield* replaceSource(root, filePath(folderId, copy), local.source);
+        yield* state.enqueue(
+          {
+            folderId,
+            path: copy,
+            txid: yield* crypto.randomUUIDv4(),
+            base: null,
+            ...local,
+            uploaded: 0,
+          },
+          { folderId, path: copy, version: null, hash: null, localHash: hash, localVersion: null },
+        );
+        yield* Effect.logWarning(`Preserved bootstrap conflict: ${folderId}/${copy}`);
+      } else {
+        const base = path.join(
+          ".folder-sync",
+          "rejected",
+          roots.get(folderId) ?? mapping(folderId),
+          file,
+        );
+
+        let backup = base;
+        let suffix = 0;
+
+        while (yield* fs.exists(path.join(root, backup))) backup = backupPath(base, ++suffix);
+        yield* replaceSource(root, backup, local.source);
+        yield* Effect.logWarning(`Preserved read-only edit: ${backup}`);
+      }
+    }
+
+    const content = value === null ? null : yield* cache(value);
+
+    const row: Known = {
+      folderId,
+      path: file,
+      version: value?.version ?? null,
+      hash: remoteHash,
+      localHash: known?.localHash ?? null,
+      localVersion: known?.localVersion ?? null,
+    };
+
+    yield* state.save(row);
+    yield* replaceSource(root, filePath(folderId, file), content?.source ?? null);
+    yield* state.save({ ...row, localHash: remoteHash, localVersion: row.version });
+  }, skip);
+
+  const initialiseFolder = Effect.fn("Sync.initialiseFolder")(function* (folderId: string) {
+    const saved = yield* state.get(`cursor:${folderId}`);
+    const tail = yield* remote.tail(folderId);
+
+    if (saved !== undefined && feedReset(saved, tail))
+      return yield* new HistoryRewound({
+        message: `Server history went backwards: ${folderId} cursor ${saved} is past tail ${tail}. Sync stopped. Restore the server history or use a new --dir.`,
+      });
+
+    if (saved !== undefined) return yield* Effect.void;
+    const files = new Map<string, File>();
+    let cursor = "-1";
+
+    while (true) {
+      const page = yield* remote.page(folderId, cursor, false);
+
+      if (page.reset) {
+        files.clear();
+        cursor = "-1";
+        continue;
+      }
+
+      let reset = false;
+
+      for (const change of page.rows) {
+        if (!("type" in change)) {
+          files.clear();
+          reset = true;
+        } else if (change.headers.operation === "delete") files.delete(change.key);
+        else if (change.value !== undefined) files.set(change.key, change.value);
+      }
+
+      cursor = page.cursor;
+
+      if (reset) {
+        cursor = "-1";
+        continue;
+      }
+
+      if (page.upToDate) break;
+    }
+
+    yield* gate.withPermit(
+      Effect.gen(function* () {
+        const paths = new Set([
+          ...files.keys(),
+          ...(yield* state.heads())
+            .filter((row) => row.folderId === folderId)
+            .map((row) => row.path),
+          ...(yield* localFiles(path.join(root, roots.get(folderId) ?? mapping(folderId)), warn)),
+        ]);
+
+        for (const file of paths) {
+          if (ignoredPath(file)) continue;
+
+          // A brand-new local path is a create, not a deletion discovered during replay.
+          if (!files.has(file) && (yield* state.head(folderId, file)) === undefined)
+            yield* observe(folderId, file);
+          else yield* install(folderId, file, files.get(file) ?? null, true);
+        }
+
+        yield* state.set(`cursor:${folderId}`, cursor);
+      }),
+    );
+
+    return yield* Effect.void;
+  });
+
+  const applyPage = Effect.fn("Sync.applyPage")(function* (
+    folderId: string,
+    rows: ReadonlyArray<FileMessage>,
+    cursor: string,
+  ) {
+    yield* gate.withPermit(
+      Effect.gen(function* () {
+        for (const change of rows) {
+          if (!("type" in change)) continue;
+
+          if (ignoredPath(change.key)) continue;
+          yield* observe(folderId, change.key);
+          yield* install(
+            folderId,
+            change.key,
+            change.headers.operation === "delete" ? null : (change.value ?? null),
+          );
+        }
+
+        yield* state.set(`cursor:${folderId}`, cursor);
+      }),
+    );
+  });
+
+  const pullFolder = Effect.fn("Sync.pullFolder")(function* (folderId: string, once = false) {
+    let cursor = (yield* state.get(`cursor:${folderId}`)) ?? "-1";
+    let live = false;
+
+    while (true) {
+      const page: Effect.Success<ReturnType<typeof remote.page>> = yield* remote.page(
+        folderId,
+        cursor,
+        live,
+      );
+
+      if (page.reset || page.rows.some((change) => !("type" in change))) {
+        yield* state.set(`cursor:${folderId}`, "-1");
+        // Bootstrap folds the replacement stream before reconciling missing paths.
+        const files = new Map<string, File>();
+        let replay = "-1";
+
+        while (true) {
+          const batch = yield* remote.page(folderId, replay, false);
+
+          if (batch.reset) {
+            files.clear();
+            replay = "-1";
+            continue;
+          }
+
+          for (const change of batch.rows) {
+            if (!("type" in change)) files.clear();
+            else if (change.headers.operation === "delete") files.delete(change.key);
+            else if (change.value !== undefined) files.set(change.key, change.value);
+          }
+
+          replay = batch.cursor;
+
+          if (batch.upToDate) break;
+        }
+
+        yield* gate.withPermit(
+          Effect.gen(function* () {
+            const paths = new Set([
+              ...files.keys(),
+              ...(yield* state.heads())
+                .filter((row) => row.folderId === folderId)
+                .map((row) => row.path),
+            ]);
+
+            for (const file of paths) yield* install(folderId, file, files.get(file) ?? null, true);
+            yield* state.set(`cursor:${folderId}`, replay);
+          }),
+        );
+        cursor = replay;
+        live = false;
+
+        if (once) return;
+        continue;
+      }
+
+      yield* applyPage(folderId, page.rows, page.cursor);
+      cursor = page.cursor;
+      live = page.upToDate;
+
+      if (once && page.upToDate) return;
+    }
+  });
+
+  const followers = yield* FiberSet.make<void, Effect.Error<ReturnType<typeof pullFolder>>>();
+  const running = new Set<string>();
+
   const addFolder = Effect.fn("Sync.addFolder")(function* (folderId: string) {
-    if (!selected(folderId) || roots.has(folderId)) return yield* Effect.void;
+    if (!selected(folderId) || running.has(folderId)) return yield* Effect.void;
 
     const relative = yield* folderRoot(folderId, mapping(folderId), roots).pipe(
       Effect.catchTag("InvalidFile", ({ message }) => new LocalFailure({ message })),
@@ -138,366 +423,201 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       return yield* new LocalFailure({
         message: `Folder mapping changed for ${folderId}. Use another directory.`,
       });
+    roots.set(folderId, relative);
     yield* state.set(`mapping:${folderId}`, relative);
     yield* state.addFolder(folderId);
-    roots.set(folderId, relative);
     yield* safePath(root, relative);
-
-    return yield* fs.makeDirectory(path.join(root, relative), { recursive: true });
-  });
-
-  for (const folderId of [
-    ...(yield* state.folders()),
-    ...(options.folders ?? []),
-    ...options.writable,
-  ])
-    yield* addFolder(folderId);
-
-  const filePath = (folderId: string, file: string) => path.join(mapping(folderId), file);
-
-  const hasPending = Effect.fn("Sync.hasPending")(function* (
-    folderId: string,
-    file: string,
-    exceptSeq?: number,
-  ) {
-    return (yield* state.pending()).some(
-      (op) => op.folderId === folderId && op.path === file && op.seq !== exceptSeq,
-    );
-  });
-
-  const install = Effect.fn("Sync.install")(function* (
-    folderId: string,
-    file: string,
-    head: { version: number | null; hash: string | null; bytes: Uint8Array | null },
-    exceptSeq?: number,
-    force = false,
-    unknownServer = false,
-  ) {
-    // An epoch change invalidates old echo hashes as well as remote versions.
-    // Keep pending observations in storage, but adopt unqueued paths as fresh files.
-    const known = unknownServer ? undefined : yield* state.head(folderId, file);
-
-    if (headRewound(known, head.version))
-      return yield* rewound(
-        `${folderId}/${file} is at version ${head.version ?? "none"}, but this mirror saw version ${known?.version}`,
-      );
-
-    if (!force && head.version !== null && known !== undefined && !applyChange(known, head.version))
-      return yield* Effect.void;
-
-    if (yield* hasPending(folderId, file, exceptSeq)) return yield* Effect.void;
-    // Recheck after the network read: an editor may have changed bytes since observation.
-    const local = yield* localBytes(root, filePath(folderId, file));
-    const localHash = yield* hashBytes(local);
-
-    if (
-      !writable(folderId) &&
-      local !== null &&
-      localHash !== head.hash &&
-      !isEcho(localHash, known)
-    ) {
-      const relative = path.join(".folder-sync", "rejected", mapping(folderId), file);
-      let backup = relative;
-      let suffix = 0;
-
-      while (yield* fs.exists(path.join(root, backup))) {
-        suffix++;
-        backup = backupPath(relative, suffix);
-      }
-
-      const destination = yield* safePath(root, backup);
-      yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-      yield* fs.rename(path.join(root, filePath(folderId, file)), destination);
-      yield* Effect.logWarning(`Preserved read-only edit: ${destination}`);
-    }
-
-    const adopt = known === undefined && head.version !== null;
-
-    if (adopt && writable(folderId) && local !== null && localHash !== head.hash) {
-      let suffix = 0;
-      let copy = conflictPath(file, clientId);
-
-      while (yield* fs.exists(path.join(root, filePath(folderId, copy)))) {
-        suffix++;
-        copy = conflictPath(file, clientId, suffix);
-      }
-
-      yield* replaceLocal(root, filePath(folderId, copy), local);
-      yield* Effect.logWarning(`Preserved bootstrap conflict: ${folderId}/${copy}`);
-    }
-
-    if (!adopt && writable(folderId) && !isEcho(localHash, known, exceptSeq !== undefined)) {
-      const opId = yield* crypto.randomUUIDv4();
-      yield* state.enqueue(
-        { folderId, path: file, opId, base: conflictBase(known), hash: localHash, bytes: local },
-        {
-          folderId,
-          path: file,
-          version: known?.version ?? null,
-          hash: known?.hash ?? null,
-          localHash,
-          localVersion: known?.localVersion ?? null,
-        },
-      );
-
-      return yield* Effect.void;
-    }
-
-    const row: Known = {
-      folderId,
-      path: file,
-      version: head.version,
-      hash: head.hash,
-      localHash: known?.localHash ?? null,
-      localVersion: known?.localVersion ?? null,
-    };
-
-    // Write intent precedes the disk rename. Cursor settlement follows both disk and observation.
-    yield* state.save(row);
-    yield* replaceLocal(root, filePath(folderId, file), head.bytes);
-
-    return yield* state.save({ ...row, localHash: head.hash, localVersion: head.version });
-  }, skip);
-
-  const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
-    if (ignoredPath(file)) return yield* Effect.void;
-    const normalized = yield* normalisePath(file);
-    const bytes = yield* localBytes(root, filePath(folderId, normalized));
-    const hash = yield* hashBytes(bytes);
-    const known = yield* state.head(folderId, normalized);
-
-    const pending = yield* hasPending(folderId, normalized);
-
-    if (known !== undefined && !pending && known.localVersion !== known.version) {
-      // An interrupted pull recorded its intent before replacing disk bytes. Finish it even if
-      // the replayed feed version equals the saved head, while preserving edits based on localVersion.
-      const head = yield* remote.head(folderId, normalized, known.version ?? undefined);
-      yield* install(folderId, normalized, head, undefined, true);
-
-      return yield* Effect.void;
-    }
-
-    if (isEcho(hash, known, pending)) return yield* Effect.void;
-
-    if (!writable(folderId)) {
-      yield* Effect.logWarning(`Restoring read-only file: ${folderId}/${normalized}`);
-      const head = yield* remote.head(folderId, normalized);
-      yield* install(folderId, normalized, head, undefined, true);
-
-      return yield* Effect.void;
-    }
-
-    const opId = yield* crypto.randomUUIDv4();
-    yield* state.enqueue(
-      { folderId, path: normalized, opId, base: conflictBase(known), hash, bytes },
-      {
-        folderId,
-        path: normalized,
-        version: known?.version ?? null,
-        hash: known?.hash ?? null,
-        localHash: hash,
-        localVersion: known?.localVersion ?? null,
-      },
-    );
+    yield* fs.makeDirectory(path.join(root, relative), { recursive: true });
+    yield* initialiseFolder(folderId);
+    yield* pullFolder(folderId, true);
+    running.add(folderId);
+    yield* FiberSet.run(followers, retryRemote(pullFolder(folderId)));
 
     return yield* Effect.void;
-  }, skip);
+  });
+
+  const discover = Effect.fn("Sync.discover")(function* (live: boolean) {
+    const offset = (yield* state.get("foldersCursor")) ?? "-1";
+    const page = yield* remote.folders(offset, live);
+
+    if (page.reset || page.rows.some((row) => !("type" in row))) {
+      yield* state.set("foldersCursor", "-1");
+
+      return;
+    }
+
+    for (const change of page.rows)
+      if ("type" in change && change.value !== undefined) yield* addFolder(change.value.folderId);
+    yield* state.set("foldersCursor", page.cursor);
+  });
+
+  // Reattach saved folders before following new registrations. The HEAD guard precedes disk changes.
+  for (const folderId of yield* state.folders()) yield* addFolder(folderId);
+  yield* discover(false);
+
+  for (const folderId of [...(options.folders ?? []), ...options.writable])
+    yield* addFolder(folderId);
+  yield* state.set("ready", "true");
 
   const scan = Effect.fn("Sync.scan")(function* () {
     for (const [folderId, relative] of roots) {
-      const files = new Set(yield* localFiles(path.join(root, relative), warn));
+      const files = new Set([
+        ...(yield* localFiles(path.join(root, relative), warn)),
+        ...(yield* state.heads()).filter((row) => row.folderId === folderId).map((row) => row.path),
+      ]);
 
-      for (const head of yield* state.heads())
-        if (head.folderId === folderId && !ignoredPath(head.path)) files.add(head.path);
+      for (const file of files) {
+        if (writable(folderId)) yield* observe(folderId, file);
+        else {
+          const known = yield* state.head(folderId, file);
 
-      for (const file of files)
-        yield* observe(folderId, file).pipe(
-          Effect.catchTags({
-            RemoteFailure: (error) => (error.retryable ? Effect.void : Effect.fail(error)),
-            HttpClientError: () => Effect.void,
-          }),
-        );
+          const local = yield* captureLocal(root, filePath(folderId, file)).pipe(
+            Effect.catchIf(Schema.is(SkippedLocal), (error) =>
+              warn(error.path, error.message).pipe(Effect.as(null)),
+            ),
+          );
+
+          if (!isEcho(local?.hash ?? null, known)) {
+            const head = yield* remote.head(folderId, file);
+
+            if (head === null) yield* install(folderId, file, null);
+            else {
+              const content = yield* cacheBody(root, head.body);
+              yield* install(folderId, file, {
+                path: file,
+                version: head.version,
+                hash: content.hash,
+                size: content.size,
+                author: "server",
+              });
+            }
+          }
+        }
+      }
     }
 
     yield* state.set("lastScan", String(yield* Clock.currentTimeMillis));
   });
 
-  const bootstrap = Effect.fn("Sync.bootstrap")(function* () {
-    yield* state.set("ready", "false");
-    const snapshot = yield* remote.snapshot;
-    yield* gate.withPermit(
-      Effect.gen(function* () {
-        const oldEpoch = yield* state.get("epoch");
+  const refresh = Effect.fn("Sync.refresh")(function* (folderId: string, file: string) {
+    const head = yield* remote.head(folderId, file);
 
-        const epochChanged = oldEpoch !== undefined && oldEpoch !== snapshot.epoch;
+    if (head === null) return yield* install(folderId, file, null);
+    const content = yield* cacheBody(root, head.body);
 
-        if (epochChanged) yield* state.resetVersions;
-
-        for (const row of snapshot.files) yield* addFolder(row.folderId);
-        const paths = new Map<string, { folderId: string; path: string }>();
-
-        for (const row of [...snapshot.files, ...(yield* state.heads())]) {
-          if (selected(row.folderId) && !ignoredPath(row.path))
-            paths.set(`${row.folderId}\0${row.path}`, row);
-        }
-
-        for (const [folderId, relative] of roots) {
-          for (const file of yield* localFiles(path.join(root, relative), warn))
-            paths.set(`${folderId}\0${file}`, { folderId, path: file });
-        }
-
-        for (const row of paths.values()) {
-          const head = yield* remote.head(row.folderId, row.path);
-
-          if (yield* hasPending(row.folderId, row.path)) continue;
-          yield* install(row.folderId, row.path, head, undefined, true, epochChanged);
-        }
-
-        yield* scan();
-        yield* state.set("epoch", snapshot.epoch);
-        yield* state.set("cursor", snapshot.cursor);
-        yield* state.set("ready", "true");
-      }),
-    );
-  });
-
-  const pull = Effect.fn("Sync.pull")(function* () {
-    let offset = yield* state.get("cursor");
-
-    if (offset === undefined) {
-      yield* bootstrap();
-      offset = yield* state.get("cursor");
-    }
-
-    if (offset === undefined)
-      return yield* new LocalFailure({ message: "Bootstrap did not save a cursor" });
-    const tail = yield* remote.tail;
-
-    // A new epoch is a declared replacement. Only an unchanged epoch promises an append-only feed.
-    if (tail.epoch !== (yield* state.get("epoch"))) {
-      yield* Effect.logWarning("Change feed epoch changed; bootstrapping again");
-      yield* bootstrap();
-
-      return yield* Effect.void;
-    }
-
-    if (feedReset(offset, tail.cursor))
-      return yield* rewound(`feed cursor ${offset} is past the server tail ${tail.cursor}`);
-
-    let cursor: string = offset;
-    let live = true;
-
-    do {
-      const page: Effect.Success<ReturnType<typeof remote.page>> = yield* remote.page(cursor, live);
-
-      if (page.epoch !== (yield* state.get("epoch"))) {
-        yield* bootstrap();
-
-        return yield* Effect.void;
-      }
-
-      if (feedReset(cursor, page.cursor))
-        return yield* rewound(`feed cursor ${cursor} is past the server tail ${page.cursor}`);
-
-      yield* gate.withPermit(
-        Effect.gen(function* () {
-          for (const change of page.rows) {
-            if (!selected(change.folderId) || ignoredPath(change.path)) continue;
-            yield* addFolder(change.folderId);
-            const known = yield* state.head(change.folderId, change.path);
-
-            if (!applyChange(known, change.version)) continue;
-
-            if (known !== undefined) yield* observe(change.folderId, change.path);
-
-            if (yield* hasPending(change.folderId, change.path)) continue;
-
-            const head = change.deleted
-              ? { version: change.version, hash: null, bytes: null }
-              : yield* remote.head(change.folderId, change.path, change.version);
-
-            yield* install(change.folderId, change.path, head);
-          }
-
-          yield* state.set("cursor", page.cursor);
-        }),
-      );
-      cursor = page.cursor;
-      live = page.upToDate;
-    } while (!live);
-
-    return yield* Effect.void;
+    return yield* install(folderId, file, {
+      path: file,
+      version: head.version,
+      hash: content.hash,
+      size: content.size,
+      author: "server",
+    });
   });
 
   const deliver = Effect.fn("Sync.deliver")(function* () {
     const operation = (yield* state.pending())[0];
 
-    if (operation === undefined) return yield* Effect.void;
+    if (operation === undefined) return;
+    // Conflict intent was saved before its disk copy. Complete it after a restart as well.
+    const restore = yield* state.get(`restore:${operation.seq}`);
 
-    const receipt = yield* remote.push(operation, clientId).pipe(
-      Effect.catchTag("RemoteFailure", (error) =>
+    if (restore !== undefined && restore !== "") {
+      yield* gate.withPermit(
         Effect.gen(function* () {
-          if (
-            error.status === 401 ||
-            error.status === 403 ||
-            error.retryable ||
-            error.status < 400 ||
-            error.status >= 500
-          )
-            return yield* error;
-          yield* gate.withPermit(state.reject(operation.seq, error.status, error.message));
-          yield* Effect.logWarning(
-            `Rejected write saved in SQLite: ${operation.folderId}/${operation.path} (${error.status})`,
-          );
+          const current = yield* captureLocal(root, filePath(operation.folderId, operation.path));
+          const known = yield* state.head(operation.folderId, operation.path);
 
-          return undefined;
+          if (current === null && known === undefined) {
+            yield* replaceSource(
+              root,
+              filePath(operation.folderId, operation.path),
+              operation.source,
+            );
+            yield* state.save({
+              folderId: operation.folderId,
+              path: operation.path,
+              version: null,
+              hash: null,
+              localHash: operation.hash,
+              localVersion: null,
+            });
+          } else if ((current?.hash ?? null) !== operation.hash) {
+            // A user may edit or remove the copy while this daemon is down. Queue that observation first.
+            yield* observe(operation.folderId, operation.path);
+          }
+
+          yield* state.set(`restore:${operation.seq}`, "");
         }),
-      ),
-    );
-
-    if (receipt === undefined) return yield* Effect.void;
-
-    if (receipt.overwrote !== undefined)
-      yield* Effect.logWarning(
-        `Replaced unseen version ${receipt.overwrote}: ${operation.folderId}/${operation.path}`,
       );
+    }
 
-    yield* gate.withPermit(
-      Effect.gen(function* () {
-        // Cover changes skipped while this entry was pending before releasing its receipt.
-        const head = yield* remote.head(
-          operation.folderId,
-          operation.path,
-          receipt.version ?? undefined,
-        );
+    const needsBlob =
+      operation.source !== null &&
+      (operation.size > INLINE_LIMIT ||
+        inlineText(yield* fs.readFile(operation.source)) === undefined);
 
-        yield* observe(operation.folderId, operation.path);
+    if (needsBlob && operation.uploaded === 0) {
+      yield* remote.upload(operation);
+      yield* state.uploaded(operation.seq);
+    }
 
-        if (!(yield* hasPending(operation.folderId, operation.path, operation.seq)))
-          yield* install(operation.folderId, operation.path, head, operation.seq, true);
-        // Retain the replayable receipt until both disk replacement and known-head state have settled.
-        yield* state.dropAndRebase(
-          operation.seq,
-          operation,
-          operation.base,
-          receipt.version ?? head.version,
-        );
+    const result = yield* remote.push(operation).pipe(
+      Effect.catchTag("SyncBlobMissing", () =>
+        remote.upload(operation).pipe(Effect.andThen(remote.push(operation))),
+      ),
+      Effect.catchTags({
+        StaleFile: () => Effect.succeed(null),
+        RemoteFailure: (error) =>
+          Effect.gen(function* () {
+            if (error.retryable || [401, 403].includes(error.status)) return yield* error;
+            yield* state.reject(operation.seq, error.status, error.message);
+            yield* Effect.logWarning(
+              `Rejected write retained in local cache: ${operation.folderId}/${operation.path} (${error.status})`,
+            );
 
-        return yield* Effect.void;
+            return undefined;
+          }),
       }),
     );
 
-    return yield* Effect.void;
+    if (result === undefined) return;
+    yield* gate.withPermit(
+      Effect.gen(function* () {
+        yield* observe(operation.folderId, operation.path);
+
+        if (result === null && operation.source !== null) {
+          let suffix = 0;
+          let copy = conflictPath(operation.path, clientId);
+          const pending = yield* state.pending();
+
+          while (
+            (yield* fs.exists(path.join(root, filePath(operation.folderId, copy)))) ||
+            pending.some((op) => op.folderId === operation.folderId && op.path === copy)
+          )
+            copy = conflictPath(operation.path, clientId, ++suffix);
+          yield* state.conflict(operation.seq, copy, yield* crypto.randomUUIDv4());
+          yield* replaceSource(root, filePath(operation.folderId, copy), operation.source);
+          yield* state.save({
+            folderId: operation.folderId,
+            path: copy,
+            version: null,
+            hash: null,
+            localHash: operation.hash,
+            localVersion: null,
+          });
+          yield* state.set(`restore:${operation.seq}`, "");
+          yield* Effect.logWarning(`Preserved conflict: ${operation.folderId}/${copy}`);
+        } else yield* state.settle(operation, result?.version ?? null);
+        yield* refresh(operation.folderId, operation.path);
+      }),
+    );
   });
 
   let lastEvent = 0;
   const settle = options.settleMillis ?? 100;
 
   const scanSafely = Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-
-    if (now - lastEvent < settle || (yield* state.get("cursor")) === undefined) return;
-    yield* gate.withPermit(scan());
+    if ((yield* Clock.currentTimeMillis) - lastEvent >= settle) yield* gate.withPermit(scan());
   });
 
   const watch = fs.watch(root, { recursive: true }).pipe(
@@ -505,20 +625,24 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       (event) => event.path.split(path.sep)[0] !== ".folder-sync" && !ignoredPath(event.path),
     ),
     Stream.tap(() =>
-      Effect.gen(function* () {
-        lastEvent = yield* Clock.currentTimeMillis;
-      }),
+      Clock.currentTimeMillis.pipe(
+        Effect.tap((now) =>
+          Effect.sync(() => {
+            lastEvent = now;
+          }),
+        ),
+      ),
     ),
     Stream.debounce(settle),
     Stream.runForEach(() => scanSafely),
   );
 
-  // Reconciliation also covers watcher event coalescing and newly created subdirectories.
   yield* Effect.all(
     [
+      FiberSet.join(followers),
       watch,
-      scanSafely.pipe(Effect.repeat(Schedule.spaced("1 second"))),
-      retryRemote(pull()).pipe(Effect.repeat(Schedule.forever)),
+      retryRemote(scanSafely).pipe(Effect.repeat(Schedule.spaced("1 second"))),
+      retryRemote(discover(true)).pipe(Effect.repeat(Schedule.forever)),
       retryRemote(deliver()).pipe(Effect.repeat(Schedule.spaced("100 millis"))),
     ],
     { concurrency: "unbounded", discard: true },
@@ -527,7 +651,6 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   return yield* Effect.void;
 });
 
-/** Resources close on interruption, including the watcher, long-poll and SQLite connection. */
 export const sync = (options: SyncOptions) => {
   const state = Layer.unwrap(
     Effect.gen(function* () {
@@ -542,19 +665,17 @@ export const sync = (options: SyncOptions) => {
       yield* fs.makeDirectory(path.join(root, ".folder-sync"), { recursive: true });
       yield* safePath(root, ".folder-sync/state.sqlite");
 
-      return stateLayer(path.join(root, ".folder-sync", "state.sqlite"));
+      return stateLayer(path.join(root, ".folder-sync/state.sqlite"));
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
   const remote = remoteLayer(options.server, options.token).pipe(
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide([FetchHttpClient.layer, BunServices.layer]),
   );
-
-  const runtime = Layer.mergeAll(state, remote, BunServices.layer, BunCrypto.layer);
 
   return runSync(options).pipe(
     Effect.scoped,
-    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This exported runner owns one scoped CLI runtime, also used by integration tests.
-    Effect.provide(runtime),
+    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Exported executable boundary owns the scoped CLI runtime.
+    Effect.provide(Layer.mergeAll(state, remote, BunServices.layer, BunCrypto.layer)),
   );
 };
