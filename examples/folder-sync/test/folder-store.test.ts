@@ -74,6 +74,21 @@ for (const [name, storage] of [
 
           for (const change of changes) yield* files.append({ folderId: "copy" }, [change]);
           expect((yield* files.collect({ folderId: "copy" })).items).toEqual(changes);
+
+          // A fresh storage owner has no source offsets or owner records to consult.
+          // Replay the wire changes, including their value versions, unchanged.
+          const fresh = yield* Layer.build(Layer.fresh(storage));
+          yield* Effect.gen(function* () {
+            const destination = yield* Files;
+            yield* destination.create({ folderId: folder });
+
+            for (const change of changes) yield* destination.append({ folderId: folder }, [change]);
+            const replayed = (yield* destination.collect({ folderId: folder })).items;
+            expect(replayed).toEqual(changes);
+            expect(
+              replayed.map((change) => ("value" in change ? change.value.version : null)),
+            ).toEqual([1, 2, null, 3]);
+          }).pipe(Effect.provideContext(fresh));
         }),
     );
     it.effect(

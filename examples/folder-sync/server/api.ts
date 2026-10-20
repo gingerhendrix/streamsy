@@ -204,5 +204,3 @@ export const ApiLive = ApiRequestLive.pipe(
 );
 
 export const HealthLive = HttpRouter.add("GET", "/health", HttpServerResponse.text("Folder sync"));
-
-export const NotFoundLive = Layer.empty;

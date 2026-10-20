@@ -2,7 +2,7 @@ import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
 import index from "../public/web/index.html";
-import { ApiLive, HealthLive, NotFoundLive } from "./api.ts";
+import { ApiLive, HealthLive } from "./api.ts";
 import { ServerConfig } from "./config.ts";
 import { FolderStoreLive, Initialise } from "./folder-store.ts";
 import { IndexApiLive } from "./index-api.ts";
@@ -34,7 +34,6 @@ const Server = Serve.layer(
     ApiLive,
     IndexApiLive,
     HealthLive,
-    NotFoundLive,
     Serve.mount(Folders, "/streams/folders"),
     Serve.mount(Files, "/streams/folders/:folderId/files"),
   ),
