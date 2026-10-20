@@ -1,6 +1,8 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { Serve } from "@streamsy/serve";
-import { ConfigProvider, Layer } from "effect";
+import { StorageFault } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
+import { ConfigProvider, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive } from "../server/api.ts";
 import { FileIndexLive, IndexLive } from "../server/file-index.ts";
@@ -11,8 +13,29 @@ import { sqliteHost } from "../server/storage.ts";
 
 export const writerToken = "protocol-test-token";
 
-export const protocolHost = () => {
+export const protocolHost = (options: { failWrites?: () => boolean } = {}) => {
   const storage = sqliteHost(":memory:");
+
+  const records = Layer.effect(
+    OwnerRecords,
+    Effect.gen(function* () {
+      const base = yield* OwnerRecords;
+
+      return OwnerRecords.of({
+        ...base,
+        write: (key, value) =>
+          options.failWrites?.()
+            ? Effect.fail(
+                new StorageFault({
+                  operation: "write",
+                  message: "injected disk failure",
+                  retryable: false,
+                }),
+              )
+            : base.write(key, value),
+      });
+    }),
+  ).pipe(Layer.provide(storage));
 
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
@@ -24,7 +47,7 @@ export const protocolHost = () => {
       Layer.provide(FileIndexLive),
       Layer.provide(IndexLive),
       Layer.provide(Initialise),
-      Layer.provide(FolderStoreLive),
+      Layer.provide(FolderStoreLive.pipe(Layer.provide(records))),
       HttpRouter.provideRequest(storage),
       Layer.provide([storage, BunHttpServer.layerHttpServices]),
       Layer.provide(

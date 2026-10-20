@@ -146,6 +146,7 @@ const make = Effect.gen(function* () {
 
       if (body.size <= INLINE_LIMIT) {
         const content = yield* blobs.get(body.hash);
+
         if (content === undefined) return yield* new BlobMissing({ hash: body.hash });
         const bytes = new Uint8Array(body.size);
         let offset = 0;
@@ -155,6 +156,7 @@ const make = Effect.gen(function* () {
             offset += chunk.length;
           }),
         );
+
         if (inlineText(bytes) !== undefined)
           return yield* new InvalidFile({ message: "Small UTF-8 content must use inline text" });
       }

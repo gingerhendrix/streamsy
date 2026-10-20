@@ -102,6 +102,7 @@ test("exhausted 503 retries become EIO", async () => {
       folders: ["docs"],
       fetch: async () => {
         calls++;
+
         return new Response("busy", { status: 503 });
       },
     }),
@@ -110,7 +111,7 @@ test("exhausted 503 retries become EIO", async () => {
 });
 
 test("Retry-After above five seconds fails without waiting or retrying", async () => {
-  for (const retryAfter of ["6", new Date(Date.now() + 60000).toUTCString()]) {
+  for (const retryAfter of ["6", "Thu, 01 Jan 2099 00:00:00 GMT"]) {
     let calls = 0;
     const start = performance.now();
     await expect(
@@ -119,6 +120,7 @@ test("Retry-After above five seconds fails without waiting or retrying", async (
         folders: ["docs"],
         fetch: async () => {
           calls++;
+
           return new Response("busy", { status: 429, headers: { "retry-after": retryAfter } });
         },
       }),
@@ -130,12 +132,14 @@ test("Retry-After above five seconds fails without waiting or retrying", async (
 
 test("anonymous blob uploads and commits omit Authorization", async () => {
   const requests: Request[] = [];
+
   const fs = await FolderHttpFileSystem.create({
     server: "http://localhost",
     folders: ["docs"],
     writable: ["docs"],
     fetch: async (request) => {
       requests.push(request);
+
       if (request.method === "PUT")
         return Response.json(
           request.url.includes("/api/blobs/") ? {} : { version: 1, txid: "one" },
@@ -144,6 +148,7 @@ test("anonymous blob uploads and commits omit Authorization", async () => {
       return empty();
     },
   });
+
   await fs.mutate("/docs/binary", new Uint8Array([0, 1]));
   const writes = requests.filter((request) => request.method === "PUT");
   expect(writes).toHaveLength(2);

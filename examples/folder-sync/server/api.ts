@@ -14,6 +14,7 @@ import {
 import { FolderStore } from "./folder-store.ts";
 
 const json = HttpServerResponse.jsonUnsafe;
+
 export const JSON_BODY_LIMIT = 512 * 1024;
 
 class JsonBodyTooLarge extends Schema.TaggedError<JsonBodyTooLarge>()("JsonBodyTooLarge", {}) {}
@@ -22,9 +23,11 @@ const jsonBody = Effect.fn("Api.jsonBody")(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const length = request.headers["content-length"];
+
   if (length !== undefined && Number(length) > JSON_BODY_LIMIT)
     return yield* new JsonBodyTooLarge();
   let size = 0;
+
   const chunks = yield* request.stream.pipe(
     Stream.tap((chunk) => {
       size += chunk.length;
@@ -33,8 +36,10 @@ const jsonBody = Effect.fn("Api.jsonBody")(function* (
     }),
     Stream.runCollect,
   );
+
   const bytes = new Uint8Array(size);
   let offset = 0;
+
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.length;

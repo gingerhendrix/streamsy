@@ -75,9 +75,12 @@ layer(BunServices.layer)((it) => {
         const blobs = yield* BlobStore;
         expect(yield* blobs.head(storedHash)).toBe(bytes.length);
         const content = yield* blobs.get(storedHash);
+
         if (content === undefined) return yield* Effect.die("Missing reopened blob");
         const chunks = yield* Stream.runCollect(content.body);
         expect(Array.from(chunks).flatMap((chunk) => [...chunk])).toEqual([...bytes]);
+
+        return yield* Effect.void;
       }).pipe(Effect.provideContext(reopened));
     }),
   );

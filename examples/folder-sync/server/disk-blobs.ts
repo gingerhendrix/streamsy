@@ -68,9 +68,11 @@ export const diskBlobs = (directory: string) =>
               yield* fs
                 .rename(temporary, path.join(directory, hash))
                 .pipe(Effect.mapError(failure));
+
               const parent = yield* fs
                 .open(directory, { flag: "r" })
                 .pipe(Effect.mapError(failure));
+
               yield* parent.sync.pipe(Effect.mapError(failure));
 
               return undefined;

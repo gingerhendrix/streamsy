@@ -36,6 +36,33 @@ const commit = (text: string, txid: string) => ({
   text,
 });
 
+test("a storage failure answers 500 and preserves the previous head and stream", async () => {
+  let failWrites = false;
+  const host = protocolHost({ failWrites: () => failWrites });
+
+  try {
+    await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    const file = "/api/folders/docs/files/a";
+    await call(host, file, "PUT", commit("one", "first"));
+    const stream = "/streams/folders/646f6373/files?offset=-1";
+    const before = await (await call(host, stream)).json();
+    failWrites = true;
+    expect(
+      (await call(host, file, "PUT", commit("two", "failed"), { "if-match": '"1"' })).status,
+    ).toBe(500);
+    const read = await call(host, file);
+    expect(await read.text()).toBe("one");
+    expect(read.headers.get("etag")).toBe('"1"');
+    expect(await (await call(host, stream)).json()).toEqual(before);
+    failWrites = false;
+    const next = await call(host, file, "PUT", commit("two", "second"), { "if-match": '"1"' });
+    expect(next.status).toBe(200);
+    expect(next.headers.get("etag")).toBe('"2"');
+  } finally {
+    await host.stop();
+  }
+});
+
 test("JSON writes, ETags, preconditions, no-op txids and State stream reads", async () => {
   const host = protocolHost();
 
@@ -163,14 +190,23 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
     expect((await call(host, file, "PUT", commit("x".repeat(INLINE_LIMIT), "exact"))).status).toBe(
       200,
     );
+
     for (const size of [0, INLINE_LIMIT]) {
       const text = "x".repeat(size);
-      const hash = digest(text);
-      expect((await call(host, `/api/blobs/${hash}`, "PUT", text)).status).toBe(200);
+      const inlineHash = digest(text);
+      expect((await call(host, `/api/blobs/${inlineHash}`, "PUT", text)).status).toBe(200);
       expect(
-        (await call(host, file, "PUT", { hash, size, txid: "must-inline", author: "test" })).status,
+        (
+          await call(host, file, "PUT", {
+            hash: inlineHash,
+            size,
+            txid: "must-inline",
+            author: "test",
+          })
+        ).status,
       ).toBe(400);
     }
+
     const largeText = "x".repeat(INLINE_LIMIT + 1);
     const largeHash = digest(largeText);
     await call(host, `/api/blobs/${largeHash}`, "PUT", largeText);
@@ -191,8 +227,10 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
 
 test("JSON writes reject oversized declared and streamed bodies before parsing", async () => {
   const host = protocolHost();
+
   try {
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+
     for (const [path, method] of [
       ["/api/folders", "POST"],
       ["/api/folders/docs/files/a", "PUT"],
@@ -202,6 +240,7 @@ test("JSON writes reject oversized declared and streamed bodies before parsing",
         authorization: `Bearer ${writerToken}`,
         "content-type": "application/json",
       };
+
       const declared = await host.fetch(
         new Request(`http://localhost${path}`, {
           method,
@@ -209,21 +248,27 @@ test("JSON writes reject oversized declared and streamed bodies before parsing",
           body: "not JSON",
         }),
       );
+
       expect(declared.status).toBe(413);
       let pulls = 0;
+
       const body = new ReadableStream<Uint8Array>({
         pull(controller) {
           pulls++;
           controller.enqueue(new Uint8Array(65536).fill(32));
+
           if (pulls === 32) controller.close();
         },
       });
+
       const streamed = await host.fetch(
         new Request(`http://localhost${path}`, { method, headers, body }),
       );
+
       expect(streamed.status).toBe(413);
       expect(pulls).toBeLessThan(32);
     }
+
     // Six-byte JSON escapes still fit for a full 64 KiB of inline UTF-8.
     const escaped = commit("\u0001".repeat(INLINE_LIMIT), "escaped");
     expect((await call(host, "/api/folders/docs/files/a", "PUT", escaped)).status).toBe(200);

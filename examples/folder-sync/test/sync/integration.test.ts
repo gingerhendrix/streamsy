@@ -111,6 +111,47 @@ const initialiseMirror = Effect.fn("SyncTest.initialiseMirror")(function* (direc
 });
 
 layer(runtime, { excludeTestServices: true })((it) => {
+  it.effect("writer authorization failures stop the daemon and leave its write in the outbox", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-unauthorized-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+
+      const context = yield* Layer.build(
+        remoteLayer(server.url, "wrong-token").pipe(Layer.provide(FetchHttpClient.layer)),
+      );
+
+      const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, remote),
+        Effect.forkScoped,
+      );
+
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* fs.writeFileString(`${mirror}/daily/demo/private.md`, "keep me");
+      const error = yield* Fiber.join(daemon).pipe(Effect.flip);
+      expect(error).toMatchObject({ status: 401, retryable: false });
+      expect(yield* read(server.url, "daily/demo", "private.md")).toBe("<missing>");
+      const pending = yield* state.pending();
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ path: "private.md", base: null });
+      expect(yield* state.rejected()).toEqual([]);
+      const source = pending[0]?.source;
+
+      if (source === undefined || source === null)
+        return yield* Effect.die("Missing retained bytes");
+      expect(yield* fs.readFileString(source)).toBe("keep me");
+
+      return yield* Effect.void;
+    }),
+  );
+
   it.effect("an offline create then delete preserves an unseen remote write", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("sync-unseen-delete-");
@@ -123,6 +164,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
       const remote = yield* remoteFor(server.url);
       const release = yield* Deferred.make<void>();
       let deletes = 0;
+
       const offline = SyncRemote.of({
         ...remote,
         push: (op) =>
@@ -134,11 +176,13 @@ layer(runtime, { excludeTestServices: true })((it) => {
             }),
           ),
       });
+
       const daemon = yield* runSync(options(server.url, mirror)).pipe(
         Effect.provideService(SyncState, state),
         Effect.provideService(SyncRemote, offline),
         Effect.forkScoped,
       );
+
       yield* until(state.get("ready"), (value) => value === "true");
       yield* fs.writeFileString(`${mirror}/daily/demo/n.md`, "mine");
       yield* until(
@@ -161,10 +205,13 @@ layer(runtime, { excludeTestServices: true })((it) => {
       );
       expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
       const origin = yield* state.get("origin");
+
       if (origin === undefined) return yield* Effect.die("Missing origin");
       expect(yield* read(server.url, "daily/demo", conflictPath("n.md", origin))).toBe("mine");
       expect(deletes).toBe(0);
       yield* Fiber.interrupt(daemon);
+
+      return yield* Effect.void;
     }),
   );
 
@@ -181,6 +228,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
       const remote = yield* remoteFor(server.url);
       const release = yield* Deferred.make<void>();
       const bases: Array<number | null> = [];
+
       const offline = SyncRemote.of({
         ...remote,
         push: (op) =>
@@ -192,16 +240,19 @@ layer(runtime, { excludeTestServices: true })((it) => {
             }),
           ),
       });
+
       const daemon = yield* runSync(options(server.url, mirror)).pipe(
         Effect.provideService(SyncState, state),
         Effect.provideService(SyncRemote, offline),
         Effect.forkScoped,
       );
+
       yield* until(state.get("ready"), (value) => value === "true");
       yield* fs.remove(`${mirror}/daily/demo/n.md`);
       const queued = yield* until(state.pending(), (rows) => rows.length === 1);
       const deletion = queued[0];
       const known = yield* state.head("daily/demo", "n.md");
+
       if (deletion === undefined || known === undefined)
         return yield* Effect.die("Missing deletion");
       // A second deletion observed before the first request returned keeps the same base.
@@ -230,6 +281,8 @@ layer(runtime, { excludeTestServices: true })((it) => {
       expect(bases).toEqual([original.version, original.version]);
       expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
       yield* Fiber.interrupt(daemon);
+
+      return yield* Effect.void;
     }),
   );
 

@@ -563,6 +563,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
 
       return;
     }
+
     // Conflict intent was saved before its disk copy. Complete it after a restart as well.
     const restore = yield* state.get(`restore:${operation.seq}`);
 

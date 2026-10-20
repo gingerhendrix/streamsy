@@ -170,7 +170,7 @@ const makeRemote = (server: string, token?: string) =>
     const push = Effect.fn("SyncRemote.push")(function* (operation: Pending) {
       // Defence for callers outside the daemon: an unseen file must never be deleted.
       if (operation.source === null && operation.base === null)
-        return yield* Schema.decodeUnknownEffect(receipt)({});
+        return yield* Schema.decodeEffect(receipt)({});
 
       let text: string | undefined;
 

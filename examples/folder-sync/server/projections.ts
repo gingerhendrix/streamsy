@@ -28,6 +28,7 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
 
     return undefined;
   }
+
   let length = 0;
 
   const chunks = yield* content.body.pipe(

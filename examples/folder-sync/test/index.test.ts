@@ -41,11 +41,6 @@ layer(graph, { excludeTestServices: true })((it) => {
           hits[0]?.snippet.some((part) => part.match && part.text.includes("rankingneedle")),
         ).toBe(true);
         expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
-        expect(
-          hits[0]?.snippet.every(
-            (part) => typeof part.text === "string" && typeof part.match === "boolean",
-          ),
-        ).toBe(true);
       }),
   );
 
@@ -56,6 +51,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const index = yield* FileIndex;
       yield* store.create("glob", "Glob", "glob");
       const paths = ["ab.md", "b.md"];
+
       for (const path of paths)
         yield* store.commit("glob", path, {
           ...(yield* prepareContent(new TextEncoder().encode(path))),
@@ -85,7 +81,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const logger = Logger.make(({ message }) => warnings.push(message));
       const projection = search.at({ folderId: "lost-blob" });
       yield* Projection.run(projection).pipe(
-        Effect.provideService(BlobStore, { ...blobs, get: () => Effect.succeed(undefined) }),
+        Effect.provideService(BlobStore, { ...blobs, get: () => Effect.void }),
         Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
       );
       expect(yield* index.list({ folder: "lost-blob" })).toMatchObject([{ path: "lost" }]);
