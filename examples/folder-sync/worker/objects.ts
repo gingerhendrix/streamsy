@@ -2,13 +2,12 @@ import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault } from "@streamsy/core";
 import { OwnerRecords } from "@streamsy/core/internal";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Serve } from "@streamsy/serve";
 import { Cause, ConfigProvider, Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { ApiRequestLive, HealthLive, jsonBody } from "../server/api.ts";
 import { CreateFolder } from "../server/domain.ts";
 import { FolderStoreLive, initialiseFolder } from "../server/folder-store.ts";
-import { Files } from "../server/streams.ts";
+import { mountFiles } from "../server/file-stream.ts";
 import { objectStorage } from "./storage.ts";
 import type { Env } from "./env.ts";
 
@@ -97,7 +96,7 @@ const FolderApp = Layer.mergeAll(
   ApiRequestLive.pipe(Layer.provide(HttpServer.layerServices)),
   HealthLive,
   FolderInternal,
-  Serve.mount(Files, "/streams/folders/:folderId/files"),
+  mountFiles(),
 );
 
 export class FolderObject extends StreamsyObject.make<

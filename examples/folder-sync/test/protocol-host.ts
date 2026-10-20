@@ -8,7 +8,8 @@ import { ApiLive } from "../server/api.ts";
 import { FileIndexLive, IndexLive } from "../server/file-index.ts";
 import { FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { IndexApiLive } from "../server/index-api.ts";
-import { Files, Folders } from "../server/streams.ts";
+import { Folders } from "../server/streams.ts";
+import { mountFiles } from "../server/file-stream.ts";
 import { sqliteHost } from "../server/storage.ts";
 
 export const writerToken = "protocol-test-token";
@@ -42,7 +43,7 @@ export const protocolHost = (options: { failWrites?: () => boolean } = {}) => {
       ApiLive,
       IndexApiLive,
       Serve.mount(Folders, "/streams/folders"),
-      Serve.mount(Files, "/streams/folders/:folderId/files"),
+      mountFiles(),
     ).pipe(
       Layer.provide(FileIndexLive),
       Layer.provide(IndexLive),

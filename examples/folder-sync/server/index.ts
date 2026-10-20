@@ -7,7 +7,8 @@ import { ServerConfig } from "./config.ts";
 import { FolderStoreLive, Initialise } from "./folder-store.ts";
 import { IndexApiLive } from "./index-api.ts";
 import { FileIndexLive, IndexLive } from "./file-index.ts";
-import { Files, Folders } from "./streams.ts";
+import { Folders } from "./streams.ts";
+import { mountFiles } from "./file-stream.ts";
 import { StorageLive } from "./storage.ts";
 
 const Listener = Layer.unwrap(
@@ -35,7 +36,7 @@ const Server = Serve.layer(
     IndexApiLive,
     HealthLive,
     Serve.mount(Folders, "/streams/folders"),
-    Serve.mount(Files, "/streams/folders/:folderId/files"),
+    mountFiles(),
   ),
   {
     disableLogger: true,
