@@ -81,6 +81,13 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
   try {
     await registry.preload();
     await db.preload();
+
+    const bootstraps = f.calls.filter(
+      (request) => new URL(request.url).searchParams.get("offset") === "-1",
+    );
+
+    expect(bootstraps).toHaveLength(2);
+    expect(bootstraps.every((request) => request.cache === "no-cache")).toBe(true);
     expect(registry.collections.folders.get(folderId)?.title).toBe("Docs");
     const before = db.collections.files.get("guide/a.md")!;
     expect(before.version).toBe(1);
