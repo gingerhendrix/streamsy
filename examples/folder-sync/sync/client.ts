@@ -153,11 +153,12 @@ const makeRemote = (server: string, token?: string) =>
 
       const response = yield* request(
         HttpClientRequest.put(`${root}/api/blobs/${operation.hash}`, {
-          body: HttpBody.stream(
-            fs.stream(operation.source),
-            "application/octet-stream",
-            operation.size,
-          ),
+          // FetchHttpClient drops explicit Content-Length on Effect streams.
+          // Bun's file Blob streams the immutable source and supplies its known length.
+          body: HttpBody.raw(Bun.file(operation.source), {
+            contentType: "application/octet-stream",
+            contentLength: operation.size,
+          }),
         }),
       );
 
