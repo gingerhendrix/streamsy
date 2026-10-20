@@ -519,64 +519,192 @@ layer(runtime, { excludeTestServices: true })((it) => {
       }),
   );
 
-  for (const reset of ["410", "reset"] as const)
-    it.effect(`${reset} resets a folder cursor and reconciles a full replay`, () =>
+  it.effect("410 resets a folder cursor and reconciles a full replay", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-410-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      yield* put(server.url, "daily/demo", "a.md", "before", "before");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      const injected = yield* Deferred.make<void>();
+      let replayed = false;
+      let resetSent = false;
+
+      const modified = SyncRemote.of({
+        ...remote,
+        page: (folder, offset, live) =>
+          Effect.gen(function* () {
+            if (folder === "daily/demo" && live && !resetSent) {
+              resetSent = true;
+              yield* put(server.url, "daily/demo", "a.md", "after reset", "after").pipe(
+                // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test fixture owns a separately authenticated request runtime.
+                Effect.provide(runtime),
+                Effect.orDie,
+              );
+              yield* Deferred.succeed(injected, undefined);
+
+              return {
+                rows: [],
+                cursor: yield* remote.tail(folder),
+                reset: true,
+                upToDate: false,
+              };
+            }
+
+            if (resetSent && offset === "-1") replayed = true;
+
+            return yield* remote.page(folder, offset, live);
+          }),
+      });
+
+      const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, modified),
+        Effect.forkScoped,
+      );
+
+      yield* Deferred.await(injected);
+      yield* until(
+        fs.readFileString(`${mirror}/daily/demo/a.md`),
+        (value) => value === "after reset",
+      );
+      expect(replayed).toBe(true);
+      yield* Fiber.interrupt(daemon);
+    }),
+  );
+
+  for (const phase of ["bootstrap", "live"] as const)
+    it.effect(`a stored reset during ${phase} applies its suffix and keeps reading forward`, () =>
       Effect.gen(function* () {
-        const directory = yield* testDirectory(`sync-${reset}-`);
+        const directory = yield* testDirectory(`sync-stored-reset-${phase}-`);
         const server = yield* host(directory);
         const fs = yield* FileSystem.FileSystem;
         yield* create(server.url, "daily/demo");
         yield* create(server.url, "ro");
-        yield* put(server.url, "daily/demo", "a.md", "before", "before");
+        yield* put(server.url, "daily/demo", "a.md", "after reset", "after");
+        yield* put(server.url, "daily/demo", "old.md", "before reset", "before");
         const mirror = `${directory}/mirror`;
         const state = yield* initialiseMirror(mirror);
         const remote = yield* remoteFor(server.url);
-        const injected = yield* Deferred.make<void>();
-        let replayed = false;
-        let resetSent = false;
+        const replacement = yield* remote.page("daily/demo", "-1", false);
+        const replacementCursor = yield* Schema.decodeEffect(Offset)(replacement.cursor);
+        const kept = replacement.rows.filter((row) => "key" in row && row.key === "a.md");
+        const old = replacement.rows.filter((row) => "key" in row && row.key === "old.md");
+        const seen: string[] = [];
+        const applied = yield* Deferred.make<void>();
+        let injected = false;
 
         const modified = SyncRemote.of({
           ...remote,
           page: (folder, offset, live) =>
             Effect.gen(function* () {
-              if (folder === "daily/demo" && live && !resetSent) {
-                resetSent = true;
-                yield* put(server.url, "daily/demo", "a.md", "after reset", "after").pipe(
-                  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test fixture owns a separately authenticated request runtime.
-                  Effect.provide(runtime),
-                  Effect.orDie,
-                );
-                yield* Deferred.succeed(injected, undefined);
+              if (folder !== "daily/demo") return yield* remote.page(folder, offset, live);
+              seen.push(offset);
 
+              if (
+                (phase === "bootstrap" && offset === "-1") ||
+                (phase === "live" && live && !injected)
+              ) {
+                injected = true;
+                yield* Deferred.succeed(applied, undefined);
+
+                // The same stored page is returned on every replay. Rewinding on this
+                // reset would loop instead of using its response cursor.
                 return {
-                  rows: reset === "reset" ? [{ headers: { control: "reset" as const } }] : [],
-                  cursor: yield* remote.tail(folder),
-                  reset: reset === "410",
-                  upToDate: false,
+                  ...replacement,
+                  cursor: replacementCursor,
+                  rows: [...old, { headers: { control: "reset" as const } }, ...kept],
                 };
               }
-
-              if (resetSent && offset === "-1") replayed = true;
 
               return yield* remote.page(folder, offset, live);
             }),
         });
 
-        const daemon = yield* runSync(options(server.url, mirror)).pipe(
+        const daemon = yield* runSync(options(server.url, mirror, [])).pipe(
           Effect.provideService(SyncState, state),
           Effect.provideService(SyncRemote, modified),
           Effect.forkScoped,
         );
 
-        yield* Deferred.await(injected);
+        yield* Deferred.await(applied);
+        yield* until(state.get(`cursor:daily/demo`), (value) => value === replacement.cursor);
+        yield* until(fs.exists(`${mirror}/daily/demo/old.md`), (exists) => !exists);
+        expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("after reset");
         yield* until(
-          fs.readFileString(`${mirror}/daily/demo/a.md`),
-          (value) => value === "after reset",
+          Effect.sync(() => seen.length),
+          (count) => count >= (phase === "live" ? 4 : 2),
         );
-        expect(replayed).toBe(true);
+        expect(seen.filter((offset) => offset === "-1")).toHaveLength(1);
+        expect(seen.at(-1)).toBe(replacement.cursor);
         yield* Fiber.interrupt(daemon);
       }),
     );
+
+  it.effect("a stored registry reset skips old registrations and advances its cursor", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-registry-reset-");
+      const server = yield* host(directory);
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      const mirror = `${directory}/mirror`;
+      const state = yield* initialiseMirror(mirror);
+      const remote = yield* remoteFor(server.url);
+      const page = yield* remote.folders("-1", false);
+      const pageCursor = yield* Schema.decodeEffect(Offset)(page.cursor);
+      const seen: string[] = [];
+
+      const modified = SyncRemote.of({
+        ...remote,
+        folders: (offset, live) => {
+          seen.push(offset);
+
+          return offset === "-1"
+            ? Effect.succeed({
+                ...page,
+                cursor: pageCursor,
+                rows: [
+                  {
+                    type: "folder" as const,
+                    key: "gone",
+                    value: { folderId: "gone", title: "Gone" },
+                    headers: { operation: "upsert" as const, txid: "gone" },
+                  },
+                  { headers: { control: "reset" as const } },
+                  ...page.rows,
+                ],
+              })
+            : remote.folders(offset, live);
+        },
+      });
+
+      const daemon = yield* runSync({
+        server: server.url,
+        directory: mirror,
+        writable: [],
+        token,
+        settleMillis: 30,
+      }).pipe(
+        Effect.provideService(SyncState, state),
+        Effect.provideService(SyncRemote, modified),
+        Effect.forkScoped,
+      );
+
+      yield* until(state.get("ready"), (ready) => ready === "true");
+      expect(yield* state.folders()).toEqual(["daily/demo", "ro"]);
+      yield* until(
+        Effect.sync(() => seen.length),
+        (count) => count >= 2,
+      );
+      expect(seen.filter((offset) => offset === "-1")).toHaveLength(1);
+      expect(seen.at(-1)).toBe(page.cursor);
+      yield* Fiber.interrupt(daemon);
+    }),
+  );
 
   it.effect("HEAD rewind stops before changing disk; opaque folder mapping remains stable", () =>
     Effect.gen(function* () {

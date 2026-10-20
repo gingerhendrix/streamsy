@@ -16,7 +16,7 @@ import {
 } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { INLINE_LIMIT, inlineText, normalisePath, type File } from "../server/domain.ts";
-import { SyncRemote, remoteLayer, type FileMessage } from "./client.ts";
+import { RemoteFailure, SyncRemote, remoteLayer, type FileMessage } from "./client.ts";
 import {
   backupPath,
   conflictBase,
@@ -264,41 +264,57 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     return saved;
   });
 
-  const initialiseFolder = Effect.fn("Sync.initialiseFolder")(function* (folderId: string) {
-    const saved = yield* guardFolder(folderId);
-
-    if (saved !== undefined) return yield* Effect.void;
+  const readReplacement = Effect.fn("Sync.readReplacement")(function* (
+    folderId: string,
+    from: string,
+    first?: Effect.Success<ReturnType<typeof remote.page>>,
+  ) {
     const files = new Map<string, File>();
-    let cursor = "-1";
+    let cursor = from;
+    let pending = first;
 
     while (true) {
-      const page = yield* remote.page(folderId, cursor, false);
+      const page = pending ?? (yield* remote.page(folderId, cursor, false));
+      pending = undefined;
 
       if (page.reset) {
+        if (cursor === "-1")
+          return yield* new RemoteFailure({
+            message: `Folder history is unavailable from the beginning: ${folderId}`,
+            retryable: false,
+            status: 410,
+          });
         files.clear();
         cursor = "-1";
         continue;
       }
 
-      let reset = false;
-
       for (const change of page.rows) {
-        if (!("type" in change)) {
-          files.clear();
-          reset = true;
-        } else if (change.headers.operation === "delete") files.delete(change.key);
+        if (!("type" in change)) files.clear();
+        else if (change.headers.operation === "delete") files.delete(change.key);
         else if (change.value !== undefined) files.set(change.key, change.value);
       }
 
-      cursor = page.cursor;
+      if (page.cursor === cursor && !page.upToDate)
+        return yield* new RemoteFailure({
+          message: `Folder read did not advance: ${folderId}`,
+          retryable: false,
+          status: 0,
+        });
 
-      if (reset) {
-        cursor = "-1";
-        continue;
-      }
+      cursor = page.cursor;
 
       if (page.upToDate) break;
     }
+
+    return { files, cursor };
+  });
+
+  const initialiseFolder = Effect.fn("Sync.initialiseFolder")(function* (folderId: string) {
+    const saved = yield* guardFolder(folderId);
+
+    if (saved !== undefined) return yield* Effect.void;
+    const { files, cursor } = yield* readReplacement(folderId, "-1");
 
     yield* gate.withPermit(
       Effect.gen(function* () {
@@ -362,30 +378,9 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
       );
 
       if (page.reset || page.rows.some((change) => !("type" in change))) {
-        yield* state.set(`cursor:${folderId}`, "-1");
-        // Bootstrap folds the replacement stream before reconciling missing paths.
-        const files = new Map<string, File>();
-        let replay = "-1";
-
-        while (true) {
-          const batch = yield* remote.page(folderId, replay, false);
-
-          if (batch.reset) {
-            files.clear();
-            replay = "-1";
-            continue;
-          }
-
-          for (const change of batch.rows) {
-            if (!("type" in change)) files.clear();
-            else if (change.headers.operation === "delete") files.delete(change.key);
-            else if (change.value !== undefined) files.set(change.key, change.value);
-          }
-
-          replay = batch.cursor;
-
-          if (batch.upToDate) break;
-        }
+        // A stored reset replaces state at this position. Only 410 reads from -1.
+        // Finish the replacement pages before reconciling paths absent from the new state.
+        const { files, cursor: replay } = yield* readReplacement(folderId, cursor, page);
 
         yield* gate.withPermit(
           Effect.gen(function* () {
@@ -448,13 +443,23 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
     const offset = (yield* state.get("foldersCursor")) ?? "-1";
     const page = yield* remote.folders(offset, live);
 
-    if (page.reset || page.rows.some((row) => !("type" in row))) {
+    if (page.reset) {
+      if (offset === "-1")
+        return yield* new RemoteFailure({
+          message: "Folder registry history is unavailable from the beginning",
+          retryable: false,
+          status: 410,
+        });
       yield* state.set("foldersCursor", "-1");
 
       return false;
     }
 
-    for (const change of page.rows)
+    // Folder lifecycle changes are out of scope. Keep configured mirrors, and discover
+    // registrations after the last reset without re-reading that stored control.
+    const reset = page.rows.findLastIndex((row) => !("type" in row));
+
+    for (const change of page.rows.slice(reset + 1))
       if ("type" in change && change.value !== undefined) yield* addFolder(change.value.folderId);
     yield* state.set("foldersCursor", page.cursor);
 
