@@ -2,7 +2,6 @@ import { Commit, Projection } from "@streamsy/projection";
 import { Effect, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
-import { MissingFile } from "./domain.ts";
 import { Files, FolderKey, fileKey } from "./streams.ts";
 
 export const SEARCH_LIMIT = 1024 * 1024;
@@ -24,7 +23,11 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
   const blobs = yield* BlobStore;
   const content = yield* blobs.get(hash);
 
-  if (content === undefined) return yield* new MissingFile({ message: "Indexed blob is missing" });
+  if (content === undefined) {
+    yield* Effect.logWarning(`Indexed blob is missing; keeping metadata without text: ${hash}`);
+
+    return undefined;
+  }
   let length = 0;
 
   const chunks = yield* content.body.pipe(

@@ -1,7 +1,8 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Effect, Layer, Result, Schedule, Schema, Stream } from "effect";
+import { Effect, Layer, Logger, Result, Schedule, Schema, Stream } from "effect";
+import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { FileIndex, FileIndexLive, IndexLive } from "../server/file-index.ts";
 import { initialiseSearch, search, SEARCH_LIMIT } from "../server/projections.ts";
@@ -25,6 +26,90 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 );
 
 layer(graph, { excludeTestServices: true })((it) => {
+  it.effect(
+    "search ranks relevant text before alphabetic paths and returns safe snippet parts",
+    () =>
+      Effect.gen(function* () {
+        yield* initialiseSearch;
+        const sql = yield* SqlClient.SqlClient;
+        const index = yield* FileIndex;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('ranking', 'a.md', 1, ${"rankingneedle " + "filler ".repeat(100)})`;
+        yield* sql`INSERT INTO folder_sync_search VALUES ('ranking', 'z.md', 2, ${"<img src=x onerror=alert(1)> rankingneedle rankingneedle rankingneedle"})`;
+        const hits = yield* index.search("rankingneedle", "ranking");
+        expect(hits.map((hit) => hit.path)).toEqual(["z.md", "a.md"]);
+        expect(
+          hits[0]?.snippet.some((part) => part.match && part.text.includes("rankingneedle")),
+        ).toBe(true);
+        expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
+        expect(
+          hits[0]?.snippet.every(
+            (part) => typeof part.text === "string" && typeof part.match === "boolean",
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect("portable globs preserve Bun's POSIX negated character classes", () =>
+    Effect.gen(function* () {
+      yield* Layer.build(IndexLive);
+      const store = yield* FolderStore;
+      const index = yield* FileIndex;
+      yield* store.create("glob", "Glob", "glob");
+      const paths = ["ab.md", "b.md"];
+      for (const path of paths)
+        yield* store.commit("glob", path, {
+          ...(yield* prepareContent(new TextEncoder().encode(path))),
+          txid: path,
+          author: "test",
+        });
+      yield* until(index.list({ folder: "glob" }), (rows) => rows.length === 2);
+      const actual = yield* index.list({ folder: "glob", glob: "[!a]*.md" });
+      const expected = paths.filter((path) => new Bun.Glob("[!a]*.md").match(path));
+      expect(expected).toEqual(["b.md"]);
+      expect(actual.map((row) => row.path)).toEqual(expected);
+    }),
+  );
+
+  it.effect("a missing blob logs a warning, keeps metadata and advances the folder cursor", () =>
+    Effect.gen(function* () {
+      yield* initialiseSearch;
+      const store = yield* FolderStore;
+      const blobs = yield* BlobStore;
+      const index = yield* FileIndex;
+      yield* store.create("lost-blob", "Lost blob", "lost-blob");
+      const bytes = new TextEncoder().encode("lostneedle " + "x".repeat(65536));
+      const content = yield* prepareContent(bytes);
+      yield* blobs.put(content.hash, Stream.succeed(bytes));
+      yield* store.commit("lost-blob", "lost", { ...content, author: "test", txid: "lost" });
+      const warnings: unknown[] = [];
+      const logger = Logger.make(({ message }) => warnings.push(message));
+      const projection = search.at({ folderId: "lost-blob" });
+      yield* Projection.run(projection).pipe(
+        Effect.provideService(BlobStore, { ...blobs, get: () => Effect.succeed(undefined) }),
+        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+      );
+      expect(yield* index.list({ folder: "lost-blob" })).toMatchObject([{ path: "lost" }]);
+      expect(yield* index.search("lostneedle", "lost-blob")).toEqual([]);
+      const before = (yield* Projection.read(projection)).offsets.input;
+      expect(before).toBeDefined();
+      expect(warnings.some((message) => String(message).includes(content.hash))).toBe(true);
+      yield* store.commit("lost-blob", "next", {
+        ...(yield* prepareContent(new TextEncoder().encode("nextneedle"))),
+        author: "test",
+        txid: "next",
+      });
+      yield* Projection.run(projection).pipe(
+        Effect.provideService(BlobStore, {
+          ...blobs,
+          get: () => Effect.die("Missing blob must not be read again"),
+        }),
+      );
+      expect(yield* index.list({ folder: "lost-blob" })).toHaveLength(2);
+      expect(yield* index.search("nextneedle", "lost-blob")).toHaveLength(1);
+      expect((yield* Projection.read(projection)).offsets.input).not.toBe(before);
+    }),
+  );
+
   it.effect("ls and FTS consume folder streams after writes, replacements and deletes", () =>
     Effect.gen(function* () {
       yield* Layer.build(IndexLive);
