@@ -2,7 +2,7 @@ import { Commit, Projection } from "@streamsy/projection";
 import { Effect, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
-import { Files, FolderKey, fileKey } from "./streams.ts";
+import { Files, FolderKey, fileKey, type FileChange } from "./streams.ts";
 
 export const SEARCH_LIMIT = 1024 * 1024;
 
@@ -54,53 +54,57 @@ const blobText = Effect.fn("Search.blobText")(function* (hash: string) {
   return searchableText(bytes, content.size > length);
 });
 
+/** Preparation is shared by the Bun source follower and the Worker's HTTP reader. */
+export const prepareIndexChanges = (changes: ReadonlyArray<FileChange>) =>
+  Effect.forEach(changes, (change) =>
+    Effect.gen(function* () {
+      const text =
+        "value" in change ? (change.value.text ?? (yield* blobText(change.value.hash))) : undefined;
+
+      return { change, text };
+    }),
+  );
+
+export const applyIndexChanges = Effect.fn("Search.apply")(function* (
+  folderId: string,
+  prepared: Effect.Success<ReturnType<typeof prepareIndexChanges>>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+
+  for (const { change, text } of prepared) {
+    yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId} AND path = ${change.key}`;
+    yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId} AND path = ${change.key}`;
+
+    if ("value" in change) {
+      const value = change.value;
+
+      const row = {
+        id: fileKey(folderId, value.path),
+        folderId,
+        path: value.path,
+        version: value.version,
+        hash: value.hash,
+        size: value.size,
+        author: value.author,
+        updatedAt: change.headers.timestamp ?? "1970-01-01T00:00:00.000Z",
+      };
+
+      yield* sql`INSERT INTO folder_sync_manifest ${sql.insert(row)}`;
+
+      if (text !== undefined)
+        yield* sql`INSERT INTO folder_sync_search (folderId, path, version, text) VALUES (${folderId}, ${value.path}, ${value.version}, ${text})`;
+    }
+  }
+});
+
 /** Each folder's SQL rows and input cursor commit together on the index owner. */
 export const search = Projection.process({
   id: "folder-index",
   params: { folderId: FolderKey },
   inputs: { input: Files },
   commit: Commit.transaction,
-  prepare: (batch) =>
-    Effect.forEach(batch.input.items, (change) =>
-      Effect.gen(function* () {
-        const text =
-          "value" in change
-            ? (change.value.text ?? (yield* blobText(change.value.hash)))
-            : undefined;
-
-        return { change, text };
-      }),
-    ),
-  process: (_batch, unit, prepared) =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const folderId = unit.params.folderId;
-
-      for (const { change, text } of prepared) {
-        yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId} AND path = ${change.key}`;
-        yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId} AND path = ${change.key}`;
-
-        if ("value" in change) {
-          const value = change.value;
-
-          const row = {
-            id: fileKey(folderId, value.path),
-            folderId,
-            path: value.path,
-            version: value.version,
-            hash: value.hash,
-            size: value.size,
-            author: value.author,
-            updatedAt: change.headers.timestamp ?? "1970-01-01T00:00:00.000Z",
-          };
-
-          yield* sql`INSERT INTO folder_sync_manifest ${sql.insert(row)}`;
-
-          if (text !== undefined)
-            yield* sql`INSERT INTO folder_sync_search (folderId, path, version, text) VALUES (${folderId}, ${value.path}, ${value.version}, ${text})`;
-        }
-      }
-    }),
+  prepare: (batch) => prepareIndexChanges(batch.input.items),
+  process: (_batch, unit, prepared) => applyIndexChanges(unit.params.folderId, prepared),
 });
 
 export const initialiseSearch = Effect.gen(function* () {
