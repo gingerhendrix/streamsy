@@ -3,6 +3,7 @@
 /* oxlint-disable effecttsgo/global-fetch -- Injectable standard Request transport also serves in-process hosts. */
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Session and operation IDs are transport metadata. */
 /* oxlint-disable effecttsgo/extends-native-error -- just-bash requires thrown errno errors, shared with the typed tools edge. */
+import { StreamAddress } from "@streamsy/core";
 import { Duration, Effect, Result, Schedule, Schema } from "effect";
 import { hex } from "../server/bytes.ts";
 import { FILE_LIMIT, FolderId, Version, File, Path as FilePath } from "../server/domain.ts";
@@ -325,7 +326,8 @@ export class FolderHttpFileSystem {
       if (from !== this.folderCursor) continue;
 
       for (const change of changes) {
-        if (isReset(change)) {
+        if (StreamAddress.isControl(change)) {
+          if (!isReset(change)) continue;
           this.roots.clear();
           this.skippedFolders.clear();
           this.files.clear();

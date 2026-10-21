@@ -1,5 +1,7 @@
 import { expect, test } from "vitest";
+import { StreamAddress } from "@streamsy/core";
 import { Schema } from "effect";
+import { applyFileMessage } from "../server/folder-view.ts";
 import {
   afterLastReset,
   applyChanges,
@@ -22,7 +24,11 @@ const remove = (key: string): StateMessage<number> => ({
   headers: { operation: "delete" },
 });
 
-const reset: StateMessage<number> = { headers: { control: "reset" } };
+const reset: StateMessage<number> = StreamAddress.reset();
+
+const snapshotStart: StateMessage<number> = StreamAddress.snapshotStart();
+
+const snapshotEnd: StateMessage<number> = StreamAddress.snapshotEnd();
 
 test("applyChanges sets, deletes and clears on reset", () => {
   const rows = applyChanges(new Map([["old", 0]]), [upsert("a", 1), upsert("b", 2), remove("a")]);
@@ -34,6 +40,22 @@ test("applyChanges sets, deletes and clears on reset", () => {
   expect([...applyChanges(rows, [reset, upsert("c", 3)])]).toEqual([["c", 3]]);
 });
 
+test("applyChanges skips snapshot markers and keeps the rows", () => {
+  const rows = applyChanges(new Map([["old", 0]]), [snapshotStart, upsert("a", 1), snapshotEnd]);
+  expect([...rows]).toEqual([
+    ["old", 0],
+    ["a", 1],
+  ]);
+});
+
+test("the folder view skips snapshot markers and clears its files at a reset", () => {
+  const live = { txid: "t", version: 3, hash: "0".repeat(64), size: 1, author: "t" };
+  const view = { last: 3, files: new Map([["a.md", live]]) };
+  expect(applyFileMessage(view, StreamAddress.snapshotStart())).toBe(view);
+  expect(applyFileMessage(view, StreamAddress.snapshotEnd())).toBe(view);
+  expect(applyFileMessage(view, StreamAddress.reset())).toEqual({ last: 3, files: new Map() });
+});
+
 test("afterLastReset keeps only the changes after the last reset", () => {
   const messages = [upsert("a", 1), reset, upsert("b", 2), reset, upsert("c", 3)];
   expect(afterLastReset(messages)).toEqual([upsert("c", 3)]);
@@ -41,14 +63,15 @@ test("afterLastReset keeps only the changes after the last reset", () => {
 });
 
 test("the guards tell a reset, an upsert and a delete apart", () => {
-  expect([reset, upsert("a", 1), remove("a")].map(isReset)).toEqual([true, false, false]);
-  expect([reset, upsert("a", 1), remove("a")].map(isUpsert)).toEqual([false, true, false]);
+  const messages = [reset, snapshotStart, upsert("a", 1), remove("a")];
+  expect(messages.map(isReset)).toEqual([true, false, false, false]);
+  expect(messages.map(isUpsert)).toEqual([false, false, true, false]);
 });
 
-test("FileMessage decodes a file change and a reset, with the offset header", () => {
+test("FileMessage decodes a file change and each State control, with the offset header", () => {
   const decode = Schema.decodeUnknownSync(Schema.Array(FileMessage));
 
-  const [change, control] = decode([
+  const [change, control, start, end] = decode([
     {
       type: "file",
       key: "a.md",
@@ -56,10 +79,13 @@ test("FileMessage decodes a file change and a reset, with the offset header", ()
       headers: { operation: "upsert", txid: "t", offset: "0000000000000001_0000000000000000" },
     },
     { headers: { control: "reset" } },
+    { headers: { control: "snapshot-start" } },
+    { headers: { control: "snapshot-end" } },
   ]);
 
   expect(change !== undefined && isUpsert(change) && change.headers.offset).toBe(
     "0000000000000001_0000000000000000",
   );
   expect(control !== undefined && isReset(control)).toBe(true);
+  expect([start, end]).toEqual([StreamAddress.snapshotStart(), StreamAddress.snapshotEnd()]);
 });

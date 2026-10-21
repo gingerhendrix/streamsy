@@ -52,7 +52,8 @@ export const fileOf = (path: string, live: LiveFile): File => ({
  * used version again.
  */
 export const applyFileMessage = (view: FolderView, message: FileMessage): FolderView => {
-  if (isReset(message)) return { last: view.last, files: new Map() };
+  if (StreamAddress.isControl(message))
+    return isReset(message) ? { last: view.last, files: new Map() } : view;
   const files = new Map(view.files);
   files.delete(message.key);
 
@@ -83,13 +84,7 @@ export const folderView = {
       // Version 2 holds metadata in a map. A version 1 checkpoint has another key, so it is ignored.
       version: 2,
       params: { folderId: FolderKey },
-      // State's public change codec omits controls. Read the same stream through a JSON codec that accepts reset.
-      inputs: {
-        files: {
-          ...StreamAddress.json(Files.at(params).id, { schema: FileMessage }),
-          stream: Files,
-        },
-      },
+      inputs: { files: Files },
       // The JSON codec stores the map as an array of [path, file] pairs.
       state: {
         schema: Schema.toCodecJson(FolderView),

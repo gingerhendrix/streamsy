@@ -1,4 +1,4 @@
-import { StorageFault, StreamGone, ZERO_OFFSET } from "@streamsy/core";
+import { StorageFault, StreamAddress, StreamGone, ZERO_OFFSET } from "@streamsy/core";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -64,7 +64,7 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
         });
 
       const retained = (yield* folders.collect({})).items.find(
-        (change) => change.key === "retained",
+        (change) => StreamAddress.isChange(change) && change.key === "retained",
       );
 
       const data = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([

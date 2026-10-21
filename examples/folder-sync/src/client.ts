@@ -1,3 +1,4 @@
+import { StreamAddress } from "@streamsy/core";
 import { Schema } from "effect";
 import { decodeText, hex } from "../server/bytes.ts";
 import { CommitFile, File, Head } from "../server/domain.ts";
@@ -92,7 +93,7 @@ export async function history(
 
     for (const change of messages) {
       if (isReset(change)) rows = [];
-      else if (change.key === path) rows.push(change);
+      else if (StreamAddress.isChange(change) && change.key === path) rows.push(change);
     }
 
     if (response.headers.get("stream-up-to-date") === "true") return rows;

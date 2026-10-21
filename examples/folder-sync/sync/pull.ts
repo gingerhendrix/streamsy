@@ -1,3 +1,4 @@
+import { StreamAddress } from "@streamsy/core";
 import { Effect, Schema } from "effect";
 import type { File } from "../server/domain.ts";
 import { applyChanges, isReset, isUpsert, type FileMessage } from "../server/messages.ts";
@@ -123,7 +124,7 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
     yield* gate.withPermit(
       Effect.gen(function* () {
         for (const change of rows) {
-          if (isReset(change) || ignoredPath(change.key)) continue;
+          if (StreamAddress.isControl(change) || ignoredPath(change.key)) continue;
           yield* observe(folderId, change.key);
           yield* install(folderId, change.key, isUpsert(change) ? change.value : null);
         }

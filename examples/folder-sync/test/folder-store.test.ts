@@ -408,7 +408,7 @@ for (const [name, storage] of [
           DurableState.remove("file", "missing"),
         ]);
 
-        expect(append[0]?.headers.operation).toBe("delete");
+        expect(append[0]).toMatchObject({ headers: { operation: "delete" } });
       }),
     );
   });

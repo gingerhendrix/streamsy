@@ -72,8 +72,8 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
   const sql = yield* SqlClient.SqlClient;
 
   for (const [position, change] of prepared.entries()) {
-    if (isReset(change)) {
-      yield* clearIndexFolder(folderId);
+    if (StreamAddress.isControl(change)) {
+      if (isReset(change)) yield* clearIndexFolder(folderId);
       continue;
     }
 
@@ -110,13 +110,7 @@ export const search = {
     Projection.process({
       id: "folder-index",
       params: { folderId: FolderKey },
-      // State's public change codec omits controls. Read the same stream through a JSON codec that accepts reset.
-      inputs: {
-        input: {
-          ...StreamAddress.json(Files.at(params).id, { schema: FileMessage }),
-          stream: Files,
-        },
-      },
+      inputs: { input: Files },
       commit: Commit.transaction,
       prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
       process: (_batch, unit, prepared) => applyIndexChanges(unit.params.folderId, prepared),

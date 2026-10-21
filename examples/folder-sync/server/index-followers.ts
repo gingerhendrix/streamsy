@@ -1,9 +1,9 @@
-import { StreamAddress, ZERO_OFFSET } from "@streamsy/core";
+import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { Projection, ProjectionFault } from "@streamsy/projection";
 import { Cause, Duration, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
 import { SqlClient } from "effect/sql";
-import { afterLastReset, FolderMessage, isUpsert } from "./messages.ts";
+import { afterLastReset, isUpsert } from "./messages.ts";
 import { clearIndexFolder, initialiseSearch, search } from "./search-index.ts";
 import { Folders } from "./streams.ts";
 
@@ -116,7 +116,7 @@ export const IndexLive = Layer.effectDiscard(
     // Replay the small registry on every runtime start to restore all folder bindings.
     yield* supervise(
       "folders",
-      Streams.follow(StreamAddress.json(Folders.at({}).id, { schema: FolderMessage })).pipe(
+      Streams.follow(Folders.at({})).pipe(
         Stream.runForEach((batch) =>
           Effect.forEach(
             afterLastReset(batch.items),
