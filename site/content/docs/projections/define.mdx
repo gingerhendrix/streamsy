@@ -84,7 +84,7 @@ A Commit plus its host Layer plays a similar role to Effect `Workflow` plus `Wor
 
 ## Output projections
 
-`Projection.emit` declares routes as outputs and returns items for each entry. A JSON route takes its item type. A state route takes `DurableState.Change` for its collections.
+`Projection.emit` declares routes as outputs and returns items for each entry. A JSON route takes its item type. A state route takes `DurableState.Entry` for its collections: a row change or a State control such as `StreamAddress.reset()`.
 
 ```ts
 // @filename: streams.ts
@@ -167,6 +167,7 @@ Output rules:
 
 - Routes and fixed addresses carry the output codecs. Their parameters must be a subset of the projection parameters.
 - `DurableState.upsert("card", row)` and `DurableState.remove("card", key)` make row changes. Each change names its collection.
+- `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()` make State controls. The output writes them unchanged, in order with the row changes.
 - A missing output key emits nothing. An empty output uses no producer sequence.
 - Two outputs cannot name the same stream or an input stream.
 - `Commit.producer` can write across owners, but foreign output streams must already exist. It can create absent outputs on its checkpoint owner.

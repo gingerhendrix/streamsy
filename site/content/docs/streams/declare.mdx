@@ -31,7 +31,7 @@ The first argument is the service name. Names are global, so give each one an ap
 | ----------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
 | `Streamsy.json<Self>()(name, template, { params, schema })`       | One message for each item                       | [JSON mode](https://durablestreams.com/json-mode)         |
 | `Streamsy.bytes<Self>()(name, template, { params })`              | All items of one append in one message          | [Byte stream](https://durablestreams.com/concepts)        |
-| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change events                     | [Durable State](https://durablestreams.com/durable-state) |
+| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change and control events         | [Durable State](https://durablestreams.com/durable-state) |
 | `Streamsy.custom<Self>()(name, { parse, address })`               | The items of the address that `address` returns | An id grammar that a template cannot express              |
 
 ## Templates and addresses
@@ -93,7 +93,7 @@ export class Workspace extends Streamsy.state<Workspace>()(
 ) {}
 ```
 
-The stream reads and writes change events as a union discriminated by `type`. To make changes, see [Durable State changes](/docs/streams/write#durable-state-changes).
+The stream reads and writes change events as a union discriminated by `type`. It also reads and writes the State control messages `snapshot-start`, `snapshot-end` and `reset`, which have no `type`. Narrow an item with `StreamAddress.isChange` or `StreamAddress.isControl` before you read its `type` or `key`. To make changes and controls, see [Durable State changes](/docs/streams/write#durable-state-changes).
 
 ## Groups
 
