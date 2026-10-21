@@ -59,6 +59,7 @@ export const BoardState = Schema.Struct({
   ordinal: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   board: ProjectionStateSchema,
 });
+
 export type BoardState = typeof BoardState.Type;
 
 export const initialBoard = ({ gameId }: { readonly gameId: string }): BoardState => ({
@@ -118,9 +119,11 @@ const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
     yield* (yield* GameEvents).append(params, nonEmpty(events.slice(0, cut)));
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
+
 const snapshot = Effect.gen(function* () {
   const { state, offsets } = yield* Projection.read(board);
   const checkpoint = yield* (yield* CheckpointStore).load(board);
+
   return {
     state,
     offsets,
@@ -138,14 +141,19 @@ See [Running](/docs/projections/define#running).
 
 ```ts title="test/restart.test.ts"
 const asProcess =
-  <ROut, LE>(layer: Layer.Layer<ROut, LE>) =>
+  <ROut, LE>(fixture: Layer.Layer<ROut, LE>) =>
   <A, E, R>(program: Effect.Effect<A, E, R>) =>
-    // oxlint-disable-next-line effecttsgo/strict-effect-provide -- each call is one process lifetime.
-    Effect.provide(program, layer);
+    Effect.scoped(
+      Effect.gen(function* () {
+        const services = yield* Layer.build(fixture);
+
+        return yield* program.pipe(Effect.provideContext(services));
+      }),
+    );
 ```
 
 ```ts title="test/restart.test.ts"
-test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
+baseIt.effect(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
   Effect.gen(function* () {
     const file = yield* tempFile("hex-board-");
     const before = yield* seed(events, cut).pipe(Effect.andThen(read), asProcess(sqlite(file)));
@@ -155,7 +163,8 @@ test(`SQLite restart retains state and checkpoint, then resumes: ${name}`, () =>
       expect(yield* read).toEqual(before);
       yield* advance(before, events, cut);
     }).pipe(asProcess(sqlite(file)));
-  }).pipe(Effect.scoped, Effect.runPromise));
+  }),
+);
 ```
 
 The SQLite tests split two games: the 12-event victory game after 5 events, during an attack, and a 450-event four-player game after 400 events. The long case also checks the exact 40 move ids and the ordinal. Another test appends an attack result that does not match the game. The fold fails with `ProjectionIntegrityError`, and neither the state nor the checkpoint moves.

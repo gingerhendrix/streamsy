@@ -3,7 +3,7 @@
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
 protocol. Typed stream declarations, stream services, an in-process memory Layer, an
 HTTP app, and a client for remote hosts. Version 0.4.0 requires
-`effect@4.0.1`.
+`effect@4.0.5`.
 
 ```sh
 bun add @streamsy/core effect
@@ -17,12 +17,15 @@ class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
   params: {},
   schema: Schema.String,
 }) {}
+
 const program = Effect.gen(function* () {
   const events = yield* Events;
   yield* events.create({});
   yield* events.append({}, ["hello"]);
+
   return yield* events.read({}).pipe(Stream.runCollect);
 });
+
 await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));
 ```
 

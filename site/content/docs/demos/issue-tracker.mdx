@@ -101,10 +101,16 @@ A shared workspace exists only as its stream. `POST /api/workspaces` makes a ran
 ```ts title="server/issue-tracker.ts"
 const create = Effect.gen(function* () {
   const bytes = yield* crypto.randomBytes(10);
-  const workspaceId = Array.from(bytes, (byte) => (byte % 36).toString(36)).join("");
+
+  const workspaceId = Array.join(
+    Array.map(Array.fromIterable(bytes), (byte) => (byte % 36).toString(36)),
+    "",
+  );
+
   yield* workspaces.create({ workspaceId });
   const starter = yield* stamp("proj");
   yield* append(workspaceId, projectUpsert(starterProject(starter), starter), ZERO_OFFSET);
+
   return workspaceId;
 }).pipe(Effect.withSpan("IssueTracker.create"));
 ```
@@ -125,6 +131,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
         onMutate: ({ issue }: CreateIssueAction) => {
           db.collections.issues.insert(issue);
         },
+        // oxlint-disable-next-line effecttsgo/async-function -- TanStack DB awaits this mutation Promise and rolls back rejected writes.
         mutationFn: async ({ issue, txid }: CreateIssueAction) => {
           const body: IssueInput = {
             id: issue.id,
@@ -134,6 +141,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
             updatedBy: issue.updatedBy,
             txid,
           };
+
           const result = await postJson(apiUrl(workspaceId, "/issues"), body);
           await db.utils.awaitTxId(result.txid);
         },
@@ -145,7 +153,8 @@ The component builds the local row and makes a new txid for each action. The bro
 ```tsx title="src/components/IssueTrackerApp.tsx"
 const createIssue = async (title: string) => {
   if (!selectedProject) return;
-  const now = new Date().toISOString();
+  const now = DateTime.formatIso(DateTime.nowUnsafe());
+
   const unnamed: Issue = {
     id: newId("issue"),
     projectId: selectedProject.id,
@@ -154,8 +163,12 @@ const createIssue = async (title: string) => {
     createdAt: now,
     updatedAt: now,
   };
+
   const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
-  await run(db.actions.createIssue, { issue, txid: crypto.randomUUID() });
+  await run(db.actions.createIssue, {
+    issue,
+    txid: Effect.runSync(browserCrypto.randomUUIDv4()),
+  });
 };
 ```
 
@@ -165,9 +178,11 @@ If the API call fails, the action fails and TanStack DB removes the local row. `
 const run = async <T,>(action: OptimisticAction<T>, variables: T) => {
   try {
     await awaitOptimisticAction(action, variables);
+
     return true;
   } catch (error) {
     notify(error instanceof Error ? error.message : String(error));
+
     return false;
   }
 };
@@ -179,7 +194,9 @@ The JSON API is an Effect `HttpApi`. `api.ts` in the contract package declares o
 
 ```ts title="issue-tracker-demo-contract/api.ts"
 const inWorkspace = { ws: WorkspaceId };
+
 const writeErrors = [BadRequest, NotFound, Conflict, InternalServerError];
+
 /** An issue write can also break the work-in-progress rule. */
 const issueErrors = [...writeErrors, WipLimitReached];
 // ...
@@ -222,7 +239,9 @@ const input = <
   }));
 
 export const ProjectInput = input(Project, ["createdAt"]);
+
 export type ProjectInput = typeof ProjectInput.Type;
+
 export const IssueInput = input(Issue, ["createdAt", "updatedAt"]);
 ```
 
@@ -240,12 +259,14 @@ The handler gets the decoded path and body. It makes one stamp for the write: a 
 export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handlers) =>
   Effect.gen(function* () {
     const tracker = yield* IssueTracker;
+
     return handlers
       .handle(
         "create",
         Effect.fn("issues.create")(function* ({ params, payload }) {
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, createIssue(payload, stamp));
+
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
         }, issueApiErrors),
       )
@@ -254,6 +275,7 @@ export const IssuesLive = HttpApiBuilder.group(IssueTrackerApi, "issues", (handl
         Effect.fn("issues.update")(function* ({ params, payload }) {
           const stamp = yield* tracker.stamp("issue", payload.txid);
           const written = yield* tracker.mutate(params.ws, updateIssue(params.id, payload, stamp));
+
           return { issue: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
         }, issueApiErrors),
       );
@@ -311,11 +333,14 @@ export const updateIssue =
   (issueId: string, input: Partial<Issue>, stamp: Stamp) =>
   (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound | TooManyInProgress> => {
     const previous = state.getIssue(issueId);
+
     if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
     const issue = nextIssue(previous, input, stamp);
+
     if (startsWork(state, previous, issue)) {
       return Effect.fail(new TooManyInProgress({ projectId: issue.projectId, limit: wipLimit }));
     }
+
     return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
   };
 ```
@@ -338,16 +363,20 @@ To get that state, the service folds the whole workspace stream into a `Material
 const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
   if (StreamAddress.isChange(event)) materialized.apply(event);
   else if (event.headers.control === "reset") materialized.clear();
+
   return materialized;
 };
+
 const view = (state: MaterializedState): WorkspaceState => ({
   getProject: (projectId: string) => state.get<Project>("project", projectId),
   getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
   hasProjects: () => state.getType("project").size > 0,
   countInProgress: (projectId: string) =>
-    [...state.getType("issue").keys()]
-      .map((issueId) => state.get<Issue>("issue", issueId))
-      .filter((issue) => issue?.projectId === projectId && issue.status === "in_progress").length,
+    Array.filter([...state.getType("issue").keys()], (issueId) => {
+      const issue = state.get<Issue>("issue", issueId);
+
+      return issue?.projectId === projectId && issue.status === "in_progress";
+    }).length,
 });
 ```
 
@@ -475,6 +504,7 @@ export const issueTrackerState = createStateSchema({
 ```ts title="src/db.ts"
 export function createIssueDb(workspaceId: string): IssueDb {
   const connection = trackConnection();
+
   const streamDb = createStreamDB({
     streamOptions: {
       url: streamUrl(workspaceId),
@@ -495,8 +525,10 @@ useEffect(() => {
   void created.preload().then(() => {
     if (cancelled) {
       created.close();
+
       return;
     }
+
     setDb(created);
   });
 
@@ -516,12 +548,15 @@ export function useVisibleIssues(db: IssueDb, projectId: string, filter: StatusF
       const inProject = q
         .from({ issue: db.collections.issues })
         .where(({ issue }) => eq(issue.projectId, projectId));
+
       const filtered =
         filter === "all" ? inProject : inProject.where(({ issue }) => eq(issue.status, filter));
+
       return filtered.orderBy(({ issue }) => issue.updatedAt, "desc");
     },
     [projectId, filter],
   );
+
   return data ?? [];
 }
 ```

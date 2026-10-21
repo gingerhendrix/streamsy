@@ -148,8 +148,9 @@ export const reconcileNewest = (
       const changes = diffNewest(rows, fetched);
       // No change gives no events: `decide` then appends nothing and does not check the tail.
       const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+
       return Effect.succeed({
-        value: { rows: events.reduce(applyChange, rows), changes },
+        value: { rows: Array.reduce(events, rows, applyChange), changes },
         items: events,
       });
     },
@@ -280,13 +281,13 @@ fetch code for stories.
 ```tsx title="src/client/main.tsx"
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
+
   const stories = useMemo(
-    () =>
-      (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || Number(b.id) - Number(a.id)),
+    () => Array.sort(storiesQuery.data ?? [], newestStoryOrder),
     [storiesQuery.data],
   );
   // ...
-          stories.map((story) => <StoryRow key={story.id} story={story} />)
+          Array.map(stories, (story) => <StoryRow key={story.id} story={story} />)
 ```
 
 ## Limits

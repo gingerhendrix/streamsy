@@ -1,4 +1,3 @@
-// oxlint-disable effecttsgo/strict-effect-provide -- This executable example is an application entry point that composes its complete host layer.
 import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Streamsy } from "@streamsy/core";
