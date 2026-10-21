@@ -1,3 +1,4 @@
+import { StreamAddress } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
@@ -144,6 +145,13 @@ const deleteCatalog = (
 ) =>
   sql`DELETE FROM ${sql(table)} WHERE workspace_id = ${workspaceId} AND ${sql(catalogTables[table])} = ${key}`;
 
+/** A State `reset` clears every row of one catalog table for the workspace. */
+const clearCatalog = (
+  sql: SqlClient.SqlClient,
+  table: keyof typeof catalogTables,
+  workspaceId: string,
+) => sql`DELETE FROM ${sql(table)} WHERE workspace_id = ${workspaceId}`;
+
 const upsertCatalog = (
   sql: SqlClient.SqlClient,
   table: keyof typeof catalogTables,
@@ -190,7 +198,11 @@ export const issueRows = Projection.process({
           const item = entry.item;
           const workspaceId = unit.params.workspaceId;
 
-          if (!("value" in item)) {
+          if (StreamAddress.isControl(item)) {
+            // Snapshot markers need no work. A reset replaces the catalog with what follows.
+            if (item.headers.control === "reset")
+              yield* clearCatalog(sql, entry.input, workspaceId);
+          } else if (!("value" in item)) {
             yield* deleteCatalog(sql, entry.input, workspaceId, item.key);
           } else {
             yield* checkCatalogWorkspace(workspaceId, item.value.workspaceId, item.type, item.key);

@@ -4,7 +4,7 @@ import { FetchHttpClient } from "effect/http";
 
 import * as Addresses from "./support/addresses.ts";
 import { expect } from "vitest";
-import { TransportFault } from "@streamsy/core";
+import { StreamAddress, TransportFault } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { Array, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
@@ -14,6 +14,18 @@ import { outputRoutes } from "../server/app.ts";
 import { tracker, Board, Transitions } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
 import { Events, Users } from "../server/streams.ts";
+
+const ada = (workspaceId: string) => ({
+  type: "user" as const,
+  key: "ada",
+  value: { workspaceId, userId: "ada", name: "Ada", updatedAt: "2026-09-23T10:00:00Z" },
+  headers: { operation: "upsert" as const },
+});
+
+const trackedUsers = (workspaceId: string) =>
+  Projection.read(tracker.at({ workspaceId })).pipe(
+    Effect.map(({ state }) => Array.map(state.users, (user) => user.userId)),
+  );
 
 const serveOutputs = () =>
   Effect.gen(function* () {
@@ -103,6 +115,47 @@ testLayer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTes
             ).toHaveLength(1);
           }).pipe(Effect.provideContext(runtime));
         }),
+    );
+
+    it.effect("a stored catalog reset clears that workspace in both projections", () =>
+      Effect.gen(function* () {
+        const runtime = yield* Layer.build(applicationLayer(sqliteStorage(":memory:")));
+
+        yield* Effect.gen(function* () {
+          for (const workspaceId of ["live", "acme"]) {
+            yield* createInputs(workspaceId);
+            yield* (yield* Users).append({ workspaceId }, [ada(workspaceId)]);
+            yield* Projection.run(issueRows.at({ workspaceId }));
+            yield* Projection.run(tracker.at({ workspaceId }));
+          }
+
+          const grace = {
+            ...ada("live"),
+            key: "grace",
+            value: { ...ada("live").value, userId: "grace", name: "Grace" },
+          };
+
+          yield* (yield* Users).append({ workspaceId: "live" }, [
+            StreamAddress.snapshotStart(),
+            StreamAddress.reset(),
+            grace,
+            StreamAddress.snapshotEnd(),
+          ]);
+          yield* Projection.run(issueRows.at({ workspaceId: "live" }));
+          yield* Projection.run(tracker.at({ workspaceId: "live" }));
+
+          const sql = yield* SqlClient.SqlClient;
+          expect(
+            yield* sql.unsafe("SELECT workspace_id, user_id FROM users ORDER BY workspace_id"),
+          ).toEqual([
+            { workspace_id: "acme", user_id: "ada" },
+            { workspace_id: "live", user_id: "grace" },
+          ]);
+
+          expect(yield* trackedUsers("live")).toEqual(["grace"]);
+          expect(yield* trackedUsers("acme")).toEqual(["ada"]);
+        }).pipe(Effect.provideContext(runtime));
+      }),
     );
 
     it.effect("catalog values cannot write another workspace in either projection", () =>

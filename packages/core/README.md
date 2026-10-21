@@ -32,8 +32,10 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 
 - `StreamAddress` names a stream with its content type and schema, including
   `StreamAddress.state(id, { collections })` for a Durable State stream. One address
-  declares several collections keyed by their wire `type`. `Streamsy` declares
-  a named stream service from an id template.
+  declares several collections keyed by their wire `type`. Its items are the
+  changes of those collections and the State control messages `snapshot-start`,
+  `snapshot-end` and `reset`. `Streamsy` declares a named stream service from an
+  id template.
 - Stream services create, append, read, follow, and remove streams. Create and
   append return `_tag` variants such as `Created` / `Exists` and
   `Appended` / `Duplicate`. Protocol failures are tagged errors
@@ -121,6 +123,38 @@ change has a `_tag` of `"Upsert"` or `"Delete"`.
 an `offset`, each event gets that offset and a default `txid`. Projection outputs
 have no source offset. The route's collection names and key fields define the
 Durable State wire events.
+
+## Control messages
+
+A State stream can also hold the control messages of the Durable State
+protocol. A control has `headers.control` and an optional `headers.offset`. It
+has no `type` or `key`.
+
+| Control          | Make it with                    | A reader should                                               |
+| ---------------- | ------------------------------- | ------------------------------------------------------------- |
+| `reset`          | `StreamAddress.reset()`         | Clear its rows, then apply the items after it                 |
+| `snapshot-start` | `StreamAddress.snapshotStart()` | Treat the changes up to `snapshot-end` as a complete snapshot |
+| `snapshot-end`   | `StreamAddress.snapshotEnd()`   | Close the snapshot                                            |
+
+Each constructor takes `{ offset }`. Items of a State address have the type
+`StreamAddress.CollectionsEvent<Collections>`. Narrow an item with
+`StreamAddress.isChange` or `StreamAddress.isControl` before you read `type`,
+`key` or `headers.operation`:
+
+```ts
+for (const item of batch.items) {
+  if (StreamAddress.isControl(item)) {
+    if (item.headers.control === "reset") rows.clear();
+  } else if ("value" in item) rows.set(item.key, item.value);
+  else rows.delete(item.key);
+}
+```
+
+`DurableState.changes` and projection outputs accept a control beside row
+changes and write it unchanged. With an `offset`, a control that has no offset
+gets that offset. `Serve.state` serves stored controls as they are. It still
+refuses the `x-streamsy-state-reset: snapshot` request header, because the
+server does not make snapshots.
 
 ## Documentation
 

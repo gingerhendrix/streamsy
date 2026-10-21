@@ -157,6 +157,8 @@ A `DecodeFault` stops the read. The application selects the offset to continue f
 
 A Durable State read gives `insert` and `update` operations from other producers as `upsert`.
 
+A Durable State read also gives the control messages that the stream holds. A control has `headers.control` set to `snapshot-start`, `snapshot-end` or `reset`, and it has no `type` or `key`. A reader that folds rows should clear them at a `reset` and apply the items after it. `StreamAddress.isControl` and `StreamAddress.isChange` narrow an item.
+
 ## Over HTTP
 
 `GET` on the stream path with `offset` reads one batch. Add `live=long-poll` or `live=sse` to follow. All access rules allow reads. See [Protocol routes](/docs/http/routes).

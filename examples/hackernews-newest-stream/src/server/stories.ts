@@ -11,4 +11,5 @@ export const storiesAddress = HackerNewsStories.at({});
 
 export type StoryChange = DurableState.Change<typeof storiesAddress.collections>;
 
-export type StoryEvent = StreamAddress.CollectionsChange<typeof storiesAddress.collections>;
+/** One item of the stories stream: a story change or a State control. */
+export type StoryEvent = StreamAddress.CollectionsEvent<typeof storiesAddress.collections>;

@@ -67,6 +67,33 @@ const createIssue = (offset: string, issue: { id: string; projectId: string; tit
 
 `DurableState.remove("issue", id)` deletes by key. Add `{ oldValue }` to also write `old_value`. If you give no `offset`, the events have no `offset` and no default `txid`. An upsert or delete can also set `timestamp` or `from`. A change to an undeclared collection, or a value that does not match its schema, does not compile.
 
+### Control messages
+
+`DurableState.changes` also takes the State control messages. Make them with `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()`. Each takes an optional `{ offset }`.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
+
+const replaceIssues = (issues: ReadonlyArray<{ id: string; projectId: string; title: string }>) =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace;
+    const params = { workspaceId: "main" };
+    const facts = DurableState.changes(Workspace.at(params), {}, [
+      StreamAddress.reset(),
+      ...issues.map((issue) => DurableState.upsert("issue", issue)),
+    ]);
+    yield* workspace.append(params, facts);
+  });
+```
+
+A control passes through `changes` unchanged. With an `offset`, a control that has no offset of its own gets that offset. Controls do not take a `txid`, but they count in the `index` of the default `txid` of the changes after them.
+
 ## Close
 
 ```ts

@@ -1,6 +1,6 @@
 import { it as baseIt } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
-import { MemoryStorage, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
+import { MemoryStorage, StreamAddress, Streamsy, ZERO_OFFSET, StorageFault } from "@streamsy/core";
 import { expect } from "vitest";
 import { Array, Context, Deferred, Effect, Layer, Order, pipe, Ref, Result, Stream } from "effect";
 import { IssueTracker, IssueTrackerLive, SeedLive } from "../../server/issue-tracker.ts";
@@ -58,6 +58,7 @@ const issueKeys = Effect.gen(function* () {
   const keys = pipe(
     batches,
     Array.flatMap((batch) => batch.items),
+    Array.filter(StreamAddress.isChange),
     Array.filter((event) => event.type === "issue"),
     Array.map((event) => event.key),
   );

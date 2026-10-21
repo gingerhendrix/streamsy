@@ -1,5 +1,5 @@
 import { BunCrypto } from "@effect/platform-bun";
-import { MemoryStorage } from "@streamsy/core";
+import { MemoryStorage, StreamAddress } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Array, Effect, Layer, Schedule, Schema } from "effect";
@@ -57,10 +57,11 @@ class NotYet extends Schema.TaggedError<NotYet, { readonly brand: unique symbol 
 ) {}
 
 /** The State changes of one workspace, read once. */
+/** The State changes of one workspace, without controls. */
 export const stateChanges = (workspaceId: string) =>
   Effect.map(
     Effect.flatMap(Workspaces, (rows) => rows.collect({ workspaceId })),
-    ({ items }) => items,
+    ({ items }) => Array.filter(items, StreamAddress.isChange),
   );
 
 /**

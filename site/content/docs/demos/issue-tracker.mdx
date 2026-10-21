@@ -336,7 +336,8 @@ To get that state, the service folds the whole workspace stream into a `Material
 
 ```ts title="server/issue-tracker.ts"
 const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
-  materialized.apply(event);
+  if (StreamAddress.isChange(event)) materialized.apply(event);
+  else if (event.headers.control === "reset") materialized.clear();
   return materialized;
 };
 const view = (state: MaterializedState): WorkspaceState => ({

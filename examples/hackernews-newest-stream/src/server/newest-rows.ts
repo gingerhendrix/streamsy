@@ -1,3 +1,4 @@
+import { StreamAddress } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Schema } from "effect";
 import { HackerNewsStory } from "../state-schema.ts";
@@ -7,7 +8,10 @@ export const StoryRows = Schema.Record(Schema.String, HackerNewsStory);
 
 export type StoryRows = Schema.Schema.Type<typeof StoryRows>;
 
+/** Apply one stream item. A `reset` clears the rows. Snapshot markers change nothing. */
 export function applyChange(rows: StoryRows, event: StoryEvent): StoryRows {
+  if (StreamAddress.isControl(event)) return event.headers.control === "reset" ? {} : rows;
+
   const next = { ...rows };
 
   if (event.headers.operation === "delete") delete next[event.key];

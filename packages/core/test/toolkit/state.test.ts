@@ -193,7 +193,9 @@ layer(MemoryStorage.layerProtocol())((it) => {
         DurableState.remove("project", "p1"),
       ]);
 
-      expect(Array.map(facts, (fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
+      const changes = Array.filter(facts, StreamAddress.isChange);
+
+      expect(Array.map(changes, (fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
         ["project", "p1", "upsert"],
         ["story", "7", "upsert"],
         ["project", "p1", "delete"],
@@ -205,7 +207,9 @@ layer(MemoryStorage.layerProtocol())((it) => {
       const items = yield* Streams.read(workspace).pipe(Streams.items, Stream.runCollect);
       expect(items).toEqual([...facts]);
 
-      const names = Array.flatMap(items, (item) =>
+      const stored = Array.filter(items, StreamAddress.isChange);
+
+      const names = Array.flatMap(stored, (item) =>
         item.type === "project" && "value" in item ? [item.value.name] : [],
       );
 
@@ -269,7 +273,7 @@ baseIt("normalizes Durable State insert, update, and upsert operations", () => {
       }),
     );
 
-    expect(decoded.headers.operation).toBe("upsert");
+    expect(decoded).toMatchObject({ headers: { operation: "upsert" } });
   }
 
   const encoded = Schema.encodeSync(stories.codec)({

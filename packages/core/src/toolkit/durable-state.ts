@@ -2,6 +2,8 @@ import { Array, Data, Predicate, Record, type Types } from "effect";
 import type {
   Collections,
   CollectionsChange,
+  CollectionsEvent,
+  StateControl,
   StateHeaders,
   StateKey,
   StateAddress,
@@ -44,6 +46,15 @@ export type Change<C extends Collections> = {
   [K in keyof C & string]: Upsert<C[K]["schema"]["Type"], K> | Delete<C[K]["schema"]["Type"], K>;
 }[keyof C & string];
 
+/**
+ * One entry for `changes`: a pending change, or a State control such as
+ * `StreamAddress.reset()`.
+ */
+export type Entry<C extends Collections> = Change<C> | StateControl;
+
+const isOperation = <C extends Collections>(entry: Entry<C>): entry is Change<C> =>
+  Predicate.isTagged(entry, "Upsert") || Predicate.isTagged(entry, "Delete");
+
 /** Describe an upsert into a collection. The key is read from the value. */
 export const upsert = <const Type extends string, A>(
   type: Type,
@@ -79,65 +90,80 @@ const readKey = <A>(type: string, field: StateKey<A>, value: A): string =>
 
 /**
  * Stamp Durable State changes with their key and headers. With an `offset`, each
- * change gets that offset and a default txid of `<offset>:<index>`.
+ * change gets that offset and a default txid of `<offset>:<index>`. A control
+ * entry passes through. It gets the `offset` only when it has none of its own.
  */
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },
-  entries: Array.NonEmptyReadonlyArray<Change<C>>,
-): Array.NonEmptyReadonlyArray<CollectionsChange<C>>;
+  entries: Array.NonEmptyReadonlyArray<Entry<C>>,
+): Array.NonEmptyReadonlyArray<CollectionsEvent<C>>;
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },
-  entries: ReadonlyArray<Change<C>>,
-): ReadonlyArray<CollectionsChange<C>>;
+  entries: ReadonlyArray<Entry<C>>,
+): ReadonlyArray<CollectionsEvent<C>>;
 export function changes<C extends Collections, RD, RE>(
   address: StateAddress<C, RD, RE>,
   options: { readonly offset?: string },
-  entries: ReadonlyArray<Change<C>>,
-): ReadonlyArray<CollectionsChange<C>> {
+  entries: ReadonlyArray<Entry<C>>,
+): ReadonlyArray<CollectionsEvent<C>> {
   const { offset } = options;
 
-  return Array.map(entries, (entry, index): CollectionsChange<C> => {
-    const collection = Record.has(address.collections, entry.type)
-      ? address.collections[entry.type]
-      : undefined;
+  return Array.map(entries, (entry, index): CollectionsEvent<C> =>
+    isOperation(entry)
+      ? stampChange(address.collections, entry, offset, index)
+      : stampControl(entry, offset),
+  );
+}
 
-    if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
-    // Only the three overridable fields are read from the entry, so a wider
-    // value cannot replace `offset` and an explicit `undefined` cannot drop `txid`.
-    const override = entry.headers ?? {};
-    const txid = override.txid ?? (offset === undefined ? undefined : `${offset}:${index}`);
-    const headers: Types.Mutable<Omit<StateHeaders, "operation">> = {};
+const stampChange = <C extends Collections>(
+  collections: C,
+  entry: Change<C>,
+  offset: string | undefined,
+  index: number,
+): CollectionsChange<C> => {
+  const collection = Record.has(collections, entry.type) ? collections[entry.type] : undefined;
 
-    if (offset !== undefined) headers.offset = offset;
+  if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
+  // Only the three overridable fields are read from the entry, so a wider
+  // value cannot replace `offset` and an explicit `undefined` cannot drop `txid`.
+  const override = entry.headers ?? {};
+  const txid = override.txid ?? (offset === undefined ? undefined : `${offset}:${index}`);
+  const headers: Types.Mutable<Omit<StateHeaders, "operation">> = {};
 
-    if (txid !== undefined) headers.txid = txid;
+  if (offset !== undefined) headers.offset = offset;
 
-    if (override.timestamp !== undefined) headers.timestamp = override.timestamp;
+  if (txid !== undefined) headers.txid = txid;
 
-    if (override.from !== undefined) headers.from = override.from;
+  if (override.timestamp !== undefined) headers.timestamp = override.timestamp;
 
-    if (Predicate.isTagged(entry, "Upsert")) {
-      const key = readKey(entry.type, collection.key, entry.value);
+  if (override.from !== undefined) headers.from = override.from;
 
-      return {
+  if (Predicate.isTagged(entry, "Upsert")) {
+    const key = readKey(entry.type, collection.key, entry.value);
+
+    return {
+      type: entry.type,
+      key,
+      value: entry.value,
+      headers: { operation: "upsert", ...headers },
+    };
+  }
+
+  const key = checkKey(entry.type, "key", entry.key);
+
+  return entry.oldValue === undefined
+    ? { type: entry.type, key, headers: { operation: "delete", ...headers } }
+    : {
         type: entry.type,
         key,
-        value: entry.value,
-        headers: { operation: "upsert", ...headers },
+        old_value: entry.oldValue,
+        headers: { operation: "delete", ...headers },
       };
-    }
+};
 
-    const key = checkKey(entry.type, "key", entry.key);
-
-    return entry.oldValue === undefined
-      ? { type: entry.type, key, headers: { operation: "delete", ...headers } }
-      : {
-          type: entry.type,
-          key,
-          old_value: entry.oldValue,
-          headers: { operation: "delete", ...headers },
-        };
-  });
-}
+const stampControl = (entry: StateControl, offset: string | undefined): StateControl =>
+  offset === undefined || entry.headers.offset !== undefined
+    ? entry
+    : { headers: { control: entry.headers.control, offset } };

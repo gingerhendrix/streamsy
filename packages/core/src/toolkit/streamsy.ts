@@ -277,7 +277,7 @@ export type StateClass<
   Self,
   Name,
   Route.Params<C>,
-  StreamAddress.CollectionsChange<Collections>,
+  StreamAddress.CollectionsEvent<Collections>,
   StreamAddress.CollectionsDecodingServices<Collections>,
   StreamAddress.CollectionsEncodingServices<Collections>,
   ReturnType<typeof Route.state<T, C, Collections>>

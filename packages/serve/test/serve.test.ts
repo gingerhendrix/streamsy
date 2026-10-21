@@ -153,6 +153,40 @@ test("state has collection fingerprint, replay headers and no snapshot reset", a
   }
 });
 
+test("state serves stored controls beside changes and still refuses a snapshot reset", async () => {
+  const web = app();
+
+  const items = [
+    { type: "cards", key: "x", value: { id: "x" }, headers: { operation: "upsert" } },
+    { headers: { control: "reset", offset: "0" } },
+    { headers: { control: "snapshot-start" } },
+    { type: "cards", key: "y", value: { id: "y" }, headers: { operation: "upsert" } },
+    { headers: { control: "snapshot-end" } },
+  ];
+
+  try {
+    await web.handler(
+      new Request("http://host/rows/b", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(items),
+      }),
+    );
+    const response = await web.handler(new Request("http://host/state/b?offset=-1"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(items);
+    expect(
+      (
+        await web.handler(
+          new Request("http://host/state/b", { headers: { "x-streamsy-state-reset": "snapshot" } }),
+        )
+      ).status,
+    ).toBe(400);
+  } finally {
+    await web.dispose();
+  }
+});
+
 test("value encodes canonical JSON and conditional HEAD", async () => {
   const web = HttpRouter.toWebHandler(
     Serve.route(

@@ -1,4 +1,4 @@
-import { Array, Data, Record as EffectRecord, Schema } from "effect";
+import { Array, Data, Predicate, Record as EffectRecord, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 
 /** Omit `offset` and `txid` rather than setting them to `undefined`. */
@@ -37,6 +37,25 @@ type StateEncodedChange<A, Type extends string = string> =
     })
   | StateDelete<A, Type>;
 
+/** The control signals of the Durable State protocol (STATE-PROTOCOL.md section 4.2). */
+export type StateControlName = "snapshot-start" | "snapshot-end" | "reset";
+
+/**
+ * A control message of a Durable State stream. It has no `type` or `key`.
+ * `snapshot-start` and `snapshot-end` mark a run of changes that is a complete
+ * snapshot. `reset` tells a reader to clear its materialized state. Omit
+ * `offset` rather than setting it to `undefined`.
+ */
+export interface StateControl {
+  readonly headers: {
+    readonly control: StateControlName;
+    readonly offset?: string;
+  };
+}
+
+/** One item of a Durable State stream: a change of one collection or a control. */
+export type StateEvent<A, Type extends string = string> = StateChange<A, Type> | StateControl;
+
 /** The value fields that may serve as a Durable State key. */
 export type StateKey<A> = {
   [K in keyof A]-?: A[K] extends string | number ? K : never;
@@ -70,6 +89,13 @@ export type CollectionsEncodedChange<C extends Collections> = {
   [K in keyof C & string]: StateEncodedChange<C[K]["schema"]["Encoded"], K>;
 }[keyof C & string];
 
+/** The items of a State address: the change events of its collections, plus controls. */
+export type CollectionsEvent<C extends Collections> = CollectionsChange<C> | StateControl;
+
+export type CollectionsEncodedEvent<C extends Collections> =
+  | CollectionsEncodedChange<C>
+  | StateControl;
+
 export type CollectionsDecodingServices<C extends Collections> =
   C[keyof C]["schema"]["DecodingServices"];
 
@@ -84,12 +110,12 @@ export interface StreamAddress<A, RD = never, RE = never> {
   readonly codec: Schema.Codec<A, string | Uint8Array, RD, RE>;
 }
 
-/** A JSON address whose items are the change events of its collections. */
+/** A JSON address whose items are the change events of its collections and State controls. */
 export interface StateAddress<
   C extends Collections,
   RD = CollectionsDecodingServices<C>,
   RE = CollectionsEncodingServices<C>,
-> extends StreamAddress<CollectionsChange<C>, RD, RE> {
+> extends StreamAddress<CollectionsEvent<C>, RD, RE> {
   readonly collections: C;
 }
 
@@ -147,10 +173,46 @@ export function stateChange<A, I, RD, RE, const Type extends string>(options: {
   ]);
 }
 
+/** The codec for a State control message. It needs no services. */
+export const stateControl: Schema.Codec<StateControl> = Schema.Struct({
+  headers: Schema.Struct({
+    control: Schema.Literals(["snapshot-start", "snapshot-end", "reset"]),
+    offset: Schema.optionalKey(Schema.String),
+  }),
+});
+
+/** True for a control message. A change has `headers.operation` and no `headers.control`. */
+export const isControl = <E extends StateEvent<unknown>>(
+  event: E,
+): event is Extract<E, StateControl> => Predicate.hasProperty(event.headers, "control");
+
+/** True for an upsert or delete change. */
+export const isChange = <E extends StateEvent<unknown>>(
+  event: E,
+): event is Exclude<E, StateControl> => !isControl(event);
+
+const control = (name: StateControlName, options: { readonly offset?: string }): StateControl => ({
+  headers:
+    options.offset === undefined ? { control: name } : { control: name, offset: options.offset },
+});
+
+/** A `reset` control. A reader should clear its materialized state and apply what follows. */
+export const reset = (options: { readonly offset?: string } = {}): StateControl =>
+  control("reset", options);
+
+/** A `snapshot-start` control. The changes up to `snapshot-end` form a complete snapshot. */
+export const snapshotStart = (options: { readonly offset?: string } = {}): StateControl =>
+  control("snapshot-start", options);
+
+/** A `snapshot-end` control. It closes the snapshot that `snapshot-start` opened. */
+export const snapshotEnd = (options: { readonly offset?: string } = {}): StateControl =>
+  control("snapshot-end", options);
+
 /**
- * A stream of Durable State change events for several collections. Each record
+ * A stream of Durable State events for several collections. Each record
  * key is the `type` on the wire; each entry gives the value schema and the value
- * field that becomes the event `key`.
+ * field that becomes the event `key`. The codec also decodes and encodes the
+ * State control messages `snapshot-start`, `snapshot-end` and `reset`.
  */
 export function state<const C extends Collections>(
   id: string,
@@ -161,12 +223,13 @@ export function state<const C extends Collections>(
   );
 
   // SAFETY: `codecs` holds exactly one `stateChange` codec per entry of
-  // `options.collections`, each tagged with that entry's type literal, so the
-  // runtime union accepts precisely the events `CollectionsChange<C>` describes.
+  // `options.collections`, each tagged with that entry's type literal, plus the
+  // control codec, so the runtime union accepts precisely the events
+  // `CollectionsEvent<C>` describes.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The invariant is stated in the comment above.
-  const schema = Schema.Union(codecs) as Schema.Codec<
-    CollectionsChange<C>,
-    CollectionsEncodedChange<C>,
+  const schema = Schema.Union([...codecs, stateControl]) as Schema.Codec<
+    CollectionsEvent<C>,
+    CollectionsEncodedEvent<C>,
     CollectionsDecodingServices<C>,
     CollectionsEncodingServices<C>
   >;

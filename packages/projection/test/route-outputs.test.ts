@@ -1,7 +1,7 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Array, Effect, Schema, Stream } from "effect";
-import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
 import { memoryHost } from "./support/memory-host.ts";
@@ -70,6 +70,47 @@ for (const commit of [Commit.transaction, Commit.producer]) {
           },
           { type: "card", key: "old", headers: { operation: "delete" } },
           { type: "count", key: "8", headers: { operation: "delete" } },
+        ]);
+      }),
+    );
+
+    it.effect(`${commit.name}: a State output writes controls between its changes`, () =>
+      Effect.gen(function* () {
+        const params = { id: "controls" };
+        const input = yield* Input;
+        const board = yield* Board;
+        yield* input.create(params);
+        yield* board.create(params);
+        yield* input.append(params, [3]);
+
+        const declaration = Projection.emit({
+          id: "controls",
+          params: { id: Schema.String },
+          inputs: { input: Input },
+          outputs: { board: Board },
+          commit,
+          emit: ({ item }) => ({
+            board: [
+              StreamAddress.reset(),
+              StreamAddress.snapshotStart(),
+              DurableState.upsert("count", { number: item, total: item }),
+              StreamAddress.snapshotEnd({ offset: "own" }),
+            ],
+          }),
+        });
+
+        yield* Projection.run(declaration.at(params));
+        const batches = yield* Stream.runCollect(board.read(params));
+        expect(Array.flatMap(batches, (batch) => batch.items)).toEqual([
+          { headers: { control: "reset" } },
+          { headers: { control: "snapshot-start" } },
+          {
+            type: "count",
+            key: "3",
+            value: { number: 3, total: 3 },
+            headers: { operation: "upsert" },
+          },
+          { headers: { control: "snapshot-end", offset: "own" } },
         ]);
       }),
     );

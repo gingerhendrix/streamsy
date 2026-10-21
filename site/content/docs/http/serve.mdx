@@ -52,6 +52,8 @@ The stream codecs decode the path parameters. Two routes with the same shape fai
 
 `Serve.state` serves the change stream with no snapshot. A new client reads from `-1`. On `replay-from-start`, clear local rows and replay from `-1`.
 
+Stored control messages (`snapshot-start`, `snapshot-end` and `reset`) are served as they are, in order with the changes. A client should clear its rows at a `reset` and keep reading forward. `Serve.state` does not make snapshots, so it refuses a request with the `x-streamsy-state-reset: snapshot` header.
+
 ## Projection outputs
 
 Pass resolved addresses to `Serve.state` or `Serve.stream`. Compute projection values with `Projection.read` and `Effect.map`.

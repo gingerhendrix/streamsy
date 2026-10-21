@@ -1,5 +1,5 @@
 import { Array, Schema } from "effect";
-import { DurableState } from "@streamsy/core";
+import { DurableState, StreamAddress } from "@streamsy/core";
 import { Commit } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
@@ -43,6 +43,30 @@ export class Transitions extends Streamsy.json<Transitions>()(
 ) {}
 
 export const outputStreams = [Board, LabelCounts, Transitions] as const;
+
+/**
+ * Apply one catalog event to its rows. A change touches its key. A `reset`
+ * clears the rows and touches every key it removed. Snapshot markers do nothing.
+ */
+const applyCatalog = <V>(
+  rows: Map<string, V>,
+  touched: Set<string>,
+  event: StreamAddress.StateEvent<V>,
+) => {
+  if (StreamAddress.isControl(event)) {
+    if (event.headers.control !== "reset") return;
+
+    for (const key of rows.keys()) touched.add(key);
+    rows.clear();
+
+    return;
+  }
+
+  touched.add(event.key);
+
+  if ("value" in event) rows.set(event.key, event.value);
+  else rows.delete(event.key);
+};
 
 /** Declared outputs for one workspace, separate from the SQL rows of issueRows. */
 export const tracker = Projection.mapAccumBatch({
@@ -114,7 +138,7 @@ export const tracker = Projection.mapAccumBatch({
       }
 
       for (const change of [...batch.projects.items, ...batch.users.items, ...batch.labels.items]) {
-        if ("value" in change)
+        if (StreamAddress.isChange(change) && "value" in change)
           yield* checkCatalogWorkspace(
             previous.workspaceId,
             change.value.workspaceId,
@@ -123,26 +147,11 @@ export const tracker = Projection.mapAccumBatch({
           );
       }
 
-      for (const change of batch.projects.items) {
-        touchedProjects.add(change.key);
+      for (const change of batch.projects.items) applyCatalog(projects, touchedProjects, change);
 
-        if ("value" in change) projects.set(change.key, change.value);
-        else projects.delete(change.key);
-      }
+      for (const change of batch.users.items) applyCatalog(users, touchedUsers, change);
 
-      for (const change of batch.users.items) {
-        touchedUsers.add(change.key);
-
-        if ("value" in change) users.set(change.key, change.value);
-        else users.delete(change.key);
-      }
-
-      for (const change of batch.labels.items) {
-        touchedLabels.add(change.key);
-
-        if ("value" in change) labels.set(change.key, change.value);
-        else labels.delete(change.key);
-      }
+      for (const change of batch.labels.items) applyCatalog(labels, touchedLabels, change);
 
       const state: WorkspaceState = {
         workspaceId: previous.workspaceId,

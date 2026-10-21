@@ -1,5 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { DurableState, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, StreamAddress, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Array, Console, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
@@ -18,13 +18,12 @@ import {
   startServer,
 } from "./support.ts";
 
+/** The label-counts State page: its changes and any State controls. */
 const LabelCountChanges = Schema.Array(
-  Schema.Struct({
-    key: Schema.String,
-    value: Schema.optionalKey(LabelCountRow),
-    old_value: Schema.optionalKey(LabelCountRow),
-    headers: Schema.Struct({ operation: Schema.String }),
-  }),
+  Schema.Union([
+    StreamAddress.stateChange({ type: "labelCounts", schema: LabelCountRow }),
+    StreamAddress.stateControl,
+  ]),
 );
 
 /** Writes labels and a membership, and runs the outputs before the server starts. */
@@ -109,17 +108,20 @@ const smoke = Effect.gen(function* () {
         Array.some(
           changes,
           (change) =>
+            StreamAddress.isChange(change) &&
             change.key === "remove" &&
             change.headers.operation === "delete" &&
-            change.old_value === undefined,
+            !("old_value" in change),
         ),
         "key-only output delete missing",
       );
       const counts = new Map<string, LabelCountRow>();
 
       for (const change of changes) {
-        if (change.headers.operation === "delete") counts.delete(change.key);
-        else if (change.value) counts.set(change.key, change.value);
+        if (StreamAddress.isControl(change)) {
+          if (change.headers.control === "reset") counts.clear();
+        } else if ("value" in change) counts.set(change.key, change.value);
+        else counts.delete(change.key);
       }
 
       yield* check(counts.size === 1 && counts.get("keep")?.count === 1, "label counts incorrect");

@@ -1,5 +1,6 @@
 import { MaterializedState } from "@durable-streams/state";
 import {
+  StreamAddress,
   ZERO_OFFSET,
   type ReadFailure,
   type AppendFailure,
@@ -104,8 +105,10 @@ export class IssueTracker extends Context.Service<
   }
 >()("IssueTrackerDemo/IssueTracker") {}
 
+/** Apply one item. A `reset` clears the state. Snapshot markers change nothing. */
 const fold = (materialized: MaterializedState, event: WorkspaceEvent) => {
-  materialized.apply(event);
+  if (StreamAddress.isChange(event)) materialized.apply(event);
+  else if (event.headers.control === "reset") materialized.clear();
 
   return materialized;
 };
