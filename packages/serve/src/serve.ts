@@ -122,10 +122,10 @@ export function stream<A, K, RD, RE>(
   return read(address, options, "stream", Effect.succeed(null));
 }
 
-/** Durable State change response with replay-from-start recovery. */
+/** Durable State response with replay-from-start recovery. Stored controls pass through. */
 export function state<C extends StreamAddress.Collections, K, RD, RE>(
   address: StreamAddress.StateAddress<C, RD, RE> &
-    Streamsy.Address<StreamAddress.CollectionsChange<C>, K, RD, RE>,
+    Streamsy.Address<StreamAddress.CollectionsEvent<C>, K, RD, RE>,
   options: ReadOptions = {},
 ) {
   return read(address, options, "state", collectionDescriptor(address.collections));

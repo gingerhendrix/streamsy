@@ -11,7 +11,7 @@ export type RoutedMap = Inputs;
 
 export type Item<T> =
   AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
-    ? DurableState.Change<C>
+    ? DurableState.Entry<C>
     : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
       ? A
       : never;
@@ -61,7 +61,7 @@ export const collect = (
       const values = yield* Effect.try({
         try: () =>
           "collections" in output
-            ? // SAFETY: state addresses carry their collections; constructor signatures check each change against them.
+            ? // SAFETY: state addresses carry their collections; constructor signatures check each change against them. Controls pass through.
               DurableState.changes(
                 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The address's state marker establishes this collection shape.
                 output as StreamAddress.StateAddress<StreamAddress.Collections, any, any>,

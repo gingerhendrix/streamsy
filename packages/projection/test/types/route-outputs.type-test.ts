@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { DurableState, Streamsy } from "@streamsy/core";
+import { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
 import { Commit, Projection, type Emits } from "@streamsy/projection";
 
 class Numbers extends Streamsy.json<Numbers>()("routes/Numbers", "numbers/:id", {
@@ -55,6 +55,15 @@ export const wrongOld: Emits<typeof outputs> = {
   multi: [DurableState.remove("count", "a", { oldValue: { id: "a", title: "A" } })],
 };
 
+export const control: Emits<typeof outputs> = {
+  board: [StreamAddress.reset(), DurableState.upsert("card", { id: "a", title: "A" })],
+};
+
+export const controlOnJson: Emits<typeof outputs> = {
+  // @ts-expect-error a JSON output does not take a State control
+  numbers: [StreamAddress.reset()],
+};
+
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 type Assert<T extends true> = T;
@@ -64,7 +73,7 @@ export type Checks = [
   Assert<
     Same<
       NonNullable<Emits<typeof outputs>["multi"]>[number],
-      DurableState.Change<typeof Multi.collections>
+      DurableState.Entry<typeof Multi.collections>
     >
   >,
 ];

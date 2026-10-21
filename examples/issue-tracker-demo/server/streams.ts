@@ -26,8 +26,8 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
 
 export type WorkspaceChange = DurableState.Change<typeof Workspaces.collections>;
 
-/** One stamped event on a workspace stream. */
-export type WorkspaceEvent = StreamAddress.CollectionsChange<typeof Workspaces.collections>;
+/** One stamped item on a workspace stream: a change or a State control. */
+export type WorkspaceEvent = StreamAddress.CollectionsEvent<typeof Workspaces.collections>;
 
 /**
  * Stamp changes for one workspace. The tracker writes its own events, so the

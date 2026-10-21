@@ -107,12 +107,15 @@ const fixtureApp = Effect.gen(function* () {
   return HttpServerResponse.text("not found", { status: 404 });
 });
 
-const StoryEvents = Schema.Array(
-  StreamAddress.stateChange({
-    type: "hn-story",
-    schema: storiesAddress.collections["hn-story"].schema,
-  }),
-);
+const StoryChange = StreamAddress.stateChange({
+  type: "hn-story",
+  schema: storiesAddress.collections["hn-story"].schema,
+});
+
+const StoryEvents = Schema.Array(StoryChange);
+
+/** A served State page may also hold controls. The checks below count changes only. */
+const StoryItems = Schema.Array(Schema.Union([StoryChange, StreamAddress.stateControl]));
 
 const smoke = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -170,7 +173,9 @@ const smoke = Effect.gen(function* () {
     yield* check(response.status === 200, `State stream read failed: ${response.status}`);
     yield* check(response.headers["x-streamsy-state-version"] === "1", "served state version");
 
-    return yield* HttpClientResponse.schemaBodyJson(StoryEvents)(response);
+    const items = yield* HttpClientResponse.schemaBodyJson(StoryItems)(response);
+
+    return Array.filter(items, StreamAddress.isChange);
   });
 
   const poll = Effect.gen(function* () {

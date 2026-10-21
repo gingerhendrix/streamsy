@@ -58,7 +58,7 @@ export type StateRoute<
 > = Omit<
   StreamRoute<
     P,
-    StreamAddress.CollectionsChange<C>,
+    StreamAddress.CollectionsEvent<C>,
     StreamAddress.CollectionsDecodingServices<C>,
     StreamAddress.CollectionsEncodingServices<C>,
     Template
