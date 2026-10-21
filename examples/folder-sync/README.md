@@ -91,7 +91,35 @@ tests load it.
 Blob routes run in the Worker entry and stream directly to local R2. Uploads
 require `Content-Length`; missing length gets 400. The shipped clients supply
 it. Bun also accepts streamed uploads without a declared length. These commands
-use no remote Cloudflare resources. There is no hosted deployment.
+use no remote Cloudflare resources.
+
+## Deploy to Cloudflare
+
+`alchemy.run.ts` declares one Worker, the two Durable Object classes and one R2
+bucket. The Worker serves the browser assets and runs the hourly cron. Alchemy
+keeps the stack state in `.alchemy/` in this folder. The CLI runs under Node and
+uses the default Alchemy profile.
+
+```sh
+FOLDER_SYNC_WRITER_TOKEN=<token> bun run --cwd examples/folder-sync deploy --stage <stage>
+```
+
+`deploy` builds the browser and the Worker, then deploys. The Worker name is
+`folder-sync-<stage>` on `workers.dev`, and the command prints its URL. The token
+becomes a Worker secret. Use the URL with the seed, sync and agent commands above.
+Run the HTTP smoke once against a fresh stage, because it expects new file
+versions:
+
+```sh
+FOLDER_SYNC_URL=<url> FOLDER_SYNC_WRITER_TOKEN=<token> bun run --cwd examples/folder-sync smoke:http
+```
+
+Remove the stage and its data with `bun run --cwd examples/folder-sync destroy --stage <stage>`.
+The destroy command also reads `FOLDER_SYNC_WRITER_TOKEN`.
+
+On Cloudflare, an upload without `Content-Length` (for example
+`Transfer-Encoding: chunked`) still succeeds. The edge gives the Worker a declared
+length. The 400 applies only on local workerd.
 
 ## Two State streams
 
@@ -396,5 +424,7 @@ full replay and scans suit a small demo corpus. There is no phone cache.
 
 Worker creation spans the registry and folder objects. A crash between them
 leaves a listed folder whose creation must be retried. A lost ping can leave
-search stale until the hourly pass. R2 checks and restart tests use local
-workerd; no remote deployment was tested.
+search stale until the hourly pass. Restart tests use local workerd. One deployed
+run on Cloudflare covered the HTTP smoke, seed, sync mirrors, the browser, the
+agent filesystem and a redeploy. No test checked the hourly cron after a lost ping
+on Cloudflare.

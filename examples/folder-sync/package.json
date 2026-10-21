@@ -16,7 +16,9 @@
     "smoke:worker": "bun run build:web && bun run build:worker && bun scripts/worker-smoke.ts",
     "build:worker": "bun scripts/build-worker.ts",
     "dev:worker": "bun run build:web && bun run build:worker && bun scripts/local-worker.ts",
-    "test:worker": "bun run build:worker && bun --bun vitest run test/worker test/agent/worker.test.ts && FOLDER_SYNC_TEST_WORKER=true bun --bun vitest run test/sync/integration.test.ts"
+    "test:worker": "bun run build:worker && bun --bun vitest run test/worker test/agent/worker.test.ts && FOLDER_SYNC_TEST_WORKER=true bun --bun vitest run test/sync/integration.test.ts",
+    "deploy": "bun run build:web && bun run build:worker && node node_modules/alchemy/bin/cli.js deploy",
+    "destroy": "node node_modules/alchemy/bin/cli.js destroy"
   },
   "dependencies": {
     "@better-fs-tools/fs": "0.1.0",
