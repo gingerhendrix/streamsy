@@ -23,7 +23,6 @@ const content = (text: string, txid: string) => ({
   author: "test",
   hash: digest(text),
   size: new TextEncoder().encode(text).length,
-  text,
 });
 
 const fileUrl = (url: string, folderId: string, path = "a.md") =>
@@ -38,11 +37,26 @@ const jsonPost = (url: string, body: typeof CreateFolder.Type | { dropPings: boo
 const create = (url: string, folderId: string, title = folderId) =>
   jsonPost(`${url}/api/folders`, { txid: `create:${folderId}`, folderId, title });
 
-const commit = (url: string, folderId: string, text: string, txid: string, version?: number) =>
-  HttpClient.put(fileUrl(url, folderId), {
-    headers: version === undefined ? headers : { ...headers, "if-match": `"${version}"` },
-    body: HttpBody.jsonUnsafe(content(text, txid)),
+/** Every commit names a blob, so put the text in the blob store first. */
+const uploadText = Effect.fn("WorkerTest.upload")(function* (url: string, text: string) {
+  const response = yield* HttpClient.put(`${url}/api/blobs/${digest(text)}`, {
+    headers,
+    body: HttpBody.text(text, "application/octet-stream"),
   });
+
+  expect(response.status).toBe(200);
+  yield* response.text;
+});
+
+const commit = (url: string, folderId: string, text: string, txid: string, version?: number) =>
+  uploadText(url, text).pipe(
+    Effect.andThen(
+      HttpClient.put(fileUrl(url, folderId), {
+        headers: version === undefined ? headers : { ...headers, "if-match": `"${version}"` },
+        body: HttpBody.jsonUnsafe(content(text, txid)),
+      }),
+    ),
+  );
 
 const remove = (url: string, folderId: string, version: number) =>
   HttpClient.del(fileUrl(url, folderId), {
@@ -138,7 +152,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           expect(before[0]).toMatchObject({
             type: "file",
             key: "a.md",
-            value: { version: 1, text: "one" },
+            value: { version: 1, hash: digest("one") },
             headers: { operation: "upsert", txid: "first" },
           });
           expect(yield* head(yield* commit(host.url, "docs", "one", "retry", 99))).toEqual(written);
@@ -206,7 +220,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "workerd saves the view checkpoint of a folder with more than 2 MB of inline text",
+      "workerd saves the view checkpoint of a folder with more than 2 MB of content",
       () =>
         Effect.gen(function* () {
           const directory = yield* testDirectory("worker-large-");
@@ -215,6 +229,8 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const writes = 40;
 
           for (let index = 1; index <= writes; index++) {
+            yield* uploadText(host.url, largeText(index));
+
             const written = yield* HttpClient.put(fileUrl(host.url, "large", `f${index}.md`), {
               headers: { ...headers, "if-none-match": "*" },
               body: HttpBody.jsonUnsafe(content(largeText(index), `t${index}`)),
@@ -365,6 +381,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             ["a.md", "needle " + "filler ".repeat(100)],
             ["z.md", "<img src=x> needle needle needle"],
           ] as const) {
+            yield* uploadText(host.url, text);
             expect(
               (yield* HttpClient.put(fileUrl(host.url, "docs", path), {
                 headers,

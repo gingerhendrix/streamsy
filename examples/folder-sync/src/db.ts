@@ -167,7 +167,7 @@ export const createFileDb = (folderId: string, options: DbOptions = {}) => {
   });
 
   // Durable State upserts replace the entire value. TanStack defaults to partial merges,
-  // which would retain old inline text when a later value refers to a blob.
+  // which would keep a field that a later value drops.
   streamDb.collections.files.config.sync.rowUpdateMode = "full";
 
   return Object.assign(streamDb, { connection });
@@ -201,6 +201,6 @@ export const editFile = (db: FileDb, current: File, text: string, author: string
       if (accepted === undefined) throw new Error("The server did not acknowledge the save");
 
       // Keep this exact accepted version even if another stream change has already arrived.
-      return { ...accepted, size: content.size, inline: content.text !== undefined };
+      return { ...accepted, size: content.size };
     });
   });

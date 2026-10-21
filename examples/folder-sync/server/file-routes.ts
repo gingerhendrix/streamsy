@@ -70,17 +70,14 @@ const fileHandler = Effect.gen(function* () {
     return json(yield* store.remove(folderId, path, yield* jsonBody(DeleteFile), condition));
   }
 
+  // The view names the content by hash. The bytes come from the blob store.
   const { head, value } = yield* store.read(folderId, path);
-  const headers = { etag: `"${head.version}"` };
-
-  if (value.text !== undefined)
-    return HttpServerResponse.uint8Array(new TextEncoder().encode(value.text), { headers });
   const content = yield* (yield* BlobStore).get(value.hash);
 
   return content === undefined
     ? json({ error: "Blob not found" }, { status: 404 })
     : HttpServerResponse.stream(content.body, {
-        headers: { ...headers, "content-length": String(content.size) },
+        headers: { etag: `"${head.version}"`, "content-length": String(content.size) },
       });
 }).pipe(
   Effect.catchTags(

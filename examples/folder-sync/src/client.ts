@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { decodeText, hex } from "../server/bytes.ts";
-import { CommitFile, File, Head, inlineText } from "../server/domain.ts";
+import { CommitFile, File, Head } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
 import { FileMessage, isReset, isUpsert, type FileChange } from "../server/messages.ts";
 import { blobUrl, fileUrl, folderStreamUrl, streamRead } from "../server/routes.ts";
@@ -131,7 +131,6 @@ export interface OpenFile {
   hash: string;
   size: number;
   text: string | null;
-  inline: boolean;
 }
 
 // oxlint-disable-next-line effecttsgo/async-function -- Browser file reads use native blob responses and AbortSignal cancellation.
@@ -153,21 +152,14 @@ export async function readFile(
 
   if (file === undefined) throw new Error("File not found");
 
-  const text =
-    file.text !== undefined
-      ? file.text
-      : (decodeText(
-          new Uint8Array(
-            await (await request(blobUrl(file.hash), { signal }, transport)).arrayBuffer(),
-          ),
-        ) ?? null);
+  // Every version's content is a blob, so a past version reads the same way as the head.
+  const bytes = await (await request(blobUrl(file.hash), { signal }, transport)).arrayBuffer();
 
   return {
     version: file.version,
     hash: file.hash,
     size: file.size,
-    text,
-    inline: file.text !== undefined,
+    text: decodeText(new Uint8Array(bytes)) ?? null,
   };
 }
 
@@ -180,16 +172,12 @@ export const search = (q: string, signal: AbortSignal) =>
 export const textContent = (text: string) => {
   const bytes = new TextEncoder().encode(text);
 
-  return crypto.subtle.digest("SHA-256", bytes).then((digest) => {
-    const hash = hex(new Uint8Array(digest));
-    const inline = inlineText(bytes);
-
-    let content: Pick<CommitFile, "hash" | "size" | "text"> = { hash, size: bytes.length };
-
-    if (inline !== undefined) content = { ...content, text: inline };
-
-    return content;
-  });
+  return crypto.subtle
+    .digest("SHA-256", bytes)
+    .then((digest): Pick<CommitFile, "hash" | "size"> => ({
+      hash: hex(new Uint8Array(digest)),
+      size: bytes.length,
+    }));
 };
 
 // oxlint-disable-next-line effecttsgo/async-function -- The optimistic mutation awaits native upload and commit responses.
@@ -201,24 +189,20 @@ export async function saveFile(
   transport: Transport,
   bytes: Uint8Array,
 ) {
-  const upload = () =>
-    request(
-      blobUrl(file.hash),
-      {
-        method: "PUT",
-        headers: transport.writerHeaders(),
-        body: new Uint8Array(bytes),
-      },
-      transport,
-    );
-
-  if (file.text === undefined) await upload();
+  // The content goes to the blob store first. The commit names it by hash.
+  await request(
+    blobUrl(file.hash),
+    {
+      method: "PUT",
+      headers: transport.writerHeaders(),
+      body: new Uint8Array(bytes),
+    },
+    transport,
+  );
   const headers = new Headers(transport.writerHeaders());
   headers.set("content-type", "application/json");
   headers.set("if-match", `"${base}"`);
-  let input: CommitFile = { txid, author: file.author, hash: file.hash, size: file.size };
-
-  if (file.text !== undefined) input = { ...input, text: file.text };
+  const input: CommitFile = { txid, author: file.author, hash: file.hash, size: file.size };
   const body = JSON.stringify(input);
 
   const response = await request(

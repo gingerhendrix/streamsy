@@ -50,7 +50,7 @@ export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
 
   for (const [position, change] of changes.entries()) {
     if (position < lastReset || !isUpsert(change)) continue;
-    const text = change.value.text ?? (yield* blobText(change.value.hash));
+    const text = yield* blobText(change.value.hash);
 
     if (text !== undefined)
       yield* sql`INSERT INTO folder_sync_index_text (folderId, position, text) VALUES (${folderId}, ${position}, ${text})`;

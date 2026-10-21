@@ -64,13 +64,11 @@ const smoke = Effect.gen(function* () {
     ) {
       const content = yield* prepareContent(bytes);
 
-      if (content.text === undefined) {
-        const upload = yield* client.put(`${server.url}/api/blobs/${content.hash}`, {
-          body: HttpBody.uint8Array(bytes),
-        });
+      const upload = yield* client.put(`${server.url}/api/blobs/${content.hash}`, {
+        body: HttpBody.uint8Array(bytes),
+      });
 
-        yield* check(upload.status === 200, "blob upload");
-      }
+      yield* check(upload.status === 200, "blob upload");
 
       const response = yield* client.put(`${folderUrl}/files/${path}`, {
         headers: base === undefined ? {} : { "if-match": `"${base}"` },
@@ -166,12 +164,19 @@ const smoke = Effect.gen(function* () {
 
     if (mode === "sqlite") {
       const restart = yield* spawnServer({ ...options, port: server.port });
+      const restartContent = yield* prepareContent(text("restart"));
+
+      const restartUpload = yield* client.put(`${restart.url}/api/blobs/${restartContent.hash}`, {
+        body: HttpBody.uint8Array(text("restart")),
+      });
+
+      yield* check(restartUpload.status === 200, "blob upload after restart");
 
       const response = yield* client.put(
         `${restart.url}/api/folders/${encodeURIComponent(folderId)}/files/after-restart`,
         {
           body: HttpBody.jsonUnsafe({
-            ...(yield* prepareContent(text("restart"))),
+            ...restartContent,
             txid: "restart",
             author: "test",
           }),

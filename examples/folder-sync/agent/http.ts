@@ -5,14 +5,7 @@
 /* oxlint-disable effecttsgo/extends-native-error -- just-bash requires thrown errno errors, shared with the typed tools edge. */
 import { Duration, Effect, Result, Schedule, Schema } from "effect";
 import { hex } from "../server/bytes.ts";
-import {
-  FILE_LIMIT,
-  FolderId,
-  Version,
-  File,
-  inlineText,
-  Path as FilePath,
-} from "../server/domain.ts";
+import { FILE_LIMIT, FolderId, Version, File, Path as FilePath } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
 import { applyChanges, FileMessage, FolderMessage, isReset, isUpsert } from "../server/messages.ts";
 import {
@@ -505,10 +498,9 @@ export class FolderHttpFileSystem {
       throw new FileSystemError("ENOENT", path);
     }
 
-    const bytes =
-      row.text === undefined
-        ? new Uint8Array(await (await this.request(blobUrl(row.hash), {}, signal)).arrayBuffer())
-        : new TextEncoder().encode(row.text);
+    const bytes = new Uint8Array(
+      await (await this.request(blobUrl(row.hash), {}, signal)).arrayBuffer(),
+    );
 
     this.observedVersions.set(target.resolved, row.version);
 
@@ -674,19 +666,18 @@ export class FolderHttpFileSystem {
         ? undefined
         : hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))));
 
-    const text = bytes === null ? undefined : inlineText(bytes);
-
     const upload =
       bytes === null || hash === undefined
         ? undefined
         : () => this.uploadBlob(hash, bytes, options.signal);
 
-    if (upload !== undefined && text === undefined) await upload();
+    // All content goes to the blob store before the commit names it.
+    if (upload !== undefined) await upload();
 
     const content =
       bytes === null
         ? { txid, author: "agent" }
-        : { txid, author: "agent", hash, size: bytes.length, text };
+        : { txid, author: "agent", hash, size: bytes.length };
 
     const receipt = await this.commit(
       target,

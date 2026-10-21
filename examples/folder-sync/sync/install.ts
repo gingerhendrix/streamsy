@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import { normalisePath, type File } from "../server/domain.ts";
 import { filePath, folderPath, freePath, skip, writable, type SyncContext } from "./context.ts";
 import { backupPath, conflictBase, conflictPath, ignoredPath, isEcho } from "./decisions.ts";
@@ -20,12 +20,7 @@ export const installer = (context: SyncContext) => {
 
     if (yield* fs.exists(source)) return { source, hash: value.hash, size: value.size };
 
-    const content =
-      value.text === undefined
-        ? yield* remote.body(value.hash)
-        : Stream.succeed(new TextEncoder().encode(value.text));
-
-    const captured = yield* cacheBody(root, content);
+    const captured = yield* cacheBody(root, yield* remote.body(value.hash));
 
     if (captured.hash !== value.hash || captured.size !== value.size)
       return yield* new LocalFailure({ message: `Content hash or size mismatch: ${value.path}` });

@@ -76,7 +76,8 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
             });
           }
 
-          expect(writes).toBe(1);
+          // A write is a blob upload and a commit. A refused token stops at the upload.
+          expect(writes).toBe(token === "agent-token" ? 2 : 1);
         }
       }),
     { timeout: 15000 },

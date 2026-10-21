@@ -2,14 +2,15 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { DurableState, CommitBoundary } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Deferred, Effect, Exit, Layer, Result } from "effect";
+import { Deferred, Effect, Layer, Result } from "effect";
 import {
+  BlobMissing,
   FolderConflict,
   InvalidFile,
   MissingFile,
   Precondition,
   PreconditionFailed,
-  prepareContent,
+  sha256,
 } from "../server/domain.ts";
 import {
   CHECKPOINT_EVERY,
@@ -20,9 +21,10 @@ import {
 import { folderView } from "../server/folder-view.ts";
 import { Files } from "../server/streams.ts";
 import { memoryHost, sqliteHost } from "../server/storage.ts";
+import { storedText } from "./content.ts";
 
 const body = (text: string, txid: string) =>
-  Effect.map(prepareContent(new TextEncoder().encode(text)), (content) => ({
+  Effect.map(storedText(text), (content) => ({
     ...content,
     author: "test",
     txid,
@@ -51,13 +53,13 @@ for (const [name, storage] of [
           );
 
           const one = {
-            ...(yield* prepareContent(new TextEncoder().encode("one"))),
+            ...(yield* storedText("one")),
             author: "test",
             txid: "one",
           };
 
           const two = {
-            ...(yield* prepareContent(new TextEncoder().encode("two"))),
+            ...(yield* storedText("two")),
             author: "test",
             txid: "two",
           };
@@ -121,7 +123,7 @@ for (const [name, storage] of [
           yield* store.create("retry", "Retry", "create-retry");
 
           const one = {
-            ...(yield* prepareContent(new TextEncoder().encode("one"))),
+            ...(yield* storedText("one")),
             author: "test",
             txid: "first",
           };
@@ -134,7 +136,7 @@ for (const [name, storage] of [
           expect((yield* files.head({ folderId: "retry" })).nextOffset).toBe(tail);
 
           const two = {
-            ...(yield* prepareContent(new TextEncoder().encode("two"))),
+            ...(yield* storedText("two")),
             author: "test",
             txid: "moved",
           };
@@ -196,7 +198,7 @@ for (const [name, storage] of [
             second,
             Precondition.IfMatch({ version: created.version }),
           );
-          expect((yield* store.read("proto", path)).value.text).toBe(`second ${path}`);
+          expect((yield* store.read("proto", path)).value.hash).toBe(second.hash);
         }
 
         // The saved checkpoint decodes every name as a map entry, not as an object member.
@@ -205,50 +207,59 @@ for (const [name, storage] of [
         const saved = (yield* Projection.read(view)).state;
         expect([...saved.files.keys()].toSorted()).toEqual(names.toSorted());
         expect(saved.files.get("__proto__")?.version).toBe(names.length * 2 - 4);
-        expect((yield* store.read("proto", "__proto__")).value.text).toBe("second __proto__");
+        expect((yield* store.read("proto", "__proto__")).value.hash).toBe(
+          yield* sha256(new TextEncoder().encode("second __proto__")),
+        );
         yield* store.remove("proto", "constructor", { txid: "delete", author: "test" });
         expect(yield* Effect.flip(store.read("proto", "constructor"))).toBeInstanceOf(MissingFile);
       }),
     );
-    it.effect("the view keeps metadata; a read takes inline text from the change", () =>
+    it.effect("the view and the stream hold metadata only; a read names the blob", () =>
       Effect.gen(function* () {
         const store = yield* FolderStore;
         const files = yield* Files;
         yield* store.create("meta", "Meta", "create");
-        const tail = (yield* files.head({ folderId: "meta" })).nextOffset;
         yield* store.commit("meta", "a", yield* body("alpha", "a1"));
         yield* store.commit("meta", "b", yield* body("beta", "b1"));
-        yield* store.commit("meta", "a", yield* body("alpha two", "a2"));
+        const two = yield* body("alpha two", "a2");
+        yield* store.commit("meta", "a", two);
 
         const view = folderView.at({ folderId: "meta" });
         yield* Projection.run(view);
         const saved = (yield* Projection.read(view)).state.files.get("a");
-        expect(saved).not.toHaveProperty("text");
-        expect(saved).toMatchObject({ version: 3, inline: true });
-        expect(saved?.offset).not.toBe(tail);
+        expect(saved).toEqual({ txid: "a2", version: 3, hash: two.hash, size: 9, author: "test" });
         expect(yield* store.read("meta", "a")).toEqual({
-          head: { version: 3, hash: saved?.hash, txid: "a2" },
-          value: {
-            path: "a",
-            version: 3,
-            hash: saved?.hash,
-            size: 9,
-            author: "test",
-            text: "alpha two",
-          },
+          head: { version: 3, hash: two.hash, txid: "a2" },
+          value: { path: "a", version: 3, hash: two.hash, size: 9, author: "test" },
         });
-        expect((yield* store.read("meta", "b")).value.text).toBe("beta");
 
-        // Copies of a stream are not supported. A copy keeps its source offsets, so
-        // the change at the stored offset is not the one that wrote the file, and
-        // the read fails as a defect.
+        // No change on the stream carries content.
+        for (const change of (yield* files.collect({ folderId: "meta" })).items)
+          expect(change).not.toHaveProperty("value.text");
+
+        // A copy of the stream reads the same, because a read does not use stream offsets.
         const changes = (yield* files.collect({ folderId: "meta" })).items;
         yield* files.create({ folderId: "meta-copy" });
 
         for (const change of [changes[2], changes[1]])
           if (change !== undefined) yield* files.append({ folderId: "meta-copy" }, [change]);
-        const copied = yield* Effect.exit(store.read("meta-copy", "a"));
-        expect(Exit.hasDies(copied)).toBe(true);
+        expect((yield* store.read("meta-copy", "a")).value.hash).toBe(two.hash);
+      }),
+    );
+    it.effect("a commit names stored content: a missing or wrong-size blob gets BlobMissing", () =>
+      Effect.gen(function* () {
+        const store = yield* FolderStore;
+        yield* store.create("blobs", "Blobs", "create");
+        const bytes = new TextEncoder().encode("never uploaded");
+        const hash = yield* sha256(bytes);
+        const missing = { hash, size: bytes.length, author: "test", txid: "missing" };
+        expect(yield* Effect.flip(store.commit("blobs", "a", missing))).toBeInstanceOf(BlobMissing);
+
+        const stored = yield* body("stored", "stored");
+        expect(
+          yield* Effect.flip(store.commit("blobs", "a", { ...stored, size: stored.size + 1 })),
+        ).toBeInstanceOf(BlobMissing);
+        expect((yield* store.commit("blobs", "a", stored)).version).toBe(1);
       }),
     );
     it.effect("a failing checkpoint save runs once per CHECKPOINT_EVERY writes", () =>

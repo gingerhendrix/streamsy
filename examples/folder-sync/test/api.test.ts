@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Native HTTP protocol boundary tests. */
 import { Schema } from "effect";
 import { test, expect } from "vitest";
-import { FILE_LIMIT, INLINE_LIMIT } from "../server/domain.ts";
+import { FILE_LIMIT } from "../server/domain.ts";
 import { JSON_BODY_LIMIT } from "../server/http.ts";
 import { protocolHost, writerToken } from "./protocol-host.ts";
 
@@ -28,13 +28,19 @@ const call = (
   return host.fetch(new Request(`http://localhost${path}`, init));
 };
 
+/** A commit body names its content by hash and size. The content is a blob. */
 const commit = (text: string, txid: string) => ({
   txid,
   author: "Zoë",
   hash: digest(text),
   size: new TextEncoder().encode(text).length,
-  text,
 });
+
+/** Upload each text as a blob, so that a later commit can name it. */
+const upload = async (host: ReturnType<typeof protocolHost>, ...texts: Array<string>) => {
+  for (const text of texts)
+    expect((await call(host, `/api/blobs/${digest(text)}`, "PUT", text)).status).toBe(200);
+};
 
 test("a storage failure answers 500 and preserves the previous head and stream", async () => {
   let failStorage = false;
@@ -42,6 +48,7 @@ test("a storage failure answers 500 and preserves the previous head and stream",
 
   try {
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    await upload(host, "one", "two");
     const file = "/api/folders/docs/files/a";
     await call(host, file, "PUT", commit("one", "first"));
     const stream = "/streams/folders/646f6373/files?offset=-1";
@@ -74,6 +81,7 @@ test("JSON writes, ETags, preconditions, no-op txids and State stream reads", as
     expect(
       (await call(host, "/api/folders", "POST", { ...created, title: "Different" })).status,
     ).toBe(409);
+    await upload(host, "one", "two", "three");
     const url = "/api/folders/docs%2F%E9%9B%AA/files/a";
     const first = await call(host, url, "PUT", commit("one", "first"), { "if-none-match": "*" });
     expect(first.status).toBe(200);
@@ -138,13 +146,17 @@ test("JSON writes, ETags, preconditions, no-op txids and State stream reads", as
       for (const method of ["PUT", "POST", "DELETE"])
         expect((await call(host, target, method, "[]")).status).toBe(405);
     expect((await call(host, "/api/folders/docs/history/a")).status).toBe(404);
+    expect((await call(host, url, "PUT", { ...commit("one", "bad"), hash: "wrong" })).status).toBe(
+      400,
+    );
+    expect((await call(host, url, "PUT", { ...commit("one", "inline"), text: "one" })).status).toBe(
+      200,
+    );
     expect(
-      (await call(host, url, "PUT", { ...commit("bad", "bad"), hash: digest("wrong") })).status,
-    ).toBe(400);
-    expect((await call(host, url, "PUT", commit("null\0", "bad"))).status).toBe(400);
-    expect(
-      (await call(host, url, "PUT", commit("x".repeat(INLINE_LIMIT + 1), "large-inline"))).status,
-    ).toBe(400);
+      (await (await call(host, `${stream}?offset=-1`)).json()).some(
+        (row: { value?: object }) => row.value !== undefined && "text" in row.value,
+      ),
+    ).toBe(false);
     expect(
       (await call(host, url, "PUT", { ...commit("x", "oversize"), size: FILE_LIMIT + 1 })).status,
     ).toBe(413);
@@ -188,11 +200,8 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
         })
       ).status,
     ).toBe(413);
-    expect((await call(host, file, "PUT", commit("x".repeat(INLINE_LIMIT), "exact"))).status).toBe(
-      200,
-    );
 
-    for (const size of [0, 5, INLINE_LIMIT]) {
+    for (const size of [0, 5, 64 * 1024 + 1]) {
       const text = "y".repeat(size);
       const smallHash = digest(text);
       const small = `/api/folders/docs/files/small-${size}`;
@@ -209,20 +218,6 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
       ).toBe(200);
       expect(await (await call(host, small)).text()).toBe(text);
     }
-
-    const largeText = "x".repeat(INLINE_LIMIT + 1);
-    const largeHash = digest(largeText);
-    await call(host, `/api/blobs/${largeHash}`, "PUT", largeText);
-    expect(
-      (
-        await call(host, file, "PUT", {
-          hash: largeHash,
-          size: largeText.length,
-          txid: "large-text",
-          author: "test",
-        })
-      ).status,
-    ).toBe(200);
   } finally {
     await host.stop();
   }
@@ -272,9 +267,11 @@ test("JSON writes reject oversized declared and streamed bodies before parsing",
       expect(pulls).toBeLessThan(32);
     }
 
-    // Six-byte JSON escapes still fit for a full 64 KiB of inline UTF-8.
-    const escaped = commit("\u0001".repeat(INLINE_LIMIT), "escaped");
-    expect((await call(host, "/api/folders/docs/files/a", "PUT", escaped)).status).toBe(200);
+    // A commit body holds metadata only, so it stays far below the limit.
+    await upload(host, "one");
+    expect(
+      (await call(host, "/api/folders/docs/files/a", "PUT", commit("one", "small"))).status,
+    ).toBe(200);
   } finally {
     await host.stop();
   }
@@ -310,6 +307,7 @@ test("every JSON write needs application/json", async () => {
 
   try {
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
+    await upload(host, "one");
     const file = "/api/folders/docs/files/a";
     expect((await call(host, file, "PUT", commit("one", "first"))).status).toBe(200);
 

@@ -5,9 +5,9 @@ import { Effect, Layer, Schedule, Schema } from "effect";
 import { FileIndex, FileIndexLive } from "../../server/file-index.ts";
 import { IndexLive } from "../../server/index-followers.ts";
 import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
-import { prepareContent } from "../../server/domain.ts";
 import { sqliteHost } from "../../server/storage.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
+import { storedText } from "../content.ts";
 
 class Waiting extends Schema.TaggedError<Waiting>()("Waiting", {}) {}
 
@@ -35,13 +35,13 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
 
                 if (run === 1) yield* store.create("old/folder", "Old", "create");
                 yield* store.commit("old/folder", "a", {
-                  ...(yield* prepareContent(new TextEncoder().encode(`restartneedle ${run}`))),
+                  ...(yield* storedText(`restartneedle ${run}`)),
                   txid: `old-${run}`,
                   author: "test",
                 });
                 yield* store.create(`new/${run}`, "New", `folder-${run}`);
                 yield* store.commit(`new/${run}`, "b", {
-                  ...(yield* prepareContent(new TextEncoder().encode("restartneedle new"))),
+                  ...(yield* storedText("restartneedle new")),
                   txid: `new-${run}`,
                   author: "test",
                 });

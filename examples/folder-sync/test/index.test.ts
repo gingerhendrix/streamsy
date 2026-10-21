@@ -21,6 +21,7 @@ import { Files, Folders } from "../server/streams.ts";
 import { IndexRunner, IndexRunnerLive } from "../worker/index-runner.ts";
 import { registerFolder } from "../server/folder-registry.ts";
 import { sqliteHost } from "../server/storage.ts";
+import { storedText } from "./content.ts";
 
 class NotReady extends Schema.TaggedError<NotReady>()("NotReady", {}) {}
 
@@ -40,7 +41,7 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 const fileMessage = (path: string, version = 1): FileMessage => ({
   type: "file",
   key: path,
-  value: { path, version, hash: "0".repeat(64), size: 6, author: "test", text: "needle" },
+  value: { path, version, hash: "0".repeat(64), size: 6, author: "test" },
   headers: { operation: "upsert", txid: path },
 });
 
@@ -57,7 +58,7 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
 
       for (const folderId of ["discarded", "retained"])
         yield* store.commit(folderId, "a", {
-          ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+          ...(yield* storedText("needle")),
           txid: folderId,
           author: "test",
         });
@@ -93,7 +94,7 @@ layer(graph, { excludeTestServices: true })((it) => {
 
       for (const folderId of ["gone-bootstrap", "healthy-bootstrap"])
         yield* store.commit(folderId, "a", {
-          ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+          ...(yield* storedText("needle")),
           txid: folderId,
           author: "test",
         });
@@ -163,7 +164,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const files = yield* Files;
       yield* store.create("gone-index", "Gone", "folder");
       yield* store.commit("gone-index", "a", {
-        ...(yield* prepareContent(new TextEncoder().encode("needle"))),
+        ...(yield* storedText("needle")),
         txid: "one",
         author: "test",
       });
@@ -222,7 +223,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       yield* initialiseSearch;
       const store = yield* FolderStore;
       const index = yield* FileIndex;
-      const content = yield* prepareContent(new TextEncoder().encode("needle"));
+      const content = yield* storedText("needle");
       yield* store.create("runner-a", "A", "runner-a");
       // The Worker registers a folder before its object creates the stream.
       yield* registerFolder({ folderId: "runner-pending", title: "Pending", txid: "pending" });
@@ -252,7 +253,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const store = yield* FolderStore;
       const index = yield* FileIndex;
       const files = yield* Files;
-      const content = yield* prepareContent(new TextEncoder().encode("needle"));
+      const content = yield* storedText("needle");
       yield* store.create("runner-broken", "Broken", "runner-broken");
       yield* store.create("runner-healthy", "Healthy", "runner-healthy");
       yield* store.commit("runner-healthy", "h.md", { ...content, author: "test", txid: "h" });
@@ -291,9 +292,8 @@ layer(graph, { excludeTestServices: true })((it) => {
         const row = fileMessage(`large-${i}`);
 
         if (!("value" in row)) throw new Error("Expected upsert");
-        const { text: _text, ...value } = row.value;
 
-        return { ...row, value: { ...value, size: bytes.length } };
+        return { ...row, value: { ...row.value, size: bytes.length } };
       });
 
       let fetched = 0;
@@ -355,7 +355,7 @@ layer(graph, { excludeTestServices: true })((it) => {
 
       for (const path of paths)
         yield* store.commit("glob", path, {
-          ...(yield* prepareContent(new TextEncoder().encode(path))),
+          ...(yield* storedText(path)),
           txid: path,
           author: "test",
         });
@@ -394,14 +394,17 @@ layer(graph, { excludeTestServices: true })((it) => {
       expect(before).toBeDefined();
       expect(warnings.some((message) => String(message).includes(content.hash))).toBe(true);
       yield* store.commit("lost-blob", "next", {
-        ...(yield* prepareContent(new TextEncoder().encode("nextneedle"))),
+        ...(yield* storedText("nextneedle")),
         author: "test",
         txid: "next",
       });
       yield* Projection.run(projection).pipe(
         Effect.provideService(BlobStore, {
           ...blobs,
-          get: () => Effect.die("Missing blob must not be read again"),
+          get: (hash) =>
+            hash === content.hash
+              ? Effect.die("Missing blob must not be read again")
+              : blobs.get(hash),
         }),
       );
       expect(yield* index.list({ folder: "lost-blob" })).toHaveLength(2);
@@ -418,7 +421,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       yield* store.create("opaque/id", "Docs", "folder");
 
       const body = {
-        ...(yield* prepareContent(new TextEncoder().encode("oldneedle"))),
+        ...(yield* storedText("oldneedle")),
         txid: "first",
         author: "Zoë",
       };
@@ -429,7 +432,7 @@ layer(graph, { excludeTestServices: true })((it) => {
         "opaque/id",
         "docs/a.md",
         {
-          ...(yield* prepareContent(new TextEncoder().encode("newneedle"))),
+          ...(yield* storedText("newneedle")),
           txid: "second",
           author: "Zoë",
         },
@@ -487,7 +490,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const checkpoints = yield* CheckpointStore;
       yield* store.create("rollback-index", "Rollback", "folder");
       yield* store.commit("rollback-index", "a", {
-        ...(yield* prepareContent(new TextEncoder().encode("rollbackneedle"))),
+        ...(yield* storedText("rollbackneedle")),
         txid: "first",
         author: "test",
       });

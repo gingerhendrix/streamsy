@@ -104,7 +104,6 @@ export function FilePanel({
           size: accepted.size,
           hash: accepted.hash,
           version: accepted.version,
-          inline: accepted.inline,
         });
         retry.current = null;
         setMessage("Saved");
@@ -118,9 +117,7 @@ export function FilePanel({
   const download =
     selection.at === undefined || file === null
       ? fileUrl(selection.folderId, selection.path)
-      : file.inline && file.text !== null
-        ? `data:application/octet-stream;charset=utf-8,${encodeURIComponent(file.text)}`
-        : `/api/blobs/${file.hash}`;
+      : `/api/blobs/${file.hash}`;
 
   const markdown = /\.mdx?$/i.test(selection.path);
 

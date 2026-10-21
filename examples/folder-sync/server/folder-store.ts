@@ -1,6 +1,6 @@
-import { CommitBoundary, DurableState, StreamAddress } from "@streamsy/core";
+import { CommitBoundary, DurableState } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, Crypto, DateTime, Effect, Layer, Schema, Semaphore } from "effect";
+import { Context, DateTime, Effect, Layer, Schema, Semaphore } from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
   BlobMissing,
@@ -11,7 +11,6 @@ import {
   FileTooLarge,
   FolderId,
   Head,
-  INLINE_LIMIT,
   FILE_LIMIT,
   InvalidFile,
   MissingFile,
@@ -19,11 +18,9 @@ import {
   PreconditionFailed,
   WriteConflict,
   normalisePath,
-  sha256,
 } from "./domain.ts";
 import { registerFolder } from "./folder-registry.ts";
-import { fileOf, folderView, headOf, type FolderView, type LiveFile } from "./folder-view.ts";
-import { FileMessage, isUpsert } from "./messages.ts";
+import { fileOf, folderView, headOf, type FolderView } from "./folder-view.ts";
 import { Files, Folders } from "./streams.ts";
 
 /** Save the folder view after this many landed writes, and on the first write in a process. */
@@ -59,7 +56,6 @@ const make = Effect.gen(function* () {
   const folders = yield* Folders;
   const boundary = yield* CommitBoundary;
   const blobs = yield* BlobStore;
-  const crypto = yield* Crypto.Crypto;
   // The view reads the Files stream and the checkpoint at each call.
   const context = yield* Effect.context<CheckpointStore | Files>();
   // One save at a time for each folder. A long save for one folder does not skip a save for another.
@@ -139,39 +135,6 @@ const make = Effect.gen(function* () {
       Effect.provideContext(context),
     );
 
-  /**
-   * The inline text of a live file, read from the change that wrote it. The owner
-   * stamps each change with the offset where its append starts, and each append
-   * holds one change. So a read from that offset gives the change first.
-   */
-  const inlineTextOf = Effect.fn("Folder.inlineText")(function* (
-    folderId: string,
-    path: string,
-    live: LiveFile,
-  ) {
-    const address = StreamAddress.json(Files.at({ folderId }).id, { schema: FileMessage });
-    const page = yield* files.wire.read(address.id, { offset: live.offset });
-    const [first] = page.messages;
-
-    const change =
-      first === undefined
-        ? undefined
-        : yield* Schema.decodeEffect(address.codec)(new TextDecoder().decode(first.data));
-
-    if (
-      change === undefined ||
-      !isUpsert(change) ||
-      change.key !== path ||
-      change.value.version !== live.version ||
-      change.value.text === undefined
-    )
-      return yield* Effect.die(
-        new Error(`No inline text for ${path} version ${live.version} at offset ${live.offset}`),
-      );
-
-    return change.value.text;
-  });
-
   const create = Effect.fn("Folder.create")(function* (
     folderId: string,
     title: string,
@@ -201,20 +164,8 @@ const make = Effect.gen(function* () {
     if (body.size > FILE_LIMIT) return yield* new FileTooLarge({ size: body.size });
     yield* requireFolder(folderId);
 
-    if (body.text !== undefined) {
-      const bytes = new TextEncoder().encode(body.text);
-
-      if (
-        !body.text.isWellFormed() ||
-        body.text.includes("\0") ||
-        bytes.length > INLINE_LIMIT ||
-        bytes.length !== body.size
-      )
-        return yield* new InvalidFile({ message: "Invalid inline text" });
-
-      if ((yield* sha256(bytes).pipe(Effect.provideService(Crypto.Crypto, crypto))) !== body.hash)
-        return yield* new InvalidFile({ message: "Text hash mismatch" });
-    } else if ((yield* blobs.head(body.hash)) !== body.size)
+    // The blob store checked the hash on upload. A commit only names stored content.
+    if ((yield* blobs.head(body.hash)) !== body.size)
       return yield* new BlobMissing({ hash: body.hash });
 
     const timestamp = DateTime.formatIso(yield* DateTime.now);
@@ -226,15 +177,13 @@ const make = Effect.gen(function* () {
         if (current?.hash === body.hash) return { value: current, items: [] };
         yield* condition(current, precondition);
 
-        const fields = {
+        const value: File = {
           path: normalized,
           version: view.last + 1,
           hash: body.hash,
           size: body.size,
           author: body.author,
         };
-
-        const value: File = body.text === undefined ? fields : { ...fields, text: body.text };
 
         const head: Head = { version: value.version, hash: value.hash, txid: body.txid };
 
@@ -285,14 +234,8 @@ const make = Effect.gen(function* () {
     const live = (yield* currentView(folderId)).files.get(normalized);
 
     if (live === undefined) return yield* new MissingFile({ message: "File not found" });
-    const value = fileOf(normalized, live);
 
-    if (!live.inline) return { head: headOf(live), value };
-
-    return {
-      head: headOf(live),
-      value: { ...value, text: yield* inlineTextOf(folderId, normalized, live) },
-    };
+    return { head: headOf(live), value: fileOf(normalized, live) };
   });
 
   return { create, commit, remove, read };

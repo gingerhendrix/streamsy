@@ -50,6 +50,13 @@ const put = Effect.fn("SyncTest.put")(function* (
 ) {
   const content = yield* prepareContent(text(value));
 
+  const uploaded = yield* HttpClient.put(`${server}/api/blobs/${content.hash}`, {
+    body: HttpBody.uint8Array(text(value)),
+  });
+
+  expect(uploaded.status).toBe(200);
+  yield* uploaded.text;
+
   const response = yield* HttpClient.put(fileUrl(server, folder, file), {
     body: HttpBody.jsonUnsafe({ ...content, txid, author: "test" }),
   });
@@ -927,22 +934,27 @@ layer(runtime, { excludeTestServices: true })((it) => {
       const remote = yield* remoteFor(server.url);
       const downloading = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      const binary = new Uint8Array(128 * 1024).fill(3);
+      const content = yield* prepareContent(binary);
 
+      // Every file is a blob, so pause only the download of the remote binary.
       const modified = SyncRemote.of({
         ...remote,
         body: (hash) =>
-          remote
-            .body(hash)
-            .pipe(
-              Effect.map((body) =>
-                Stream.unwrap(
-                  Deferred.succeed(downloading, undefined).pipe(
-                    Effect.andThen(Deferred.await(release)),
-                    Effect.as(body),
+          hash !== content.hash
+            ? remote.body(hash)
+            : remote
+                .body(hash)
+                .pipe(
+                  Effect.map((body) =>
+                    Stream.unwrap(
+                      Deferred.succeed(downloading, undefined).pipe(
+                        Effect.andThen(Deferred.await(release)),
+                        Effect.as(body),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
       });
 
       const daemon = yield* runSync(options(server.url, mirror)).pipe(
@@ -952,8 +964,6 @@ layer(runtime, { excludeTestServices: true })((it) => {
       );
 
       yield* until(state.get("ready"), (ready) => ready === "true");
-      const binary = new Uint8Array(128 * 1024).fill(3);
-      const content = yield* prepareContent(binary);
 
       const uploaded = yield* HttpClient.put(`${server.url}/api/blobs/${content.hash}`, {
         body: HttpBody.uint8Array(binary),

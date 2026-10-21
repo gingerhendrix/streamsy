@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import { INLINE_LIMIT, inlineText } from "../server/domain.ts";
 import { filePath, freePath, type SyncContext } from "./context.ts";
 import { conflictPath } from "./decisions.ts";
 import type { Install } from "./install.ts";
@@ -70,14 +69,9 @@ export const pusher = (context: SyncContext, { observe, refresh }: Install) => {
     yield* Effect.logWarning(`Preserved conflict: ${operation.folderId}/${copy}`);
   });
 
-  /** Upload the blob when the content cannot travel as inline text, then commit with a precondition. */
+  /** Upload the content as a blob, then commit with a precondition. A delete has no content. */
   const send = Effect.fn("Sync.send")(function* (operation: Pending) {
-    const needsBlob =
-      operation.source !== null &&
-      (operation.size > INLINE_LIMIT ||
-        inlineText(yield* fs.readFile(operation.source)) === undefined);
-
-    if (needsBlob && operation.uploaded === 0) {
+    if (operation.source !== null && operation.uploaded === 0) {
       yield* remote.upload(operation);
       yield* state.uploaded(operation.seq);
     }

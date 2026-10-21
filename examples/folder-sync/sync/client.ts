@@ -1,7 +1,7 @@
 import { Offset } from "@streamsy/core";
-import { Context, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { Head, INLINE_LIMIT, inlineText, VersionFromString } from "../server/domain.ts";
+import { Head, VersionFromString } from "../server/domain.ts";
 import { FileMessage, FolderMessage } from "../server/messages.ts";
 import {
   blobUrl,
@@ -43,7 +43,6 @@ const cursor = (values: Readonly<Record<string, string>>) =>
 const makeRemote = (server: string, token?: string) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const fs = yield* FileSystem.FileSystem;
     const root = server.replace(/\/$/, "");
 
     const request = Effect.fn("SyncRemote.request")(function* (
@@ -146,24 +145,15 @@ const makeRemote = (server: string, token?: string) =>
       if (operation.source === null && operation.base === null)
         return yield* Schema.decodeEffect(receipt)({});
 
-      let text: string | undefined;
-
-      if (operation.source !== null && operation.size <= INLINE_LIMIT)
-        text = inlineText(yield* fs.readFile(operation.source));
-
-      const content = {
-        txid: operation.txid,
-        author: "sync CLI",
-        hash: operation.hash,
-        size: operation.size,
-      };
-
       const payload =
         operation.source === null
           ? { txid: operation.txid, author: "sync CLI" }
-          : text === undefined
-            ? content
-            : { ...content, text };
+          : {
+              txid: operation.txid,
+              author: "sync CLI",
+              hash: operation.hash,
+              size: operation.size,
+            };
 
       const condition =
         operation.base === null ? { "if-none-match": "*" } : { "if-match": `"${operation.base}"` };

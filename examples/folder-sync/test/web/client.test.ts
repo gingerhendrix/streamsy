@@ -44,10 +44,16 @@ test("default browser fetch keeps its global receiver for saves, history, search
       headers,
       body: JSON.stringify({ folderId: "docs", title: "Docs", txid: "folder" }),
     });
+    const one = await textContent("one");
+    await request(`/api/blobs/${one.hash}`, {
+      method: "PUT",
+      headers: transport.writerHeaders(),
+      body: "one",
+    });
     await request("/api/folders/docs/files/a", {
       method: "PUT",
       headers,
-      body: JSON.stringify({ ...(await textContent("one")), txid: "first", author: "test" }),
+      body: JSON.stringify({ ...one, txid: "first", author: "test" }),
     });
     const bytes = new Uint8Array([0, 255, 1]);
     const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
@@ -146,12 +152,18 @@ test("the panel history reader refreshes accepted saves and a later StreamDB row
       },
       options,
     );
+    const one = await textContent("one");
+    await request(
+      `/api/blobs/${one.hash}`,
+      { method: "PUT", headers: authorization, body: "one" },
+      options,
+    );
     await request(
       "/api/folders/docs/files/a",
       {
         method: "PUT",
         headers: { ...authorization, "content-type": "application/json" },
-        body: JSON.stringify({ ...(await textContent("one")), txid: "first", author: "test" }),
+        body: JSON.stringify({ ...one, txid: "first", author: "test" }),
       },
       options,
     );

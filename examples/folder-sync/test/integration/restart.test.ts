@@ -3,12 +3,12 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Effect, Layer } from "effect";
 import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
-import { prepareContent } from "../../server/domain.ts";
 import { sqliteHost } from "../../server/storage.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
+import { storedText } from "../content.ts";
 
 const graph = (filename: string) =>
-  Layer.merge(Initialise, FolderStoreLive).pipe(Layer.provide(sqliteHost(filename)));
+  Layer.merge(Initialise, FolderStoreLive).pipe(Layer.provideMerge(sqliteHost(filename)));
 
 layer(BunServices.layer)((it) => {
   it.effect("versions keep rising across restarts after an upsert and after a delete", () =>
@@ -23,7 +23,7 @@ layer(BunServices.layer)((it) => {
             yield* Effect.gen(function* () {
               const store = yield* FolderStore;
               yield* store.create("daily/demo", "Docs", "create");
-              const content = yield* prepareContent(new TextEncoder().encode("one"));
+              const content = yield* storedText("one");
               expect(
                 (yield* store.commit("daily/demo", "a", {
                   ...content,
@@ -42,7 +42,7 @@ layer(BunServices.layer)((it) => {
             const context = yield* Layer.build(graph(filename));
             yield* Effect.gen(function* () {
               const store = yield* FolderStore;
-              const content = yield* prepareContent(new TextEncoder().encode("two"));
+              const content = yield* storedText("two");
               expect(
                 (yield* store.commit("daily/demo", "a", {
                   ...content,

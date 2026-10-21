@@ -112,8 +112,7 @@ values contain `{ folderId, title }`. File upserts have this shape:
     "version": 41,
     "hash": "<sha256-hex>",
     "size": 8,
-    "author": "sync CLI",
-    "text": "# Intro\n"
+    "author": "sync CLI"
   },
   "headers": {
     "operation": "upsert",
@@ -125,7 +124,8 @@ values contain `{ folderId, title }`. File upserts have this shape:
 
 A delete has `type`, `key` and headers with `operation: "delete"`. It has no
 value or version. Each append contains one change. The server time is for
-display only.
+display only. A change holds no content. The content is in the blob store under
+`hash`, so every version of every file is addressable by its hash.
 
 The owner assigns the next positive folder sequence to each upsert. Deletes
 take no number. The version never goes down after delete or restart.
@@ -142,9 +142,9 @@ the checkpoint on its first write in a process and every 32 writes after that. A
 save that fails is tried again 32 writes later. A lagging or missing checkpoint
 costs only a longer fold.
 
-The view holds metadata only: version, hash, size, author, txid and the offset
-where the change starts. `GET` of an inline file reads that one change from the
-stream. A file with a short path and txid costs about 200 bytes of checkpoint.
+The view holds metadata only: version, hash, size, author and txid. `GET` of a
+file looks up the hash in the view and streams that blob. A file with a short
+path and txid costs about 200 bytes of checkpoint.
 A Worker keeps the checkpoint in one Durable Object SQLite row, and a row holds at
 most 2 MB, so one folder holds about 10,000 such files. Long paths lower that
 number. Past it, the save fails and logs a warning, writes still land, and each
@@ -170,12 +170,12 @@ JSON write bodies are limited to 512 KiB. Send `Content-Type: application/json`.
 A JSON write with another content type gets 415 on both hosts: folder creation,
 file commits and file deletes.
 
-| Request                                 | Body                                  | Result                                                      |
-| --------------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
-| `POST /api/folders`                     | `{ txid, folderId, title }`           | 200; same ID and title is a no-op, another title gets 409   |
-| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, hash, size, text? }` | 200 with `{ version, txid, hash }` and a version ETag       |
-| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author }`                    | 200 with `{ txid }`; already absent gives `{}` with no txid |
-| `GET /api/folders/<id>/files/<path>`    | none                                  | Content bytes with `ETag: "<version>"`, or 404              |
+| Request                                 | Body                           | Result                                                      |
+| --------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
+| `POST /api/folders`                     | `{ txid, folderId, title }`    | 200; same ID and title is a no-op, another title gets 409   |
+| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, hash, size }` | 200 with `{ version, txid, hash }` and a version ETag       |
+| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author }`             | 200 with `{ txid }`; already absent gives `{}` with no txid |
+| `GET /api/folders/<id>/files/<path>`    | none                           | Content bytes with `ETag: "<version>"`, or 404              |
 
 The path comes from the URL. The owner sets the version. Choose a precondition:
 
@@ -190,7 +190,7 @@ ETag, or `{ "head": null }` when absent. Delete rejects `If-None-Match`.
 `If-Match: *`, weak tags and tag lists get 400. The API supports only one quoted
 positive version.
 
-After validating content, the owner checks for the current hash before checking
+After it checks that the blob exists, the owner checks for the current hash before checking
 the precondition. Matching content returns the current head and appends nothing,
 even when the supplied version is stale. Retry a network error or 5xx with the
 same body and precondition. If another writer changed the head, a conditional
@@ -202,15 +202,14 @@ returns no txid because it appends nothing; there is nothing to wait for.
 
 ## Blobs
 
-All content has a SHA-256 hex hash. Only valid UTF-8 without NUL, at most
-64 KiB, may use `text`. Any content may use a blob reference, including content
-that could be `text`. The clients send `text` when they can. The file limit is
-64 MiB.
+All content lives in the blob store, under its SHA-256 hex hash. Every write
+uploads the bytes first and then commits a reference to them. This applies to
+small text and to binary content alike. The file limit is 64 MiB.
 
 1. `PUT /api/blobs/<hash>` uploads bytes with the writer token and
    `Content-Length`. Success is `200 { "hash": "<hash>" }`. A repeated upload
    writes nothing. Wrong bytes get 400; content above the limit gets 413.
-2. Commit the file JSON with `hash` and `size`, omitting `text`. The owner checks
+2. Commit the file JSON with `hash` and `size`. The owner checks
    that the blob exists with that size. Missing content gets
    `409 { "error": "blob-missing", "hash": "..." }`. Upload and commit again.
 
@@ -224,13 +223,13 @@ Uploads and commits are separate, so an abandoned upload can leave an orphan.
 
 The browser uses one `createStreamDB` for the registry and one for the open
 folder. TanStack DB live queries build the tree from these collections. File
-upserts replace complete rows, including removal of optional inline text.
-An edit appears optimistically, sends `If-Match`, and waits for the answer's
+upserts replace complete rows.
+An edit appears optimistically, uploads the blob, sends `If-Match`, and waits for the answer's
 txid through `awaitTxId`. A failed save rolls back the optimistic row and keeps
 the draft. The accepted version becomes the next edit's base.
 
 History is a paginated replay of the folder stream filtered by path. Earlier
-content comes from the saved value's `text` or immutable hash. Markdown and MDX
+content comes from the blob that the saved value's hash names. Markdown and MDX
 display without executing HTML or JSX. Search snippets render as escaped text.
 Binary files offer a download. Drafts stay in memory and are lost on navigation
 or reload. The writer token is stored in browser local storage.
@@ -387,8 +386,7 @@ state: SQLite databases and Durable Objects from older builds keep rows that no
 reader uses (owner records, view checkpoints of version 1, the Worker
 `folder_sync_cursors` table). Start the demo with fresh state.
 
-Copies of a folder stream are not supported. A copied change keeps the offset
-of its source, so a `GET` of inline text from a copy fails. Restoring a missing blob alone does not reindex an
+Restoring a missing blob alone does not reindex an
 already consumed change. A later write or index rebuild is needed.
 
 Sync scans hash every selected file. An external editor can save during the

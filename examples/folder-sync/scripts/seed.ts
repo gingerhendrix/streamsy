@@ -59,16 +59,14 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
       Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
     )([location.folderId, location.path, hash]);
 
-    if (content.text === undefined) {
-      const upload = yield* HttpClient.put(`${root}/api/blobs/${hash}`, {
-        body: HttpBody.uint8Array(bytes),
-      });
+    const upload = yield* HttpClient.put(`${root}/api/blobs/${hash}`, {
+      body: HttpBody.uint8Array(bytes),
+    });
 
-      if (upload.status !== 200)
-        return yield* new SeedFailure({
-          message: `${relative}: blob upload answered ${upload.status}`,
-        });
-    }
+    if (upload.status !== 200)
+      return yield* new SeedFailure({
+        message: `${relative}: blob upload answered ${upload.status}`,
+      });
 
     const response = yield* HttpClient.put(url, {
       body: HttpBody.jsonUnsafe({ ...content, txid: `seed:${key}`, author: "docs seed" }),

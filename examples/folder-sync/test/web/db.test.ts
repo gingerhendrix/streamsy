@@ -25,6 +25,21 @@ const fixture = () => {
 
   const options = { origin, fetch: fetcher, writerHeaders: () => authorization };
 
+  /** Put the text in the blob store and give the hash and size that a commit names. */
+  const upload = async (text: string) => {
+    const content = await textContent(text);
+
+    const response = await fetcher(`${origin}/api/blobs/${content.hash}`, {
+      method: "PUT",
+      headers: authorization,
+      body: text,
+    });
+
+    expect(response.status).toBe(200);
+
+    return content;
+  };
+
   const create = async (folderId: string, text: string) => {
     const folder = await fetcher(`${origin}/api/folders`, {
       method: "POST",
@@ -33,7 +48,7 @@ const fixture = () => {
     });
 
     expect(folder.status).toBe(200);
-    const content = await textContent(text);
+    const content = await upload(text);
 
     const file = await fetcher(new URL(fileUrl(folderId, "guide/a.md"), origin), {
       method: "PUT",
@@ -44,7 +59,7 @@ const fixture = () => {
     expect(file.status).toBe(200);
   };
 
-  return { host, calls, options, fetcher, create };
+  return { host, calls, options, fetcher, create, upload };
 };
 
 test("registry and file StreamDBs use opaque folder IDs; optimistic edits await the accepted txid", async () => {
@@ -101,19 +116,24 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
       bytes: new TextEncoder().encode("edited"),
     });
 
-    expect(db.collections.files.get(before.path)?.text).toBe("edited");
+    expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
     expect(db.collections.files.get(before.path)?.version).toBe(1);
     await started;
     release();
     await transaction.isPersisted.promise;
     expect(db.collections.files.get(before.path)?.version).toBe(2);
-    expect(db.collections.files.get(before.path)?.text).toBe("edited");
+    expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
 
     const put = f.calls.find(
       (request) => request.method === "PUT" && request.headers.get("if-match") === '"1"',
     );
 
-    expect(await put?.json()).toMatchObject({ txid: "browser-edit", text: "edited" });
+    expect(await put?.json()).toEqual({
+      txid: "browser-edit",
+      author: "browser",
+      hash: content.hash,
+      size: content.size,
+    });
     expect(f.calls.some((request) => request.url.includes(folderStreamUrl(folderId)))).toBe(true);
   } finally {
     release();
@@ -155,7 +175,7 @@ test("412 rolls back the optimistic row while preserving the newer server versio
   try {
     await db.preload();
     const before = db.collections.files.get("guide/a.md")!;
-    const content = await textContent("other writer");
+    const content = await f.upload("other writer");
 
     const response = await f.fetcher(new URL(fileUrl("conflict", before.path), origin), {
       method: "PUT",
@@ -174,9 +194,9 @@ test("412 rolls back the optimistic row while preserving the newer server versio
       bytes: new TextEncoder().encode("my draft"),
     });
 
-    expect(db.collections.files.get(before.path)?.text).toBe("my draft");
+    expect(db.collections.files.get(before.path)?.hash).toBe(edited.hash);
     await expect(transaction.isPersisted.promise).rejects.toThrow("The file changed on the server");
-    expect(db.collections.files.get(before.path)?.text).toBe("other writer");
+    expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
     expect(db.collections.files.get(before.path)?.version).toBe(2);
   } finally {
     db.close();
@@ -195,7 +215,7 @@ test("the editor retains its exact accepted version when another write arrives b
       const response = await f.fetcher(request);
 
       if (request.method === "PUT" && request.url.includes("/files/")) {
-        const content = await textContent("later writer");
+        const content = await f.upload("later writer");
 
         const later = await f.fetcher(request.url, {
           method: "PUT",
@@ -220,14 +240,16 @@ test("the editor retains its exact accepted version when another write arrives b
     const accepted = await editFile(db, before, "my save", "browser", "my-save");
     expect(accepted.version).toBe(2);
     expect(db.collections.files.get(before.path)?.version).toBe(3);
-    expect(db.collections.files.get(before.path)?.text).toBe("later writer");
+    expect(db.collections.files.get(before.path)?.hash).toBe(
+      (await textContent("later writer")).hash,
+    );
   } finally {
     db.close();
     await f.host.stop();
   }
 });
 
-test("large browser edits upload blobs before JSON commits and read history from State", async () => {
+test("browser edits upload blobs before JSON commits and read history from State", async () => {
   const f = fixture();
   await f.create("blob", "original");
   const db = createFileDb("blob", f.options);

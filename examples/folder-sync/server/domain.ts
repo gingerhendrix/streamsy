@@ -1,7 +1,5 @@
 import { Crypto, Data, Effect, Schema } from "effect";
-import { decodeText, hex } from "./bytes.ts";
-
-export const INLINE_LIMIT = 64 * 1024;
+import { hex } from "./bytes.ts";
 
 export const FILE_LIMIT = 64 * 1024 * 1024;
 
@@ -91,11 +89,11 @@ export const normalisePath = (path: string) => {
     : Effect.succeed(normalized);
 };
 
+/** A file's content lives only in the blob store. A change names it by hash and size. */
 const contentFields = {
   hash: Hash,
   size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   author: Identifier,
-  text: Schema.optionalKey(Schema.String),
 };
 
 export const CommitFile = Schema.Struct({ txid: Identifier, ...contentFields });
@@ -134,13 +132,9 @@ export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
   return hex(yield* crypto.digest("SHA-256", bytes));
 });
 
-export const inlineText = (bytes: Uint8Array): string | undefined =>
-  bytes.length > INLINE_LIMIT ? undefined : decodeText(bytes);
-
+/** The hash and size that name `bytes` in the blob store. */
 export const prepareContent = Effect.fn("File.prepareContent")(function* (bytes: Uint8Array) {
   if (bytes.length > FILE_LIMIT) return yield* new FileTooLarge({ size: bytes.length });
-  const hash = yield* sha256(bytes);
-  const text = inlineText(bytes);
 
-  return text === undefined ? { hash, size: bytes.length } : { hash, size: bytes.length, text };
+  return { hash: yield* sha256(bytes), size: bytes.length };
 });
