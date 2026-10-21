@@ -2,7 +2,6 @@ import { CommitBoundary, DurableState, StreamAddress } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
 import { BlobStore } from "./blob-store.ts";
-import { collectBytes } from "./bytes.ts";
 import {
   BlobMissing,
   CommitFile,
@@ -20,7 +19,6 @@ import {
   PreconditionFailed,
   WriteConflict,
   normalisePath,
-  inlineText,
   sha256,
 } from "./domain.ts";
 import { registerFolder } from "./folder-registry.ts";
@@ -236,25 +234,8 @@ const make = Effect.gen(function* () {
 
       if ((yield* sha256(bytes).pipe(Effect.provideService(Crypto.Crypto, crypto))) !== body.hash)
         return yield* new InvalidFile({ message: "Text hash mismatch" });
-    } else {
-      if ((yield* blobs.head(body.hash)) !== body.size)
-        return yield* new BlobMissing({ hash: body.hash });
-
-      if (body.size <= INLINE_LIMIT) {
-        const content = yield* blobs.get(body.hash);
-
-        if (content === undefined) return yield* new BlobMissing({ hash: body.hash });
-
-        const bytes = yield* collectBytes(
-          content.body,
-          INLINE_LIMIT,
-          (size) => new FileTooLarge({ size }),
-        );
-
-        if (inlineText(bytes) !== undefined)
-          return yield* new InvalidFile({ message: "Small UTF-8 content must use inline text" });
-      }
-    }
+    } else if ((yield* blobs.head(body.hash)) !== body.size)
+      return yield* new BlobMissing({ hash: body.hash });
 
     const timestamp = DateTime.formatIso(yield* DateTime.now);
 

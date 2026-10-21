@@ -192,20 +192,22 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
       200,
     );
 
-    for (const size of [0, INLINE_LIMIT]) {
-      const text = "x".repeat(size);
-      const inlineHash = digest(text);
-      expect((await call(host, `/api/blobs/${inlineHash}`, "PUT", text)).status).toBe(200);
+    for (const size of [0, 5, INLINE_LIMIT]) {
+      const text = "y".repeat(size);
+      const smallHash = digest(text);
+      const small = `/api/folders/docs/files/small-${size}`;
+      expect((await call(host, `/api/blobs/${smallHash}`, "PUT", text)).status).toBe(200);
       expect(
         (
-          await call(host, file, "PUT", {
-            hash: inlineHash,
+          await call(host, small, "PUT", {
+            hash: smallHash,
             size,
-            txid: "must-inline",
+            txid: `small-blob-${size}`,
             author: "test",
           })
         ).status,
-      ).toBe(400);
+      ).toBe(200);
+      expect(await (await call(host, small)).text()).toBe(text);
     }
 
     const largeText = "x".repeat(INLINE_LIMIT + 1);

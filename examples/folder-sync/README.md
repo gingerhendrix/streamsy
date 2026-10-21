@@ -202,8 +202,10 @@ returns no txid because it appends nothing; there is nothing to wait for.
 
 ## Blobs
 
-All content has a SHA-256 hex hash. Valid UTF-8 without NUL, at most 64 KiB,
-must use `text`. Other content uses a blob reference. The file limit is 64 MiB.
+All content has a SHA-256 hex hash. Only valid UTF-8 without NUL, at most
+64 KiB, may use `text`. Any content may use a blob reference, including content
+that could be `text`. The clients send `text` when they can. The file limit is
+64 MiB.
 
 1. `PUT /api/blobs/<hash>` uploads bytes with the writer token and
    `Content-Length`. Success is `200 { "hash": "<hash>" }`. A repeated upload
