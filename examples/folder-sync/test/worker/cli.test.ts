@@ -1,14 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
+import { Array, Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 
-class Waiting extends Schema.TaggedError<Waiting>()("WorkerCliWaiting", {}) {}
+class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbol }>()(
+  "WorkerCliWaiting",
+  {},
+) {}
 
 const until = <A, E, R>(effect: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
   effect.pipe(
@@ -75,7 +78,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           );
 
           expect(yield* cli.exitCode).toBe(ChildProcessSpawner.ExitCode(1));
-          const messages = (yield* Fiber.join(output)).join("");
+          const messages = Array.join(yield* Fiber.join(output), "");
           expect(messages).toContain("Server answered 401");
           expect(messages).not.toContain("wrong-token");
           const context = yield* Layer.build(stateLayer(`${mirror}/.folder-sync/state.sqlite`));

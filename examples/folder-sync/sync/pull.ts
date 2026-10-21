@@ -1,5 +1,5 @@
 import { StreamAddress } from "@streamsy/core";
-import { Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import type { File } from "../server/domain.ts";
 import { applyChanges, isReset, isUpsert, type FileMessage } from "../server/messages.ts";
 import { RemoteFailure, type SyncRemote } from "./client.ts";
@@ -8,7 +8,10 @@ import { historyRewound, ignoredPath } from "./decisions.ts";
 import type { Install } from "./install.ts";
 import { localFiles } from "./local.ts";
 
-export class HistoryRewound extends Schema.TaggedError<HistoryRewound>()("HistoryRewound", {
+export class HistoryRewound extends Schema.TaggedError<
+  HistoryRewound,
+  { readonly brand: unique symbol }
+>()("HistoryRewound", {
   message: Schema.String,
 }) {}
 
@@ -142,7 +145,7 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
     while (true) {
       const page: Page = yield* remote.page(folderId, cursor, live);
 
-      if (page.reset || page.rows.some(isReset)) {
+      if (page.reset || Array.some(page.rows, isReset)) {
         // A stored reset replaces state at this position. Only 410 reads from -1.
         // Finish the replacement pages before reconciling paths absent from the new state.
         const { files, cursor: replay } = yield* readReplacement(folderId, cursor, page);

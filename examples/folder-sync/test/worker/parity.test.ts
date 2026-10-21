@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Compare native HTTP responses from both local host adapters. */
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Record, Schema } from "effect";
 import { CreateFolder, CommitFile, DeleteFile } from "../../server/domain.ts";
 import { expect } from "vitest";
 import { startWorker } from "../../scripts/worker-harness.ts";
@@ -57,7 +57,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
             const b = await fetch(`${worker.url}${path}`, {
               ...init,
               headers: {
-                ...Object.fromEntries(new Headers(init.headers)),
+                ...Record.fromEntries(new Headers(init.headers)),
                 "accept-encoding": "identity",
               },
             });

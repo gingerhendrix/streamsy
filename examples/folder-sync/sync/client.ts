@@ -12,17 +12,26 @@ import {
 } from "../server/routes.ts";
 import type { Pending } from "./state.ts";
 
-export class RemoteFailure extends Schema.TaggedError<RemoteFailure>()("RemoteFailure", {
+export class RemoteFailure extends Schema.TaggedError<
+  RemoteFailure,
+  { readonly brand: unique symbol }
+>()("RemoteFailure", {
   message: Schema.String,
   retryable: Schema.Boolean,
   status: Schema.Int,
 }) {}
 
-export class StaleFile extends Schema.TaggedError<StaleFile>()("StaleFile", {
-  head: Schema.NullOr(Head),
-}) {}
+export class StaleFile extends Schema.TaggedError<StaleFile, { readonly brand: unique symbol }>()(
+  "StaleFile",
+  {
+    head: Schema.NullOr(Head),
+  },
+) {}
 
-export class SyncBlobMissing extends Schema.TaggedError<SyncBlobMissing>()("SyncBlobMissing", {}) {}
+export class SyncBlobMissing extends Schema.TaggedError<
+  SyncBlobMissing,
+  { readonly brand: unique symbol }
+>()("SyncBlobMissing", {}) {}
 
 const receipt = Schema.Struct({
   version: Schema.optionalKey(Head.fields.version),

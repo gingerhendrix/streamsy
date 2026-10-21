@@ -1,3 +1,4 @@
+import { Array, Order } from "effect";
 import type { File } from "../server/domain.ts";
 import type { Selection } from "./client.ts";
 
@@ -44,9 +45,16 @@ export function Tree({
 }) {
   return (
     <ul className="tree">
-      {[...branch.children.values()]
-        .toSorted((a, b) => a.name.localeCompare(b.name))
-        .map((child) => (
+      {Array.map(
+        Array.sort(
+          [...branch.children.values()],
+          Order.make((a: Branch, b) => {
+            const compared = a.name.localeCompare(b.name);
+
+            return compared < 0 ? -1 : compared > 0 ? 1 : 0;
+          }),
+        ),
+        (child) => (
           <li key={child.name}>
             {child.file && (
               <button
@@ -69,7 +77,8 @@ export function Tree({
               </details>
             )}
           </li>
-        ))}
+        ),
+      )}
     </ul>
   );
 }

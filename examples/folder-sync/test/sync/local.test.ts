@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, FileSystem, Stream } from "effect";
+import { Array, Effect, FileSystem, Stream } from "effect";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { captureLocal } from "../../sync/local.ts";
 
@@ -71,7 +71,7 @@ layer(BunServices.layer)((it) => {
       expect(reads).toBe(2);
       expect(yield* fs.readFileString(`${directory}/renamed`)).toBe("original bytes");
       expect(
-        (yield* fs.readDirectory(`${directory}/.folder-sync/content`)).filter((name) =>
+        Array.filter(yield* fs.readDirectory(`${directory}/.folder-sync/content`), (name) =>
           name.startsWith(".capture-"),
         ),
       ).toEqual([]);

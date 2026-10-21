@@ -5,10 +5,10 @@ import { authorize, json, jsonBody, requestFailures, storageFailure } from "./ht
 import type { Folder } from "./streams.ts";
 
 /** A folder create failed in storage or in another object. The route answers 500. */
-export class FolderCreateFailed extends Schema.TaggedError<FolderCreateFailed>()(
-  "FolderCreateFailed",
-  { cause: Schema.Unknown },
-) {}
+export class FolderCreateFailed extends Schema.TaggedError<
+  FolderCreateFailed,
+  { readonly brand: unique symbol }
+>()("FolderCreateFailed", { cause: Schema.Unknown }) {}
 
 /** Keep the two answers a client can act on. Any other failure becomes `FolderCreateFailed`. */
 export const createFailures = <A, E, R>(self: Effect.Effect<A, E, R>) =>

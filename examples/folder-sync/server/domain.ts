@@ -1,4 +1,4 @@
-import { Crypto, Data, Effect, Schema } from "effect";
+import { Array, Crypto, Data, Effect, Schema } from "effect";
 import { hex } from "./bytes.ts";
 
 export const FILE_LIMIT = 64 * 1024 * 1024;
@@ -34,26 +34,44 @@ export const CreateFolder = Schema.Struct({
   title: Identifier,
 });
 
-export class InvalidFile extends Schema.TaggedError<InvalidFile>()("InvalidFile", {
+export class InvalidFile extends Schema.TaggedError<
+  InvalidFile,
+  { readonly brand: unique symbol }
+>()("InvalidFile", {
   message: Schema.String,
 }) {}
 
-export class FileTooLarge extends Schema.TaggedError<FileTooLarge>()("FileTooLarge", {
+export class FileTooLarge extends Schema.TaggedError<
+  FileTooLarge,
+  { readonly brand: unique symbol }
+>()("FileTooLarge", {
   size: Schema.Int,
 }) {}
 
-export class MissingFile extends Schema.TaggedError<MissingFile>()("MissingFile", {
+export class MissingFile extends Schema.TaggedError<
+  MissingFile,
+  { readonly brand: unique symbol }
+>()("MissingFile", {
   message: Schema.String,
 }) {}
 
-export class FolderConflict extends Schema.TaggedError<FolderConflict>()("FolderConflict", {
+export class FolderConflict extends Schema.TaggedError<
+  FolderConflict,
+  { readonly brand: unique symbol }
+>()("FolderConflict", {
   message: Schema.String,
 }) {}
 
-export class BlobMissing extends Schema.TaggedError<BlobMissing>()("BlobMissing", { hash: Hash }) {}
+export class BlobMissing extends Schema.TaggedError<
+  BlobMissing,
+  { readonly brand: unique symbol }
+>()("BlobMissing", { hash: Hash }) {}
 
 /** Other writes to the folder kept landing first. The client may retry. */
-export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {
+export class WriteConflict extends Schema.TaggedError<
+  WriteConflict,
+  { readonly brand: unique symbol }
+>()("WriteConflict", {
   folderId: Schema.String,
 }) {}
 
@@ -70,7 +88,11 @@ const canonicalPath = (path: string): string | undefined => {
     parts.includes("..")
   )
     return undefined;
-  const normalized = parts.filter((part) => part !== "" && part !== ".").join("/");
+
+  const normalized = Array.join(
+    Array.filter(parts, (part) => part !== "" && part !== "."),
+    "/",
+  );
 
   return normalized === "" ? undefined : normalized;
 };
@@ -112,10 +134,10 @@ export const Head = Schema.Struct({ version: Version, hash: Hash, txid: Identifi
 
 export type Head = typeof Head.Type;
 
-export class PreconditionFailed extends Schema.TaggedError<PreconditionFailed>()(
-  "PreconditionFailed",
-  { head: Schema.NullOr(Head) },
-) {}
+export class PreconditionFailed extends Schema.TaggedError<
+  PreconditionFailed,
+  { readonly brand: unique symbol }
+>()("PreconditionFailed", { head: Schema.NullOr(Head) }) {}
 
 /** The write precondition from `If-Match` or `If-None-Match: *`. */
 export type Precondition = Data.TaggedEnum<{

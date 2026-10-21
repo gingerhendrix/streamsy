@@ -1,5 +1,5 @@
 import { StreamAddress } from "@streamsy/core";
-import { Schema } from "effect";
+import { Array, Option, Schema } from "effect";
 import { decodeText, hex } from "../server/bytes.ts";
 import { CommitFile, File, Head } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
@@ -144,8 +144,11 @@ export async function readFile(
   let file = current;
 
   if (selection.at !== undefined) {
-    const change = (await history(selection, signal, transport)).find(
-      (row) => isUpsert(row) && row.value.version === selection.at,
+    const change = Option.getOrUndefined(
+      Array.findFirst(
+        await history(selection, signal, transport),
+        (row) => isUpsert(row) && row.value.version === selection.at,
+      ),
     );
 
     file = change !== undefined && isUpsert(change) ? change.value : undefined;

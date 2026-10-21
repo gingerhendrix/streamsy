@@ -1,3 +1,4 @@
+import { Array } from "effect";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "./MarkdownLink.tsx";
@@ -218,7 +219,7 @@ export function FilePanel({
         <h3>
           File history <span>{rows.length} changes</span>
         </h3>
-        {rows.toReversed().map((change, index) => (
+        {Array.map(Array.reverse(rows), (change, index) => (
           <div key={`${change.headers.txid ?? ""}:${index}`} className="history-entry">
             {isUpsert(change) ? (
               <>

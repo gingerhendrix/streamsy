@@ -1,5 +1,5 @@
 import { StreamAddress } from "@streamsy/core";
-import { Schema } from "effect";
+import { Array, Option, Schema } from "effect";
 import { File } from "./domain.ts";
 import { Folder } from "./streams.ts";
 
@@ -41,7 +41,7 @@ export const isUpsert = <A>(message: StateMessage<A>): message is StreamAddress.
 
 /** The messages that a reader must apply: everything after the last reset in the batch. */
 export const afterLastReset = <M extends StateMessage<unknown>>(messages: ReadonlyArray<M>) =>
-  messages.slice(messages.findLastIndex(isReset) + 1);
+  messages.slice(Option.getOrElse(Array.findLastIndex(messages, isReset), () => -1) + 1);
 
 /** Apply messages to a map of live values by key. A reset clears the map. */
 export const applyChanges = <A>(

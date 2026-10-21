@@ -2,7 +2,7 @@ import { StorageFault, StreamAddress, StreamGone, ZERO_OFFSET } from "@streamsy/
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Effect, Layer, Logger, Result, Schedule, Schema, Stream } from "effect";
+import { Array, Effect, Layer, Logger, Option, Result, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { FileIndex, FileIndexLive } from "../server/file-index.ts";
@@ -23,7 +23,10 @@ import { registerFolder } from "../server/folder-registry.ts";
 import { sqliteHost } from "../server/storage.ts";
 import { storedText } from "./content.ts";
 
-class NotReady extends Schema.TaggedError<NotReady>()("NotReady", {}) {}
+class NotReady extends Schema.TaggedError<NotReady, { readonly brand: unique symbol }>()(
+  "NotReady",
+  {},
+) {}
 
 const until = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
   read.pipe(
@@ -63,8 +66,11 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
           author: "test",
         });
 
-      const retained = (yield* folders.collect({})).items.find(
-        (change) => StreamAddress.isChange(change) && change.key === "retained",
+      const retained = Option.getOrUndefined(
+        Array.findFirst(
+          (yield* folders.collect({})).items,
+          (change) => StreamAddress.isChange(change) && change.key === "retained",
+        ),
       );
 
       const data = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
@@ -115,12 +121,12 @@ layer(graph, { excludeTestServices: true })((it) => {
       yield* until(index.list({ folder: "healthy-bootstrap" }), (rows) => rows.length === 1);
       expect(yield* index.list({ folder: "gone-bootstrap" })).toEqual([]);
       expect(
-        messages.filter((entry) =>
+        Array.filter(messages, (entry) =>
           String(entry).includes("gone-bootstrap history is unavailable at bootstrap"),
         ),
       ).toHaveLength(1);
       expect(
-        messages.some((entry) => String(entry).includes("Index follower folders failed")),
+        Array.some(messages, (entry) => String(entry).includes("Index follower folders failed")),
       ).toBe(false);
     }),
   );
@@ -143,7 +149,7 @@ layer(graph, { excludeTestServices: true })((it) => {
         ),
       });
       yield* runIndex("stored-reset");
-      expect((yield* index.list({ folder: "stored-reset" })).map((row) => row.path)).toEqual([
+      expect(Array.map(yield* index.list({ folder: "stored-reset" }), (row) => row.path)).toEqual([
         "after",
       ]);
 
@@ -235,7 +241,7 @@ layer(graph, { excludeTestServices: true })((it) => {
 
       const paths = index
         .list({ folder: "runner-a" })
-        .pipe(Effect.map((rows) => rows.map((row) => row.path)));
+        .pipe(Effect.map((rows) => Array.map(rows, (row) => row.path)));
 
       expect(yield* paths).toEqual(["a.md"]);
 
@@ -288,7 +294,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       const blobs = yield* BlobStore;
       const bytes = new TextEncoder().encode("needle " + "x".repeat(SEARCH_LIMIT));
 
-      const changes = Array.from({ length: 12 }, (_, i): FileMessage => {
+      const changes = Array.makeBy(12, (i): FileMessage => {
         const row = fileMessage(`large-${i}`);
 
         if (!("value" in row)) throw new Error("Expected upsert");
@@ -337,11 +343,23 @@ layer(graph, { excludeTestServices: true })((it) => {
         yield* sql`INSERT INTO folder_sync_search VALUES ('ranking', 'a.md', 1, ${"rankingneedle " + "filler ".repeat(100)})`;
         yield* sql`INSERT INTO folder_sync_search VALUES ('ranking', 'z.md', 2, ${"<img src=x onerror=alert(1)> rankingneedle rankingneedle rankingneedle"})`;
         const hits = yield* index.search("rankingneedle", "ranking");
-        expect(hits.map((hit) => hit.path)).toEqual(["z.md", "a.md"]);
+        expect(Array.map(hits, (hit) => hit.path)).toEqual(["z.md", "a.md"]);
         expect(
-          hits[0]?.snippet.some((part) => part.match && part.text.includes("rankingneedle")),
+          hits[0] === undefined
+            ? undefined
+            : Array.some(
+                hits[0].snippet,
+                (part) => part.match && part.text.includes("rankingneedle"),
+              ),
         ).toBe(true);
-        expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
+        expect(
+          hits[0] === undefined
+            ? undefined
+            : Array.join(
+                Array.map(hits[0].snippet, (part) => part.text),
+                "",
+              ),
+        ).toContain("<img");
       }),
   );
 
@@ -361,9 +379,9 @@ layer(graph, { excludeTestServices: true })((it) => {
         });
       yield* until(index.list({ folder: "glob" }), (rows) => rows.length === 2);
       const actual = yield* index.list({ folder: "glob", glob: "[!a]*.md" });
-      const expected = paths.filter((path) => new Bun.Glob("[!a]*.md").match(path));
+      const expected = Array.filter(paths, (path) => new Bun.Glob("[!a]*.md").match(path));
       expect(expected).toEqual(["b.md"]);
-      expect(actual.map((row) => row.path)).toEqual(expected);
+      expect(Array.map(actual, (row) => row.path)).toEqual(expected);
     }),
   );
 
@@ -392,7 +410,7 @@ layer(graph, { excludeTestServices: true })((it) => {
       expect(yield* index.search("lostneedle", "lost-blob")).toEqual([]);
       const before = (yield* Projection.read(projection)).offsets.input;
       expect(before).toBeDefined();
-      expect(warnings.some((message) => String(message).includes(content.hash))).toBe(true);
+      expect(Array.some(warnings, (message) => String(message).includes(content.hash))).toBe(true);
       yield* store.commit("lost-blob", "next", {
         ...(yield* storedText("nextneedle")),
         author: "test",

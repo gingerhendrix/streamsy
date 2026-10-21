@@ -1,7 +1,10 @@
-import { Schema } from "effect";
+import { Array, Schema } from "effect";
 import type { SyncOptions } from "./decisions.ts";
 
-export class ArgumentsError extends Schema.TaggedError<ArgumentsError>()("ArgumentsError", {
+export class ArgumentsError extends Schema.TaggedError<
+  ArgumentsError,
+  { readonly brand: unique symbol }
+>()("ArgumentsError", {
   message: Schema.String,
 }) {}
 
@@ -44,7 +47,7 @@ export const parseArguments = (args: ReadonlyArray<string>): SyncOptions => {
   if (
     folders?.includes("") ||
     writable.includes("") ||
-    writable.some((id) => folders !== undefined && !folders.includes(id))
+    Array.some(writable, (id) => folders !== undefined && !folders.includes(id))
   )
     throw new ArgumentsError({
       message: "--write must name selected folders; folder IDs cannot be empty",

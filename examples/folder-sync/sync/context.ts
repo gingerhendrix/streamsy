@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Schema, Semaphore } from "effect";
+import { Array, Crypto, Effect, FileSystem, Order, Path, Schema, Semaphore } from "effect";
 import { SyncRemote } from "./client.ts";
 import { folderDirectory, type SyncOptions } from "./decisions.ts";
 import { LocalFailure, skipWarnings, SkippedLocal } from "./local.ts";
@@ -43,8 +43,8 @@ export const openContext = Effect.fn("Sync.context")(function* (options: SyncOpt
     ),
   )({
     server: options.server,
-    folders: options.folders === undefined ? null : [...options.folders].toSorted(),
-    writable: [...options.writable].toSorted(),
+    folders: options.folders === undefined ? null : Array.sort([...options.folders], Order.String),
+    writable: Array.sort([...options.writable], Order.String),
   });
 
   const stored = yield* state.get("configuration");

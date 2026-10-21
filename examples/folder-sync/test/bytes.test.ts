@@ -5,7 +5,10 @@ import { bearerMatches } from "../server/auth.ts";
 import { collectBytes, concatBytes, decodeText, hex, limitBytes } from "../server/bytes.ts";
 import { hashStream } from "../server/hash-stream.ts";
 
-class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", { size: Schema.Int }) {}
+class TooLarge extends Schema.TaggedError<TooLarge, { readonly brand: unique symbol }>()(
+  "TooLarge",
+  { size: Schema.Int },
+) {}
 
 const bytes = (...values: number[]) => new Uint8Array(values);
 

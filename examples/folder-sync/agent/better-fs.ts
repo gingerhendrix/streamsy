@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Implements the external Promise filesystem contract. */
+import { Array } from "effect";
 import { posixPaths } from "@better-fs-tools/fs";
 import type {
   FileSystemError as ReadError,
@@ -131,9 +132,10 @@ export function betterFileSystem(core: FolderHttpFileSystem): WritableFileSystem
 
         return {
           ok: true,
-          entries: entries
-            .slice(0, options.limit)
-            .map((entry) => ({ name: entry.name, type: entry.kind })),
+          entries: Array.map(entries.slice(0, options.limit), (entry) => ({
+            name: entry.name,
+            type: entry.kind,
+          })),
           truncated: entries.length > options.limit,
         };
       } catch (error) {

@@ -2,7 +2,17 @@ import { Offset } from "@streamsy/core";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Deferred, Effect, Fiber, FileSystem, Layer, Schedule, Schema, Stream } from "effect";
+import {
+  Array,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { prepareContent } from "../../server/domain.ts";
@@ -14,7 +24,10 @@ import { cacheBody, captureLocal, replaceSource } from "../../sync/local.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 import { spawnServer, token } from "./host.ts";
 
-class Waiting extends Schema.TaggedError<Waiting>()("SyncTestWaiting", {}) {}
+class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbol }>()(
+  "SyncTestWaiting",
+  {},
+) {}
 
 const until = <A, E, R>(work: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
   work.pipe(
@@ -195,12 +208,12 @@ layer(runtime, { excludeTestServices: true })((it) => {
       yield* fs.writeFileString(`${mirror}/daily/demo/n.md`, "mine");
       yield* until(
         state.pending(),
-        (rows) => rows.filter((row) => row.path === "n.md").length === 1,
+        (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 1,
       );
       yield* fs.remove(`${mirror}/daily/demo/n.md`);
       yield* until(
         state.pending(),
-        (rows) => rows.filter((row) => row.path === "n.md").length === 2,
+        (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 2,
       );
       yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
       yield* Deferred.succeed(release, undefined);
@@ -517,7 +530,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
         );
         expect(yield* state.pending()).toEqual([]);
         expect(
-          (yield* fs.readDirectory(`${mirror}/daily/demo`)).filter((name) =>
+          Array.filter(yield* fs.readDirectory(`${mirror}/daily/demo`), (name) =>
             name.includes("conflict"),
           ),
         ).toEqual([]);
@@ -600,8 +613,8 @@ layer(runtime, { excludeTestServices: true })((it) => {
         const remote = yield* remoteFor(server.url);
         const replacement = yield* remote.page("daily/demo", "-1", false);
         const replacementCursor = yield* Schema.decodeEffect(Offset)(replacement.cursor);
-        const kept = replacement.rows.filter((row) => "key" in row && row.key === "a.md");
-        const old = replacement.rows.filter((row) => "key" in row && row.key === "old.md");
+        const kept = Array.filter(replacement.rows, (row) => "key" in row && row.key === "a.md");
+        const old = Array.filter(replacement.rows, (row) => "key" in row && row.key === "old.md");
         const seen: string[] = [];
         const applied = yield* Deferred.make<void>();
         let injected = false;
@@ -647,7 +660,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
           Effect.sync(() => seen.length),
           (count) => count >= (phase === "live" ? 4 : 2),
         );
-        expect(seen.filter((offset) => offset === "-1")).toHaveLength(1);
+        expect(Array.filter(seen, (offset) => offset === "-1")).toHaveLength(1);
         expect(seen.at(-1)).toBe(replacement.cursor);
         yield* Fiber.interrupt(daemon);
       }),
@@ -708,7 +721,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
         Effect.sync(() => seen.length),
         (count) => count >= 2,
       );
-      expect(seen.filter((offset) => offset === "-1")).toHaveLength(1);
+      expect(Array.filter(seen, (offset) => offset === "-1")).toHaveLength(1);
       expect(seen.at(-1)).toBe(page.cursor);
       yield* Fiber.interrupt(daemon);
     }),
@@ -1014,7 +1027,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
         const remote = yield* remoteFor(server.url);
         const page = yield* remote.folders("-1", false);
         const finalRegistryCursor = yield* Schema.decodeEffect(Offset)(page.cursor);
-        const rows = page.rows.filter((row) => "type" in row);
+        const rows = Array.filter(page.rows, (row) => "type" in row);
         expect(rows).toHaveLength(2);
         const waiting = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
@@ -1097,7 +1110,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
         const cached = yield* cacheBody(
           directory,
-          Stream.fromIterable(Array.from({ length: 32 }, () => chunk)),
+          Stream.fromIterable(Array.makeBy(32, () => chunk)),
         );
 
         expect(cached.size).toBe(2 * 1024 * 1024);
@@ -1106,7 +1119,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
         const tooLarge = yield* cacheBody(
           directory,
-          Stream.fromIterable(Array.from({ length: 1025 }, () => chunk)),
+          Stream.fromIterable(Array.makeBy(1025, () => chunk)),
         ).pipe(Effect.result);
 
         expect(tooLarge).toMatchObject({ failure: { _tag: "SkippedLocal" } });

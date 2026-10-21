@@ -5,11 +5,17 @@ import { FILE_LIMIT } from "../server/domain.ts";
 import { hashStream } from "../server/hash-stream.ts";
 import { ignoredPath } from "./decisions.ts";
 
-export class LocalFailure extends Schema.TaggedError<LocalFailure>()("LocalFailure", {
+export class LocalFailure extends Schema.TaggedError<
+  LocalFailure,
+  { readonly brand: unique symbol }
+>()("LocalFailure", {
   message: Schema.String,
 }) {}
 
-export class SkippedLocal extends Schema.TaggedError<SkippedLocal>()("SkippedLocal", {
+export class SkippedLocal extends Schema.TaggedError<
+  SkippedLocal,
+  { readonly brand: unique symbol }
+>()("SkippedLocal", {
   message: Schema.String,
   path: Schema.String,
 }) {}

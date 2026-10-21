@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- just-bash session and command Promise compatibility edge. */
+import { Array } from "effect";
 import { defineCommand } from "just-bash";
 import { FolderHttpFileSystem } from "./http.ts";
 
@@ -36,7 +37,7 @@ export const searchGrep = (core: FolderHttpFileSystem) =>
         return { stdout: "", stderr: "grep: missing pattern\n", exitCode: 2 };
 
       const scopes =
-        rest.length === 0 ? [ctx.cwd] : rest.map((path) => core.resolve(path, ctx.cwd));
+        rest.length === 0 ? [ctx.cwd] : Array.map(rest, (path) => core.resolve(path, ctx.cwd));
 
       const { hits, truncated } = await core.searchCandidates(query, ctx.signal);
 
@@ -44,8 +45,11 @@ export const searchGrep = (core: FolderHttpFileSystem) =>
         ? "grep: search reached the 100-hit limit; candidates may be incomplete\n"
         : "";
 
-      const candidates = [...new Set(hits.map((hit) => hit.path))].filter((path) =>
-        scopes.some((scope) => scope === "/" || path === scope || path.startsWith(`${scope}/`)),
+      const candidates = Array.filter([...new Set(Array.map(hits, (hit) => hit.path))], (path) =>
+        Array.some(
+          scopes,
+          (scope) => scope === "/" || path === scope || path.startsWith(`${scope}/`),
+        ),
       );
 
       if (candidates.length === 0) return { stdout: "", stderr: note, exitCode: 1 };

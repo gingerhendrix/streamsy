@@ -1,8 +1,9 @@
-import { Schema } from "effect";
+import { Array, Schema } from "effect";
 import { FolderKey } from "./streams.ts";
 
 /** Encode each path segment and keep the slashes, so the router sees the folder structure. */
-export const encodeFilePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+export const encodeFilePath = (path: string) =>
+  Array.join(Array.map(path.split("/"), encodeURIComponent), "/");
 
 /** The file route of one path: `PUT` commits, `DELETE` removes and `GET` reads the bytes. */
 export const fileUrl = (folderId: string, path: string) =>

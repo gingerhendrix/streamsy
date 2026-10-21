@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect";
+import { Array, Effect, Stream } from "effect";
 
 /** Join chunks into one buffer of the given total size. */
 export const concatBytes = (chunks: Iterable<Uint8Array>, size: number) => {
@@ -31,7 +31,10 @@ export const decodeText = (bytes: Uint8Array, truncated = false): string | undef
 
 /** Lowercase hex, the form of every content hash in the protocol. */
 export const hex = (digest: Uint8Array) =>
-  Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  Array.join(
+    Array.map(Array.fromIterable(digest), (byte) => byte.toString(16).padStart(2, "0")),
+    "",
+  );
 
 /** Pass chunks through and fail as soon as the running size passes `limit`. */
 export const limitBytes = <E, E2>(
@@ -61,6 +64,6 @@ export const collectBytes = Effect.fn("Bytes.collect")(function* <E, E2>(
 
   return concatBytes(
     chunks,
-    chunks.reduce((size, chunk) => size + chunk.length, 0),
+    Array.reduce(chunks, 0, (size, chunk) => size + chunk.length),
   );
 });

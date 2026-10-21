@@ -2,7 +2,7 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { DurableState, CommitBoundary } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Deferred, Effect, Layer, Result } from "effect";
+import { Array, Deferred, Effect, Layer, Order, Result } from "effect";
 import {
   BlobMissing,
   FolderConflict,
@@ -89,7 +89,7 @@ for (const [name, storage] of [
           ).toBeInstanceOf(InvalidFile);
           const changes = (yield* files.collect({ folderId: folder })).items;
           expect(
-            changes.map((change) => ("value" in change ? change.value.version : null)),
+            Array.map(changes, (change) => ("value" in change ? change.value.version : null)),
           ).toEqual([1, 2, null, 3]);
           expect(changes[2]).not.toHaveProperty("value");
           // Replaying one event per append into another owner changes storage positions, never versions.
@@ -109,7 +109,7 @@ for (const [name, storage] of [
             const replayed = (yield* destination.collect({ folderId: folder })).items;
             expect(replayed).toEqual(changes);
             expect(
-              replayed.map((change) => ("value" in change ? change.value.version : null)),
+              Array.map(replayed, (change) => ("value" in change ? change.value.version : null)),
             ).toEqual([1, 2, null, 3]);
           }).pipe(Effect.provideContext(fresh));
         }),
@@ -205,7 +205,9 @@ for (const [name, storage] of [
         const view = folderView.at({ folderId: "proto" });
         yield* Projection.run(view);
         const saved = (yield* Projection.read(view)).state;
-        expect([...saved.files.keys()].toSorted()).toEqual(names.toSorted());
+        expect(Array.sort([...saved.files.keys()], Order.String)).toEqual(
+          Array.sort(names, Order.String),
+        );
         expect(saved.files.get("__proto__")?.version).toBe(names.length * 2 - 4);
         expect((yield* store.read("proto", "__proto__")).value.hash).toBe(
           yield* sha256(new TextEncoder().encode("second __proto__")),
@@ -376,8 +378,8 @@ for (const [name, storage] of [
             );
           }).pipe(Effect.provideContext(context));
 
-          const landed = results.filter(Result.isSuccess);
-          const refused = results.filter(Result.isFailure);
+          const landed = Array.filter(results, Result.isSuccess);
+          const refused = Array.filter(results, Result.isFailure);
           expect(landed).toHaveLength(1);
           expect(refused).toHaveLength(1);
           expect(refused[0]?.failure).toBeInstanceOf(PreconditionFailed);

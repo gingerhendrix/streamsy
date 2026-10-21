@@ -1,6 +1,6 @@
 import { StreamAddress } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Effect, Stream } from "effect";
+import { Array, Effect, Option, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
 import { decodeText } from "./bytes.ts";
@@ -46,7 +46,7 @@ export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM folder_sync_index_text WHERE folderId = ${folderId}`;
 
-  const lastReset = changes.findLastIndex(isReset);
+  const lastReset = Option.getOrElse(Array.findLastIndex(changes, isReset), () => -1);
 
   for (const [position, change] of changes.entries()) {
     if (position < lastReset || !isUpsert(change)) continue;

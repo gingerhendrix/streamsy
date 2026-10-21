@@ -1,6 +1,6 @@
 import { it } from "@effect/vitest";
 import { expect } from "vitest";
-import { Deferred, Effect, Fiber, Logger } from "effect";
+import { Array, Deferred, Effect, Fiber, Logger } from "effect";
 import { TestClock } from "effect/testing";
 import {
   IndexBootstrapUnavailable,
@@ -73,8 +73,10 @@ it.effect("a clean follower finish is logged as stopped and restarts with fresh 
     yield* TestClock.adjust("1 second");
     yield* Deferred.await(resumed);
     expect(offsets).toEqual(["startup", "advanced"]);
-    expect(messages.flat().map(String).join(" ")).toContain("clean stopped; restarting");
-    expect(messages.flat().map(String).join(" ")).not.toContain("failed");
+    expect(Array.join(Array.map(messages.flat(), String), " ")).toContain(
+      "clean stopped; restarting",
+    );
+    expect(Array.join(Array.map(messages.flat(), String), " ")).not.toContain("failed");
     yield* Fiber.interrupt(follower);
   }),
 );
@@ -123,7 +125,7 @@ it.effect("gone folder bootstraps back off to sixty seconds, warn once, and reco
     }
 
     expect(messages).toHaveLength(1);
-    expect(messages.flat().map(String).join(" ")).toContain(
+    expect(Array.join(Array.map(messages.flat(), String), " ")).toContain(
       "gone history is unavailable at bootstrap",
     );
     available = true;

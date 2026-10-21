@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Array, Effect, Layer, Schedule, Schema } from "effect";
 import { FileIndex, FileIndexLive } from "../../server/file-index.ts";
 import { IndexLive } from "../../server/index-followers.ts";
 import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
@@ -9,7 +9,10 @@ import { sqliteHost } from "../../server/storage.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { storedText } from "../content.ts";
 
-class Waiting extends Schema.TaggedError<Waiting>()("Waiting", {}) {}
+class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbol }>()(
+  "Waiting",
+  {},
+) {}
 
 const graph = (filename: string) =>
   Layer.merge(FolderStoreLive, FileIndexLive).pipe(
@@ -50,7 +53,10 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
                   Effect.filterOrFail(
                     (rows) =>
                       rows.length === run + 1 &&
-                      rows.some((row) => row.folderId === "old/folder" && row.version === run),
+                      Array.some(
+                        rows,
+                        (row) => row.folderId === "old/folder" && row.version === run,
+                      ),
                     () => new Waiting(),
                   ),
                   Effect.retry({

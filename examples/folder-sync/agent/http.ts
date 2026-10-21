@@ -4,7 +4,7 @@
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Session and operation IDs are transport metadata. */
 /* oxlint-disable effecttsgo/extends-native-error -- just-bash requires thrown errno errors, shared with the typed tools edge. */
 import { StreamAddress } from "@streamsy/core";
-import { Duration, Effect, Result, Schedule, Schema } from "effect";
+import { Array, Duration, Effect, Order, Result, Schedule, Schema } from "effect";
 import { hex } from "../server/bytes.ts";
 import { FILE_LIMIT, FolderId, Version, File, Path as FilePath } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
@@ -189,7 +189,7 @@ export class FolderHttpFileSystem {
 
     if (parts[0] === ".folder-sync") throw new FileSystemError("EACCES", path);
 
-    return `/${parts.join("/")}`;
+    return `/${Array.join(parts, "/")}`;
   }
 
   allPaths() {
@@ -408,13 +408,14 @@ export class FolderHttpFileSystem {
     const addParents = (path: string) => {
       const parts = path.split("/").slice(1);
 
-      for (let i = 1; i <= parts.length; i++) directories.add(`/${parts.slice(0, i).join("/")}`);
+      for (let i = 1; i <= parts.length; i++)
+        directories.add(`/${Array.join(parts.slice(0, i), "/")}`);
     };
 
     for (const root of this.roots.values()) addParents(`/${root}`);
 
     for (const path of files.keys()) addParents(path.slice(0, path.lastIndexOf("/")));
-    this.paths = [...directories, ...files.keys()].toSorted();
+    this.paths = Array.sort([...directories, ...files.keys()], Order.String);
 
     return { files, directories };
   }
@@ -526,9 +527,17 @@ export class FolderHttpFileSystem {
         entries.set(suffix, directories.has(candidate) ? "directory" : "file");
     }
 
-    return [...entries]
-      .toSorted(([a], [b]) => a.localeCompare(b))
-      .map(([name, kind]) => ({ name, kind }));
+    return Array.map(
+      Array.sort(
+        [...entries],
+        Order.make(([a]: [string, "file" | "directory"], [b]) => {
+          const compared = a.localeCompare(b);
+
+          return compared < 0 ? -1 : compared > 0 ? 1 : 0;
+        }),
+      ),
+      ([name, kind]) => ({ name, kind }),
+    );
   }
 
   async missingParents(path: string, signal?: AbortSignal) {
@@ -696,10 +705,13 @@ export class FolderHttpFileSystem {
 
     for (const parent of parents) this.emptyDirectories.add(parent);
     // Keep globs useful immediately, without another network call after a successful write.
-    this.paths = this.paths.filter((value) => value !== target.resolved);
+    this.paths = Array.filter(this.paths, (value) => value !== target.resolved);
 
     if (bytes !== null)
-      this.paths.push(target.resolved, ...parents.filter((value) => !this.paths.includes(value)));
+      this.paths.push(
+        target.resolved,
+        ...Array.filter(parents, (value) => !this.paths.includes(value)),
+      );
 
     return {
       resolved: target.resolved,
@@ -722,12 +734,20 @@ export class FolderHttpFileSystem {
     if (this.options.folders === undefined)
       for (const hit of hits) await this.addFolder(hit.folderId, true);
 
-    const candidates = hits.flatMap((hit) => {
+    const candidates = Array.flatMap(hits, (hit) => {
       const path = this.folderPath(hit.folderId, hit.path);
 
       return path === undefined
         ? []
-        : [{ path, snippet: hit.snippet.map((part) => part.text).join("") }];
+        : [
+            {
+              path,
+              snippet: Array.join(
+                Array.map(hit.snippet, (part) => part.text),
+                "",
+              ),
+            },
+          ];
     });
 
     return { hits: candidates, truncated: hits.length >= 100 };

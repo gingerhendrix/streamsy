@@ -1,5 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Array, Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { Hash, Path, Version } from "../server/domain.ts";
 
@@ -66,7 +66,8 @@ const make = Effect.gen(function* () {
 
   /** The paths of one folder that this mirror has a head for. */
   const paths = Effect.fn("SyncState.paths")(function* (folderId: string) {
-    return (yield* sql<{ path: string }>`SELECT path FROM known WHERE folderId = ${folderId}`).map(
+    return Array.map(
+      yield* sql<{ path: string }>`SELECT path FROM known WHERE folderId = ${folderId}`,
       (row) => row.path,
     );
   });
@@ -168,7 +169,8 @@ const make = Effect.gen(function* () {
   });
 
   const folders = Effect.fn("SyncState.folders")(function* () {
-    return (yield* sql<{ folderId: string }>`SELECT folderId FROM folders ORDER BY folderId`).map(
+    return Array.map(
+      yield* sql<{ folderId: string }>`SELECT folderId FROM folders ORDER BY folderId`,
       (row) => row.folderId,
     );
   });

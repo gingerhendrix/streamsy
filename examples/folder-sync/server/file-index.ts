@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Array, Context, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import picomatch from "picomatch";
 import { InvalidFile } from "./domain.ts";
@@ -24,7 +24,8 @@ const make = Effect.gen(function* () {
       yield* sql`SELECT * FROM folder_sync_manifest ORDER BY folderId, path`,
     );
 
-    return rows.filter(
+    return Array.filter(
+      rows,
       (row) =>
         (options.folder === undefined || row.folderId === options.folder) &&
         (options.prefix === undefined || row.path.startsWith(options.prefix)) &&
@@ -53,7 +54,7 @@ const make = Effect.gen(function* () {
       );
 
     return yield* Schema.decodeEffect(Schema.Array(SearchResult))(
-      rows.map((row) => ({ ...row, snippet: snippetParts(row.snippet) })),
+      Array.map(rows, (row) => ({ ...row, snippet: snippetParts(row.snippet) })),
     );
   });
 

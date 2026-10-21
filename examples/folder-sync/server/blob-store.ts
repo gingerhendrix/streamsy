@@ -2,7 +2,10 @@ import { Context, Crypto, Effect, Layer, Schema, Stream } from "effect";
 import { collectBytes } from "./bytes.ts";
 import { FILE_LIMIT, FileTooLarge, InvalidFile, sha256 } from "./domain.ts";
 
-export class BlobFailure extends Schema.TaggedError<BlobFailure>()("BlobFailure", {
+export class BlobFailure extends Schema.TaggedError<
+  BlobFailure,
+  { readonly brand: unique symbol }
+>()("BlobFailure", {
   message: Schema.String,
 }) {}
 

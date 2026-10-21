@@ -1,13 +1,16 @@
 import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { Projection, ProjectionFault } from "@streamsy/projection";
-import { Cause, Duration, Effect, Fiber, Layer, Schema, Schedule, Stream } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { afterLastReset, isUpsert } from "./messages.ts";
 import { clearIndexFolder, initialiseSearch, search } from "./search-index.ts";
 import { Folders } from "./streams.ts";
 
-class FollowerFailed extends Schema.TaggedError<FollowerFailed>()("FollowerFailed", {}) {}
+class FollowerFailed extends Schema.TaggedError<
+  FollowerFailed,
+  { readonly brand: unique symbol }
+>()("FollowerFailed", {}) {}
 
 /** A stopped binding is logged and restarted, including defects from its handler. */
 export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =>
@@ -27,10 +30,10 @@ export const supervise = <A, E, R>(name: string, work: Effect.Effect<A, E, R>) =
     Effect.retry({ schedule: Schedule.spaced("1 second") }),
   );
 
-export class IndexBootstrapUnavailable extends Schema.TaggedError<IndexBootstrapUnavailable>()(
-  "IndexBootstrapUnavailable",
-  { folderId: Schema.String },
-) {}
+export class IndexBootstrapUnavailable extends Schema.TaggedError<
+  IndexBootstrapUnavailable,
+  { readonly brand: unique symbol }
+>()("IndexBootstrapUnavailable", { folderId: Schema.String }) {}
 
 /** Bootstrap failures stay local to one folder and emit one warning during its lifetime. */
 export const superviseFolder = <A, E, R>(folderId: string, work: Effect.Effect<A, E, R>) =>

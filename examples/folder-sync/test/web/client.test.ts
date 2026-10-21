@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/new-promise -- Exercise the default native browser transport against the local HTTP host. */
+import { Array } from "effect";
 import { expect, test, vi } from "vitest";
 import {
   browserTransport,
@@ -64,7 +65,7 @@ test("default browser fetch keeps its global receiver for saves, history, search
     expect(
       await readFile({ folderId: "docs", path: "a" }, file, new AbortController().signal),
     ).toMatchObject({ hash, size: bytes.length, text: null });
-    expect(await search("one", new AbortController().signal)).toBeInstanceOf(Array);
+    expect(await search("one", new AbortController().signal)).toBeInstanceOf(globalThis.Array);
     expect(calls).toContain(`PUT /api/blobs/${hash}`);
     expect(calls).toContain(`GET /api/blobs/${hash}`);
     expect(calls).toContain("GET /api/search");
@@ -177,7 +178,9 @@ test("the panel history reader refreshes accepted saves and a later StreamDB row
       await panel.refresh(selection);
     }
 
-    expect(rows.map((row) => ("value" in row ? row.value.version : null))).toEqual([1, 2, 3]);
+    expect(Array.map(rows, (row) => ("value" in row ? row.value.version : null))).toEqual([
+      1, 2, 3,
+    ]);
     await saveFile(
       "docs",
       { ...db.collections.files.get("a")!, ...(await textContent("other")) },

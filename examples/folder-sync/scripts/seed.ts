@@ -1,12 +1,15 @@
 import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Array, Config, Console, Effect, FileSystem, Layer, Order, Path, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { prepareContent, Version } from "../server/domain.ts";
 import { fileUrl } from "../server/routes.ts";
 
-class SeedFailure extends Schema.TaggedError<SeedFailure>()("SeedFailure", {
-  message: Schema.String,
-}) {}
+class SeedFailure extends Schema.TaggedError<SeedFailure, { readonly brand: unique symbol }>()(
+  "SeedFailure",
+  {
+    message: Schema.String,
+  },
+) {}
 
 const Written = Schema.Struct({ version: Version });
 
@@ -16,7 +19,7 @@ export const seedLocation = (relative: string) => {
 
   return parts.length === 1
     ? { folderId: "docs/root", path: relative }
-    : { folderId: `docs/${parts[0]}`, path: parts.slice(1).join("/") };
+    : { folderId: `docs/${parts[0]}`, path: Array.join(parts.slice(1), "/") };
 };
 
 export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
@@ -28,7 +31,7 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
   const root = server.replace(/\/$/, "");
   const created = new Set<string>();
   const versions = new Map<string, number>();
-  const files = (yield* fs.readDirectory(directory, { recursive: true })).toSorted();
+  const files = Array.sort(yield* fs.readDirectory(directory, { recursive: true }), Order.String);
 
   for (const relative of files) {
     const absolute = path.join(directory, relative);

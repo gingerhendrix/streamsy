@@ -3,7 +3,7 @@ import { StreamAddress } from "@streamsy/core";
 import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Array, Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
@@ -67,7 +67,10 @@ const remove = (url: string, folderId: string, version: number) =>
 const head = (response: HttpClientResponse.HttpClientResponse) =>
   response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Head)));
 
-class Waiting extends Schema.TaggedError<Waiting>()("WorkerTestWaiting", {}) {}
+class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbol }>()(
+  "WorkerTestWaiting",
+  {},
+) {}
 
 const until = <A, E, R>(effect: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
   effect.pipe(
@@ -103,22 +106,30 @@ const SavedView = Schema.fromJsonString(
 
 /** Read the folder view checkpoints straight from the Durable Object SQLite files. */
 const savedViews = (directory: string, folderKey: string) =>
-  Array.from(new Bun.Glob("objects/folder-sync-FolderObject/*.sqlite").scanSync(directory))
-    .filter((path) => !path.endsWith("/metadata.sqlite"))
-    .flatMap((path) => {
+  Array.flatMap(
+    Array.filter(
+      Array.fromIterable(
+        new Bun.Glob("objects/folder-sync-FolderObject/*.sqlite").scanSync(directory),
+      ),
+      (path) => !path.endsWith("/metadata.sqlite"),
+    ),
+    (path: string) => {
       const db = new Database(`${directory}/${path}`, { readonly: true });
 
       try {
-        return db
-          .query<{ owner_value: string }, [string]>(
-            "SELECT owner_value FROM streamsy_owner_records WHERE owner_key LIKE ?",
-          )
-          .all(`%folder-sync-view%${folderKey}%`)
-          .map((row) => row.owner_value);
+        return Array.map(
+          db
+            .query<{ owner_value: string }, [string]>(
+              "SELECT owner_value FROM streamsy_owner_records WHERE owner_key LIKE ?",
+            )
+            .all(`%folder-sync-view%${folderKey}%`),
+          (row) => row.owner_value,
+        );
       } finally {
         db.close();
       }
-    });
+    },
+  );
 
 const listed = (url: string) =>
   HttpClient.get(`${url}/api/ls`).pipe(
@@ -397,9 +408,18 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             yield* response.json,
           );
 
-          expect(hits.map((hit) => hit.path)).toEqual(["z.md", "a.md"]);
-          expect(hits[0]?.snippet.map((part) => part.text).join("")).toContain("<img");
-          expect(hits[0]?.snippet.some((part) => part.match)).toBe(true);
+          expect(Array.map(hits, (hit) => hit.path)).toEqual(["z.md", "a.md"]);
+          expect(
+            hits[0] === undefined
+              ? undefined
+              : Array.join(
+                  Array.map(hits[0].snippet, (part) => part.text),
+                  "",
+                ),
+          ).toContain("<img");
+          expect(
+            hits[0] === undefined ? undefined : Array.some(hits[0].snippet, (part) => part.match),
+          ).toBe(true);
 
           for (const query of ['"unterminated', "foo:bar", "AND", "NEAR(", "a OR"])
             expect(
@@ -416,7 +436,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
               yield* filtered.json,
             );
 
-            expect(rows.map((row) => row.path)).toEqual(["z.md"]);
+            expect(Array.map(rows, (row) => row.path)).toEqual(["z.md"]);
           }
 
           expect((yield* HttpClient.get(`${host.url}/api/ls?glob=%5B`)).status).toBe(400);
@@ -477,7 +497,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           yield* Effect.promise(() => bucket.delete(missingHash));
           const runtime = yield* Effect.promise(() => host.mf.getWorker());
           yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
-          expect((yield* listed(host.url)).map((row) => row.path)).toEqual([
+          expect(Array.map(yield* listed(host.url), (row) => row.path)).toEqual([
             "binary",
             "large",
             "missing",
@@ -592,7 +612,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           ).toMatchObject({ version: 3 });
           const retained = yield* changes(again.url, "daily/demo");
           expect(
-            retained.map((change) => ("value" in change ? change.value.version : null)),
+            Array.map(retained, (change) => ("value" in change ? change.value.version : null)),
           ).toEqual([1, null, 2, 3]);
           const wake = yield* HttpClient.post(`${again.url}/api/admin/wake`, { headers });
           expect(wake.status).toBe(200);

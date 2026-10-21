@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Native Promise filesystem transport boundary. */
+import { Array } from "effect";
 import { expect, test } from "vitest";
 import { FolderHttpFileSystem } from "../../agent/http.ts";
 
@@ -150,9 +151,9 @@ test("anonymous blob uploads and commits omit Authorization", async () => {
   });
 
   await fs.mutate("/docs/binary", new Uint8Array([0, 1]));
-  const writes = requests.filter((request) => request.method === "PUT");
+  const writes = Array.filter(requests, (request) => request.method === "PUT");
   expect(writes).toHaveLength(2);
-  expect(writes.every((request) => !request.headers.has("authorization"))).toBe(true);
+  expect(Array.every(writes, (request) => !request.headers.has("authorization"))).toBe(true);
 });
 
 const fileChange = (path: string, version = 1) => ({

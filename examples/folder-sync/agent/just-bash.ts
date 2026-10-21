@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Implements just-bash Promise filesystem methods. */
 /* oxlint-disable effecttsgo/global-date -- FsStat requires native Date values. */
-import { Predicate } from "effect";
+import { Array, Predicate } from "effect";
 import { InMemoryFs, MountableFs } from "just-bash";
 import type { BufferEncoding, FileContent, FsStat, IFileSystem } from "just-bash";
 import { ShellDevices } from "./devices.ts";
@@ -75,10 +75,10 @@ export function justBashFileSystem(core: FolderHttpFileSystem): IFileSystem {
       await core.mkdir(path, options?.recursive);
     },
     async readdir(path) {
-      return (await core.list(path)).map((entry) => entry.name);
+      return Array.map(await core.list(path), (entry) => entry.name);
     },
     async readdirWithFileTypes(path) {
-      return (await core.list(path)).map((entry) => ({
+      return Array.map(await core.list(path), (entry) => ({
         name: entry.name,
         isFile: entry.kind === "file",
         isDirectory: entry.kind === "directory",

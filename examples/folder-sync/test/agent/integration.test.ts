@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- External filesystem conformance and just-bash Promise harness. */
+import { Array } from "effect";
 import { expect, test } from "vitest";
 import { runFileSystemConformance, runWritableFileSystemConformance } from "@better-fs-tools/fs";
 import { createAgentFileSystem } from "../../agent/index.ts";
@@ -43,14 +44,14 @@ test("Bun agent passes Better FS Tools read and write conformance with atomic CA
       },
     });
 
-    expect(read.checks.filter((check) => !check.ok)).toEqual([]);
+    expect(Array.filter(read.checks, (check) => !check.ok)).toEqual([]);
 
     const write = await runWritableFileSystemConformance(tools, {
       scratchDirectory: "/docs/scratch",
       directoryPath: "/docs/scratch",
     });
 
-    expect(write.checks.filter((check) => !check.ok)).toEqual([]);
+    expect(Array.filter(write.checks, (check) => !check.ok)).toEqual([]);
     expect(tools.writeCapabilities).toEqual({
       atomic: true,
       compareAndSwap: true,
@@ -82,7 +83,7 @@ test("stale reads and commit races return ESTALE, while successful edits use If-
     await expect(b.core.mutate("/docs/a", encoded("blind"))).rejects.toMatchObject({
       code: "ESTALE",
     });
-    const blind = requests.filter((request) => request.method === "PUT").at(-1);
+    const blind = Array.filter(requests, (request) => request.method === "PUT").at(-1);
     expect(blind?.headers.get("if-none-match")).toBe("*");
     expect(blind?.headers.get("if-match")).toBeNull();
     await b.core.read("/docs/a");
@@ -90,18 +91,18 @@ test("stale reads and commit races return ESTALE, while successful edits use If-
     await expect(b.core.mutate("/docs/a", encoded("stale"))).rejects.toMatchObject({
       code: "ESTALE",
     });
-    const stale = requests.filter((request) => request.method === "PUT").at(-1);
+    const stale = Array.filter(requests, (request) => request.method === "PUT").at(-1);
     expect(stale?.headers.get("if-match")).toBe('"1"');
     expect(new TextDecoder().decode((await b.core.read("/docs/a")).bytes)).toBe("two");
     await b.core.mutate("/docs/a", encoded("three"));
     expect(
-      requests
-        .filter((request) => request.method === "PUT")
+      Array.filter(requests, (request) => request.method === "PUT")
         .at(-1)
         ?.headers.get("if-match"),
     ).toBe('"2"');
     expect(
-      requests.some(
+      Array.some(
+        requests,
         (request) =>
           new URL(request.url).pathname === "/api/ls" || request.url.includes("/history/"),
       ),
@@ -137,7 +138,7 @@ test("agent blob uploads precede reference commits and session shell commands st
     expect((await core.read("/docs/large.txt")).bytes).toEqual(large);
     await core.mutate("/docs/nul", new Uint8Array([0, 1, 2]));
     expect((await core.read("/docs/nul")).bytes).toEqual(new Uint8Array([0, 1, 2]));
-    const writes = requests.filter((request) => request.method === "PUT");
+    const writes = Array.filter(requests, (request) => request.method === "PUT");
     expect(new URL(writes[0]?.url ?? "http://localhost").pathname).toMatch(/^\/api\/blobs\//);
     expect(writes[1]?.headers.get("if-none-match")).toBe("*");
     const reference = await writes[1]?.json();
@@ -179,7 +180,7 @@ test("listed unread files can be deleted with If-Match and stale listings return
       { name: "stale.txt", kind: "file" },
     ]);
     await agent.core.mutate("/docs/delete.txt", null);
-    const removed = requests.filter((request) => request.method === "DELETE").at(-1);
+    const removed = Array.filter(requests, (request) => request.method === "DELETE").at(-1);
     expect(removed?.headers.get("if-match")).toBe('"1"');
     expect(removed?.headers.get("if-none-match")).toBeNull();
     expect(await writer.core.stat("/docs/delete.txt")).toBeUndefined();
@@ -188,12 +189,12 @@ test("listed unread files can be deleted with If-Match and stale listings return
     await expect(agent.core.mutate("/docs/stale.txt", null)).rejects.toMatchObject({
       code: "ESTALE",
     });
-    const stale = requests.filter((request) => request.method === "DELETE").at(-1);
+    const stale = Array.filter(requests, (request) => request.method === "DELETE").at(-1);
     expect(stale?.headers.get("if-match")).toBe('"2"');
     expect(new TextDecoder().decode((await writer.core.read("/docs/stale.txt")).bytes)).toBe(
       "newer edit",
     );
-    expect(requests.some((request) => request.url.includes("/api/blobs/"))).toBe(false);
+    expect(Array.some(requests, (request) => request.url.includes("/api/blobs/"))).toBe(false);
   } finally {
     await host.stop();
   }

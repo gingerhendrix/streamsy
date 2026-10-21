@@ -1,3 +1,5 @@
+import { Array } from "effect";
+
 /** Server versions are folder sequences. Feed cursors are stream offsets. */
 export interface KnownHead {
   readonly version: number | null;
@@ -39,17 +41,16 @@ export const conflictPath = (file: string, origin: string, suffix = 0) => {
 
 /** Common editor scratch files are never mirrored or uploaded. */
 export const ignoredPath = (file: string) =>
-  file
-    .split("/")
-    .some(
-      (name) =>
-        name === ".DS_Store" ||
-        name === "4913" ||
-        /\.sw[px]$/.test(name) ||
-        name.endsWith("~") ||
-        name.startsWith(".#") ||
-        (name.startsWith("#") && name.endsWith("#") && name.length > 1),
-    );
+  Array.some(
+    file.split("/"),
+    (name) =>
+      name === ".DS_Store" ||
+      name === "4913" ||
+      /\.sw[px]$/.test(name) ||
+      name.endsWith("~") ||
+      name.startsWith(".#") ||
+      (name.startsWith("#") && name.endsWith("#") && name.length > 1),
+  );
 
 /** Numbered backups retain the extension, including nested paths. */
 export const backupPath = (file: string, suffix: number) => {

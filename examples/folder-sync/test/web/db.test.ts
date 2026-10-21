@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/new-promise -- These browser integration tests exercise native StreamDB promises and an in-process HTTP fetch boundary. */
+import { Array, Option, Order } from "effect";
 import { expect, test } from "vitest";
 import { createFileDb, createFolderDb, editFile } from "../../src/db.ts";
 import { fileUrl, folderStreamUrl } from "../../server/routes.ts";
@@ -98,12 +99,13 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
     await registry.preload();
     await db.preload();
 
-    const bootstraps = f.calls.filter(
+    const bootstraps = Array.filter(
+      f.calls,
       (request) => new URL(request.url).searchParams.get("offset") === "-1",
     );
 
     expect(bootstraps).toHaveLength(2);
-    expect(bootstraps.every((request) => request.cache === "no-cache")).toBe(true);
+    expect(Array.every(bootstraps, (request) => request.cache === "no-cache")).toBe(true);
     expect(registry.collections.folders.get(folderId)?.title).toBe("Docs");
     const before = db.collections.files.get("guide/a.md")!;
     expect(before.version).toBe(1);
@@ -124,8 +126,11 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
     expect(db.collections.files.get(before.path)?.version).toBe(2);
     expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
 
-    const put = f.calls.find(
-      (request) => request.method === "PUT" && request.headers.get("if-match") === '"1"',
+    const put = Option.getOrUndefined(
+      Array.findFirst(
+        f.calls,
+        (request) => request.method === "PUT" && request.headers.get("if-match") === '"1"',
+      ),
     );
 
     expect(await put?.json()).toEqual({
@@ -134,7 +139,9 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
       hash: content.hash,
       size: content.size,
     });
-    expect(f.calls.some((request) => request.url.includes(folderStreamUrl(folderId)))).toBe(true);
+    expect(Array.some(f.calls, (request) => request.url.includes(folderStreamUrl(folderId)))).toBe(
+      true,
+    );
   } finally {
     release();
     registry.close();
@@ -266,11 +273,19 @@ test("browser edits upload blobs before JSON commits and read history from State
       bytes: new TextEncoder().encode(text),
     }).isPersisted.promise;
 
-    const uploadIndex = f.calls.findIndex(
-      (request) => request.method === "PUT" && request.url.includes("/api/blobs/"),
+    const uploadIndex = Option.getOrElse(
+      Array.findFirstIndex(
+        f.calls,
+        (request) => request.method === "PUT" && request.url.includes("/api/blobs/"),
+      ),
+      () => -1,
     );
 
-    const commitIndex = f.calls.findIndex((request) => request.headers.get("if-match") === '"1"');
+    const commitIndex = Option.getOrElse(
+      Array.findFirstIndex(f.calls, (request) => request.headers.get("if-match") === '"1"'),
+      () => -1,
+    );
+
     expect(uploadIndex).toBeGreaterThan(-1);
     expect(commitIndex).toBeGreaterThan(uploadIndex);
     expect(await f.calls[commitIndex]?.json()).not.toHaveProperty("text");
@@ -296,7 +311,8 @@ test("browser edits upload blobs before JSON commits and read history from State
 
     expect(historical.text).toBe("original");
     expect(
-      f.calls.every(
+      Array.every(
+        f.calls,
         (request) => !request.url.includes("/history/") && !request.url.includes("?at="),
       ),
     ).toBe(true);
@@ -422,7 +438,7 @@ test("history clears at a stored reset, retains its suffix and advances forward"
     writerHeaders: () => ({}),
   });
 
-  expect(rows.map((row) => ("value" in row ? row.value.version : null))).toEqual([2, 3]);
+  expect(Array.map(rows, (row) => ("value" in row ? row.value.version : null))).toEqual([2, 3]);
   expect(offsets).toEqual(["-1", "next"]);
 });
 
@@ -447,7 +463,7 @@ test("history 410 drops the old replay and requests -1 once", async () => {
 
   const transport = { origin, fetch: fetcher, writerHeaders: () => ({}) };
   const rows = await history({ folderId: "docs", path: "a" }, undefined, transport);
-  expect(rows.map((row) => ("value" in row ? row.value.version : null))).toEqual([2]);
+  expect(Array.map(rows, (row) => ("value" in row ? row.value.version : null))).toEqual([2]);
   expect(offsets).toEqual(["-1", "expired", "-1"]);
   transport.fetch = Object.assign(async () => new Response(null, { status: 410 }), {
     preconnect: globalThis.fetch.preconnect,
@@ -474,12 +490,12 @@ for (const kind of ["file", "folder"] as const) {
     if (kind === "file") {
       const db = createFileDb(`reset-${kind}`, options);
 
-      return { db, keys: () => [...db.collections.files.keys()].toSorted() };
+      return { db, keys: () => Array.sort([...db.collections.files.keys()], Order.String) };
     }
 
     const db = createFolderDb(options);
 
-    return { db, keys: () => [...db.collections.folders.keys()].toSorted() };
+    return { db, keys: () => Array.sort([...db.collections.folders.keys()], Order.String) };
   };
 
   test(`${kind} StreamDB resets pending bootstrap rows and keeps the following changes`, async () => {

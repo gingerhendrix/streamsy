@@ -1,10 +1,11 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import {
+  Array,
   Clock,
   Duration,
   Effect,
-  FileSystem,
   FiberSet,
+  FileSystem,
   Layer,
   Path,
   Predicate,
@@ -114,7 +115,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
   const { addFolder, discover, followers } = yield* folderDiscovery(context, pull);
 
   // Check every saved folder before installing any file from a resumed mirror.
-  const savedFolders = (yield* state.folders()).filter((id) => selected(context, id));
+  const savedFolders = Array.filter(yield* state.folders(), (id) => selected(context, id));
 
   for (const folderId of savedFolders) yield* pull.guardFolder(folderId);
 

@@ -1,17 +1,23 @@
 import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import { Config, Console, Effect, Layer, Schedule, Schema } from "effect";
+import { Array, Config, Console, Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { prepareContent, Head } from "../server/domain.ts";
 import { FolderKey } from "../server/streams.ts";
 import { ListedFile, SearchResult } from "../server/index-rows.ts";
 import { testDirectory } from "./test-directory.ts";
 
-class SmokeFailure extends Schema.TaggedError<SmokeFailure>()("SmokeFailure", {
-  message: Schema.String,
-}) {}
+class SmokeFailure extends Schema.TaggedError<SmokeFailure, { readonly brand: unique symbol }>()(
+  "SmokeFailure",
+  {
+    message: Schema.String,
+  },
+) {}
 
-class Waiting extends Schema.TaggedError<Waiting>()("Waiting", {}) {}
+class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbol }>()(
+  "Waiting",
+  {},
+) {}
 
 const check = (ok: boolean, message: string) =>
   ok ? Effect.void : Effect.fail(new SmokeFailure({ message }));

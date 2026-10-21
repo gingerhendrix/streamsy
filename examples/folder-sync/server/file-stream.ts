@@ -33,7 +33,7 @@ export const mountFiles = (path: `/${string}` = "/streams/*") =>
     ),
   );
 
-class InvalidFolderStream extends Schema.TaggedError<InvalidFolderStream>()(
-  "InvalidFolderStream",
-  {},
-) {}
+class InvalidFolderStream extends Schema.TaggedError<
+  InvalidFolderStream,
+  { readonly brand: unique symbol }
+>()("InvalidFolderStream", {}) {}

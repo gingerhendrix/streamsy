@@ -1,3 +1,4 @@
+import { Array, Option } from "effect";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import { createFileDb, createFolderDb } from "./db.ts";
@@ -63,7 +64,9 @@ function FolderBrowser({
     return () => controller.abort();
   }, [submitted, searchRevision]);
 
-  const current = data.find((file) => file.path === selection?.path);
+  const current = Option.getOrUndefined(
+    Array.findFirst(data, (file) => file.path === selection?.path),
+  );
 
   return (
     <main className="shell">
@@ -96,7 +99,7 @@ function FolderBrowser({
           </div>
           <p className="muted">Your files, with every version.</p>
           <ul className="tree" aria-label="Folders">
-            {folders.map((folder) => (
+            {Array.map(folders, (folder) => (
               <li key={folder.folderId}>
                 <button
                   className={folder.folderId === folderId ? "selected" : ""}
@@ -108,7 +111,7 @@ function FolderBrowser({
             ))}
           </ul>
           <Tree
-            branch={fileTree(data.map((file) => ({ ...file, folderId })))}
+            branch={fileTree(Array.map(data, (file) => ({ ...file, folderId })))}
             selection={selection}
             open={open}
           />
@@ -146,7 +149,7 @@ function FolderBrowser({
             <section className="search-results" aria-label="Search results">
               <h2>{searching ? "Searching…" : `${hits.length} results for “${submitted}”`}</h2>
               {error && <p role="alert">{error}</p>}
-              {hits.map((hit) => (
+              {Array.map(hits, (hit) => (
                 <button
                   className="search-hit"
                   key={`${hit.folderId}/${hit.path}`}

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { StreamAddress } from "@streamsy/core";
-import { Schema } from "effect";
+import { Array, Schema } from "effect";
 import { applyFileMessage } from "../server/folder-view.ts";
 import {
   afterLastReset,
@@ -64,8 +64,8 @@ test("afterLastReset keeps only the changes after the last reset", () => {
 
 test("the guards tell a reset, an upsert and a delete apart", () => {
   const messages = [reset, snapshotStart, upsert("a", 1), remove("a")];
-  expect(messages.map(isReset)).toEqual([true, false, false, false]);
-  expect(messages.map(isUpsert)).toEqual([false, false, true, false]);
+  expect(Array.map(messages, isReset)).toEqual([true, false, false, false]);
+  expect(Array.map(messages, isUpsert)).toEqual([false, false, true, false]);
 });
 
 test("FileMessage decodes a file change and each State control, with the offset header", () => {

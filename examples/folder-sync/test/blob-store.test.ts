@@ -1,7 +1,7 @@
 import { BunServices, BunCrypto } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Effect, FileSystem, Layer, Stream } from "effect";
+import { Array, Effect, FileSystem, Layer, Stream } from "effect";
 import { BlobStore, memoryBlobs } from "../server/blob-store.ts";
 import { diskBlobs } from "../server/disk-blobs.ts";
 import { FileTooLarge, InvalidFile, sha256 } from "../server/domain.ts";
@@ -33,7 +33,9 @@ for (const [name, host] of [
 
         if (content === undefined) throw new Error("Missing stored blob");
         const chunks = yield* Stream.runCollect(content.body);
-        expect(Array.from(chunks).flatMap((chunk) => [...chunk])).toEqual([0, 255, 1]);
+        expect(Array.flatMap(Array.fromIterable(chunks), (chunk) => [...chunk])).toEqual([
+          0, 255, 1,
+        ]);
         expect(yield* blobs.get("0".repeat(64))).toBeUndefined();
       }),
     );
@@ -41,7 +43,7 @@ for (const [name, host] of [
       Effect.gen(function* () {
         const blobs = yield* BlobStore;
         const chunk = new Uint8Array(1024 * 1024);
-        const oversized = Stream.fromIterable(Array.from({ length: 65 }, () => chunk));
+        const oversized = Stream.fromIterable(Array.makeBy(65, () => chunk));
         expect(yield* Effect.flip(blobs.put("a".repeat(64), oversized))).toBeInstanceOf(
           FileTooLarge,
         );
@@ -78,7 +80,9 @@ layer(BunServices.layer)((it) => {
 
         if (content === undefined) return yield* Effect.die("Missing reopened blob");
         const chunks = yield* Stream.runCollect(content.body);
-        expect(Array.from(chunks).flatMap((chunk) => [...chunk])).toEqual([...bytes]);
+        expect(Array.flatMap(Array.fromIterable(chunks), (chunk) => [...chunk])).toEqual([
+          ...bytes,
+        ]);
 
         return yield* Effect.void;
       }).pipe(Effect.provideContext(reopened));

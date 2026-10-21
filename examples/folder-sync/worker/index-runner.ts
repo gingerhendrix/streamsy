@@ -6,10 +6,10 @@ import { runIndex } from "../server/index-followers.ts";
 import { isUpsert } from "../server/messages.ts";
 import { Files, Folders } from "../server/streams.ts";
 
-export class IndexCatchupFailed extends Schema.TaggedError<IndexCatchupFailed>()(
-  "IndexCatchupFailed",
-  { message: Schema.String },
-) {}
+export class IndexCatchupFailed extends Schema.TaggedError<
+  IndexCatchupFailed,
+  { readonly brand: unique symbol }
+>()("IndexCatchupFailed", { message: Schema.String }) {}
 
 /**
  * The Worker index runs the same search projection as the Bun index, with the

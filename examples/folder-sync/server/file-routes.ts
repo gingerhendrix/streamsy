@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { BlobStore } from "./blob-store.ts";
 import { CommitFile, DeleteFile, InvalidFile, Precondition, VersionFromString } from "./domain.ts";
@@ -108,7 +108,7 @@ const fileHandler = Effect.gen(function* () {
   ),
 );
 
-export const fileRoutes = (["GET", "PUT", "DELETE"] as const).map((method) =>
+export const fileRoutes = Array.map(["GET", "PUT", "DELETE"] as const, (method) =>
   HttpRouter.route(method, "/api/folders/*", fileHandler),
 );
 

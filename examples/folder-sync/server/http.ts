@@ -7,17 +7,20 @@ export const json = HttpServerResponse.jsonUnsafe;
 
 export const JSON_BODY_LIMIT = 512 * 1024;
 
-export class JsonBodyTooLarge extends Schema.TaggedError<JsonBodyTooLarge>()(
-  "JsonBodyTooLarge",
-  {},
-) {}
+export class JsonBodyTooLarge extends Schema.TaggedError<
+  JsonBodyTooLarge,
+  { readonly brand: unique symbol }
+>()("JsonBodyTooLarge", {}) {}
 
-export class UnsupportedMediaType extends Schema.TaggedError<UnsupportedMediaType>()(
-  "UnsupportedMediaType",
-  {},
-) {}
+export class UnsupportedMediaType extends Schema.TaggedError<
+  UnsupportedMediaType,
+  { readonly brand: unique symbol }
+>()("UnsupportedMediaType", {}) {}
 
-export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
+export class Unauthorized extends Schema.TaggedError<
+  Unauthorized,
+  { readonly brand: unique symbol }
+>()("Unauthorized", {}) {}
 
 /** The writer token. With no token, the host accepts no writes. */
 export class WriterToken extends Context.Service<WriterToken, { readonly token: string }>()(

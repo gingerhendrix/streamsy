@@ -10,7 +10,10 @@ import {
 import { FileIndex } from "./file-index.ts";
 import { ListedFile, SearchResult } from "./index-rows.ts";
 
-class IndexBadRequest extends Schema.TaggedError<IndexBadRequest>()(
+class IndexBadRequest extends Schema.TaggedError<
+  IndexBadRequest,
+  { readonly brand: unique symbol }
+>()(
   "IndexBadRequest",
   {
     error: Schema.String,
@@ -18,7 +21,7 @@ class IndexBadRequest extends Schema.TaggedError<IndexBadRequest>()(
   { httpApiStatus: 400 },
 ) {}
 
-class IndexFailure extends Schema.TaggedError<IndexFailure>()(
+class IndexFailure extends Schema.TaggedError<IndexFailure, { readonly brand: unique symbol }>()(
   "IndexFailure",
   {
     error: Schema.String,
