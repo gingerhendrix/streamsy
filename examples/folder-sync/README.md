@@ -2,8 +2,9 @@
 
 A file workspace with a State stream for each folder, a live browser, search,
 a sync CLI and an agent filesystem. Reads follow the folder streams. Writes use
-a JSON API with HTTP preconditions. A stale edit gets 412. Each file value
-carries its version, so a replay gives the same versions.
+a JSON API. Each write names the version it started from, its parent. Concurrent
+writes all land: the last one is the head and history keeps every one. Each file
+value carries its version and parent, so a replay gives the same history.
 
 ## Run on Bun
 
@@ -27,8 +28,8 @@ FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync see
 
 The seed makes one folder per docs section and `docs/root` for root files.
 It includes metadata JSON. Repeating an unchanged corpus adds no versions while
-the remote content still matches. The seed sends no precondition, so it can
-replace user edits. `--server <url>` selects another server.
+the remote content still matches. The seed names the current head as its parent,
+so it can replace user edits. The user edit stays in history. `--server <url>` selects another server.
 
 Run two mirrors in separate terminals, using fresh directories:
 
@@ -39,13 +40,13 @@ FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync syn
 
 Edit `docs/root/tutorial.mdx` in the browser. Both mirrors update. Edit the file
 under `mirror-a/docs/root/`; the browser and the other mirror update. Leave a
-browser draft open, change the file from a mirror, then save the draft. The
-browser keeps the draft and reports a stale edit. **Discard draft and reload**
-takes the current file. History reads the folder stream and can open earlier
+browser draft open, change the file from a mirror, then save the draft. The save
+lands and becomes the head. History shows both versions with the same parent.
+**Discard draft and reload** takes the current file instead. History reads the folder stream and can open earlier
 values. Search opens the version it indexed.
 
 Stop the server, edit a writable mirror, and restart with the same database.
-Queued writes resume. Concurrent edits become conflict copies. Stop the CLIs
+Queued writes resume. Concurrent edits all land, and the last one is the head. Stop the CLIs
 with Ctrl+C when finished. Their state stays under `.folder-sync`.
 
 `PORT` overrides 1339. `FOLDER_SYNC_DB` persists streams, view checkpoints,
@@ -138,6 +139,7 @@ values contain `{ folderId, title }`. File upserts have this shape:
   "value": {
     "path": "guide/intro.md",
     "version": 41,
+    "parent": 40,
     "hash": "<sha256-hex>",
     "size": 8,
     "author": "sync CLI"
@@ -150,13 +152,16 @@ values contain `{ folderId, title }`. File upserts have this shape:
 }
 ```
 
-A delete has `type`, `key` and headers with `operation: "delete"`. It has no
-value or version. Each append contains one change. The server time is for
+A delete is an upsert of a tombstone with the value
+`{ path, version, parent, author, deleted: true }` and no hash. Each append
+contains one change. The server time is for
 display only. A change holds no content. The content is in the blob store under
 `hash`, so every version of every file is addressable by its hash.
 
-The owner assigns the next positive folder sequence to each upsert. Deletes
-take no number. The version never goes down after delete or restart.
+The owner assigns the next positive folder sequence to each change, a tombstone
+too. `parent` is the version that the writer started from, or `null`. The version
+never goes down after delete or restart. A tombstone is a row, so a later State
+compaction keeps its version and the high-water mark.
 Compare versions only for equality on the same path in the same folder.
 Offsets are read cursors. They never name file versions. The append uses
 `expectedOffset` as a write guard.
@@ -170,9 +175,11 @@ the checkpoint on its first write in a process and every 32 writes after that. A
 save that fails is tried again 32 writes later. A lagging or missing checkpoint
 costs only a longer fold.
 
-The view holds metadata only: version, hash, size, author and txid. `GET` of a
-file looks up the hash in the view and streams that blob. A file with a short
-path and txid costs about 200 bytes of checkpoint.
+The view holds metadata only: version, parent, hash, size, author and txid of
+each live path, the tombstone version of each deleted path, and the retry memory
+of the last 1024 changes (about 200 KiB with short paths). `GET` of a file looks up the
+hash in the view and streams that blob. A file with a short path and txid costs
+about 200 bytes of checkpoint.
 A Worker keeps the checkpoint in one Durable Object SQLite row, and a row holds at
 most 2 MB, so one folder holds about 10,000 such files. Long paths lower that
 number. Past it, the save fails and logs a warning, writes still land, and each
@@ -198,31 +205,44 @@ JSON write bodies are limited to 512 KiB. Send `Content-Type: application/json`.
 A JSON write with another content type gets 415 on both hosts: folder creation,
 file commits and file deletes.
 
-| Request                                 | Body                           | Result                                                      |
-| --------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
-| `POST /api/folders`                     | `{ txid, folderId, title }`    | 200; same ID and title is a no-op, another title gets 409   |
-| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, hash, size }` | 200 with `{ version, txid, hash }` and a version ETag       |
-| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author }`             | 200 with `{ txid }`; already absent gives `{}` with no txid |
-| `GET /api/folders/<id>/files/<path>`    | none                           | Content bytes with `ETag: "<version>"`, or 404              |
+`POST /api/folders` takes `{ txid, folderId, title }`. The same ID and title is
+a no-op, and another title gets 409.
 
-The path comes from the URL. The owner sets the version. Choose a precondition:
+| Request                                 | Body                                   | Result                                                                    |
+| --------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, parent, hash, size }` | 200 with `{ version, parent, txid, hash }` and a version ETag             |
+| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author, parent }`             | 200 with `{ version, parent, txid }`; no live file gives `{}`             |
+| `GET /api/folders/<id>/files/<path>`    | none                                   | Content bytes with `ETag: "<version>"`, or 404 with `{ error, deleted? }` |
 
-| Header             | Meaning                                      |
-| ------------------ | -------------------------------------------- |
-| `If-Match: "41"`   | Write only if this path still has version 41 |
-| `If-None-Match: *` | Create only if the path has no live file     |
-| none               | Last writer wins                             |
+The path comes from the URL. The owner sets the version. `parent` is the version
+that the writer started from, or `null` when it saw no file at the path. A parent
+after the folder's last version gets 400. The server records the parent and does
+not compare it with the head, so every accepted write lands. The last write in
+stream order is the head. `If-Match` and `If-None-Match` are not part of the
+protocol, and a write that sends one gets 400.
 
-A precondition miss gets 412 with the current `{ version, txid, hash }` and its
-ETag, or `{ "head": null }` when absent. Delete rejects `If-None-Match`.
-`If-Match: *`, weak tags and tag lists get 400. The API supports only one quoted
-positive version.
+A delete appends a tombstone: an upsert whose value is
+`{ path, version, parent, author, deleted: true }`. It takes a version like any
+other change. A read of a deleted path gets 404 with `deleted: <version>`, so a
+writer can name the tombstone as the parent of a new file. Readers treat a
+tombstone as a delete.
 
-After it checks that the blob exists, the owner checks for the current hash before checking
-the precondition. Matching content returns the current head and appends nothing,
-even when the supplied version is stale. Retry a network error or 5xx with the
-same body and precondition. If another writer changed the head, a conditional
-retry can get 412. An unconditioned retry remains last writer wins.
+The owner applies three rules in this order:
+
+1. **Retry.** The folder view remembers the answers of its last 1024 changes by
+   txid. A write whose txid is in that memory gets its first answer again and
+   appends nothing, even when other writes landed since. The memory checks the
+   path and the kind of change: a txid used again for another path, or for a
+   delete after a commit, gets 400.
+2. **Same content.** A commit whose hash matches the head returns the current
+   head and appends nothing. A delete of a path with no live file returns `{}`.
+3. **Append.** Otherwise the change gets the next version and becomes the head.
+
+Retry a network error or 5xx with the same body. A retry that arrives after 1024
+other changes in the folder lands again as a new head; its parent shows that it
+is old. Two writes with the same parent are a fork. A reader can find a fork
+with one pass over the stream: a change whose parent is not the version of the
+change before it on the same path.
 
 Wait for the txid in the answer to appear on the stream. It can differ from the
 request's txid when another writer stored the same content first. A no-op delete
@@ -252,11 +272,15 @@ Uploads and commits are separate, so an abandoned upload can leave an orphan.
 The browser uses one `createStreamDB` for the registry and one for the open
 folder. TanStack DB live queries build the tree from these collections. File
 upserts replace complete rows.
-An edit appears optimistically, uploads the blob, sends `If-Match`, and waits for the answer's
-txid through `awaitTxId`. A failed save rolls back the optimistic row and keeps
-the draft. The accepted version becomes the next edit's base.
+An edit appears optimistically, uploads the blob, commits with the draft's base as
+its parent, and waits for the answer's txid through `awaitTxId`. A save from an
+old base lands and becomes the head. A failed save rolls back the optimistic row
+and keeps the draft. The accepted version becomes the next edit's base. One
+adapter turns a tombstone upsert into a State delete, so TanStack DB sees the
+same rows as for a plain delete.
 
-History is a paginated replay of the folder stream filtered by path. Earlier
+History is a paginated replay of the folder stream filtered by path. Each entry
+shows its parent, and a tombstone shows as a versioned delete. Earlier
 content comes from the blob that the saved value's hash names. Markdown and MDX
 display without executing HTML or JSX. Search snippets render as escaped text.
 Binary files offer a download. Drafts stay in memory and are lost on navigation
@@ -281,12 +305,14 @@ the server history or use a fresh mirror after resolving the restore. No file
 version is compared numerically to detect a rewind.
 
 Each folder bootstraps by replay, then stays live. Unchanged local files take
-remote content. A local edit uses its observed version with `If-Match`; a new
-path uses `If-None-Match: *`. On 412, its bytes become a
-`name.conflict-<client>[-n].ext` sibling. The original path takes the server file,
-and the sibling syncs as a new file. A delete without an observed version sends
-no request. A stale delete keeps the remote file. A reset clears folder state
-and consumes the rest of that page; 410 replays from `-1` and reconciles again.
+remote content. A local edit names the version that its disk copy came from as
+its parent. A new path names the tombstone version when the path was deleted,
+or `null`. Every write lands: a pulled change installs over the local file, and
+a local edit that is still queued is sent later and becomes the head. A first
+sync that finds a local file with other bytes than the server commits the local
+file with parent `null`. The server copy stays in history. A delete without an
+observed version sends no request. A reset clears folder state and consumes the
+rest of that page; 410 replays from `-1` and reconciles again.
 
 SQLite stores observations, cursors and queued operations. Immutable source
 files under `.folder-sync/content/<hash>` keep pending bytes safe across edits
@@ -331,12 +357,14 @@ Folder discovery uses the registry. `folderDirectory(id)` applies the same
 mapping rules as the CLI. Writable folders default to none. Root and synthetic
 parents are read-only.
 
-Content writes use the version seen by a read or successful write, or an explicit
-version precondition. A write to a path the session never read uses
-`If-None-Match: *`, even if listing found it. A 412 becomes `ESTALE`; read again
-before retrying. Deletes may use a listed version without reading the bytes.
-That version is pinned before refresh, so a stale listing also gets `ESTALE`.
-The Better FS Tools adapter advertises atomic writes and compare-and-swap.
+A content write names the version seen by a read or successful write as its
+parent. A write to a path the session never read has parent `null`, even if
+listing found it. A delete may name a listed version without reading the bytes.
+Every write lands, so a stale read or listing makes a fork in history and does
+not fail. An explicit precondition (`absent` or `version`) is checked against a
+fresh snapshot before the commit and fails with `EEXIST` or `ESTALE`. That check
+is not atomic with the commit. The Better FS Tools adapter advertises atomic
+writes and no compare-and-swap.
 
 Shell globs use the session path snapshot. List again after external edits.
 Empty directories are session-only. Links, persistent modes and atomic rename
