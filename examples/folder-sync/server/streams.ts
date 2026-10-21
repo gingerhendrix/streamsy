@@ -1,6 +1,6 @@
 import { Streamsy, type StreamAddress } from "@streamsy/core";
 import { Schema } from "effect";
-import { File, FolderId, Identifier } from "./domain.ts";
+import { FileValue, FolderId, Identifier } from "./domain.ts";
 
 /** Hex UTF-8 is an injective, canonical stream-id segment for opaque folder ids. */
 export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(FolderId)));
@@ -16,7 +16,7 @@ export class Folders extends Streamsy.state<Folders>()("FolderSync/Folders", "fo
 
 export class Files extends Streamsy.state<Files>()("FolderSync/Files", "folders/:folderId/files", {
   params: { folderId: FolderKey },
-  collections: { file: { schema: File, key: "path" } },
+  collections: { file: { schema: FileValue, key: "path" } },
 }) {}
 
 export type FileChange = StreamAddress.CollectionsChange<typeof Files.collections>;

@@ -1,37 +1,23 @@
-import { Array, Effect, Schema } from "effect";
+import { Array, Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { BlobStore } from "./blob-store.ts";
-import { CommitFile, DeleteFile, InvalidFile, Precondition, VersionFromString } from "./domain.ts";
+import { CommitFile, DeleteFile, InvalidFile } from "./domain.ts";
 import { FolderStore } from "./folder-store.ts";
 import { authorize, json, jsonBody, requestFailures, storageFailure } from "./http.ts";
 
-/** Read `If-Match: "<version>"` or `If-None-Match: *`. A write may send one of them. */
-const precondition = Effect.fn("Api.precondition")(function* (
-  headers: Readonly<Record<string, string | undefined>>,
-) {
-  const match = headers["if-match"];
-  const absent = headers["if-none-match"];
-
-  if (match !== undefined && absent !== undefined)
-    return yield* new InvalidFile({ message: "Conflicting preconditions" });
-
-  if (absent !== undefined) {
-    if (absent !== "*") return yield* new InvalidFile({ message: "Expected If-None-Match: *" });
-
-    return Precondition.IfAbsent();
-  }
-
-  if (match === undefined) return Precondition.Unconditional();
-
-  if (!/^"[1-9]\d*"$/.test(match))
-    return yield* new InvalidFile({ message: "Expected a quoted version in If-Match" });
-
-  const version = yield* Schema.decodeEffect(VersionFromString)(match.slice(1, -1)).pipe(
-    Effect.mapError(() => new InvalidFile({ message: "Invalid version" })),
-  );
-
-  return Precondition.IfMatch({ version });
-});
+/**
+ * Writes carry their parent in the body and have no precondition. A request that
+ * still sends one expects a compare-and-set that the server does not give, so it
+ * gets `400` and not a silent last-writer-wins.
+ */
+const refusePreconditions = (headers: Readonly<Record<string, string | undefined>>) =>
+  headers["if-match"] === undefined && headers["if-none-match"] === undefined
+    ? Effect.void
+    : Effect.fail(
+        new InvalidFile({
+          message: "Preconditions are not supported. Send the parent version in the body.",
+        }),
+      );
 
 const decodeSegment = (segment: string) =>
   Effect.try({
@@ -58,16 +44,16 @@ const fileHandler = Effect.gen(function* () {
   const path = yield* decodeSegment(route[2] ?? "");
 
   if (request.method === "PUT") {
-    const condition = yield* precondition(request.headers);
-    const head = yield* store.commit(folderId, path, yield* jsonBody(CommitFile), condition);
+    yield* refusePreconditions(request.headers);
+    const head = yield* store.commit(folderId, path, yield* jsonBody(CommitFile));
 
     return json(head, { headers: { etag: `"${head.version}"` } });
   }
 
   if (request.method === "DELETE") {
-    const condition = yield* precondition(request.headers);
+    yield* refusePreconditions(request.headers);
 
-    return json(yield* store.remove(folderId, path, yield* jsonBody(DeleteFile), condition));
+    return json(yield* store.remove(folderId, path, yield* jsonBody(DeleteFile)));
   }
 
   // The view names the content by hash. The bytes come from the blob store.
@@ -89,13 +75,9 @@ const fileHandler = Effect.gen(function* () {
         Effect.succeed(json({ error: "blob-missing", hash }, { status: 409 })),
       FileTooLarge: () =>
         Effect.succeed(json({ error: "Files must be at most 64 MiB" }, { status: 413 })),
-      PreconditionFailed: ({ head }) =>
-        Effect.succeed(
-          json(head ?? { head: null }, {
-            status: 412,
-            headers: head === null ? {} : { etag: `"${head.version}"` },
-          }),
-        ),
+      // The last change of the path is a tombstone. Its version is the parent of a new write.
+      DeletedFile: ({ version }) =>
+        Effect.succeed(json({ error: "File not found", deleted: version }, { status: 404 })),
       WriteConflict: () =>
         Effect.succeed(
           json(

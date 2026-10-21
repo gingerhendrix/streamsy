@@ -16,7 +16,7 @@ import {
 } from "../server/search-index.ts";
 import type { FileMessage } from "../server/messages.ts";
 import { BlobStore } from "../server/blob-store.ts";
-import { Precondition, prepareContent } from "../server/domain.ts";
+import { prepareContent } from "../server/domain.ts";
 import { Files, Folders } from "../server/streams.ts";
 import { IndexRunner, IndexRunnerLive } from "../worker/index-runner.ts";
 import { registerFolder } from "../server/folder-registry.ts";
@@ -44,7 +44,7 @@ const graph = Layer.mergeAll(Initialise, FolderStoreLive, FileIndexLive).pipe(
 const fileMessage = (path: string, version = 1): FileMessage => ({
   type: "file",
   key: path,
-  value: { path, version, hash: "0".repeat(64), size: 6, author: "test" },
+  value: { path, version, parent: null, hash: "0".repeat(64), size: 6, author: "test" },
   headers: { operation: "upsert", txid: path },
 });
 
@@ -64,6 +64,7 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
           ...(yield* storedText("needle")),
           txid: folderId,
           author: "test",
+          parent: null,
         });
 
       const retained = Option.getOrUndefined(
@@ -103,6 +104,7 @@ layer(graph, { excludeTestServices: true })((it) => {
           ...(yield* storedText("needle")),
           txid: folderId,
           author: "test",
+          parent: null,
         });
       const goneId = Files.at({ folderId: "gone-bootstrap" }).id;
       const messages: unknown[] = [];
@@ -173,6 +175,7 @@ layer(graph, { excludeTestServices: true })((it) => {
         ...(yield* storedText("needle")),
         txid: "one",
         author: "test",
+        parent: null,
       });
       yield* runIndex("gone-index");
       const reads: string[] = [];
@@ -233,7 +236,12 @@ layer(graph, { excludeTestServices: true })((it) => {
       yield* store.create("runner-a", "A", "runner-a");
       // The Worker registers a folder before its object creates the stream.
       yield* registerFolder({ folderId: "runner-pending", title: "Pending", txid: "pending" });
-      yield* store.commit("runner-a", "a.md", { ...content, author: "test", txid: "a" });
+      yield* store.commit("runner-a", "a.md", {
+        ...content,
+        author: "test",
+        txid: "a",
+        parent: null,
+      });
 
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each test builds one runner over the shared test graph.
       const runner = yield* IndexRunner.pipe(Effect.provide(IndexRunnerLive));
@@ -246,7 +254,12 @@ layer(graph, { excludeTestServices: true })((it) => {
       expect(yield* paths).toEqual(["a.md"]);
 
       // A ping folds on from the saved checkpoint.
-      yield* store.commit("runner-a", "b.md", { ...content, author: "test", txid: "b" });
+      yield* store.commit("runner-a", "b.md", {
+        ...content,
+        author: "test",
+        txid: "b",
+        parent: null,
+      });
       yield* runner.moved("runner-a");
       expect(yield* paths).toEqual(["a.md", "b.md"]);
       yield* runner.moved("runner-pending");
@@ -262,7 +275,12 @@ layer(graph, { excludeTestServices: true })((it) => {
       const content = yield* storedText("needle");
       yield* store.create("runner-broken", "Broken", "runner-broken");
       yield* store.create("runner-healthy", "Healthy", "runner-healthy");
-      yield* store.commit("runner-healthy", "h.md", { ...content, author: "test", txid: "h" });
+      yield* store.commit("runner-healthy", "h.md", {
+        ...content,
+        author: "test",
+        txid: "h",
+        parent: null,
+      });
       const broken = Files.at({ folderId: "runner-broken" }).id;
 
       const runner = yield* IndexRunner.pipe(
@@ -376,6 +394,7 @@ layer(graph, { excludeTestServices: true })((it) => {
           ...(yield* storedText(path)),
           txid: path,
           author: "test",
+          parent: null,
         });
       yield* until(index.list({ folder: "glob" }), (rows) => rows.length === 2);
       const actual = yield* index.list({ folder: "glob", glob: "[!a]*.md" });
@@ -395,7 +414,12 @@ layer(graph, { excludeTestServices: true })((it) => {
       const bytes = new TextEncoder().encode("lostneedle " + "x".repeat(65536));
       const content = yield* prepareContent(bytes);
       yield* blobs.put(content.hash, Stream.succeed(bytes));
-      yield* store.commit("lost-blob", "lost", { ...content, author: "test", txid: "lost" });
+      yield* store.commit("lost-blob", "lost", {
+        ...content,
+        author: "test",
+        txid: "lost",
+        parent: null,
+      });
       const warnings: unknown[] = [];
       const logger = Logger.make(({ message }) => warnings.push(message));
       const projection = search.at({ folderId: "lost-blob" });
@@ -415,6 +439,7 @@ layer(graph, { excludeTestServices: true })((it) => {
         ...(yield* storedText("nextneedle")),
         author: "test",
         txid: "next",
+        parent: null,
       });
       yield* Projection.run(projection).pipe(
         Effect.provideService(BlobStore, {
@@ -442,26 +467,23 @@ layer(graph, { excludeTestServices: true })((it) => {
         ...(yield* storedText("oldneedle")),
         txid: "first",
         author: "Zoë",
+        parent: null,
       };
 
       yield* store.commit("opaque/id", "docs/a.md", body);
       yield* until(index.search("oldneedle"), (rows) => rows.length === 1);
-      yield* store.commit(
-        "opaque/id",
-        "docs/a.md",
-        {
-          ...(yield* storedText("newneedle")),
-          txid: "second",
-          author: "Zoë",
-        },
-        Precondition.IfMatch({ version: 1 }),
-      );
+      yield* store.commit("opaque/id", "docs/a.md", {
+        ...(yield* storedText("newneedle")),
+        txid: "second",
+        author: "Zoë",
+        parent: 1,
+      });
       yield* until(index.search("newneedle"), (rows) => rows.length === 1);
       expect(yield* index.search("oldneedle")).toEqual([]);
       expect(
         (yield* index.list({ folder: "opaque/id", prefix: "docs/", glob: "**/*.md" }))[0],
       ).toMatchObject({ path: "docs/a.md", version: 2, author: "Zoë" });
-      yield* store.remove("opaque/id", "docs/a.md", { txid: "delete", author: "test" });
+      yield* store.remove("opaque/id", "docs/a.md", { txid: "delete", author: "test", parent: 2 });
       yield* until(index.list({ folder: "opaque/id" }), (rows) => rows.length === 0);
       expect(yield* index.search("newneedle")).toEqual([]);
       expect(yield* Effect.flip(index.search('"unterminated'))).toMatchObject({
@@ -492,6 +514,7 @@ layer(graph, { excludeTestServices: true })((it) => {
           size: content.size,
           author: "test",
           txid: path,
+          parent: null,
         });
       }
 
@@ -511,6 +534,7 @@ layer(graph, { excludeTestServices: true })((it) => {
         ...(yield* storedText("rollbackneedle")),
         txid: "first",
         author: "test",
+        parent: null,
       });
       const projection = search.at({ folderId: "rollback-index" });
 

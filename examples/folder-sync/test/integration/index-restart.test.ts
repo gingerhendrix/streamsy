@@ -41,12 +41,14 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
                   ...(yield* storedText(`restartneedle ${run}`)),
                   txid: `old-${run}`,
                   author: "test",
+                  parent: null,
                 });
                 yield* store.create(`new/${run}`, "New", `folder-${run}`);
                 yield* store.commit(`new/${run}`, "b", {
                   ...(yield* storedText("restartneedle new")),
                   txid: `new-${run}`,
                   author: "test",
+                  parent: null,
                 });
 
                 const listed = yield* index.list().pipe(

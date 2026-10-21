@@ -137,7 +137,7 @@ export const runSync = Effect.fn("FolderSync.run")(function* (options: SyncOptio
           (yield* state.hasPending(row.folderId, row.path))
         )
           continue;
-        // An interrupted install or conflict refresh left the disk on an older observation.
+        // An interrupted install or refresh left the disk on an older observation.
         // Capture edits made while stopped before replacing anything or advancing their base.
         yield* install.observe(row.folderId, row.path);
         yield* install.refresh(row.folderId, row.path);

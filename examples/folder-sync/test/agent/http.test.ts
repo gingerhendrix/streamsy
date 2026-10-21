@@ -159,7 +159,7 @@ test("anonymous blob uploads and commits omit Authorization", async () => {
 const fileChange = (path: string, version = 1) => ({
   type: "file",
   key: path,
-  value: { path, version, hash: "a".repeat(64), size: 1, author: "test", text: path },
+  value: { path, version, parent: null, hash: "a".repeat(64), size: 1, author: "test", text: path },
   headers: { operation: "upsert", txid: `file:${path}:${version}` },
 });
 

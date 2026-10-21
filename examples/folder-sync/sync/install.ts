@@ -1,18 +1,21 @@
 import { Effect } from "effect";
-import { normalisePath, type File } from "../server/domain.ts";
+import { isTombstone, normalisePath, type File, type FileValue } from "../server/domain.ts";
 import { filePath, folderPath, freePath, skip, writable, type SyncContext } from "./context.ts";
-import { backupPath, conflictBase, conflictPath, ignoredPath, isEcho } from "./decisions.ts";
+import { backupPath, editBase, ignoredPath, isEcho } from "./decisions.ts";
 import { cacheBody, captureLocal, LocalFailure, replaceSource, safePath } from "./local.ts";
 import type { Known } from "./state.ts";
 
 /**
  * Local observation and remote installation for one sync run. `observe` queues
- * a local edit. `install` puts a remote value on disk and keeps any local edit
+ * a local edit. `install` puts a remote value on disk and queues any local edit
  * that it would replace. `refresh` reads the current head from the server and
  * installs it. Callers hold the gate.
+ *
+ * A known row keeps the version of the last change of the path, a tombstone too.
+ * That version is the parent of the next local edit.
  */
 export const installer = (context: SyncContext) => {
-  const { fs, path, crypto, state, remote, root, clientId } = context;
+  const { fs, path, crypto, state, remote, root } = context;
   const exists = (file: string) => fs.exists(path.join(root, file));
 
   const cache = Effect.fn("Sync.cache")(function* (value: File) {
@@ -28,6 +31,7 @@ export const installer = (context: SyncContext) => {
     return captured;
   });
 
+  /** Queue the local state of a path as a write based on `base`. */
   const observe = Effect.fn("Sync.observe")(function* (folderId: string, file: string) {
     if (ignoredPath(file)) return;
     const normalized = yield* normalisePath(file);
@@ -44,7 +48,7 @@ export const installer = (context: SyncContext) => {
         folderId,
         path: normalized,
         txid: yield* crypto.randomUUIDv4(),
-        base: conflictBase(known),
+        base: editBase(known),
         hash,
         size: local?.size ?? 0,
         source: local?.source ?? null,
@@ -61,22 +65,21 @@ export const installer = (context: SyncContext) => {
     );
   }, skip(context));
 
-  /** A first sync found a local file that differs from the server. Keep it as a new conflict file. */
-  const keepBootstrapConflict = Effect.fn("Sync.keepBootstrapConflict")(function* (
+  /**
+   * A first sync found a local file that differs from the server. The local file
+   * is committed with parent `null`: it becomes the head, and the server copy
+   * stays in history. A fork detector sees a fork from "no file".
+   */
+  const keepFirstSyncEdit = Effect.fn("Sync.keepFirstSyncEdit")(function* (
     folderId: string,
     file: string,
     local: { readonly source: string; readonly hash: string; readonly size: number },
+    value: FileValue | null,
   ) {
-    const copy = yield* freePath(
-      (suffix) => conflictPath(file, clientId, suffix),
-      (candidate) => exists(filePath(context, folderId, candidate)),
-    );
-
-    yield* replaceSource(root, filePath(context, folderId, copy), local.source);
     yield* state.enqueue(
       {
         folderId,
-        path: copy,
+        path: file,
         txid: yield* crypto.randomUUIDv4(),
         base: null,
         ...local,
@@ -84,14 +87,14 @@ export const installer = (context: SyncContext) => {
       },
       {
         folderId,
-        path: copy,
-        version: null,
-        hash: null,
+        path: file,
+        version: value?.version ?? null,
+        hash: liveHash(value),
         localHash: local.hash,
         localVersion: null,
       },
     );
-    yield* Effect.logWarning(`Preserved bootstrap conflict: ${folderId}/${copy}`);
+    yield* Effect.logWarning(`First sync keeps the local file as the head: ${folderId}/${file}`);
   });
 
   /** A read-only mirror cannot upload an edit. Move it under `.folder-sync/rejected`. */
@@ -110,36 +113,35 @@ export const installer = (context: SyncContext) => {
   const install = Effect.fn("Sync.install")(function* (
     folderId: string,
     file: string,
-    value: File | null,
-    bootstrap = false,
+    value: FileValue | null,
   ) {
     const known = yield* state.head(folderId, file);
-    const remoteHash = value?.hash ?? null;
+    const remoteHash = liveHash(value);
+    const version = value?.version ?? null;
 
     if (yield* state.hasPending(folderId, file)) {
-      if (known !== undefined)
-        yield* state.save({ ...known, version: value?.version ?? null, hash: remoteHash });
+      if (known !== undefined) yield* state.save({ ...known, version, hash: remoteHash });
 
       return;
     }
 
     // Download before observing the working file: editors keep writing while a blob read waits.
-    const content = value === null ? null : yield* cache(value);
+    const live = value === null || isTombstone(value) ? null : value;
+    const content = live === null ? null : yield* cache(live);
     const local = yield* captureLocal(root, filePath(context, folderId, file));
     const hash = local?.hash ?? null;
 
     if (local !== null && hash !== remoteHash && !isEcho(hash, known)) {
       if (!writable(context, folderId)) yield* keepReadOnlyEdit(folderId, file, local.source);
-      else if (bootstrap || known === undefined)
-        yield* keepBootstrapConflict(folderId, file, local);
-      else {
+      else if (known === undefined) {
+        // The local file stays on disk and becomes the head when the outbox sends it.
+        yield* keepFirstSyncEdit(folderId, file, local, value);
+
+        return;
+      } else {
+        // A local edit that the mirror has not queued yet. It is sent later and becomes the head.
         yield* observe(folderId, file);
-        yield* state.save({
-          ...known,
-          version: value?.version ?? null,
-          hash: remoteHash,
-          localHash: hash,
-        });
+        yield* state.save({ ...known, version, hash: remoteHash, localHash: hash });
 
         return;
       }
@@ -148,7 +150,7 @@ export const installer = (context: SyncContext) => {
     const row: Known = {
       folderId,
       path: file,
-      version: value?.version ?? null,
+      version,
       hash: remoteHash,
       localHash: known?.localHash ?? null,
       localVersion: known?.localVersion ?? null,
@@ -159,16 +161,30 @@ export const installer = (context: SyncContext) => {
     yield* state.save({ ...row, localHash: remoteHash, localVersion: row.version });
   }, skip(context));
 
-  /** Install the server's current head of one path, or remove the path when the server has none. */
+  /**
+   * Install the server's current head of one path. A deleted path installs its
+   * tombstone version, and a path that never existed installs nothing.
+   */
   const refresh = Effect.fn("Sync.refresh")(function* (folderId: string, file: string) {
     const head = yield* remote.head(folderId, file);
 
     if (head === null) return yield* install(folderId, file, null);
+
+    if ("deleted" in head)
+      return yield* install(folderId, file, {
+        path: file,
+        version: head.deleted,
+        parent: null,
+        author: "server",
+        deleted: true,
+      });
     const content = yield* cacheBody(root, head.body);
 
+    // `install` reads only the version and the content. The parent and author are not sent here.
     return yield* install(folderId, file, {
       path: file,
       version: head.version,
+      parent: null,
       hash: content.hash,
       size: content.size,
       author: "server",
@@ -179,3 +195,7 @@ export const installer = (context: SyncContext) => {
 };
 
 export type Install = ReturnType<typeof installer>;
+
+/** The content hash of a live value. A tombstone and a missing path have none. */
+const liveHash = (value: FileValue | null) =>
+  value === null || isTombstone(value) ? null : value.hash;

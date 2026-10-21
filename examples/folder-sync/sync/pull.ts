@@ -1,6 +1,6 @@
 import { StreamAddress } from "@streamsy/core";
 import { Array, Effect, Schema } from "effect";
-import type { File } from "../server/domain.ts";
+import type { FileValue } from "../server/domain.ts";
 import { applyChanges, isReset, isUpsert, type FileMessage } from "../server/messages.ts";
 import { RemoteFailure, type SyncRemote } from "./client.ts";
 import { folderPath, type SyncContext } from "./context.ts";
@@ -40,13 +40,13 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
     return saved;
   });
 
-  /** Read to the tail and fold the live files. A 410 reads again from -1. */
+  /** Read to the tail and fold the last change of each path, tombstones too. A 410 reads again from -1. */
   const readReplacement = Effect.fn("Sync.readReplacement")(function* (
     folderId: string,
     from: string,
     first?: Page,
   ) {
-    const files = new Map<string, File>();
+    const files = new Map<string, FileValue>();
     let cursor = from;
     let pending = first;
 
@@ -86,7 +86,7 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
   /** Every path that a replacement must reconcile: the new state, known heads and `extra`. */
   const replacedPaths = Effect.fn("Sync.replacedPaths")(function* (
     folderId: string,
-    files: ReadonlyMap<string, File>,
+    files: ReadonlyMap<string, FileValue>,
     extra: Iterable<string> = [],
   ) {
     return new Set([...files.keys(), ...(yield* state.paths(folderId)), ...extra]);
@@ -109,7 +109,7 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
           // A brand-new local path is a create, not a deletion discovered during replay.
           if (!files.has(file) && (yield* state.head(folderId, file)) === undefined)
             yield* observe(folderId, file);
-          else yield* install(folderId, file, files.get(file) ?? null, true);
+          else yield* install(folderId, file, files.get(file) ?? null);
         }
 
         yield* state.set(cursorKey(folderId), cursor);
@@ -153,7 +153,7 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
         yield* gate.withPermit(
           Effect.gen(function* () {
             for (const file of yield* replacedPaths(folderId, files))
-              yield* install(folderId, file, files.get(file) ?? null, true);
+              yield* install(folderId, file, files.get(file) ?? null);
             yield* state.set(cursorKey(folderId), replay);
           }),
         );

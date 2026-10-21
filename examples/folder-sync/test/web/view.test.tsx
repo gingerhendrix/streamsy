@@ -24,18 +24,17 @@ test("search snippet content is text even inside highlighted matches", () => {
 
 test("file tree keeps opaque folder ids and handles file-directory name collisions", () => {
   const row = {
-    id: "a",
     folderId: "docs/雪",
     version: 1,
+    parent: null,
     hash: "a",
     size: 1,
-    updatedAt: "now",
     author: "test",
   };
 
   const root = fileTree([
     { ...row, path: "a" },
-    { ...row, id: "b", path: "a/b.md" },
+    { ...row, path: "a/b.md" },
   ]);
 
   const folder = root.children.get("docs/雪");

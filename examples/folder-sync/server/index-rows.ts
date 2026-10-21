@@ -5,7 +5,11 @@ import { File, FolderId, Version } from "./domain.ts";
 export const ListedFile = Schema.Struct({
   id: Schema.String,
   folderId: FolderId,
-  ...File.fields,
+  path: File.fields.path,
+  version: File.fields.version,
+  hash: File.fields.hash,
+  size: File.fields.size,
+  author: File.fields.author,
   updatedAt: Schema.String,
 });
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownLink } from "./MarkdownLink.tsx";
 import { draftReads } from "./draft-reads.ts";
-import { isUpsert } from "../server/messages.ts";
+import { isLive, isUpsert } from "../server/messages.ts";
 import { fileUrl } from "../server/routes.ts";
 import { historyReader, readFile } from "./client.ts";
 import type { History, OpenFile, Selection } from "./client.ts";
@@ -88,13 +88,7 @@ export function FilePanel({
     setMessage("");
     void editFile(
       db,
-      {
-        path: selection.path,
-        version: sent.base,
-        hash: file.hash,
-        size: file.size,
-        author: sent.author,
-      },
+      { path: selection.path, version: sent.base },
       sent.text,
       sent.author,
       sent.txid,
@@ -156,7 +150,8 @@ export function FilePanel({
       )}
       {dirty && headVersion && file?.version !== headVersion && (
         <p className="notice">
-          The server has a newer version. Your draft keeps its original base.
+          The server has a newer version. A save makes your draft the head, and the other version
+          stays in history.
         </p>
       )}
       {!file ? (
@@ -221,17 +216,23 @@ export function FilePanel({
         </h3>
         {Array.map(Array.reverse(rows), (change, index) => (
           <div key={`${change.headers.txid ?? ""}:${index}`} className="history-entry">
-            {isUpsert(change) ? (
+            {isLive(change) ? (
               <>
                 <button onClick={() => open({ ...selection, at: change.value.version })}>
                   {change.value.version}
                 </button>
                 <span>
-                  Written by {change.value.author} · {change.headers.timestamp ?? "earlier log"}
+                  Written by {change.value.author} · {parentLabel(change.value.parent)} ·{" "}
+                  {change.headers.timestamp ?? "earlier log"}
                 </span>
               </>
             ) : (
-              <span>Deleted · {change.headers.timestamp ?? "earlier log"}</span>
+              <span>
+                Deleted
+                {isUpsert(change) &&
+                  ` as ${change.value.version} by ${change.value.author} · ${parentLabel(change.value.parent)}`}{" "}
+                · {change.headers.timestamp ?? "earlier log"}
+              </span>
             )}
           </div>
         ))}
@@ -239,3 +240,6 @@ export function FilePanel({
     </section>
   );
 }
+
+/** The version that a change started from. A fork shows as two changes with one parent. */
+const parentLabel = (parent: number | null) => (parent === null ? "new file" : `from ${parent}`);

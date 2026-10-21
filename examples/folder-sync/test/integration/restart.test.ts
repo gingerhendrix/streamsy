@@ -11,7 +11,7 @@ const graph = (filename: string) =>
   Layer.merge(Initialise, FolderStoreLive).pipe(Layer.provideMerge(sqliteHost(filename)));
 
 layer(BunServices.layer)((it) => {
-  it.effect("versions keep rising across restarts after an upsert and after a delete", () =>
+  it.effect("versions keep rising across restarts after an upsert and after a tombstone", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("counter-restart-");
 
@@ -29,11 +29,16 @@ layer(BunServices.layer)((it) => {
                   ...content,
                   txid: "first",
                   author: "test",
+                  parent: null,
                 })).version,
               ).toBe(1);
 
               if (deleteBeforeRestart)
-                yield* store.remove("daily/demo", "a", { txid: "delete", author: "test" });
+                yield* store.remove("daily/demo", "a", {
+                  txid: "delete",
+                  author: "test",
+                  parent: 1,
+                });
             }).pipe(Effect.provideContext(context));
           }),
         );
@@ -48,16 +53,18 @@ layer(BunServices.layer)((it) => {
                   ...content,
                   txid: "second",
                   author: "test",
+                  parent: null,
                 })).version,
-              ).toBe(2);
+              ).toBe(deleteBeforeRestart ? 3 : 2);
               // The restarted owner keeps counting from the stream, not from a reset counter.
               expect(
                 (yield* store.commit("daily/demo", "b", {
                   ...content,
                   txid: "third",
                   author: "test",
+                  parent: null,
                 })).version,
-              ).toBe(3);
+              ).toBe(deleteBeforeRestart ? 4 : 3);
             }).pipe(Effect.provideContext(context));
           }),
         );

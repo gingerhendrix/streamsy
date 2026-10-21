@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   backupPath,
-  conflictBase,
+  editBase,
   folderDirectory,
   historyRewound,
   isEcho,
@@ -26,9 +26,9 @@ test("echo checks distinguish a pending edit reverted to the server's bytes", ()
 });
 
 test("write bases retain the version observed on disk", () => {
-  expect(conflictBase(head)).toBe(head.version);
-  expect(conflictBase(undefined)).toBeNull();
-  expect(conflictBase({ ...head, localVersion: 1 })).toBe(1);
+  expect(editBase(head)).toBe(head.version);
+  expect(editBase(undefined)).toBeNull();
+  expect(editBase({ ...head, localVersion: 1 })).toBe(1);
 });
 
 test("mapping preserves nested IDs, URL encoding preserves individual file segments", () => {

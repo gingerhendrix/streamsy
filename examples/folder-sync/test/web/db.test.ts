@@ -53,8 +53,8 @@ const fixture = () => {
 
     const file = await fetcher(new URL(fileUrl(folderId, "guide/a.md"), origin), {
       method: "PUT",
-      headers: { ...authorization, "content-type": "application/json", "if-none-match": "*" },
-      body: JSON.stringify({ txid: "first-write", author: "seed", ...content }),
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ txid: "first-write", author: "seed", parent: null, ...content }),
     });
 
     expect(file.status).toBe(200);
@@ -127,14 +127,17 @@ test("registry and file StreamDBs use opaque folder IDs; optimistic edits await 
     expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
 
     const put = Option.getOrUndefined(
-      Array.findFirst(
+      Array.findLast(
         f.calls,
-        (request) => request.method === "PUT" && request.headers.get("if-match") === '"1"',
+        (request) => request.method === "PUT" && request.url.includes("/files/"),
       ),
     );
 
+    // The draft's base is the parent. No precondition header is sent.
+    expect(put?.headers.has("if-match")).toBe(false);
     expect(await put?.json()).toEqual({
       txid: "browser-edit",
+      parent: 1,
       author: "browser",
       hash: content.hash,
       size: content.size,
@@ -174,37 +177,68 @@ test("same-hash no-op waits for the response's original txid without appending",
   }
 });
 
-test("412 rolls back the optimistic row while preserving the newer server version", async () => {
+test("a save from an old base lands as the head; the other write stays in history", async () => {
   const f = fixture();
-  await f.create("conflict", "first");
-  const db = createFileDb("conflict", f.options);
+  await f.create("fork", "first");
+  const db = createFileDb("fork", f.options);
 
   try {
     await db.preload();
     const before = db.collections.files.get("guide/a.md")!;
     const content = await f.upload("other writer");
 
-    const response = await f.fetcher(new URL(fileUrl("conflict", before.path), origin), {
+    const response = await f.fetcher(new URL(fileUrl("fork", before.path), origin), {
       method: "PUT",
-      headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
-      body: JSON.stringify({ txid: "other-writer", author: "other", ...content }),
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ txid: "other-writer", author: "other", parent: 1, ...content }),
     });
 
     expect(response.status).toBe(200);
     await db.utils.awaitTxId("other-writer");
-    const edited = await textContent("my draft");
 
-    const transaction = db.actions.edit({
-      file: { ...before, ...edited, author: "browser" },
-      base: 1,
-      txid: "stale-edit",
-      bytes: new TextEncoder().encode("my draft"),
+    const accepted = await editFile(
+      db,
+      { path: before.path, version: 1 },
+      "my draft",
+      "me",
+      "mine",
+    );
+
+    expect(accepted).toMatchObject({ version: 3, parent: 1, txid: "mine" });
+    expect(db.collections.files.get(before.path)?.hash).toBe((await textContent("my draft")).hash);
+    expect(db.collections.files.get(before.path)?.version).toBe(3);
+    const rows = await history({ folderId: "fork", path: before.path }, undefined, f.options);
+    expect(
+      Array.map(rows, (row) => ("value" in row ? [row.value.version, row.value.parent] : null)),
+    ).toEqual([
+      [1, null],
+      [2, 1],
+      [3, 1],
+    ]);
+  } finally {
+    db.close();
+    await f.host.stop();
+  }
+});
+
+test("a tombstone removes the row from the file StreamDB and acknowledges its txid", async () => {
+  const f = fixture();
+  await f.create("tombstone", "first");
+  const db = createFileDb("tombstone", f.options);
+
+  try {
+    await db.preload();
+    expect(db.collections.files.has("guide/a.md")).toBe(true);
+
+    const response = await f.fetcher(new URL(fileUrl("tombstone", "guide/a.md"), origin), {
+      method: "DELETE",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ txid: "removed", author: "other", parent: 1 }),
     });
 
-    expect(db.collections.files.get(before.path)?.hash).toBe(edited.hash);
-    await expect(transaction.isPersisted.promise).rejects.toThrow("The file changed on the server");
-    expect(db.collections.files.get(before.path)?.hash).toBe(content.hash);
-    expect(db.collections.files.get(before.path)?.version).toBe(2);
+    expect(await response.json()).toEqual({ version: 2, parent: 1, txid: "removed" });
+    await db.utils.awaitTxId("removed");
+    expect(db.collections.files.has("guide/a.md")).toBe(false);
   } finally {
     db.close();
     await f.host.stop();
@@ -226,8 +260,8 @@ test("the editor retains its exact accepted version when another write arrives b
 
         const later = await f.fetcher(request.url, {
           method: "PUT",
-          headers: { ...authorization, "content-type": "application/json", "if-match": '"2"' },
-          body: JSON.stringify({ txid: "later-writer", author: "other", ...content }),
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({ txid: "later-writer", author: "other", parent: 2, ...content }),
         });
 
         expect(later.status).toBe(200);
@@ -267,7 +301,13 @@ test("browser edits upload blobs before JSON commits and read history from State
     const text = "x".repeat(64 * 1024 + 1);
     const content = await textContent(text);
     await db.actions.edit({
-      file: { path: before.path, version: before.version, ...content, author: "browser" },
+      file: {
+        path: before.path,
+        version: before.version,
+        parent: 1,
+        ...content,
+        author: "browser",
+      },
       base: 1,
       txid: "large",
       bytes: new TextEncoder().encode(text),
@@ -282,7 +322,10 @@ test("browser edits upload blobs before JSON commits and read history from State
     );
 
     const commitIndex = Option.getOrElse(
-      Array.findFirstIndex(f.calls, (request) => request.headers.get("if-match") === '"1"'),
+      Array.findLastIndex(
+        f.calls,
+        (request) => request.method === "PUT" && request.url.includes("/files/"),
+      ),
       () => -1,
     );
 
@@ -322,22 +365,24 @@ test("browser edits upload blobs before JSON commits and read history from State
   }
 });
 
-test("history paginates, filters paths, and leaves deletes unversioned", async () => {
+test("history paginates, filters paths, and keeps versioned tombstones", async () => {
   const f = fixture();
   await f.create("history", "first");
 
   try {
     const deleted = await f.fetcher(`${origin}${fileUrl("history", "guide/a.md")}`, {
       method: "DELETE",
-      headers: { ...authorization, "content-type": "application/json", "if-match": '"1"' },
-      body: JSON.stringify({ txid: "deleted", author: "browser" }),
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ txid: "deleted", author: "browser", parent: 1 }),
     });
 
     expect(deleted.status).toBe(200);
     const rows = await history({ folderId: "history", path: "guide/a.md" }, undefined, f.options);
     expect(rows).toHaveLength(2);
-    expect(rows[1]).not.toHaveProperty("value");
-    expect(rows[1]).not.toHaveProperty("version");
+    expect(rows[1]).toMatchObject({
+      headers: { operation: "upsert", txid: "deleted" },
+      value: { path: "guide/a.md", version: 2, parent: 1, author: "browser", deleted: true },
+    });
     expect(await history({ folderId: "history", path: "elsewhere" }, undefined, f.options)).toEqual(
       [],
     );
@@ -363,6 +408,7 @@ test("history paginates, filters paths, and leaves deletes unversioned", async (
                   value: {
                     path: "a",
                     version: 7,
+                    parent: null,
                     hash: "0".repeat(64),
                     size: 0,
                     author: "writer",
@@ -405,7 +451,15 @@ const resetPage = (items: object[], offset: string, upToDate: boolean) => {
 const historyChange = (version: number) => ({
   type: "file",
   key: "a",
-  value: { path: "a", version, hash: "a".repeat(64), size: 1, author: "test", text: "a" },
+  value: {
+    path: "a",
+    version,
+    parent: null,
+    hash: "a".repeat(64),
+    size: 1,
+    author: "test",
+    text: "a",
+  },
   headers: { operation: "upsert", txid: `write:${version}` },
 });
 

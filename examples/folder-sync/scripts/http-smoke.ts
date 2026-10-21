@@ -2,7 +2,7 @@ import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
 import { Array, Config, Console, Effect, Layer, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { prepareContent, Head } from "../server/domain.ts";
+import { Deleted, prepareContent, Head } from "../server/domain.ts";
 import { FolderKey } from "../server/streams.ts";
 import { ListedFile, SearchResult } from "../server/index-rows.ts";
 import { testDirectory } from "./test-directory.ts";
@@ -66,7 +66,7 @@ const smoke = Effect.gen(function* () {
       path: string,
       bytes: Uint8Array,
       txid: string,
-      base?: number,
+      parent: number | null = null,
     ) {
       const content = yield* prepareContent(bytes);
 
@@ -77,8 +77,7 @@ const smoke = Effect.gen(function* () {
       yield* check(upload.status === 200, "blob upload");
 
       const response = yield* client.put(`${folderUrl}/files/${path}`, {
-        headers: base === undefined ? {} : { "if-match": `"${base}"` },
-        body: HttpBody.jsonUnsafe({ ...content, author: "Zoë", txid }),
+        body: HttpBody.jsonUnsafe({ ...content, parent, author: "Zoë", txid }),
       });
 
       yield* check(
@@ -97,31 +96,68 @@ const smoke = Effect.gen(function* () {
       "same-hash no-op returns current txid",
     );
 
-    const stale = yield* client.put(`${folderUrl}/files/a.md`, {
-      headers: { "if-match": `"${one.version}"` },
+    const retry = yield* put("a.md", text("first"), "first");
+    yield* check(
+      retry.version === one.version && retry.parent === null,
+      "late retry gets its first answer",
+    );
+
+    const fork = yield* put("a.md", text("fork"), "fork", one.version);
+    yield* check(
+      fork.version === 3 && fork.parent === one.version,
+      "two writes from one parent both land, and the second is the head",
+    );
+
+    const reused = yield* client.put(`${folderUrl}/files/b.md`, {
       body: HttpBody.jsonUnsafe({
         ...(yield* prepareContent(text("first"))),
+        parent: null,
         txid: "first",
         author: "test",
       }),
     });
 
-    yield* check(stale.status === 412, "moved retry gets 412");
+    yield* check(reused.status === 400, "a txid used for another path gets 400");
+
+    const conditional = yield* client.put(`${folderUrl}/files/a.md`, {
+      headers: { "if-match": `"${fork.version}"` },
+      body: HttpBody.jsonUnsafe({
+        ...(yield* prepareContent(text("conditional"))),
+        parent: fork.version,
+        txid: "conditional",
+        author: "test",
+      }),
+    });
+
+    yield* check(conditional.status === 400, "If-Match gets 400");
     const read = yield* client.get(`${folderUrl}/files/a.md`);
     yield* check(
-      read.headers.etag === `"${two.version}"` && (yield* read.text) === "second",
+      read.headers.etag === `"${fork.version}"` && (yield* read.text) === "fork",
       "version ETag and content",
     );
 
     const deleted = yield* client.del(`${folderUrl}/files/a.md`, {
-      headers: { "if-match": `"${two.version}"` },
-      body: HttpBody.jsonUnsafe({ txid: "delete", author: "test" }),
+      body: HttpBody.jsonUnsafe({ txid: "delete", author: "test", parent: fork.version }),
     });
 
     yield* check(deleted.status === 200, "delete");
-    yield* check((yield* client.get(`${folderUrl}/files/a.md`)).status === 404, "deleted file");
-    const three = yield* put("a.md", text("durable searchneedle"), "third");
-    yield* check(three.version === 3, "delete consumes no version");
+    const tombstone = yield* Schema.decodeUnknownEffect(Deleted)(yield* deleted.json);
+    yield* check(
+      tombstone.version === 4 && tombstone.parent === fork.version,
+      "delete takes a version",
+    );
+    const gone = yield* client.get(`${folderUrl}/files/a.md`);
+
+    const missing = yield* Schema.decodeUnknownEffect(Schema.Struct({ deleted: Schema.Int }))(
+      yield* gone.json,
+    );
+
+    yield* check(
+      gone.status === 404 && missing.deleted === tombstone.version,
+      "deleted file names its tombstone",
+    );
+    const three = yield* put("a.md", text("durable searchneedle"), "third", tombstone.version);
+    yield* check(three.version === 5 && three.parent === 4, "a new file names the delete");
     const binary = yield* put("binary", new Uint8Array([0, 255, 1, 2]), "binary");
     const blob = yield* client.get(`${server.url}/api/blobs/${binary.hash}`);
     yield* check(
@@ -144,7 +180,7 @@ const smoke = Effect.gen(function* () {
     const stream = yield* client.get(`${streamUrl}?offset=-1`);
     const changes = yield* stream.json;
     yield* check(
-      Array.isArray(changes) && changes.length === 5,
+      Array.isArray(changes) && changes.length === 6,
       "source history contains one change per write",
     );
     yield* Effect.gen(function* () {
@@ -183,6 +219,7 @@ const smoke = Effect.gen(function* () {
         {
           body: HttpBody.jsonUnsafe({
             ...restartContent,
+            parent: null,
             txid: "restart",
             author: "test",
           }),
@@ -190,7 +227,7 @@ const smoke = Effect.gen(function* () {
       );
 
       const head = yield* Schema.decodeUnknownEffect(Head)(yield* response.json);
-      yield* check(head.version === 5, "counter survives restart");
+      yield* check(head.version === 7, "counter survives restart");
       const retained = yield* client.get(`${restart.url}/api/blobs/${binary.hash}`);
       yield* check(
         new Uint8Array(yield* retained.arrayBuffer).join(",") === "0,255,1,2",

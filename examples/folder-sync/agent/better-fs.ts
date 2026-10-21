@@ -67,13 +67,16 @@ const readError = (error: unknown): ReadError => {
   }
 };
 
-/** Whole-file snapshots with authoritative version checks. Writes use atomic HTTP preconditions. */
+/**
+ * Whole-file snapshots. A write is atomic. A precondition is checked against a
+ * fresh snapshot before the commit, not next to it, so there is no compare-and-swap.
+ */
 export function betterFileSystem(core: FolderHttpFileSystem): WritableFileSystem {
   return {
     id: "folder-sync",
     capabilities: { streaming: false, identity: false },
     paths: posixPaths,
-    writeCapabilities: { atomic: true, compareAndSwap: true, preserveMode: false },
+    writeCapabilities: { atomic: true, compareAndSwap: false, preserveMode: false },
     async open(path, options) {
       try {
         const opened = await core.read(path, options.signal);

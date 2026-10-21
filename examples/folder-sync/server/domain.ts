@@ -1,4 +1,4 @@
-import { Array, Crypto, Data, Effect, Schema } from "effect";
+import { Array, Crypto, Effect, Schema } from "effect";
 import { hex } from "./bytes.ts";
 
 export const FILE_LIMIT = 64 * 1024 * 1024;
@@ -62,6 +62,14 @@ export class FolderConflict extends Schema.TaggedError<
   message: Schema.String,
 }) {}
 
+/** A read of a path whose last change is a tombstone. */
+export class DeletedFile extends Schema.TaggedError<
+  DeletedFile,
+  { readonly brand: unique symbol }
+>()("DeletedFile", {
+  version: Version,
+}) {}
+
 export class BlobMissing extends Schema.TaggedError<
   BlobMissing,
   { readonly brand: unique symbol }
@@ -118,35 +126,65 @@ const contentFields = {
   author: Identifier,
 };
 
-export const CommitFile = Schema.Struct({ txid: Identifier, ...contentFields });
+/**
+ * The version that a writer started from. `null` means that the writer saw no file
+ * at the path. The server records it and does not check it against the head.
+ */
+export const Parent = Schema.NullOr(Version);
+
+export const CommitFile = Schema.Struct({ txid: Identifier, parent: Parent, ...contentFields });
 
 export type CommitFile = typeof CommitFile.Type;
 
-export const DeleteFile = Schema.Struct({ txid: Identifier, author: Identifier });
+export const DeleteFile = Schema.Struct({ txid: Identifier, author: Identifier, parent: Parent });
 
 export type DeleteFile = typeof DeleteFile.Type;
 
-export const File = Schema.Struct({ path: Path, version: Version, ...contentFields });
+/** A live file value: its content is in the blob store under `hash`. */
+export const File = Schema.Struct({
+  path: Path,
+  version: Version,
+  parent: Parent,
+  ...contentFields,
+});
 
 export type File = typeof File.Type;
 
-export const Head = Schema.Struct({ version: Version, hash: Hash, txid: Identifier });
+/**
+ * A delete is an upsert of a tombstone. It takes a version and names its parent,
+ * so every change of a path is part of one parent chain.
+ */
+export const Tombstone = Schema.Struct({
+  path: Path,
+  version: Version,
+  parent: Parent,
+  author: Identifier,
+  deleted: Schema.Literal(true),
+});
+
+export type Tombstone = typeof Tombstone.Type;
+
+/** The value of one change on a folder stream. */
+export const FileValue = Schema.Union([File, Tombstone]);
+
+export type FileValue = typeof FileValue.Type;
+
+export const isTombstone = (value: FileValue): value is Tombstone => "deleted" in value;
+
+/** The answer to a commit. */
+export const Head = Schema.Struct({
+  version: Version,
+  parent: Parent,
+  hash: Hash,
+  txid: Identifier,
+});
 
 export type Head = typeof Head.Type;
 
-export class PreconditionFailed extends Schema.TaggedError<
-  PreconditionFailed,
-  { readonly brand: unique symbol }
->()("PreconditionFailed", { head: Schema.NullOr(Head) }) {}
+/** The answer to a delete that appended a tombstone. */
+export const Deleted = Schema.Struct({ version: Version, parent: Parent, txid: Identifier });
 
-/** The write precondition from `If-Match` or `If-None-Match: *`. */
-export type Precondition = Data.TaggedEnum<{
-  Unconditional: {};
-  IfMatch: { readonly version: number };
-  IfAbsent: {};
-}>;
-
-export const Precondition = Data.taggedEnum<Precondition>();
+export type Deleted = typeof Deleted.Type;
 
 export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
   const crypto = yield* Crypto.Crypto;

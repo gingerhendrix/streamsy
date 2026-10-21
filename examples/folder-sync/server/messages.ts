@@ -1,9 +1,9 @@
 import { StreamAddress } from "@streamsy/core";
 import { Array, Option, Schema } from "effect";
-import { File } from "./domain.ts";
+import { FileValue, isTombstone, type File } from "./domain.ts";
 import { Folder } from "./streams.ts";
 
-export const FileChange = StreamAddress.stateChange({ type: "file", schema: File });
+export const FileChange = StreamAddress.stateChange({ type: "file", schema: FileValue });
 
 export type FileChange = typeof FileChange.Type;
 
@@ -38,6 +38,26 @@ export const isReset = <A>(message: StateMessage<A>): message is StreamAddress.S
 
 export const isUpsert = <A>(message: StateMessage<A>): message is StreamAddress.StateUpsert<A> =>
   StreamAddress.isChange(message) && message.headers.operation === "upsert";
+
+/** An upsert of a live file. A tombstone upsert is a delete. */
+export const isLive = (
+  message: StateMessage<FileValue>,
+): message is StreamAddress.StateUpsert<File> => isUpsert(message) && !isTombstone(message.value);
+
+/** Apply file messages to a map of live files by path. A tombstone removes its path. */
+export const applyFileChanges = (
+  rows: Map<string, File>,
+  messages: Iterable<StateMessage<FileValue>>,
+): Map<string, File> => {
+  for (const message of messages) {
+    if (StreamAddress.isControl(message)) {
+      if (isReset(message)) rows.clear();
+    } else if (isLive(message)) rows.set(message.key, message.value);
+    else rows.delete(message.key);
+  }
+
+  return rows;
+};
 
 /** The messages that a reader must apply: everything after the last reset in the batch. */
 export const afterLastReset = <M extends StateMessage<unknown>>(messages: ReadonlyArray<M>) =>

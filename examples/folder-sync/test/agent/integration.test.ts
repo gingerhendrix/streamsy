@@ -24,7 +24,7 @@ const options = (host: ReturnType<typeof protocolHost>) => ({
   writable: ["docs"],
 });
 
-test("Bun agent passes Better FS Tools read and write conformance with atomic CAS", async () => {
+test("Bun agent passes Better FS Tools read and write conformance without server CAS", async () => {
   const host = protocolHost();
 
   try {
@@ -54,7 +54,7 @@ test("Bun agent passes Better FS Tools read and write conformance with atomic CA
     expect(Array.filter(write.checks, (check) => !check.ok)).toEqual([]);
     expect(tools.writeCapabilities).toEqual({
       atomic: true,
-      compareAndSwap: true,
+      compareAndSwap: false,
       preserveMode: false,
     });
   } finally {
@@ -62,7 +62,19 @@ test("Bun agent passes Better FS Tools read and write conformance with atomic CA
   }
 });
 
-test("stale reads and commit races return ESTALE, while successful edits use If-Match", async () => {
+/** The JSON bodies of the file writes that a session sent, oldest first. */
+const writeBodies = (requests: ReadonlyArray<Request>, method: "PUT" | "DELETE") =>
+  Promise.all(
+    Array.map(
+      Array.filter(
+        requests,
+        (request) => request.method === method && request.url.includes("/files/"),
+      ),
+      (request) => request.clone().json(),
+    ),
+  );
+
+test("blind and stale writes land with their parents; explicit preconditions are checked first", async () => {
   const host = protocolHost();
   const requests: Request[] = [];
 
@@ -80,26 +92,38 @@ test("stale reads and commit races return ESTALE, while successful edits use If-
       },
     });
 
-    await expect(b.core.mutate("/docs/a", encoded("blind"))).rejects.toMatchObject({
-      code: "ESTALE",
-    });
-    const blind = Array.filter(requests, (request) => request.method === "PUT").at(-1);
-    expect(blind?.headers.get("if-none-match")).toBe("*");
-    expect(blind?.headers.get("if-match")).toBeNull();
+    // A write to a path that the session never read has parent null. It lands.
+    expect((await b.core.mutate("/docs/a", encoded("blind"))).version).toBe("2");
+    expect(
+      Array.every(
+        requests,
+        (request) => !request.headers.has("if-match") && !request.headers.has("if-none-match"),
+      ),
+    ).toBe(true);
     await b.core.read("/docs/a");
     await a.core.mutate("/docs/a", encoded("two"));
-    await expect(b.core.mutate("/docs/a", encoded("stale"))).rejects.toMatchObject({
-      code: "ESTALE",
-    });
-    const stale = Array.filter(requests, (request) => request.method === "PUT").at(-1);
-    expect(stale?.headers.get("if-match")).toBe('"1"');
-    expect(new TextDecoder().decode((await b.core.read("/docs/a")).bytes)).toBe("two");
+    // A write from an older read lands too, and becomes the head.
+    expect((await b.core.mutate("/docs/a", encoded("stale"))).version).toBe("4");
+    expect(new TextDecoder().decode((await a.core.read("/docs/a")).bytes)).toBe("stale");
     await b.core.mutate("/docs/a", encoded("three"));
-    expect(
-      Array.filter(requests, (request) => request.method === "PUT")
-        .at(-1)
-        ?.headers.get("if-match"),
-    ).toBe('"2"');
+    expect(Array.map(await writeBodies(requests, "PUT"), (body) => body.parent)).toEqual([
+      null,
+      2,
+      4,
+    ]);
+    // An explicit precondition is checked against a fresh snapshot, before any request.
+    const sent = requests.length;
+    await expect(
+      b.core.mutate("/docs/a", encoded("guarded"), {
+        precondition: { kind: "version", version: "1" },
+      }),
+    ).rejects.toMatchObject({ code: "ESTALE" });
+    await expect(
+      b.core.mutate("/docs/a", encoded("guarded"), { precondition: { kind: "absent" } }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    expect(Array.filter(requests.slice(sent), (request) => request.method !== "GET")).toHaveLength(
+      0,
+    );
     expect(
       Array.some(
         requests,
@@ -108,10 +132,15 @@ test("stale reads and commit races return ESTALE, while successful edits use If-
       ),
     ).toBe(false);
     await b.core.mutate("/docs/a", null);
+    expect(await writeBodies(requests, "DELETE")).toMatchObject([{ parent: 5 }]);
     expect(await a.core.stat("/docs/a")).toBeUndefined();
     await a.core.read("/docs/a").catch(() => undefined);
     await a.core.mutate("/docs/a", encoded("recreated"), { precondition: { kind: "absent" } });
-    expect(new TextDecoder().decode((await b.core.read("/docs/a")).bytes)).toBe("recreated");
+    // The session that deleted the path names its tombstone, 6, when it writes the path again.
+    // Session a made version 7 from no file, so history shows two creates after one delete.
+    await b.core.mutate("/docs/a", encoded("again"));
+    expect((await writeBodies(requests, "PUT")).at(-1)).toMatchObject({ parent: 6 });
+    expect(new TextDecoder().decode((await a.core.read("/docs/a")).bytes)).toBe("again");
   } finally {
     await host.stop();
   }
@@ -140,8 +169,9 @@ test("agent blob uploads precede reference commits and session shell commands st
     expect((await core.read("/docs/nul")).bytes).toEqual(new Uint8Array([0, 1, 2]));
     const writes = Array.filter(requests, (request) => request.method === "PUT");
     expect(new URL(writes[0]?.url ?? "http://localhost").pathname).toMatch(/^\/api\/blobs\//);
-    expect(writes[1]?.headers.get("if-none-match")).toBe("*");
+    expect(writes[1]?.headers.has("if-none-match")).toBe(false);
     const reference = await writes[1]?.json();
+    expect(reference.parent).toBeNull();
     expect(reference.text).toBeUndefined();
     expect(reference.size).toBe(65537);
     expect((await bash.exec("echo hello > /docs/hello.txt; cat /docs/hello.txt")).stdout).toBe(
@@ -156,7 +186,7 @@ test("agent blob uploads precede reference commits and session shell commands st
   }
 });
 
-test("listed unread files can be deleted with If-Match and stale listings return ESTALE", async () => {
+test("a listed unread file can be deleted; a delete from a stale listing lands and forks", async () => {
   const host = protocolHost();
   const requests: Request[] = [];
 
@@ -180,20 +210,20 @@ test("listed unread files can be deleted with If-Match and stale listings return
       { name: "stale.txt", kind: "file" },
     ]);
     await agent.core.mutate("/docs/delete.txt", null);
-    const removed = Array.filter(requests, (request) => request.method === "DELETE").at(-1);
-    expect(removed?.headers.get("if-match")).toBe('"1"');
-    expect(removed?.headers.get("if-none-match")).toBeNull();
+    expect(await writeBodies(requests, "DELETE")).toMatchObject([{ parent: 1 }]);
     expect(await writer.core.stat("/docs/delete.txt")).toBeUndefined();
 
+    // The writer edits version 2 to version 4. The agent still names version 2 from its listing.
     await writer.core.mutate("/docs/stale.txt", encoded("newer edit"));
-    await expect(agent.core.mutate("/docs/stale.txt", null)).rejects.toMatchObject({
-      code: "ESTALE",
-    });
-    const stale = Array.filter(requests, (request) => request.method === "DELETE").at(-1);
-    expect(stale?.headers.get("if-match")).toBe('"2"');
-    expect(new TextDecoder().decode((await writer.core.read("/docs/stale.txt")).bytes)).toBe(
-      "newer edit",
-    );
+    await agent.core.mutate("/docs/stale.txt", null);
+    expect((await writeBodies(requests, "DELETE")).at(-1)).toMatchObject({ parent: 2 });
+    expect(await writer.core.stat("/docs/stale.txt")).toBeUndefined();
+    expect(
+      Array.every(
+        requests,
+        (request) => !request.headers.has("if-match") && !request.headers.has("if-none-match"),
+      ),
+    ).toBe(true);
     expect(Array.some(requests, (request) => request.url.includes("/api/blobs/"))).toBe(false);
   } finally {
     await host.stop();

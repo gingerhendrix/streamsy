@@ -53,43 +53,4 @@ layer(stateLayer(":memory:"))((it) => {
         return yield* Effect.void;
       }),
   );
-  it.effect("conflict retargeting preserves source and records recoverable disk intent", () =>
-    Effect.gen(function* () {
-      const state = yield* SyncState;
-      yield* state.enqueue(
-        {
-          folderId: "docs",
-          path: "b.md",
-          txid: "conflict",
-          base: 3,
-          hash: "c".repeat(64),
-          size: 7,
-          source: "/cache/c",
-          uploaded: 1,
-        },
-        {
-          folderId: "docs",
-          path: "b.md",
-          version: 3,
-          hash: "a".repeat(64),
-          localHash: "c".repeat(64),
-          localVersion: 3,
-        },
-      );
-      const op = (yield* state.pending())[0];
-
-      if (op === undefined) return yield* Effect.die("Missing conflict");
-      yield* state.conflict(op.seq, "b.conflict-copy.md", "copy");
-      expect((yield* state.pending())[0]).toMatchObject({
-        path: "b.conflict-copy.md",
-        txid: "copy",
-        base: null,
-        source: "/cache/c",
-        uploaded: 1,
-      });
-      expect(yield* state.get(`restore:${op.seq}`)).toBe("b.conflict-copy.md");
-
-      return yield* Effect.void;
-    }),
-  );
 });

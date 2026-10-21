@@ -21,8 +21,6 @@ export interface SyncContext {
   readonly gate: Semaphore.Semaphore;
   /** Folder roots relative to `root`, filled as folders are added. */
   readonly roots: Map<string, string>;
-  /** A random id for this mirror. Conflict copies carry it in their names. */
-  readonly clientId: string;
   readonly warn: (file: string, message: string) => Effect.Effect<void>;
 }
 
@@ -55,12 +53,6 @@ export const openContext = Effect.fn("Sync.context")(function* (options: SyncOpt
     });
   yield* state.set("configuration", configuration);
   yield* state.set("ready", "false");
-  let origin = yield* state.get("origin");
-
-  if (origin === undefined) {
-    origin = yield* crypto.randomUUIDv4();
-    yield* state.set("origin", origin);
-  }
 
   const context: SyncContext = {
     options,
@@ -72,7 +64,6 @@ export const openContext = Effect.fn("Sync.context")(function* (options: SyncOpt
     root: path.resolve(options.directory),
     gate: yield* Semaphore.make(1),
     roots: new Map(),
-    clientId: origin,
     warn: yield* skipWarnings,
   };
 

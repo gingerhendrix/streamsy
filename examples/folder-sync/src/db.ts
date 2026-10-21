@@ -6,7 +6,7 @@ import {
 } from "@durable-streams/state";
 import { createStreamDB } from "@durable-streams/state/db";
 import { Schema } from "effect";
-import { File, type Head } from "../server/domain.ts";
+import { File, Tombstone, type Head } from "../server/domain.ts";
 import { Folder } from "../server/streams.ts";
 import { folderStreamUrl, FOLDERS_STREAM_URL } from "../server/routes.ts";
 import { browserTransport, saveFile, textContent, type Transport } from "./client.ts";
@@ -37,9 +37,14 @@ const connectionFor = (transport: Transport, options: DbOptions) =>
           }),
   );
 
+/** A folder stream marks a delete with a tombstone upsert. TanStack DB sees a plain delete. */
+const isTombstoneEvent = (event: StateEvent) =>
+  isChangeEvent(event) && event.headers.operation === "upsert" && Schema.is(Tombstone)(event.value);
+
 /** State 0.3.2 truncates outside a TanStack sync transaction. Express the same
  * reset as deletes of source keys, then let StreamDB commit the suffix normally.
  * Track source keys so pending bootstrap rows and optimistic rows stay distinct.
+ * A tombstone upsert becomes a State delete with the same txid.
  */
 const resetBatch = (type: string) => {
   const keys = new Set<string>();
@@ -51,6 +56,15 @@ const resetBatch = (type: string) => {
       if (isControlEvent(event) && event.headers.control === "reset") {
         for (const key of keys) items.push({ type, key, headers: { operation: "delete" } });
         keys.clear();
+      } else if (isChangeEvent(event) && isTombstoneEvent(event)) {
+        // Keep the txid, so StreamDB acknowledges the delete that wrote it.
+        items.push({
+          type: event.type,
+          key: event.key,
+          headers: { ...event.headers, operation: "delete" },
+        });
+
+        if (event.type === type) keys.delete(event.key);
       } else {
         // Keep prior events so their real txids are acknowledged by StreamDB.
         items.push(event);
@@ -178,7 +192,13 @@ export type FolderDb = ReturnType<typeof createFolderDb>;
 export type FileDb = ReturnType<typeof createFileDb>;
 
 /** Hash before opening an optimistic transaction, so its local row is complete. */
-export const editFile = (db: FileDb, current: File, text: string, author: string, txid: string) =>
+export const editFile = (
+  db: FileDb,
+  current: Pick<File, "path" | "version">,
+  text: string,
+  author: string,
+  txid: string,
+) =>
   textContent(text).then((content) => {
     let accepted: Head | undefined;
 
@@ -186,6 +206,7 @@ export const editFile = (db: FileDb, current: File, text: string, author: string
       file: {
         path: current.path,
         version: current.version,
+        parent: current.version,
         author: author.trim() || "anonymous",
         ...content,
       },

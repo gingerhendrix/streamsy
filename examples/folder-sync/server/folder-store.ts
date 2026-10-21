@@ -1,12 +1,14 @@
 import { CommitBoundary, DurableState } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, DateTime, Effect, Layer, Schema, Semaphore } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
   BlobMissing,
   CommitFile,
   CreateFolder,
   DeleteFile,
+  Deleted,
+  DeletedFile,
   File,
   FileTooLarge,
   FolderId,
@@ -14,8 +16,7 @@ import {
   FILE_LIMIT,
   InvalidFile,
   MissingFile,
-  Precondition,
-  PreconditionFailed,
+  Tombstone,
   WriteConflict,
   normalisePath,
 } from "./domain.ts";
@@ -28,14 +29,27 @@ export const CHECKPOINT_EVERY = 32;
 
 const invalid = () => new InvalidFile({ message: "Invalid request" });
 
-const condition = (head: Head | undefined, precondition: Precondition) =>
-  Precondition.$match(precondition, {
-    Unconditional: () => true,
-    IfMatch: ({ version }) => head?.version === version,
-    IfAbsent: () => head === undefined,
-  })
-    ? Effect.void
-    : Effect.fail(new PreconditionFailed({ head: head ?? null }));
+/** A parent past the folder's last version names a change that does not exist. */
+const checkParent = (view: FolderView, parent: number | null) =>
+  parent !== null && parent > view.last
+    ? Effect.fail(new InvalidFile({ message: "Parent is not a version in this folder" }))
+    : Effect.void;
+
+/**
+ * Rule 2: a txid in the retry memory already landed. A retry gets the first answer.
+ * The memory checks the path and the kind of change, so a txid that a client uses
+ * again for another path, or for a delete after a commit, gets `400`.
+ */
+const recall = (view: FolderView, txid: string, path: string, kind: "commit" | "delete") => {
+  const landed = Option.fromUndefinedOr(view.recent.get(txid));
+
+  return Option.exists(
+    landed,
+    (entry) => entry.path !== path || (entry.hash === null) !== (kind === "delete"),
+  )
+    ? Effect.fail(new InvalidFile({ message: "This txid was used for another change" }))
+    : Effect.succeed(landed);
+};
 
 const liveHead = (view: FolderView, path: string) => {
   const live = view.files.get(path);
@@ -75,7 +89,8 @@ const make = Effect.gen(function* () {
 
   /**
    * Fold the view, decide, and append at the offset that was read. A lost race
-   * folds the new tail and decides again. A precondition that held before can then fail.
+   * folds the new tail and decides again. The offset only orders appends. It never
+   * refuses a write for being stale.
    */
   const decide = <A, E>(
     folderId: string,
@@ -156,7 +171,6 @@ const make = Effect.gen(function* () {
     folderId: string,
     path: string,
     input: CommitFile,
-    precondition: Precondition = Precondition.Unconditional(),
   ) {
     const normalized = yield* normalisePath(path);
     const body = yield* Schema.decodeEffect(CommitFile)(input).pipe(Effect.mapError(invalid));
@@ -172,20 +186,42 @@ const make = Effect.gen(function* () {
 
     return yield* decide(folderId, (view) =>
       Effect.gen(function* () {
+        yield* checkParent(view, body.parent);
+        // Rule 2 comes first. A retry gets its first answer even when the head moved since.
+        const landed = Option.getOrUndefined(yield* recall(view, body.txid, normalized, "commit"));
+
+        if (landed !== undefined && landed.hash !== null) {
+          const head: Head = {
+            version: landed.version,
+            parent: landed.parent,
+            hash: landed.hash,
+            txid: body.txid,
+          };
+
+          return { value: head, items: [] };
+        }
+
+        // Rule 1: the head already has this content. Nothing changes.
         const current = liveHead(view, normalized);
 
         if (current?.hash === body.hash) return { value: current, items: [] };
-        yield* condition(current, precondition);
 
+        // Rule 3: append. There is no precondition, so the last append is the head.
         const value: File = {
           path: normalized,
           version: view.last + 1,
+          parent: body.parent,
           hash: body.hash,
           size: body.size,
           author: body.author,
         };
 
-        const head: Head = { version: value.version, hash: value.hash, txid: body.txid };
+        const head: Head = {
+          version: value.version,
+          parent: value.parent,
+          hash: value.hash,
+          txid: body.txid,
+        };
 
         return {
           value: head,
@@ -199,30 +235,49 @@ const make = Effect.gen(function* () {
     folderId: string,
     path: string,
     input: DeleteFile,
-    precondition: Precondition = Precondition.Unconditional(),
   ) {
     const normalized = yield* normalisePath(path);
     const body = yield* Schema.decodeEffect(DeleteFile)(input).pipe(Effect.mapError(invalid));
-
-    if (Precondition.$is("IfAbsent")(precondition))
-      return yield* new InvalidFile({ message: "Delete does not accept If-None-Match" });
     yield* requireFolder(folderId);
     const timestamp = DateTime.formatIso(yield* DateTime.now);
 
     return yield* decide(folderId, (view) =>
-      Effect.gen(function* () {
-        const current = liveHead(view, normalized);
-        // A delete of a missing path answers with no txid and appends nothing (D12).
+      Effect.gen(function* (): Effect.fn.Return<
+        { value: Removed; items: Array<FileChangeItem> },
+        InvalidFile
+      > {
+        yield* checkParent(view, body.parent);
+        // Rule 2 comes first: the file that a retry deleted is gone, and rule 1 would hide its answer.
+        const landed = Option.getOrUndefined(yield* recall(view, body.txid, normalized, "delete"));
+
+        if (landed !== undefined) {
+          const deleted: Removed = {
+            version: landed.version,
+            parent: landed.parent,
+            txid: body.txid,
+          };
+
+          return { value: deleted, items: [] };
+        }
+
+        // Rule 1: a delete of a path with no live file answers with no txid and appends nothing.
         const absent: Removed = {};
 
-        if (current === undefined) return { value: absent, items: [] };
-        yield* condition(current, precondition);
+        if (!view.files.has(normalized)) return { value: absent, items: [] };
+
+        const value: Tombstone = {
+          path: normalized,
+          version: view.last + 1,
+          parent: body.parent,
+          author: body.author,
+          deleted: true,
+        };
+
+        const deleted: Removed = { version: value.version, parent: value.parent, txid: body.txid };
 
         return {
-          value: { txid: body.txid },
-          items: [
-            DurableState.remove("file", normalized, { headers: { txid: body.txid, timestamp } }),
-          ],
+          value: deleted,
+          items: [DurableState.upsert("file", value, { headers: { txid: body.txid, timestamp } })],
         };
       }),
     );
@@ -231,9 +286,16 @@ const make = Effect.gen(function* () {
   const read = Effect.fn("Folder.read")(function* (folderId: string, path: string) {
     const normalized = yield* normalisePath(path);
     yield* requireFolder(folderId);
-    const live = (yield* currentView(folderId)).files.get(normalized);
+    const view = yield* currentView(folderId);
+    const live = view.files.get(normalized);
 
-    if (live === undefined) return yield* new MissingFile({ message: "File not found" });
+    if (live === undefined) {
+      const version = view.removed.get(normalized);
+
+      return yield* version === undefined
+        ? new MissingFile({ message: "File not found" })
+        : new DeletedFile({ version });
+    }
 
     return { head: headOf(live), value: fileOf(normalized, live) };
   });
@@ -243,10 +305,8 @@ const make = Effect.gen(function* () {
 
 type FileChangeItem = DurableState.Change<typeof Files.collections>;
 
-/** A delete answer. It has no txid when nothing was deleted. */
-interface Removed {
-  readonly txid?: string;
-}
+/** A delete answer. It is empty when nothing was deleted. */
+type Removed = Deleted | Record<string, never>;
 
 export class FolderStore extends Context.Service<FolderStore, Effect.Success<typeof make>>()(
   "FolderSync/FolderStore",

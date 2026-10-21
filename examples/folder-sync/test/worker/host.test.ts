@@ -9,7 +9,7 @@ import { testDirectory } from "../../scripts/test-directory.ts";
 import { startWorker } from "../../scripts/worker-harness.ts";
 import { FolderKey } from "../../server/streams.ts";
 import { ListedFile, SearchResult } from "../../server/index-rows.ts";
-import { CreateFolder, File, Head } from "../../server/domain.ts";
+import { CreateFolder, FileValue, Head } from "../../server/domain.ts";
 import { CHECKPOINT_EVERY } from "../../server/folder-store.ts";
 
 const token = "worker-test-token";
@@ -18,8 +18,9 @@ const headers = { authorization: `Bearer ${token}` };
 
 const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
-const content = (text: string, txid: string) => ({
+const content = (text: string, txid: string, parent: number | null = null) => ({
   txid,
+  parent,
   author: "test",
   hash: digest(text),
   size: new TextEncoder().encode(text).length,
@@ -48,20 +49,27 @@ const uploadText = Effect.fn("WorkerTest.upload")(function* (url: string, text: 
   yield* response.text;
 });
 
-const commit = (url: string, folderId: string, text: string, txid: string, version?: number) =>
+/** A commit names its parent in the body. There is no precondition. */
+const commit = (
+  url: string,
+  folderId: string,
+  text: string,
+  txid: string,
+  parent: number | null = null,
+) =>
   uploadText(url, text).pipe(
     Effect.andThen(
       HttpClient.put(fileUrl(url, folderId), {
-        headers: version === undefined ? headers : { ...headers, "if-match": `"${version}"` },
-        body: HttpBody.jsonUnsafe(content(text, txid)),
+        headers,
+        body: HttpBody.jsonUnsafe(content(text, txid, parent)),
       }),
     ),
   );
 
-const remove = (url: string, folderId: string, version: number) =>
+const remove = (url: string, folderId: string, parent: number, txid = `delete:${parent}`) =>
   HttpClient.del(fileUrl(url, folderId), {
-    headers: { ...headers, "if-match": `"${version}"` },
-    body: HttpBody.jsonUnsafe({ txid: `delete:${version}`, author: "test" }),
+    headers,
+    body: HttpBody.jsonUnsafe({ txid, author: "test", parent }),
   });
 
 const head = (response: HttpClientResponse.HttpClientResponse) =>
@@ -143,7 +151,7 @@ const changes = (url: string, folderId: string) =>
     Effect.flatMap((response) => response.json),
     Effect.flatMap(
       Schema.decodeUnknownEffect(
-        Schema.Array(StreamAddress.stateChange({ type: "file", schema: File })),
+        Schema.Array(StreamAddress.stateChange({ type: "file", schema: FileValue })),
       ),
     ),
   );
@@ -157,7 +165,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const host = yield* worker;
           expect((yield* create(host.url, "docs")).status).toBe(200);
           const written = yield* head(yield* commit(host.url, "docs", "one", "first"));
-          expect(written).toEqual({ version: 1, hash: digest("one"), txid: "first" });
+          expect(written).toEqual({ version: 1, parent: null, hash: digest("one"), txid: "first" });
           const before = yield* changes(host.url, "docs");
           expect(before).toHaveLength(1);
           expect(before[0]).toMatchObject({
@@ -166,7 +174,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             value: { version: 1, hash: digest("one") },
             headers: { operation: "upsert", txid: "first" },
           });
-          expect(yield* head(yield* commit(host.url, "docs", "one", "retry", 99))).toEqual(written);
+          expect(yield* head(yield* commit(host.url, "docs", "one", "retry", 1))).toEqual(written);
           expect(yield* changes(host.url, "docs")).toEqual(before);
           const read = yield* HttpClient.get(fileUrl(host.url, "docs"));
           expect(read.headers.etag).toBe('"1"');
@@ -180,16 +188,29 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             }
           }
 
-          expect((yield* commit(host.url, "docs", "two", "stale", 99)).status).toBe(412);
-          expect((yield* remove(host.url, "docs", 1)).status).toBe(200);
+          // A parent must be a version of the folder. A precondition header is refused.
+          expect((yield* commit(host.url, "docs", "two", "future", 99)).status).toBe(400);
+
+          const conditional = yield* HttpClient.put(fileUrl(host.url, "docs"), {
+            headers: { ...headers, "if-match": '"1"' },
+            body: HttpBody.jsonUnsafe(content("one", "conditional", 1)),
+          });
+
+          expect(conditional.status).toBe(400);
+          yield* conditional.text;
+          const removed = yield* remove(host.url, "docs", 1);
+          expect(yield* removed.json).toEqual({ version: 2, parent: 1, txid: "delete:1" });
           const deleted = yield* changes(host.url, "docs");
           expect(deleted.at(-1)).toMatchObject({
             type: "file",
             key: "a.md",
-            headers: { operation: "delete" },
+            value: { path: "a.md", version: 2, parent: 1, deleted: true },
+            headers: { operation: "upsert", txid: "delete:1" },
           });
-          expect(deleted.at(-1)).not.toHaveProperty("value");
-          const absent = yield* remove(host.url, "docs", 1);
+          const gone = yield* HttpClient.get(fileUrl(host.url, "docs"));
+          expect(gone.status).toBe(404);
+          expect(yield* gone.json).toEqual({ error: "File not found", deleted: 2 });
+          const absent = yield* remove(host.url, "docs", 2, "absent");
           expect(yield* absent.json).toEqual({});
           expect(yield* changes(host.url, "docs")).toEqual(deleted);
         }),
@@ -212,7 +233,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
                 "derived",
                 `text ${version}`,
                 `t${version}`,
-                version === 1 ? undefined : version - 1,
+                version === 1 ? null : version - 1,
               ),
             );
 
@@ -222,10 +243,15 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const read = yield* HttpClient.get(fileUrl(host.url, "derived"));
           expect(read.headers.etag).toBe(`"${writes}"`);
           expect(yield* read.text).toBe(`text ${writes}`);
-          const stale = yield* commit(host.url, "derived", "stale", "stale", writes - 1);
-          expect(stale.status).toBe(412);
-          expect(yield* head(stale)).toMatchObject({ version: writes, txid: `t${writes}` });
-          expect(yield* changes(host.url, "derived")).toHaveLength(writes);
+          // A write from an older parent lands and becomes the head.
+          const fork = yield* commit(host.url, "derived", "fork", "fork", writes - 1);
+          expect(yield* head(fork)).toEqual({
+            version: writes + 1,
+            parent: writes - 1,
+            hash: digest("fork"),
+            txid: "fork",
+          });
+          expect(yield* changes(host.url, "derived")).toHaveLength(writes + 1);
         }),
       { timeout: 15000 },
     );
@@ -243,7 +269,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             yield* uploadText(host.url, largeText(index));
 
             const written = yield* HttpClient.put(fileUrl(host.url, "large", `f${index}.md`), {
-              headers: { ...headers, "if-none-match": "*" },
+              headers,
               body: HttpBody.jsonUnsafe(content(largeText(index), `t${index}`)),
             });
 
@@ -481,7 +507,13 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
 
             const committed = yield* HttpClient.put(fileUrl(host.url, "blobs", path), {
               headers,
-              body: HttpBody.jsonUnsafe({ txid: path, author: "test", hash, size: bytes.length }),
+              body: HttpBody.jsonUnsafe({
+                txid: path,
+                author: "test",
+                parent: null,
+                hash,
+                size: bytes.length,
+              }),
             });
 
             expect(committed.status).toBe(200);
@@ -558,6 +590,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
               body: HttpBody.jsonUnsafe({
                 txid: "binary",
                 author: "test",
+                parent: null,
                 hash,
                 size: bytes.length,
               }),
@@ -579,7 +612,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "DO restarts preserve the counter after deletion and reject stale pre-recreation versions",
+      "DO restarts keep the counter after a tombstone and keep the retry memory",
       () =>
         Effect.gen(function* () {
           const directory = yield* testDirectory("worker-restart-");
@@ -591,33 +624,43 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           yield* remove(host.url, "daily/demo", 1);
           yield* Effect.promise(host.stop);
           const restarted = yield* launch(directory);
-          expect((yield* HttpClient.get(fileUrl(restarted.url, "daily/demo"))).status).toBe(404);
+          const gone = yield* HttpClient.get(fileUrl(restarted.url, "daily/demo"));
+          expect(gone.status).toBe(404);
+          expect(yield* gone.json).toEqual({ error: "File not found", deleted: 2 });
 
           const second = yield* head(
-            yield* commit(restarted.url, "daily/demo", "second", "second"),
+            yield* commit(restarted.url, "daily/demo", "second", "second", 2),
           );
 
-          expect(second.version).toBe(2);
-          expect((yield* commit(restarted.url, "daily/demo", "stale", "stale", 1)).status).toBe(
-            412,
-          );
-          expect((yield* remove(restarted.url, "daily/demo", 1)).status).toBe(412);
-          expect(
-            yield* head(yield* commit(restarted.url, "daily/demo", "second", "retry", 1)),
-          ).toEqual(second);
+          expect(second).toMatchObject({ version: 3, parent: 2 });
           yield* Effect.promise(restarted.stop);
           const again = yield* launch(directory);
+          // The retry memory is a fold of the stream, so a retry after a restart gets its first answer.
+          const late = yield* commit(again.url, "daily/demo", "first", "first");
+          expect(yield* head(late)).toEqual({
+            version: 1,
+            parent: null,
+            hash: digest("first"),
+            txid: "first",
+          });
           expect(
-            yield* head(yield* commit(again.url, "daily/demo", "third", "third", 2)),
-          ).toMatchObject({ version: 3 });
+            yield* head(yield* commit(again.url, "daily/demo", "third", "third", 3)),
+          ).toMatchObject({ version: 4, parent: 3 });
           const retained = yield* changes(again.url, "daily/demo");
           expect(
-            Array.map(retained, (change) => ("value" in change ? change.value.version : null)),
-          ).toEqual([1, null, 2, 3]);
+            Array.map(retained, (change) =>
+              "value" in change ? [change.value.version, change.value.parent] : null,
+            ),
+          ).toEqual([
+            [1, null],
+            [2, 1],
+            [3, 2],
+            [4, 3],
+          ]);
           const wake = yield* HttpClient.post(`${again.url}/api/admin/wake`, { headers });
           expect(wake.status).toBe(200);
           yield* wake.text;
-          expect(yield* listed(again.url)).toMatchObject([{ folderId: "daily/demo", version: 3 }]);
+          expect(yield* listed(again.url)).toMatchObject([{ folderId: "daily/demo", version: 4 }]);
           const registry = yield* HttpClient.get(`${again.url}/streams/folders?offset=-1`);
           expect(yield* registry.json).toHaveLength(1);
         }),

@@ -29,8 +29,9 @@ const call = (
 };
 
 /** A commit body names its content by hash and size. The content is a blob. */
-const commit = (text: string, txid: string) => ({
+const commit = (text: string, txid: string, parent: number | null = null) => ({
   txid,
+  parent,
   author: "Zoë",
   hash: digest(text),
   size: new TextEncoder().encode(text).length,
@@ -54,16 +55,14 @@ test("a storage failure answers 500 and preserves the previous head and stream",
     const stream = "/streams/folders/646f6373/files?offset=-1";
     const before = await (await call(host, stream)).json();
     failStorage = true;
-    expect(
-      (await call(host, file, "PUT", commit("two", "failed"), { "if-match": '"1"' })).status,
-    ).toBe(500);
+    expect((await call(host, file, "PUT", commit("two", "failed", 1))).status).toBe(500);
     expect((await call(host, file)).status).toBe(500);
     failStorage = false;
     const read = await call(host, file);
     expect(await read.text()).toBe("one");
     expect(read.headers.get("etag")).toBe('"1"');
     expect(await (await call(host, stream)).json()).toEqual(before);
-    const next = await call(host, file, "PUT", commit("two", "second"), { "if-match": '"1"' });
+    const next = await call(host, file, "PUT", commit("two", "second", 1));
     expect(next.status).toBe(200);
     expect(next.headers.get("etag")).toBe('"2"');
   } finally {
@@ -71,7 +70,7 @@ test("a storage failure answers 500 and preserves the previous head and stream",
   }
 });
 
-test("JSON writes, ETags, preconditions, no-op txids and State stream reads", async () => {
+test("JSON writes, ETags, parents, retries, tombstones and State stream reads", async () => {
   const host = protocolHost();
 
   try {
@@ -83,63 +82,87 @@ test("JSON writes, ETags, preconditions, no-op txids and State stream reads", as
     ).toBe(409);
     await upload(host, "one", "two", "three");
     const url = "/api/folders/docs%2F%E9%9B%AA/files/a";
-    const first = await call(host, url, "PUT", commit("one", "first"), { "if-none-match": "*" });
+    const first = await call(host, url, "PUT", commit("one", "first"));
     expect(first.status).toBe(200);
     expect(first.headers.get("etag")).toBe('"1"');
     const firstHead = await first.json();
-    const noop = await call(host, url, "PUT", commit("one", "other"), { "if-none-match": "*" });
+    expect(firstHead).toEqual({ version: 1, parent: null, hash: digest("one"), txid: "first" });
+    const noop = await call(host, url, "PUT", commit("one", "other"));
     expect(noop.status).toBe(200);
     expect(await noop.json()).toEqual(firstHead);
 
-    const staleCreate = await call(host, url, "PUT", commit("two", "second"), {
-      "if-none-match": "*",
+    // A second write that saw no file lands too. The last write is the head.
+    const fork = await call(host, url, "PUT", commit("two", "second"));
+    expect(fork.status).toBe(200);
+    expect(await fork.json()).toEqual({
+      version: 2,
+      parent: null,
+      hash: digest("two"),
+      txid: "second",
     });
-
-    expect(staleCreate.status).toBe(412);
-    expect(await staleCreate.json()).toEqual(firstHead);
-    expect(
-      (await call(host, url, "PUT", commit("two", "second"), { "if-match": '"1"' })).status,
-    ).toBe(200);
-    expect(
-      (await call(host, url, "PUT", commit("one", "first"), { "if-match": '"1"' })).status,
-    ).toBe(412);
+    // A late retry of the first write gets its first answer and does not hide the second.
+    const retry = await call(host, url, "PUT", commit("one", "first"));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(firstHead);
     const read = await call(host, url);
     expect(await read.text()).toBe("two");
     expect(read.headers.get("etag")).toBe('"2"');
-    expect(
-      (await call(host, url, "DELETE", { txid: "bad", author: "test" }, { "if-none-match": "*" }))
-        .status,
-    ).toBe(400);
-    expect(
-      (await call(host, url, "DELETE", { txid: "delete", author: "test" }, { "if-match": '"2"' }))
-        .status,
-    ).toBe(200);
-    expect((await call(host, url)).status).toBe(404);
-    const noopDelete = await call(host, url, "DELETE", { txid: "noop-delete", author: "test" });
+
+    // Preconditions are not part of the protocol.
+    for (const [method, body, headers] of [
+      ["PUT", commit("three", "match", 2), { "if-match": '"2"' }],
+      ["PUT", commit("three", "absent"), { "if-none-match": "*" }],
+      ["DELETE", { txid: "bad", author: "test", parent: 2 }, { "if-match": '"2"' }],
+    ] as const) {
+      const refused = await call(host, url, method, body, headers);
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({
+        error: "Preconditions are not supported. Send the parent version in the body.",
+      });
+    }
+
+    const deleted = await call(host, url, "DELETE", { txid: "delete", author: "test", parent: 2 });
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ version: 3, parent: 2, txid: "delete" });
+    const gone = await call(host, url);
+    expect(gone.status).toBe(404);
+    expect(await gone.json()).toEqual({ error: "File not found", deleted: 3 });
+
+    const noopDelete = await call(host, url, "DELETE", {
+      txid: "noop-delete",
+      author: "test",
+      parent: 3,
+    });
+
     expect(noopDelete.status).toBe(200);
     expect(await noopDelete.json()).toEqual({});
-    const absent = await call(host, url, "PUT", commit("three", "third"), { "if-match": '"2"' });
-    expect(absent.status).toBe(412);
-    expect(await absent.json()).toEqual({ head: null });
-    expect(
-      (
-        await call(host, url, "PUT", commit("three", "third"), { "if-none-match": "*" })
-      ).headers.get("etag"),
-    ).toBe('"3"');
-    expect(
-      (await call(host, url, "PUT", commit("one", "first"), { "if-match": '"1"' })).status,
-    ).toBe(412);
+    const third = await call(host, url, "PUT", commit("three", "third", 3));
+    expect(third.headers.get("etag")).toBe('"4"');
+    // A parent must name a version of this folder.
+    expect((await call(host, url, "PUT", commit("one", "future", 99))).status).toBe(400);
     const stream = "/streams/folders/646f63732fe99baa/files";
     const changes = await (await call(host, `${stream}?offset=-1`)).json();
     expect(changes.map((row: { headers: { operation: string } }) => row.headers.operation)).toEqual(
-      ["upsert", "upsert", "delete", "upsert"],
+      ["upsert", "upsert", "upsert", "upsert"],
     );
-    expect(changes.map((row: { value?: { version: number } }) => row.value?.version)).toEqual([
-      1,
-      2,
-      undefined,
-      3,
+    expect(
+      changes.map((row: { value: { version: number; parent: number | null } }) => [
+        row.value.version,
+        row.value.parent,
+      ]),
+    ).toEqual([
+      [1, null],
+      [2, null],
+      [3, 2],
+      [4, 3],
     ]);
+    expect(changes[2].value).toEqual({
+      path: "a",
+      version: 3,
+      parent: 2,
+      author: "test",
+      deleted: true,
+    });
     expect(changes[0].headers.txid).toBe("first");
 
     for (const target of ["/streams/folders", stream])
@@ -172,7 +195,7 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
     const hash = digest("binary\0");
     const blob = `/api/blobs/${hash}`;
-    const reference = { txid: "blob", author: "test", hash, size: 7 };
+    const reference = { txid: "blob", author: "test", hash, size: 7, parent: null };
     const file = "/api/folders/docs/files/binary";
     const missing = await call(host, file, "PUT", reference);
     expect(missing.status).toBe(409);
@@ -213,6 +236,7 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
             size,
             txid: `small-blob-${size}`,
             author: "test",
+            parent: null,
           })
         ).status,
       ).toBe(200);
@@ -314,7 +338,7 @@ test("every JSON write needs application/json", async () => {
     for (const [path, method, body] of [
       ["/api/folders", "POST", { txid: "again", folderId: "docs", title: "Docs" }],
       [file, "PUT", commit("two", "second")],
-      [file, "DELETE", { txid: "delete", author: "Zoë" }],
+      [file, "DELETE", { txid: "delete", author: "Zoë", parent: 1 }],
     ] as const) {
       const response = await call(host, path, method, body, { "content-type": "text/plain" });
 

@@ -126,20 +126,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Retargeting persists conflict intent before any filesystem copy. Its immutable source survives a crash.
-  const conflict = Effect.fn("SyncState.conflict")(function* (
-    seq: number,
-    path: string,
-    txid: string,
-  ) {
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`INSERT INTO metadata (key, value) VALUES (${`restore:${seq}`}, ${path}) ON CONFLICT (key) DO UPDATE SET value = excluded.value`;
-        yield* sql`UPDATE outbox SET path = ${path}, txid = ${txid}, base = NULL WHERE seq = ${seq}`;
-      }),
-    );
-  });
-
   const reject = Effect.fn("SyncState.reject")(function* (
     seq: number,
     status: number,
@@ -191,7 +177,6 @@ const make = Effect.gen(function* () {
     uploaded,
     discard,
     settle,
-    conflict,
     reject,
     rejected,
     get,

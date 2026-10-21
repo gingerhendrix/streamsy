@@ -9,6 +9,7 @@ import {
   Fiber,
   FileSystem,
   Layer,
+  Order,
   Schedule,
   Schema,
   Stream,
@@ -16,11 +17,11 @@ import {
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { prepareContent } from "../../server/domain.ts";
-import { conflictPath } from "../../sync/decisions.ts";
-import { fileUrl as fileRoute } from "../../server/routes.ts";
+import { FileMessage } from "../../server/messages.ts";
+import { fileUrl as fileRoute, folderStreamUrl, streamRead } from "../../server/routes.ts";
 import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
-import { cacheBody, captureLocal, replaceSource } from "../../sync/local.ts";
+import { cacheBody, captureLocal } from "../../sync/local.ts";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 import { spawnServer, token } from "./host.ts";
 
@@ -60,6 +61,7 @@ const put = Effect.fn("SyncTest.put")(function* (
   file: string,
   value: string,
   txid: string,
+  parent: number | null = null,
 ) {
   const content = yield* prepareContent(text(value));
 
@@ -71,7 +73,7 @@ const put = Effect.fn("SyncTest.put")(function* (
   yield* uploaded.text;
 
   const response = yield* HttpClient.put(fileUrl(server, folder, file), {
-    body: HttpBody.jsonUnsafe({ ...content, txid, author: "test" }),
+    body: HttpBody.jsonUnsafe({ ...content, txid, author: "test", parent }),
   });
 
   expect(response.status).toBe(200);
@@ -87,6 +89,25 @@ const read = (server: string, folder: string, file: string) =>
       response.status === 404 ? Effect.succeed("<missing>") : response.text,
     ),
   );
+
+/** The `[version, parent, deleted]` of each change of one path, in stream order. */
+const fileHistory = Effect.fn("SyncTest.history")(function* (
+  server: string,
+  folder: string,
+  file: string,
+) {
+  const response = yield* HttpClient.get(`${server}${streamRead(folderStreamUrl(folder), "-1")}`);
+
+  const messages = yield* Schema.decodeUnknownEffect(Schema.Array(FileMessage))(
+    yield* response.json,
+  );
+
+  return Array.flatMap(messages, (message) =>
+    "value" in message && message.key === file
+      ? [[message.value.version, message.value.parent, "deleted" in message.value] as const]
+      : [],
+  );
+});
 
 const inspect = Effect.fn("SyncTest.inspect")(function* (directory: string) {
   const context = yield* Layer.build(stateLayer(`${directory}/.folder-sync/state.sqlite`));
@@ -173,70 +194,69 @@ layer(runtime, { excludeTestServices: true })((it) => {
     }),
   );
 
-  it.effect("an offline create then delete preserves an unseen remote write", () =>
-    Effect.gen(function* () {
-      const directory = yield* testDirectory("sync-unseen-delete-");
-      const server = yield* host(directory);
-      const fs = yield* FileSystem.FileSystem;
-      yield* create(server.url, "daily/demo");
-      yield* create(server.url, "ro");
-      const mirror = `${directory}/mirror`;
-      const state = yield* initialiseMirror(mirror);
-      const remote = yield* remoteFor(server.url);
-      const release = yield* Deferred.make<void>();
-      let deletes = 0;
+  it.effect(
+    "an offline create then delete lands after an unseen remote write; history keeps it",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-unseen-delete-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        const mirror = `${directory}/mirror`;
+        const state = yield* initialiseMirror(mirror);
+        const remote = yield* remoteFor(server.url);
+        const release = yield* Deferred.make<void>();
+        const parents: Array<number | null> = [];
 
-      const offline = SyncRemote.of({
-        ...remote,
-        push: (op) =>
-          Deferred.await(release).pipe(
-            Effect.andThen(() => {
-              if (op.source === null) deletes++;
+        const offline = SyncRemote.of({
+          ...remote,
+          push: (op) =>
+            Deferred.await(release).pipe(
+              Effect.andThen(() => {
+                parents.push(op.base);
 
-              return remote.push(op);
-            }),
-          ),
-      });
+                return remote.push(op);
+              }),
+            ),
+        });
 
-      const daemon = yield* runSync(options(server.url, mirror)).pipe(
-        Effect.provideService(SyncState, state),
-        Effect.provideService(SyncRemote, offline),
-        Effect.forkScoped,
-      );
+        const daemon = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, offline),
+          Effect.forkScoped,
+        );
 
-      yield* until(state.get("ready"), (value) => value === "true");
-      yield* fs.writeFileString(`${mirror}/daily/demo/n.md`, "mine");
-      yield* until(
-        state.pending(),
-        (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 1,
-      );
-      yield* fs.remove(`${mirror}/daily/demo/n.md`);
-      yield* until(
-        state.pending(),
-        (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 2,
-      );
-      yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
-      yield* Deferred.succeed(release, undefined);
-      yield* until(state.pending(), (rows) => rows.length === 0);
-      yield* until(
-        fs
-          .readFileString(`${mirror}/daily/demo/n.md`)
-          .pipe(Effect.orElseSucceed(() => "<missing>")),
-        (value) => value === "theirs",
-      );
-      expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
-      const origin = yield* state.get("origin");
+        yield* until(state.get("ready"), (value) => value === "true");
+        yield* fs.writeFileString(`${mirror}/daily/demo/n.md`, "mine");
+        yield* until(
+          state.pending(),
+          (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 1,
+        );
+        yield* fs.remove(`${mirror}/daily/demo/n.md`);
+        yield* until(
+          state.pending(),
+          (rows) => Array.filter(rows, (row) => row.path === "n.md").length === 2,
+        );
+        const theirs = yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
+        yield* Deferred.succeed(release, undefined);
+        yield* until(state.pending(), (rows) => rows.length === 0);
+        // The create has parent null, like the remote write. The delete names the create.
+        expect(parents).toEqual([null, theirs.version + 1]);
+        expect(yield* read(server.url, "daily/demo", "n.md")).toBe("<missing>");
+        expect(yield* fs.exists(`${mirror}/daily/demo/n.md`)).toBe(false);
+        expect(yield* fileHistory(server.url, "daily/demo", "n.md")).toEqual([
+          [1, null, false],
+          [2, null, false],
+          [3, 2, true],
+        ]);
+        yield* Fiber.interrupt(daemon);
 
-      if (origin === undefined) return yield* Effect.die("Missing origin");
-      expect(yield* read(server.url, "daily/demo", conflictPath("n.md", origin))).toBe("mine");
-      expect(deletes).toBe(0);
-      yield* Fiber.interrupt(daemon);
-
-      return yield* Effect.void;
-    }),
+        return yield* Effect.void;
+      }),
   );
 
-  it.effect("a delete rejected with 412 preserves the base of later queued deletes", () =>
+  it.effect("a delete from an old base lands and moves the base of later queued deletes", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("sync-stale-delete-");
       const server = yield* host(directory);
@@ -290,17 +310,29 @@ layer(runtime, { excludeTestServices: true })((it) => {
         },
         known,
       );
-      yield* put(server.url, "daily/demo", "n.md", "theirs", "theirs");
+
+      const theirs = yield* put(
+        server.url,
+        "daily/demo",
+        "n.md",
+        "theirs",
+        "theirs",
+        original.version,
+      );
+
       yield* Deferred.succeed(release, undefined);
       yield* until(state.pending(), (rows) => rows.length === 0);
-      yield* until(
-        fs
-          .readFileString(`${mirror}/daily/demo/n.md`)
-          .pipe(Effect.orElseSucceed(() => "<missing>")),
-        (value) => value === "theirs",
-      );
-      expect(bases).toEqual([original.version, original.version]);
-      expect(yield* read(server.url, "daily/demo", "n.md")).toBe("theirs");
+      // The first delete lands on top of the other write. The second names that tombstone
+      // and appends nothing, because the path has no live file.
+      expect(bases).toEqual([original.version, theirs.version + 1]);
+      expect(yield* read(server.url, "daily/demo", "n.md")).toBe("<missing>");
+      expect(yield* fs.exists(`${mirror}/daily/demo/n.md`)).toBe(false);
+      expect(yield* fileHistory(server.url, "daily/demo", "n.md")).toEqual([
+        [1, null, false],
+        [2, 1, false],
+        [3, 1, true],
+      ]);
+      expect((yield* state.head("daily/demo", "n.md"))?.version).toBe(3);
       yield* Fiber.interrupt(daemon);
 
       return yield* Effect.void;
@@ -342,7 +374,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
         yield* until(local(`${b}/daily/demo/remote.md`), (value) => value === "edited remotely");
 
         const deleted = yield* HttpClient.del(fileUrl(server.url, "daily/demo", "remote.md"), {
-          body: HttpBody.jsonUnsafe({ txid: "remote-delete", author: "test" }),
+          body: HttpBody.jsonUnsafe({ txid: "remote-delete", author: "test", parent: null }),
         });
 
         expect(deleted.status).toBe(200);
@@ -362,9 +394,9 @@ layer(runtime, { excludeTestServices: true })((it) => {
       }),
   );
 
-  it.effect("a 412 preserves immutable local bytes in a committed conflict sibling", () =>
+  it.effect("an edit that races another write lands as the head; both name one parent", () =>
     Effect.gen(function* () {
-      const directory = yield* testDirectory("sync-conflict-");
+      const directory = yield* testDirectory("sync-fork-");
       const server = yield* host(directory);
       const fs = yield* FileSystem.FileSystem;
       yield* create(server.url, "daily/demo");
@@ -381,7 +413,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
           Effect.gen(function* () {
             if (!raced && op.path === "a.md") {
               raced = true;
-              yield* put(server.url, "daily/demo", "a.md", "human wins", "human").pipe(
+              yield* put(server.url, "daily/demo", "a.md", "human edit", "human", 1).pipe(
                 // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Test fixture injects a separately owned authenticated request runtime.
                 Effect.provide(runtime),
                 Effect.orDie,
@@ -399,18 +431,52 @@ layer(runtime, { excludeTestServices: true })((it) => {
       );
 
       yield* until(state.get("ready"), (value) => value === "true");
-      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "local conflict");
-      const origin = yield* state.get("origin");
-
-      if (origin === undefined) return yield* Effect.die("Missing origin");
-      const copy = conflictPath("a.md", origin);
-      yield* until(read(server.url, "daily/demo", copy), (value) => value === "local conflict");
-      yield* until(
-        fs.readFileString(`${mirror}/daily/demo/a.md`),
-        (value) => value === "human wins",
-      );
-      expect(yield* fs.readFileString(`${mirror}/daily/demo/${copy}`)).toBe("local conflict");
+      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "local edit");
+      yield* until(read(server.url, "daily/demo", "a.md"), (value) => value === "local edit");
+      yield* until(state.pending(), (rows) => rows.length === 0);
+      expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("local edit");
+      expect(yield* fileHistory(server.url, "daily/demo", "a.md")).toEqual([
+        [1, null, false],
+        [2, 1, false],
+        [3, 1, false],
+      ]);
+      // No sibling file: the other write is only in history.
+      expect(yield* fs.readDirectory(`${mirror}/daily/demo`)).toEqual(["a.md"]);
       expect(yield* state.rejected()).toEqual([]);
+      yield* Fiber.interrupt(daemon);
+
+      return yield* Effect.void;
+    }),
+  );
+
+  it.effect("a first sync keeps a different local file as the head, with parent null", () =>
+    Effect.gen(function* () {
+      const directory = yield* testDirectory("sync-first-");
+      const server = yield* host(directory);
+      const fs = yield* FileSystem.FileSystem;
+      yield* create(server.url, "daily/demo");
+      yield* create(server.url, "ro");
+      yield* put(server.url, "daily/demo", "a.md", "server copy", "server");
+      yield* put(server.url, "daily/demo", "same.md", "same bytes", "same");
+      const mirror = `${directory}/mirror`;
+      yield* fs.makeDirectory(`${mirror}/daily/demo`, { recursive: true });
+      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "local copy");
+      yield* fs.writeFileString(`${mirror}/daily/demo/same.md`, "same bytes");
+      const daemon = yield* sync(options(server.url, mirror)).pipe(Effect.forkScoped);
+      yield* until(read(server.url, "daily/demo", "a.md"), (value) => value === "local copy");
+      const state = yield* inspect(mirror);
+      yield* until(state.pending(), (rows) => rows.length === 0);
+      expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("local copy");
+      expect(yield* fileHistory(server.url, "daily/demo", "a.md")).toEqual([
+        [1, null, false],
+        [3, null, false],
+      ]);
+      // Matching bytes are not a write.
+      expect(yield* fileHistory(server.url, "daily/demo", "same.md")).toEqual([[2, null, false]]);
+      expect(Array.sort(yield* fs.readDirectory(`${mirror}/daily/demo`), Order.String)).toEqual([
+        "a.md",
+        "same.md",
+      ]);
       yield* Fiber.interrupt(daemon);
 
       return yield* Effect.void;
@@ -830,10 +896,10 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
   for (const editedWhileStopped of [false, true])
     it.effect(
-      `conflict retarget crash with a current cursor recovers ${editedWhileStopped ? "and preserves stopped edits" : "the original path"}`,
+      `a queued edit from an old base survives a restart and lands as the head${editedWhileStopped ? ", then the stopped edit" : ""}`,
       () =>
         Effect.gen(function* () {
-          const directory = yield* testDirectory("sync-retarget-restart-");
+          const directory = yield* testDirectory("sync-queued-restart-");
           const server = yield* host(directory);
           const fs = yield* FileSystem.FileSystem;
           yield* create(server.url, "daily/demo");
@@ -842,11 +908,12 @@ layer(runtime, { excludeTestServices: true })((it) => {
           const mirror = `${directory}/mirror`;
           const state = yield* initialiseMirror(mirror);
           yield* fs.makeDirectory(`${mirror}/daily/demo`, { recursive: true });
-          yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "conflicted local bytes");
+          yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "local bytes");
           const content = yield* captureLocal(mirror, "daily/demo/a.md");
 
           if (content === null) return yield* Effect.die("Missing local fixture");
-          const human = yield* put(server.url, "daily/demo", "a.md", "human head", "human");
+          // The process stopped after it queued the edit. Another writer then moved the head.
+          const human = yield* put(server.url, "daily/demo", "a.md", "human head", "human", 1);
           const humanContent = yield* prepareContent(text("human head"));
           yield* state.enqueue(
             {
@@ -867,26 +934,9 @@ layer(runtime, { excludeTestServices: true })((it) => {
             },
           );
           yield* state.addFolder("daily/demo");
-          yield* state.set("origin", "recovery-client");
           const remote = yield* remoteFor(server.url);
           const currentCursor = yield* remote.tail("daily/demo");
           yield* state.set("cursor:daily/demo", currentCursor);
-          const op = (yield* state.pending())[0];
-
-          if (op === undefined) return yield* Effect.die("Missing pending fixture");
-          const copy = conflictPath("a.md", "recovery-client");
-          // Exact durable boundary: retarget and disk copy landed, then the process stopped before refresh(original).
-          yield* state.conflict(op.seq, copy, "copy-attempt");
-          yield* replaceSource(mirror, `daily/demo/${copy}`, content.source);
-          yield* state.save({
-            folderId: "daily/demo",
-            path: copy,
-            version: null,
-            hash: null,
-            localHash: content.hash,
-            localVersion: null,
-          });
-          yield* state.set(`restore:${op.seq}`, "");
 
           if (editedWhileStopped)
             yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "edited while stopped");
@@ -910,103 +960,107 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
           yield* until(state.get("ready"), (ready) => ready === "true");
           expect(initialRead).toBe(currentCursor);
-
-          if (!editedWhileStopped)
-            expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe("human head");
-          yield* until(
-            read(server.url, "daily/demo", copy),
-            (value) => value === "conflicted local bytes",
-          );
-
-          if (editedWhileStopped)
-            yield* until(
-              read(server.url, "daily/demo", conflictPath("a.md", "recovery-client", 1)),
-              (value) => value === "edited while stopped",
-            );
-          yield* until(
-            fs.readFileString(`${mirror}/daily/demo/a.md`),
-            (value) => value === "human head",
-          );
+          const head = editedWhileStopped ? "edited while stopped" : "local bytes";
+          yield* until(read(server.url, "daily/demo", "a.md"), (value) => value === head);
           yield* until(state.pending(), (rows) => rows.length === 0);
+          expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe(head);
+          expect(yield* fileHistory(server.url, "daily/demo", "a.md")).toEqual([
+            [1, null, false],
+            [2, 1, false],
+            [3, 1, false],
+            ...(editedWhileStopped ? [[4, 3, false] as const] : []),
+          ]);
           yield* Fiber.interrupt(daemon);
 
           return yield* Effect.void;
         }),
     );
 
-  it.effect("an edit during a paused blob download becomes a committed conflict copy", () =>
-    Effect.gen(function* () {
-      const directory = yield* testDirectory("sync-download-edit-");
-      const server = yield* host(directory);
-      const fs = yield* FileSystem.FileSystem;
-      yield* create(server.url, "daily/demo");
-      yield* create(server.url, "ro");
-      yield* put(server.url, "daily/demo", "a.md", "old bytes", "initial");
-      const mirror = `${directory}/mirror`;
-      const state = yield* initialiseMirror(mirror);
-      const remote = yield* remoteFor(server.url);
-      const downloading = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const binary = new Uint8Array(128 * 1024).fill(3);
-      const content = yield* prepareContent(binary);
+  it.effect(
+    "an edit during a paused blob download is sent from its base and becomes the head",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-download-edit-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        yield* put(server.url, "daily/demo", "a.md", "old bytes", "initial");
+        const mirror = `${directory}/mirror`;
+        const state = yield* initialiseMirror(mirror);
+        const remote = yield* remoteFor(server.url);
+        const downloading = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const binary = new Uint8Array(128 * 1024).fill(3);
+        const content = yield* prepareContent(binary);
 
-      // Every file is a blob, so pause only the download of the remote binary.
-      const modified = SyncRemote.of({
-        ...remote,
-        body: (hash) =>
-          hash !== content.hash
-            ? remote.body(hash)
-            : remote
-                .body(hash)
-                .pipe(
-                  Effect.map((body) =>
-                    Stream.unwrap(
-                      Deferred.succeed(downloading, undefined).pipe(
-                        Effect.andThen(Deferred.await(release)),
-                        Effect.as(body),
+        // Every file is a blob, so pause only the download of the remote binary.
+        const modified = SyncRemote.of({
+          ...remote,
+          body: (hash) =>
+            hash !== content.hash
+              ? remote.body(hash)
+              : remote
+                  .body(hash)
+                  .pipe(
+                    Effect.map((body) =>
+                      Stream.unwrap(
+                        Deferred.succeed(downloading, undefined).pipe(
+                          Effect.andThen(Deferred.await(release)),
+                          Effect.as(body),
+                        ),
                       ),
                     ),
                   ),
-                ),
-      });
+        });
 
-      const daemon = yield* runSync(options(server.url, mirror)).pipe(
-        Effect.provideService(SyncState, state),
-        Effect.provideService(SyncRemote, modified),
-        Effect.forkScoped,
-      );
+        const daemon = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, modified),
+          Effect.forkScoped,
+        );
 
-      yield* until(state.get("ready"), (ready) => ready === "true");
+        yield* until(state.get("ready"), (ready) => ready === "true");
 
-      const uploaded = yield* HttpClient.put(`${server.url}/api/blobs/${content.hash}`, {
-        body: HttpBody.uint8Array(binary),
-      });
+        const uploaded = yield* HttpClient.put(`${server.url}/api/blobs/${content.hash}`, {
+          body: HttpBody.uint8Array(binary),
+        });
 
-      expect(uploaded.status).toBe(200);
-      yield* uploaded.text;
+        expect(uploaded.status).toBe(200);
+        yield* uploaded.text;
 
-      const committed = yield* HttpClient.put(fileUrl(server.url, "daily/demo", "a.md"), {
-        body: HttpBody.jsonUnsafe({ ...content, author: "test", txid: "remote-binary" }),
-      });
+        const committed = yield* HttpClient.put(fileUrl(server.url, "daily/demo", "a.md"), {
+          body: HttpBody.jsonUnsafe({
+            ...content,
+            author: "test",
+            txid: "remote-binary",
+            parent: 1,
+          }),
+        });
 
-      expect(committed.status).toBe(200);
-      yield* committed.text;
-      yield* Deferred.await(downloading);
-      yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "edited during download");
-      yield* Deferred.succeed(release, undefined);
-      const origin = yield* state.get("origin");
+        expect(committed.status).toBe(200);
+        yield* committed.text;
+        yield* Deferred.await(downloading);
+        yield* fs.writeFileString(`${mirror}/daily/demo/a.md`, "edited during download");
+        yield* Deferred.succeed(release, undefined);
+        yield* until(
+          read(server.url, "daily/demo", "a.md"),
+          (value) => value === "edited during download",
+        );
+        yield* until(state.pending(), (rows) => rows.length === 0);
+        // The edit started from version 1, like the remote binary. The binary stays in history.
+        expect(yield* fs.readFileString(`${mirror}/daily/demo/a.md`)).toBe(
+          "edited during download",
+        );
+        expect(yield* fileHistory(server.url, "daily/demo", "a.md")).toEqual([
+          [1, null, false],
+          [2, 1, false],
+          [3, 1, false],
+        ]);
+        yield* Fiber.interrupt(daemon);
 
-      if (origin === undefined) return yield* Effect.die("Missing client identity");
-      yield* until(
-        read(server.url, "daily/demo", conflictPath("a.md", origin)),
-        (value) => value === "edited during download",
-      );
-      yield* until(state.pending(), (rows) => rows.length === 0);
-      expect(new Uint8Array(yield* fs.readFile(`${mirror}/daily/demo/a.md`))).toEqual(binary);
-      yield* Fiber.interrupt(daemon);
-
-      return yield* Effect.void;
-    }),
+        return yield* Effect.void;
+      }),
   );
 
   it.effect(

@@ -4,7 +4,7 @@ import { Array, Effect, Option, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BlobStore } from "./blob-store.ts";
 import { decodeText } from "./bytes.ts";
-import { FileMessage, isReset, isUpsert } from "./messages.ts";
+import { FileMessage, isLive, isReset } from "./messages.ts";
 import { fileKey } from "./index-rows.ts";
 import { Files, FolderKey } from "./streams.ts";
 
@@ -49,7 +49,7 @@ export const prepareIndexChanges = Effect.fn("Search.prepare")(function* (
   const lastReset = Option.getOrElse(Array.findLastIndex(changes, isReset), () => -1);
 
   for (const [position, change] of changes.entries()) {
-    if (position < lastReset || !isUpsert(change)) continue;
+    if (position < lastReset || !isLive(change)) continue;
     const text = yield* blobText(change.value.hash);
 
     if (text !== undefined)
@@ -80,7 +80,8 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
     yield* sql`DELETE FROM folder_sync_search WHERE folderId = ${folderId} AND path = ${change.key}`;
     yield* sql`DELETE FROM folder_sync_manifest WHERE folderId = ${folderId} AND path = ${change.key}`;
 
-    if (isUpsert(change)) {
+    // A tombstone removes the path, like a State delete.
+    if (isLive(change)) {
       const value = change.value;
 
       const row = {

@@ -8,7 +8,13 @@ import { Array, Duration, Effect, Order, Result, Schedule, Schema } from "effect
 import { hex } from "../server/bytes.ts";
 import { FILE_LIMIT, FolderId, Version, File, Path as FilePath } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
-import { applyChanges, FileMessage, FolderMessage, isReset, isUpsert } from "../server/messages.ts";
+import {
+  applyFileChanges,
+  FileMessage,
+  FolderMessage,
+  isReset,
+  isUpsert,
+} from "../server/messages.ts";
 import {
   blobUrl,
   fileUrl,
@@ -92,8 +98,6 @@ const statusCode = (status: number): Errno => {
       return "EINVAL";
     case 404:
       return "ENOENT";
-    case 412:
-      return "ESTALE";
     case 413:
       return "EFBIG";
     case 401:
@@ -376,7 +380,7 @@ export class FolderHttpFileSystem {
 
       if (from !== (this.cursors.get(folderId) ?? "-1")) continue;
 
-      const files = applyChanges(this.files.get(folderId) ?? new Map<string, File>(), changes);
+      const files = applyFileChanges(this.files.get(folderId) ?? new Map<string, File>(), changes);
 
       const cursor = response.headers.get("stream-next-offset");
 
@@ -565,10 +569,16 @@ export class FolderHttpFileSystem {
   }
 
   /**
-   * The conditional headers of a write. A content write without a read or an
-   * explicit precondition must be a create. A delete always needs a version.
+   * The parent of a write, after the checks of an explicit precondition. The
+   * server has no compare-and-set, so the checks read the snapshot that `mutate`
+   * just refreshed. A write lands even when another write arrives between the
+   * check and the commit. Its parent then shows the fork in history.
+   *
+   * The parent is the version that this session read or wrote. A content write
+   * to a path that the session never read has parent `null`. A delete of a
+   * listed path names the version that it deletes.
    */
-  private conditionHeaders(
+  private writeParent(
     path: string,
     bytes: Uint8Array | null,
     head: FileHead | undefined,
@@ -583,15 +593,14 @@ export class FolderHttpFileSystem {
       throw new FileSystemError("ESTALE", path);
 
     if (bytes === null && !exists) throw new FileSystemError("ENOENT", path);
-    const base = condition?.kind === "version" ? Number(condition.version) : observedVersion;
 
-    // A delete needs an observed version too; If-None-Match is not valid on DELETE.
-    if (bytes === null && base === undefined) throw new FileSystemError("ESTALE", path);
+    if (condition?.kind === "version") return Number(condition.version);
+
+    return observedVersion ?? (bytes === null ? (head?.version ?? null) : null);
+  }
+
+  private writeHeaders() {
     const headers = new Headers({ "content-type": "application/json" });
-
-    if (condition?.kind === "absent" || base === undefined) {
-      if (bytes !== null) headers.set("if-none-match", "*");
-    } else headers.set("if-match", `"${base}"`);
 
     if (this.options.token !== undefined)
       headers.set("authorization", `Bearer ${this.options.token}`);
@@ -641,7 +650,7 @@ export class FolderHttpFileSystem {
     const target = this.assertWritable(path);
 
     // A listed entry is enough to identify a delete. Pin it before metadata refreshes.
-    // Content writes still need a read observation or an explicit precondition.
+    // A content write without a read observation has parent `null`.
     const observedVersion =
       options.observedVersion ??
       this.observedVersions.get(target.resolved) ??
@@ -657,7 +666,7 @@ export class FolderHttpFileSystem {
     if (this.statIn(directories, target.resolved)?.kind === "directory")
       throw new FileSystemError("EISDIR", path);
 
-    const headers = this.conditionHeaders(
+    const parentVersion = this.writeParent(
       path,
       bytes,
       this.cachedHead(target.resolved),
@@ -687,12 +696,16 @@ export class FolderHttpFileSystem {
 
     const content =
       bytes === null
-        ? { txid, author: "agent" }
-        : { txid, author: "agent", hash, size: bytes.length };
+        ? { txid, author: "agent", parent: parentVersion }
+        : { txid, author: "agent", parent: parentVersion, hash, size: bytes.length };
 
     const receipt = await this.commit(
       target,
-      { method: bytes === null ? "DELETE" : "PUT", headers, body: JSON.stringify(content) },
+      {
+        method: bytes === null ? "DELETE" : "PUT",
+        headers: this.writeHeaders(),
+        body: JSON.stringify(content),
+      },
       upload,
       hash,
       options.signal,

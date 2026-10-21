@@ -1,7 +1,18 @@
 import { BunCrypto, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Array, Config, Console, Effect, FileSystem, Layer, Order, Path, Schema } from "effect";
+import {
+  Array,
+  Config,
+  Console,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Order,
+  Path,
+  Schema,
+} from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { prepareContent, Version } from "../server/domain.ts";
+import { prepareContent, Version, VersionFromString } from "../server/domain.ts";
 import { fileUrl } from "../server/routes.ts";
 
 class SeedFailure extends Schema.TaggedError<SeedFailure, { readonly brand: unique symbol }>()(
@@ -12,6 +23,30 @@ class SeedFailure extends Schema.TaggedError<SeedFailure, { readonly brand: uniq
 ) {}
 
 const Written = Schema.Struct({ version: Version });
+
+/** The version of the last change of a path: the head, a tombstone, or `null` for no change. */
+const parentOf = Effect.fn("FolderSync.seedParent")(function* (url: string) {
+  const response = yield* HttpClient.get(url);
+
+  if (response.status === 200) {
+    yield* response.text;
+
+    return yield* Schema.decodeUnknownEffect(VersionFromString)(
+      response.headers.etag?.replace(/^"|"$/g, ""),
+    );
+  }
+
+  if (response.status !== 404)
+    return yield* new SeedFailure({ message: `${url}: read answered ${response.status}` });
+  const body = yield* response.json.pipe(Effect.orElseSucceed(() => ({})));
+
+  return Option.getOrNull(
+    Option.map(
+      Schema.decodeUnknownOption(Schema.Struct({ deleted: Version }))(body),
+      ({ deleted }) => deleted,
+    ),
+  );
+});
 
 /** The first directory is the docs section. Root files have their own disjoint folder. */
 export const seedLocation = (relative: string) => {
@@ -57,10 +92,15 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
     const content = yield* prepareContent(bytes);
     const hash = content.hash;
     const url = `${root}${fileUrl(location.folderId, location.path)}`;
+    // The seed writes over the current head. The parent in the txid gives a new txid
+    // after a user edit, so the retry memory does not answer with an old seed write.
+    const parent = yield* parentOf(url);
 
     const key = yield* Schema.encodeEffect(
-      Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
-    )([location.folderId, location.path, hash]);
+      Schema.fromJsonString(
+        Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.NullOr(Version)]),
+      ),
+    )([location.folderId, location.path, hash, parent]);
 
     const upload = yield* HttpClient.put(`${root}/api/blobs/${hash}`, {
       body: HttpBody.uint8Array(bytes),
@@ -72,7 +112,7 @@ export const seedDocs = Effect.fn("FolderSync.seedDocs")(function* (
       });
 
     const response = yield* HttpClient.put(url, {
-      body: HttpBody.jsonUnsafe({ ...content, txid: `seed:${key}`, author: "docs seed" }),
+      body: HttpBody.jsonUnsafe({ ...content, parent, txid: `seed:${key}`, author: "docs seed" }),
     });
 
     if (response.status !== 200)

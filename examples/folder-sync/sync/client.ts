@@ -1,7 +1,7 @@
 import { Offset } from "@streamsy/core";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
-import { Head, VersionFromString } from "../server/domain.ts";
+import { Head, Version, VersionFromString } from "../server/domain.ts";
 import { FileMessage, FolderMessage } from "../server/messages.ts";
 import {
   blobUrl,
@@ -21,20 +21,15 @@ export class RemoteFailure extends Schema.TaggedError<
   status: Schema.Int,
 }) {}
 
-export class StaleFile extends Schema.TaggedError<StaleFile, { readonly brand: unique symbol }>()(
-  "StaleFile",
-  {
-    head: Schema.NullOr(Head),
-  },
-) {}
-
 export class SyncBlobMissing extends Schema.TaggedError<
   SyncBlobMissing,
   { readonly brand: unique symbol }
 >()("SyncBlobMissing", {}) {}
 
+/** A commit answer, a delete answer, or `{}` for a delete of a path with no live file. */
 const receipt = Schema.Struct({
   version: Schema.optionalKey(Head.fields.version),
+  parent: Schema.optionalKey(Head.fields.parent),
   txid: Schema.optionalKey(Schema.String),
   hash: Schema.optionalKey(Head.fields.hash),
 });
@@ -115,7 +110,14 @@ const makeRemote = (server: string, token?: string) =>
     const head = Effect.fn("SyncRemote.head")(function* (folderId: string, path: string) {
       const response = yield* request(HttpClientRequest.get(`${root}${fileUrl(folderId, path)}`));
 
-      if (response.status === 404) return null;
+      // A deleted path answers 404 with the version of its tombstone.
+      if (response.status === 404) {
+        const missing = Schema.decodeUnknownOption(Schema.Struct({ deleted: Version }))(
+          yield* response.json.pipe(Effect.orElseSucceed(() => ({}))),
+        );
+
+        return Option.getOrNull(missing);
+      }
 
       if (response.status !== 200) return yield* reject(response.status);
 
@@ -154,39 +156,24 @@ const makeRemote = (server: string, token?: string) =>
       if (operation.source === null && operation.base === null)
         return yield* Schema.decodeEffect(receipt)({});
 
+      // The parent is the version that the local edit started from. There is no precondition.
       const payload =
         operation.source === null
-          ? { txid: operation.txid, author: "sync CLI" }
+          ? { txid: operation.txid, author: "sync CLI", parent: operation.base }
           : {
               txid: operation.txid,
               author: "sync CLI",
+              parent: operation.base,
               hash: operation.hash,
               size: operation.size,
             };
-
-      const condition =
-        operation.base === null ? { "if-none-match": "*" } : { "if-match": `"${operation.base}"` };
 
       const url = `${root}${fileUrl(operation.folderId, operation.path)}`;
 
       const req =
         operation.source === null ? HttpClientRequest.delete(url) : HttpClientRequest.put(url);
 
-      const response = yield* request(
-        req.pipe(
-          HttpClientRequest.setHeaders(condition),
-          HttpClientRequest.bodyJsonUnsafe(payload),
-        ),
-      );
-
-      if (response.status === 412) {
-        const raw = yield* response.json;
-        const missing = Schema.decodeUnknownOption(Schema.Struct({ head: Schema.Null }))(raw);
-
-        if (Option.isSome(missing)) return yield* new StaleFile({ head: null });
-
-        return yield* new StaleFile({ head: yield* Schema.decodeUnknownEffect(Head)(raw) });
-      }
+      const response = yield* request(req.pipe(HttpClientRequest.bodyJsonUnsafe(payload)));
 
       if (response.status === 409) {
         const error = yield* Schema.decodeUnknownEffect(Schema.Struct({ error: Schema.String }))(

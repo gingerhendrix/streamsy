@@ -36,6 +36,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         const commit = yield* Schema.encodeEffect(Schema.fromJsonString(CommitFile))({
           txid: "binary",
           author: "test",
+          parent: null,
           hash,
           size: bytes.length,
         });
@@ -43,6 +44,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         const deletion = yield* Schema.encodeEffect(Schema.fromJsonString(DeleteFile))({
           txid: "delete",
           author: "test",
+          parent: 1,
         });
 
         yield* Effect.promise(async () => {
@@ -128,11 +130,24 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
             body: commit,
           });
           await compare("/api/folders/docs/files/binary", 200);
-          await compare("/api/folders/docs/files/binary", 412, {
+          // Preconditions are not part of the protocol. Both hosts refuse them.
+          await compare("/api/folders/docs/files/binary", 400, {
             method: "DELETE",
             headers: { ...jsonHeaders, "if-match": '"99"' },
             body: deletion,
           });
+          await compare("/api/folders/docs/files/binary", 200, {
+            method: "DELETE",
+            headers: jsonHeaders,
+            body: deletion,
+          });
+          // A retry of the delete gets the same tombstone answer, and the read names it.
+          await compare("/api/folders/docs/files/binary", 200, {
+            method: "DELETE",
+            headers: jsonHeaders,
+            body: deletion,
+          });
+          await compare("/api/folders/docs/files/binary", 404);
         });
       }),
     { timeout: 20000 },

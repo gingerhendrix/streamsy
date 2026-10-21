@@ -54,13 +54,13 @@ test("default browser fetch keeps its global receiver for saves, history, search
     await request("/api/folders/docs/files/a", {
       method: "PUT",
       headers,
-      body: JSON.stringify({ ...one, txid: "first", author: "test" }),
+      body: JSON.stringify({ ...one, txid: "first", author: "test", parent: null }),
     });
     const bytes = new Uint8Array([0, 255, 1]);
     const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-    const file = { path: "a", version: 1, hash, size: bytes.length, author: "browser" };
+    const file = { path: "a", version: 1, parent: 1, hash, size: bytes.length, author: "browser" };
     const saved = await saveFile("docs", file, 1, "second", transport, bytes);
-    expect(saved).toMatchObject({ version: 2, txid: "second", hash });
+    expect(saved).toEqual({ version: 2, parent: 1, txid: "second", hash });
     expect(await history({ folderId: "docs", path: "a" })).toHaveLength(2);
     expect(
       await readFile({ folderId: "docs", path: "a" }, file, new AbortController().signal),
@@ -164,7 +164,7 @@ test("the panel history reader refreshes accepted saves and a later StreamDB row
       {
         method: "PUT",
         headers: { ...authorization, "content-type": "application/json" },
-        body: JSON.stringify({ ...one, txid: "first", author: "test" }),
+        body: JSON.stringify({ ...one, txid: "first", author: "test", parent: null }),
       },
       options,
     );

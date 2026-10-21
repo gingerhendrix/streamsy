@@ -3,7 +3,7 @@ import { Array, Option, Schema } from "effect";
 import { decodeText, hex } from "../server/bytes.ts";
 import { CommitFile, File, Head } from "../server/domain.ts";
 import { SearchResult } from "../server/index-rows.ts";
-import { FileMessage, isReset, isUpsert, type FileChange } from "../server/messages.ts";
+import { FileMessage, isLive, isReset, type FileChange } from "../server/messages.ts";
 import { blobUrl, fileUrl, folderStreamUrl, streamRead } from "../server/routes.ts";
 
 export interface Selection {
@@ -37,11 +37,6 @@ export const request = (
 ): Promise<Response> =>
   transport.fetch(new URL(url, transport.origin), init).then((response) => {
     if (response.ok) return response;
-
-    if (response.status === 412)
-      throw new Error(
-        "The file changed on the server. Keep your draft and open the current version before saving again.",
-      );
 
     return response.text().then((body) => {
       let message = `Request failed with status ${response.status}`;
@@ -147,11 +142,11 @@ export async function readFile(
     const change = Option.getOrUndefined(
       Array.findFirst(
         await history(selection, signal, transport),
-        (row) => isUpsert(row) && row.value.version === selection.at,
+        (row) => isLive(row) && row.value.version === selection.at,
       ),
     );
 
-    file = change !== undefined && isUpsert(change) ? change.value : undefined;
+    file = change !== undefined && isLive(change) ? change.value : undefined;
   }
 
   if (file === undefined) throw new Error("File not found");
@@ -205,8 +200,16 @@ export async function saveFile(
   );
   const headers = new Headers(transport.writerHeaders());
   headers.set("content-type", "application/json");
-  headers.set("if-match", `"${base}"`);
-  const input: CommitFile = { txid, author: file.author, hash: file.hash, size: file.size };
+
+  // The draft's base is its parent. The save always lands and becomes the head.
+  const input: CommitFile = {
+    txid,
+    parent: base,
+    author: file.author,
+    hash: file.hash,
+    size: file.size,
+  };
+
   const body = JSON.stringify(input);
 
   const response = await request(
