@@ -2,8 +2,8 @@
 
 A file workspace with a State stream for each folder, a live browser, search,
 a sync CLI and an agent filesystem. Reads follow the folder streams. Writes use
-a JSON API with HTTP preconditions. A stale edit gets 412. Each file value keeps
-its version when its stream is copied or replayed.
+a JSON API with HTTP preconditions. A stale edit gets 412. Each file value
+carries its version, so a replay gives the same versions.
 
 ## Run on Bun
 
@@ -387,10 +387,8 @@ state: SQLite databases and Durable Objects from older builds keep rows that no
 reader uses (owner records, view checkpoints of version 1, the Worker
 `folder_sync_cursors` table). Start the demo with fresh state.
 
-Copying a folder's events into a new owner gives a writable folder. Its view
-folds the same heads and versions from the copied events. A copied change keeps
-the offset of its source, so a `GET` that misses it there reads the copy from the
-start. Restoring a missing blob alone does not reindex an
+Copies of a folder stream are not supported. A copied change keeps the offset
+of its source, so a `GET` of inline text from a copy fails. Restoring a missing blob alone does not reindex an
 already consumed change. A later write or index rebuild is needed.
 
 Sync scans hash every selected file. An external editor can save during the

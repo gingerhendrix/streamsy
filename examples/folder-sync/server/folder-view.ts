@@ -5,9 +5,6 @@ import { File, Head } from "./domain.ts";
 import { FileMessage, isReset, isUpsert } from "./messages.ts";
 import { Files, FolderKey } from "./streams.ts";
 
-/** The offset of a change with no `offset` header. A read from it scans the whole stream. */
-export const STREAM_START = "-1";
-
 /**
  * The metadata of one live path. Inline text stays in the `Files` stream, so the
  * view grows by about 200 bytes for each file, whatever the file size is.
@@ -20,7 +17,7 @@ export const LiveFile = Schema.Struct({
   author: File.fields.author,
   /** True when the change carries the content as inline text. */
   inline: Schema.Boolean,
-  /** The offset where the append of this change starts. A read of the inline text starts here. */
+  /** The offset where the append of this change starts. A read of the inline text reads from here. */
   offset: Schema.String,
 });
 
@@ -67,14 +64,15 @@ export const applyFileMessage = (view: FolderView, message: FileMessage): Folder
   const { headers, value } = message;
 
   files.set(message.key, {
-    // Every owner append stamps a txid. A replayed change without one answers with its version.
+    // Every owner append stamps a txid and an offset. Only a change that the owner did not
+    // write lacks them. Its head answers with its version, and a read of its inline text fails.
     txid: headers.txid ?? String(value.version),
     version: value.version,
     hash: value.hash,
     size: value.size,
     author: value.author,
     inline: value.text !== undefined,
-    offset: headers.offset ?? STREAM_START,
+    offset: headers.offset ?? "-1",
   });
 
   return { last: Math.max(view.last, value.version), files };

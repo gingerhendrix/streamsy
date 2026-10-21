@@ -1,6 +1,6 @@
 import { CommitBoundary, DurableState, StreamAddress } from "@streamsy/core";
 import { CheckpointStore, Projection } from "@streamsy/projection";
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
+import { Context, Crypto, DateTime, Effect, Layer, Schema, Semaphore } from "effect";
 import { BlobStore } from "./blob-store.ts";
 import {
   BlobMissing,
@@ -22,14 +22,7 @@ import {
   sha256,
 } from "./domain.ts";
 import { registerFolder } from "./folder-registry.ts";
-import {
-  fileOf,
-  folderView,
-  headOf,
-  STREAM_START,
-  type FolderView,
-  type LiveFile,
-} from "./folder-view.ts";
+import { fileOf, folderView, headOf, type FolderView, type LiveFile } from "./folder-view.ts";
 import { FileMessage, isUpsert } from "./messages.ts";
 import { Files, Folders } from "./streams.ts";
 
@@ -147,10 +140,9 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * The inline text of a live file, read from the change that wrote it. The scan
-   * starts at the change's own offset and decodes one message at a time, so it
-   * usually decodes one change. A stream copied by replay keeps the offsets of
-   * its source, so a scan that misses starts again at the start of the stream.
+   * The inline text of a live file, read from the change that wrote it. The owner
+   * stamps each change with the offset where its append starts, and each append
+   * holds one change. So a read from that offset gives the change first.
    */
   const inlineTextOf = Effect.fn("Folder.inlineText")(function* (
     folderId: string,
@@ -158,38 +150,26 @@ const make = Effect.gen(function* () {
     live: LiveFile,
   ) {
     const address = StreamAddress.json(Files.at({ folderId }).id, { schema: FileMessage });
-    const decodeChange = Schema.decodeEffect(address.codec);
-    const decoder = new TextDecoder();
+    const page = yield* files.wire.read(address.id, { offset: live.offset });
+    const [first] = page.messages;
 
-    const scan = Effect.fn("Folder.scanText")(function* (from: string) {
-      let offset = from;
+    const change =
+      first === undefined
+        ? undefined
+        : yield* Schema.decodeEffect(address.codec)(new TextDecoder().decode(first.data));
 
-      while (true) {
-        const page = yield* files.wire.read(address.id, { offset });
+    if (
+      change === undefined ||
+      !isUpsert(change) ||
+      change.key !== path ||
+      change.value.version !== live.version ||
+      change.value.text === undefined
+    )
+      return yield* Effect.die(
+        new Error(`No inline text for ${path} version ${live.version} at offset ${live.offset}`),
+      );
 
-        for (const message of page.messages) {
-          const change = yield* decodeChange(decoder.decode(message.data));
-
-          if (isUpsert(change) && change.key === path && change.value.version === live.version)
-            return Option.fromUndefinedOr(change.value.text);
-        }
-
-        if (page.upToDate || page.messages.length === 0) return Option.none<string>();
-        offset = page.nextOffset;
-      }
-    });
-
-    const hinted =
-      live.offset === STREAM_START
-        ? Option.none<string>()
-        : yield* scan(live.offset).pipe(Effect.orElseSucceed(() => Option.none<string>()));
-
-    const text = Option.isSome(hinted) ? hinted : yield* scan(STREAM_START);
-
-    if (Option.isNone(text))
-      return yield* Effect.die(new Error(`The Files stream has no text for ${path}`));
-
-    return text.value;
+    return change.value.text;
   });
 
   const create = Effect.fn("Folder.create")(function* (

@@ -2,7 +2,7 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { DurableState, CommitBoundary } from "@streamsy/core";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Deferred, Effect, Layer, Result } from "effect";
+import { Deferred, Effect, Exit, Layer, Result } from "effect";
 import {
   FolderConflict,
   InvalidFile,
@@ -239,16 +239,16 @@ for (const [name, storage] of [
         });
         expect((yield* store.read("meta", "b")).value.text).toBe("beta");
 
-        // A replayed copy keeps its source offsets. The copy holds only the last
-        // change of "a" and then "b", so the hint for "a" points past its real
-        // position, and the read scans again from the start.
+        // Copies of a stream are not supported. A copy keeps its source offsets, so
+        // the change at the stored offset is not the one that wrote the file, and
+        // the read fails as a defect.
         const changes = (yield* files.collect({ folderId: "meta" })).items;
         yield* files.create({ folderId: "meta-copy" });
 
         for (const change of [changes[2], changes[1]])
           if (change !== undefined) yield* files.append({ folderId: "meta-copy" }, [change]);
-        expect((yield* store.read("meta-copy", "a")).value.text).toBe("alpha two");
-        expect((yield* store.read("meta-copy", "b")).value.text).toBe("beta");
+        const copied = yield* Effect.exit(store.read("meta-copy", "a"));
+        expect(Exit.hasDies(copied)).toBe(true);
       }),
     );
     it.effect("a failing checkpoint save runs once per CHECKPOINT_EVERY writes", () =>
