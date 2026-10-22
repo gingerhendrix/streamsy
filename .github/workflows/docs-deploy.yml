@@ -1,0 +1,79 @@
+name: Docs deploy
+
+# Deploys the docs site (site/) to one Alchemy target. publish.yml calls it
+# after the release gate. The target picks the Worker, domains and pinned stage
+# from scripts/docs-deployment-targets.ts. Alchemy state for shared targets
+# lives in the Cloudflare state store, so every run updates the same Worker.
+#
+# Each target has a GitHub environment of the same name. It holds the
+# Cloudflare and Alchemy secrets, and can hold protection rules.
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "STREAMSY_DOCS_DEPLOYMENT value: next or production."
+        type: string
+        required: true
+      url:
+        description: "Public URL of the target, shown on the deployment."
+        type: string
+        required: true
+      adopt:
+        description: "Pass --adopt to alchemy deploy."
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.target }}
+      url: ${{ inputs.url }}
+    # One deploy per target at a time. A queued deploy waits; it never cancels
+    # a running one, because a cancelled Alchemy run can leave partial state.
+    concurrency:
+      group: docs-deploy-${{ inputs.target }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun install --frozen-lockfile --cwd site
+
+      - name: Check the site
+        run: |
+          bun run --cwd site check
+          bun run --cwd site check:deploy-targets
+
+      # Build before deploy so a broken build fails before Alchemy touches the
+      # state store or Cloudflare. The deploy builds again from the same tree.
+      - name: Build the site
+        run: bun run --cwd site build
+
+      - name: Deploy with Alchemy
+        working-directory: site
+        env:
+          STREAMSY_DOCS_DEPLOYMENT: ${{ inputs.target }}
+          ADOPT: ${{ inputs.adopt }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ALCHEMY_PASSWORD: ${{ secrets.ALCHEMY_PASSWORD }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.ALCHEMY_STATE_TOKEN }}
+        run: |
+          if [ "$ADOPT" = "true" ]; then
+            bun run deploy --adopt
+          else
+            bun run deploy
+          fi

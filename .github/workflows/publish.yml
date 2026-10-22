@@ -6,25 +6,46 @@ name: Release
 # through npm trusted publishing, creates the shared v<version> tag and the
 # GitHub release. A manual run (workflow_dispatch) does the same on main.
 #
+# After the gate, the docs site deploys with Alchemy:
+# - deploy-next updates next.streamsy.dev on every push to main.
+# - deploy-production updates streamsy.dev when this run made a release, that
+#   is, when a v* tag points at the commit after `tegami ci`. Tegami makes the
+#   release with GITHUB_TOKEN, so an `on: release` workflow would never start.
+# A manual run with `deploy` set to next or production runs the gate and that
+# deploy only. It skips `tegami ci`, so it cannot publish packages.
+#
 # Keep the file name publish.yml: npm trusted publishing is tied to it.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the docs site from this ref and skip tegami ci. none runs the normal release flow."
+        type: choice
+        options: [none, next, production]
+        default: none
+      adopt:
+        description: "Pass --adopt to alchemy deploy. Use once, for the first deploy into the remote state store."
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  id-token: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   release:
     name: Version and publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.release-tag.outputs.released }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -79,6 +100,54 @@ jobs:
         run: bun run pack:dry-run
 
       - name: Version or publish packages
+        if: github.event_name == 'push' || inputs.deploy == 'none'
         run: bun run tegami ci
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+      # Tegami tags the commit this run checked out. A v* tag at HEAD means a
+      # release exists for this commit, so the production docs must follow it.
+      - name: Detect a release at this commit
+        id: release-tag
+        if: github.event_name == 'push' || inputs.deploy == 'none'
+        run: |
+          git fetch --force --tags origin
+          tag="$(git tag --points-at HEAD --list 'v*' | sort -V | tail -n 1)"
+          if [ -n "$tag" ]; then
+            echo "Release $tag points at $GITHUB_SHA"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No release tag points at $GITHUB_SHA"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-next:
+    name: Deploy next.streamsy.dev
+    needs: release
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || inputs.deploy == 'next')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      target: next
+      url: https://next.streamsy.dev
+      adopt: ${{ inputs.adopt == true }}
+    secrets: inherit
+
+  deploy-production:
+    name: Deploy streamsy.dev
+    needs: release
+    if: >-
+      needs.release.outputs.released == 'true' ||
+      (inputs.deploy == 'production' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      target: production
+      url: https://streamsy.dev
+      adopt: ${{ inputs.adopt == true }}
+    secrets: inherit
