@@ -3,6 +3,7 @@
   "exclude": [
     "test/scripts/check-excerpts.test.ts",
     "test/scripts/check-demo-excerpts.test.ts",
+    "test/scripts/docs-deployment-targets.test.ts",
     "test/twoslash.test.ts"
   ],
   "compilerOptions": {

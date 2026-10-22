@@ -12,6 +12,7 @@
     "check": "fumadocs-mdx && tsc --noEmit",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
+    "check:deploy-targets": "bun test test/scripts/docs-deployment-targets.test.ts",
     "check:og": "bun run scripts/check-og-image.ts",
     "check:terms": "bun run scripts/check-stale-terms.ts",
     "check:links": "bun run scripts/check-links.ts",
