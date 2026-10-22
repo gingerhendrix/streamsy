@@ -94,12 +94,14 @@ const remoteFiles = (env: Env) =>
 
 const IndexInternal = Layer.mergeAll(
   // The Worker edge checked the token, and this route checks it again.
-  // Registration comes first: a crash leaves a discoverable folder that a retry can finish.
+  // The stream comes first, so a reader that finds the folder in the registry can read it.
+  // A crash between the two leaves an unlisted empty stream. A retry creates it again
+  // without change and then registers the folder.
   HttpRouter.addAll(
     folderRoutes((input) =>
       createFailures(
-        registerFolder(input).pipe(
-          Effect.tap(() => Effect.flatMap(FolderStreams, (streams) => streams.create(input))),
+        Effect.flatMap(FolderStreams, (streams) => streams.create(input)).pipe(
+          Effect.andThen(registerFolder(input)),
         ),
       ),
     ),

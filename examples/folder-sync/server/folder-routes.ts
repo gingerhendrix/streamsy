@@ -22,8 +22,8 @@ export const createFailures = <A, E, R>(self: Effect.Effect<A, E, R>) =>
 
 /**
  * `POST /api/folders`. Each host passes its own create: the Bun host commits the
- * registry and the stream together, and the Worker index registers the folder
- * and then asks the folder object for its stream.
+ * registry and the stream together, and the Worker index asks the folder object
+ * for its stream and then registers the folder.
  */
 export const folderRoutes = <R>(
   create: (

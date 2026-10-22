@@ -16,8 +16,8 @@ export interface Registration {
  * repeated create with the same title answers the registered folder.
  *
  * `beforeAppend` runs in the same transaction, only for a new folder. The Bun
- * host creates the folder's `Files` stream there. The Worker creates it later,
- * in the folder object.
+ * host creates the folder's `Files` stream there. The Worker creates it before
+ * this call, in the folder object.
  */
 export const registerFolder = Effect.fn("Folder.register")(function* <E = never, R = never>(
   input: Registration,

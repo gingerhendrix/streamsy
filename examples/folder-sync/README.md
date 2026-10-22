@@ -450,8 +450,9 @@ final local read-to-rename window. A delete made while stopped during an
 interrupted first install can be restored on restart. Browser bundle size,
 full replay and scans suit a small demo corpus. There is no phone cache.
 
-Worker creation spans the registry and folder objects. A crash between them
-leaves a listed folder whose creation must be retried. A lost ping can leave
+Worker creation spans the registry and folder objects. The folder object creates
+the stream before the registry lists the folder. A crash between them leaves an
+unlisted empty stream, and a retry of the create lists it. A lost ping can leave
 search stale until the hourly pass. Restart tests use local workerd. One deployed
 run on Cloudflare covered the HTTP smoke, seed, sync mirrors, the browser, the
 agent filesystem and a redeploy. No test checked the hourly cron after a lost ping
