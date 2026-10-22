@@ -17,6 +17,35 @@ export { folderOwner, placement } from "./placement.ts";
 
 const json = (error: string, status: number) => Response.json({ error }, { status });
 
+/** The most request body bytes that a refused write reads before it gives up. */
+const refusedBodyLimit = 64 * 1024;
+
+/**
+ * Read a refused request body to its end, up to `refusedBodyLimit` bytes.
+ * workerd closes the connection when a response leaves the body unread. A
+ * client that sends its next request on that connection then gets
+ * ECONNRESET instead of the 401. A larger body is cancelled.
+ */
+const discardBody = async (request: Request) => {
+  const reader = request.body?.getReader();
+
+  if (reader === undefined) return;
+  let read = 0;
+
+  try {
+    while (read <= refusedBodyLimit) {
+      const chunk = await reader.read();
+
+      if (chunk.done) return;
+      read += chunk.value.byteLength;
+    }
+
+    await reader.cancel();
+  } catch {
+    // The client went away. The 401 has nobody to reach.
+  }
+};
+
 /** The hourly backstop checks source tails from every stored folder cursor. */
 export const scheduledWake = async (env: Env) => {
   const response = await indexObject(env).fetch("https://internal/__catchup", { method: "POST" });
@@ -49,8 +78,11 @@ export default {
       });
     const write = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 
-    if (write && !bearerMatches(request.headers.get("authorization"), env.WRITER_TOKEN))
+    if (write && !bearerMatches(request.headers.get("authorization"), env.WRITER_TOKEN)) {
+      await discardBody(request);
+
       return json("Unauthorized", 401);
+    }
 
     if (url.pathname === "/api/admin/wake" && request.method === "POST") {
       try {

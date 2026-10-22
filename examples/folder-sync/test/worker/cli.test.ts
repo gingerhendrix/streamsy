@@ -102,7 +102,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
               ],
               {
                 cwd: `${import.meta.dirname}/../..`,
+                // Keep PATH: a CI runner installs bun outside the default search path.
                 env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
+                extendEnv: true,
               },
             ),
           );
@@ -151,7 +153,9 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
               ],
               {
                 cwd: `${import.meta.dirname}/../..`,
+                // Keep PATH: a CI runner installs bun outside the default search path.
                 env: { FOLDER_SYNC_WRITER_TOKEN: "correct-token" },
+                extendEnv: true,
               },
             ),
           );

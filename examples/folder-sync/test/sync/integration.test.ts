@@ -846,52 +846,56 @@ layer(runtime, { excludeTestServices: true })((it) => {
     }),
   );
 
-  it.effect("binary upload and second-client pull recover an actual blob-missing 409", () =>
-    Effect.gen(function* () {
-      const directory = yield* testDirectory("sync-binary-");
-      const server = yield* host(directory);
-      const fs = yield* FileSystem.FileSystem;
-      yield* create(server.url, "daily/demo");
-      yield* create(server.url, "ro");
-      const mirror = `${directory}/writer`;
-      const reader = `${directory}/reader`;
-      const state = yield* initialiseMirror(mirror);
-      const remote = yield* remoteFor(server.url);
-      let uploads = 0;
+  // Each file waits for a 1 s scan, and the lost upload adds a retry. Leave room on a two-core runner.
+  it.effect(
+    "binary upload and second-client pull recover an actual blob-missing 409",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-binary-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+        yield* create(server.url, "daily/demo");
+        yield* create(server.url, "ro");
+        const mirror = `${directory}/writer`;
+        const reader = `${directory}/reader`;
+        const state = yield* initialiseMirror(mirror);
+        const remote = yield* remoteFor(server.url);
+        let uploads = 0;
 
-      const modified = SyncRemote.of({
-        ...remote,
-        upload: (op) => {
-          uploads++;
+        const modified = SyncRemote.of({
+          ...remote,
+          upload: (op) => {
+            uploads++;
 
-          // Simulate a lost upload acknowledgment with no stored object. The commit then returns 409.
-          return uploads === 1 ? Effect.void : remote.upload(op);
-        },
-      });
+            // Simulate a lost upload acknowledgment with no stored object. The commit then returns 409.
+            return uploads === 1 ? Effect.void : remote.upload(op);
+          },
+        });
 
-      const daemon = yield* runSync(options(server.url, mirror)).pipe(
-        Effect.provideService(SyncState, state),
-        Effect.provideService(SyncRemote, modified),
-        Effect.forkScoped,
-      );
+        const daemon = yield* runSync(options(server.url, mirror)).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, modified),
+          Effect.forkScoped,
+        );
 
-      yield* sync(options(server.url, reader, [])).pipe(Effect.forkScoped);
-      yield* until(state.get("ready"), (value) => value === "true");
-      const bytes = new Uint8Array(512 * 1024);
+        yield* sync(options(server.url, reader, [])).pipe(Effect.forkScoped);
+        yield* until(state.get("ready"), (value) => value === "true");
+        const bytes = new Uint8Array(512 * 1024);
 
-      for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
-      yield* fs.writeFile(`${mirror}/daily/demo/large.bin`, bytes);
-      const local = `${reader}/daily/demo/large.bin`;
-      yield* until(fs.exists(local), (exists) => exists);
-      expect(new Uint8Array(yield* fs.readFile(local))).toEqual(bytes);
-      expect(uploads).toBe(2);
-      yield* fs.writeFile(`${mirror}/daily/demo/nul.bin`, new Uint8Array([65, 0, 66]));
-      yield* until(fs.exists(`${reader}/daily/demo/nul.bin`), (exists) => exists);
-      expect(new Uint8Array(yield* fs.readFile(`${reader}/daily/demo/nul.bin`))).toEqual(
-        new Uint8Array([65, 0, 66]),
-      );
-      yield* Fiber.interrupt(daemon);
-    }),
+        for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+        yield* fs.writeFile(`${mirror}/daily/demo/large.bin`, bytes);
+        const local = `${reader}/daily/demo/large.bin`;
+        yield* until(fs.exists(local), (exists) => exists);
+        expect(new Uint8Array(yield* fs.readFile(local))).toEqual(bytes);
+        expect(uploads).toBe(2);
+        yield* fs.writeFile(`${mirror}/daily/demo/nul.bin`, new Uint8Array([65, 0, 66]));
+        yield* until(fs.exists(`${reader}/daily/demo/nul.bin`), (exists) => exists);
+        expect(new Uint8Array(yield* fs.readFile(`${reader}/daily/demo/nul.bin`))).toEqual(
+          new Uint8Array([65, 0, 66]),
+        );
+        yield* Fiber.interrupt(daemon);
+      }),
+    { timeout: 15000 },
   );
 
   for (const editedWhileStopped of [false, true])
