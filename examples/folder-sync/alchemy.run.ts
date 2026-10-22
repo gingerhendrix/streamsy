@@ -12,7 +12,8 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
     const token = yield* Config.Redacted("FOLDER_SYNC_WRITER_TOKEN");
-    const blobs = yield* Cloudflare.R2.Bucket("Blobs", {});
+    // A stage's blobs are disposable demo data. Destroy empties the bucket, then deletes it.
+    const blobs = yield* Cloudflare.R2.Bucket("Blobs", { forceDestroy: true });
 
     const worker = yield* Cloudflare.Worker("Server", {
       name: `folder-sync-${stage}`,
