@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Effect-first Durable Streams protocol, storage contract, memory layer and toolkit.",
   "license": "MIT",
   "repository": {
