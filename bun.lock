@@ -414,6 +414,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "just-bash@3.6.0": "patches/just-bash@3.6.0.patch",
+  },
   "overrides": {
     "@durable-streams/client": "^0.2.7",
     "@effect/ai-anthropic": "4.0.5",

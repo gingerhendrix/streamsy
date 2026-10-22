@@ -86,5 +86,8 @@
     "@tanstack/react-db": "0.5.11",
     "effect": "4.0.5",
     "vitest": "5.0.5"
+  },
+  "patchedDependencies": {
+    "just-bash@3.6.0": "patches/just-bash@3.6.0.patch"
   }
 }

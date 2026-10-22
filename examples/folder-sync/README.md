@@ -355,7 +355,11 @@ await session.bash.exec("echo note > /docs/root/agent-note.txt");
 The agent keeps folder maps from the State streams and loads blobs by hash.
 Folder discovery uses the registry. `folderDirectory(id)` applies the same
 mapping rules as the CLI. Writable folders default to none. Root and synthetic
-parents are read-only.
+parents are read-only. A shell write to a read-only path fails that command
+only, as in bash: `echo x > /ro/f` prints `bash: /ro/f: Read-only file system`,
+sets `$?` to 1, and the script goes on. The root `patches/just-bash@3.6.0.patch`
+gives just-bash this behaviour until a release carries upstream pull request
+vercel-labs/just-bash#613.
 
 A content write names the version seen by a read or successful write as its
 parent. A write to a path the session never read has parent `null`, even if

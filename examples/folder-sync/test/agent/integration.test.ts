@@ -229,3 +229,41 @@ test("a listed unread file can be deleted; a delete from a stale listing lands a
     await host.stop();
   }
 });
+
+test("a shell write into a read-only folder fails one command, and the script goes on", async () => {
+  const host = protocolHost();
+
+  try {
+    await create(host, "docs");
+    await create(host, "ro");
+
+    const writer = await createAgentFileSystem({
+      ...options(host),
+      folders: ["ro"],
+      writable: ["ro"],
+    });
+
+    await writer.core.mutate("/ro/kept.txt", encoded("kept\n"));
+
+    const { bash } = await createAgentFileSystem({ ...options(host), folders: ["docs", "ro"] });
+
+    const result = await bash.exec(
+      'echo before; echo x > /ro/new.txt; echo "after rc=$?"; ' +
+        "echo x >> /ro/kept.txt || echo handled; " +
+        'for i in 1 2; do echo $i > /ro/kept.txt; echo "loop $i"; done; ' +
+        "echo ok > /docs/ok.txt; cat /docs/ok.txt",
+    );
+
+    expect(result.stdout).toBe("before\nafter rc=1\nhandled\nloop 1\nloop 2\nok\n");
+    expect(result.stderr).toBe(
+      "bash: /ro/new.txt: Read-only file system\n" +
+        "bash: /ro/kept.txt: Read-only file system\n".repeat(3),
+    );
+    expect(result.exitCode).toBe(0);
+    // The refused writes change nothing in the read-only folder.
+    expect(await writer.core.stat("/ro/new.txt")).toBeUndefined();
+    expect(new TextDecoder().decode((await writer.core.read("/ro/kept.txt")).bytes)).toBe("kept\n");
+  } finally {
+    await host.stop();
+  }
+});
