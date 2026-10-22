@@ -201,9 +201,9 @@ starts a fresh read from `-1`. No production writer currently emits either.
 
 ## Write API
 
-JSON write bodies are limited to 512 KiB. Send `Content-Type: application/json`.
-A JSON write with another content type gets 415 on both hosts: folder creation,
-file commits and file deletes.
+JSON writes need `Content-Type: application/json`. A JSON write with another
+content type gets 415 on both hosts: folder creation, file commits and file
+deletes. JSON bodies have no size limit.
 
 `POST /api/folders` takes `{ txid, folderId, title }`. The same ID and title is
 a no-op, and another title gets 409.

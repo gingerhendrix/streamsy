@@ -2,7 +2,6 @@
 import { Schema } from "effect";
 import { test, expect } from "vitest";
 import { FILE_LIMIT } from "../server/domain.ts";
-import { JSON_BODY_LIMIT } from "../server/http.ts";
 import { protocolHost, writerToken } from "./protocol-host.ts";
 
 const digest = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -247,55 +246,18 @@ test("blob routes verify hashes, sizes and existence; bytes use immutable reads"
   }
 });
 
-test("JSON writes reject oversized declared and streamed bodies before parsing", async () => {
+test("JSON writes have no body size limit", async () => {
   const host = protocolHost();
 
   try {
     await call(host, "/api/folders", "POST", { txid: "folder", folderId: "docs", title: "Docs" });
-
-    for (const [path, method] of [
-      ["/api/folders", "POST"],
-      ["/api/folders/docs/files/a", "PUT"],
-      ["/api/folders/docs/files/a", "DELETE"],
-    ]) {
-      const headers = {
-        authorization: `Bearer ${writerToken}`,
-        "content-type": "application/json",
-      };
-
-      const declared = await host.fetch(
-        new Request(`http://localhost${path}`, {
-          method,
-          headers: { ...headers, "content-length": String(JSON_BODY_LIMIT + 1) },
-          body: "not JSON",
-        }),
-      );
-
-      expect(declared.status).toBe(413);
-      let pulls = 0;
-
-      const body = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          pulls++;
-          controller.enqueue(new Uint8Array(65536).fill(32));
-
-          if (pulls === 32) controller.close();
-        },
-      });
-
-      const streamed = await host.fetch(
-        new Request(`http://localhost${path}`, { method, headers, body }),
-      );
-
-      expect(streamed.status).toBe(413);
-      expect(pulls).toBeLessThan(32);
-    }
-
-    // A commit body holds metadata only, so it stays far below the limit.
     await upload(host, "one");
-    expect(
-      (await call(host, "/api/folders/docs/files/a", "PUT", commit("one", "small"))).status,
-    ).toBe(200);
+    // Whitespace pads a valid commit body past the 512 KiB limit that the server once had.
+    const padded = `${JSON.stringify(commit("one", "padded"))}${" ".repeat(1024 * 1024)}`;
+    const response = await call(host, "/api/folders/docs/files/a", "PUT", padded);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ version: 1 });
   } finally {
     await host.stop();
   }
