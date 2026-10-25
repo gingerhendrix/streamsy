@@ -52,6 +52,7 @@ const paper = tegami({
     "hex-board",
     "issue-tracker-demo",
     "issue-tracker-demo-event-sourced",
+    "issue-tracker-demo-foldkit",
     "memory-server",
     "platform-matrix",
   ],

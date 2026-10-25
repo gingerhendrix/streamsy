@@ -196,6 +196,25 @@
         "vitest": "catalog:",
       },
     },
+    "examples/issue-tracker-demo-foldkit": {
+      "name": "issue-tracker-demo-foldkit",
+      "version": "0.0.3",
+      "dependencies": {
+        "@durable-streams/client": "^0.2.7",
+        "@effect/platform-browser": "4.0.5",
+        "@effect/platform-bun": "4.0.5",
+        "@streamsy/issue-tracker-demo-contract": "workspace:*",
+        "@streamsy/serve": "workspace:*",
+        "effect": "4.0.5",
+        "foldkit": "0.169.0",
+        "issue-tracker-demo": "workspace:*",
+        "typescript": "catalog:",
+      },
+      "devDependencies": {
+        "bun-types": "^1.4.3",
+        "vitest": "catalog:",
+      },
+    },
     "examples/memory-server": {
       "name": "memory-server",
       "version": "0.0.4",
@@ -526,6 +545,8 @@
     "@effect/ai-anthropic": ["@effect/ai-anthropic@4.0.5", "", { "peerDependencies": { "effect": "^4.0.5" } }, "sha512-Vb8pEJrwqeRd3UT0BtOM2IHlLgRp32XunUnWfEd/DpV0jyKgZHSKVVxsDs6AsMyZpRsD1klDtvfCndDiQV4TyQ=="],
 
     "@effect/ai-openai": ["@effect/ai-openai@4.0.5", "", { "peerDependencies": { "effect": "^4.0.5" } }, "sha512-xJGqOXR10BdLIk3X5rPA8/cXbk7hyvygPK2xjplkc1LxI2VT2wspTT7Nt+BlcN9+REzHM10ve0bbNbk5GIJKuw=="],
+
+    "@effect/platform-browser": ["@effect/platform-browser@4.0.5", "", { "peerDependencies": { "effect": "^4.0.5" } }, "sha512-o3H75xA91nkgIWOcp0XouIxxWxJEOFkTf7gG4qkQtZfy0tq46hJBI0U8jrUqsPruo2vCCNfM0yCoj5AG7F5BMQ=="],
 
     "@effect/platform-bun": ["@effect/platform-bun@4.0.5", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.5" }, "peerDependencies": { "effect": "^4.0.5" } }, "sha512-tB/GapZ/bVoCbwRgnojGP4TwopvkMoFoSCipXT1sf0guvG/2oRVhWzJW/1vkrYFEdLM7XyRnVVLrSJyqdok7DA=="],
 
@@ -1131,6 +1152,8 @@
 
     "end-of-stream": ["end-of-stream@1.4.5", "", { "dependencies": { "once": "^1.4.0" } }, "sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg=="],
 
+    "entities": ["entities@8.1.0", "", {}, "sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA=="],
+
     "error-causes": ["error-causes@3.0.2", "", {}, "sha512-i0B8zq1dHL6mM85FGoxaJnVtx6LD5nL2v0hlpGdntg5FOSyzQ46c9lmz5qx0xRS2+PWHGOHcYxGIBC5Le2dRMw=="],
 
     "error-stack-parser-es": ["error-stack-parser-es@1.0.5", "", {}, "sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA=="],
@@ -1170,6 +1193,8 @@
     "fold-agent-example": ["fold-agent-example@workspace:examples/fold-agent"],
 
     "folder-sync": ["folder-sync@workspace:examples/folder-sync"],
+
+    "foldkit": ["foldkit@0.169.0", "", { "dependencies": { "parse5": "^8.0.1" }, "peerDependencies": { "@effect/platform-browser": "4.0.0", "effect": "4.0.0" } }, "sha512-7GHWKVJshNM6DLkPfybklfGpSo3wfDHtiywCP3VUmwmVTtpezeLdhwqhd67PtpDid8Ri7aVKtAykjk6m1tK/tw=="],
 
     "foreground-child": ["foreground-child@3.3.1", "", { "dependencies": { "cross-spawn": "^7.0.6", "signal-exit": "^4.0.1" } }, "sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw=="],
 
@@ -1248,6 +1273,8 @@
     "issue-tracker-demo": ["issue-tracker-demo@workspace:examples/issue-tracker-demo"],
 
     "issue-tracker-demo-event-sourced": ["issue-tracker-demo-event-sourced@workspace:examples/issue-tracker-demo-event-sourced"],
+
+    "issue-tracker-demo-foldkit": ["issue-tracker-demo-foldkit@workspace:examples/issue-tracker-demo-foldkit"],
 
     "js-base64": ["js-base64@3.9.4", "", {}, "sha512-PtOMXpEGuP0RRiRXsjzHzl44dMHxSu2CPvAhinupR1tBa88me+1DPqsobl7eupn5UukjLkln1ZnAOAOXOrYG0Q=="],
 
@@ -1404,6 +1431,8 @@
     "papaparse": ["papaparse@5.7.0", "", {}, "sha512-qBGxg/7Q3Kl9Wfhrz2Z74UnvnHTXLNG6jmKJFeBvP2+y4lV7So+7SR62+Zd47JvdrCkX+nDcnr0ObPzek/+6RA=="],
 
     "parse-entities": ["parse-entities@4.0.2", "", { "dependencies": { "@types/unist": "^2.0.0", "character-entities-legacy": "^3.0.0", "character-reference-invalid": "^2.0.0", "decode-named-character-reference": "^1.0.0", "is-alphanumerical": "^2.0.0", "is-decimal": "^2.0.0", "is-hexadecimal": "^2.0.0" } }, "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw=="],
+
+    "parse5": ["parse5@8.0.1", "", { "dependencies": { "entities": "^8.0.0" } }, "sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw=="],
 
     "path-expression-matcher": ["path-expression-matcher@1.6.2", "", {}, "sha512-enSlaiat05iasnzmgNxRj8reFdj3puY2QpNgP1aPIaVfT6nn9ICuPoFlKHk8EN22HcwewshO+mN2DGbkCEOtqQ=="],
 

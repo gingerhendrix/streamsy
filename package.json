@@ -40,6 +40,7 @@
     "smoke:bugsy": "bun run --cwd examples/bugsy smoke:http",
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker-demo smoke:http",
     "smoke:issue-tracker-event-sourced": "bun run --cwd examples/issue-tracker-demo-event-sourced smoke:http",
+    "smoke:issue-tracker-foldkit": "bun run --cwd examples/issue-tracker-demo-foldkit smoke:http",
     "smoke:bugsy-serve": "bun run --cwd examples/bugsy smoke:serve",
     "app:bugsy": "bun run --cwd examples/bugsy app:full",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
