@@ -6,6 +6,7 @@
     "hackernews-newest-stream",
     "issue-tracker",
     "issue-tracker-event-sourced",
+    "issue-tracker-foldkit",
     "fold-agent",
     "hex-board",
     "bugsy",

@@ -1,0 +1,201 @@
+---
+title: Issue tracker, Foldkit
+description: The same issue tracker with a Foldkit frontend. Each read of the durable stream becomes a Message, and update owns the rows and the optimistic writes.
+---
+
+This variant of the [issue tracker](/docs/demos/issue-tracker) keeps the server, the wire contract and the stylesheet. Only the browser code changes. [Foldkit](https://foldkit.dev) is a TypeScript framework on Effect with the Elm architecture: one Model, one Message union, a pure `update`, a `view`, and Commands and subscriptions for side effects. A subscription reads the State stream, and each read batch becomes a Message. `update` folds the changes into the Model and confirms the writes that wait for their txid.
+
+Read the base page first. This page shows only what is different.
+
+The source is in [`examples/issue-tracker-demo-foldkit`](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo-foldkit).
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/issue-tracker-demo-foldkit dev
+```
+
+Open http://localhost:1338. The settings are the base app's settings. The dev server has no hot module reloading, so reload the page after an edit.
+
+## What changes
+
+| Concern           | Base app                                       | This variant                                                  |
+| ----------------- | ---------------------------------------------- | ------------------------------------------------------------- |
+| Stream reader     | `createStreamDB` from `@durable-streams/state` | A subscription over `stream()` from `@durable-streams/client` |
+| Rows in memory    | TanStack DB collections                        | Records in the Model, changed only by `update`                |
+| Optimistic writes | `onMutate`, `mutationFn` and `awaitTxId`       | A list of pending writes in the Model, cleared by txid        |
+| Rollback          | TanStack DB removes the local row              | `update` removes the pending write                            |
+| Derived lists     | Live queries                                   | Pure functions that the view calls                            |
+| Server            | `server/`                                      | The base app's layers, imported, with this variant's page     |
+
+The stream route, the JSON API, the status codes and the rules are the base app's. A 422 still means that the work-in-progress rule refused the change.
+
+## 1. Stream reads become Messages
+
+A Foldkit subscription maps the Model to its dependencies, and the dependencies to a stream of Messages. Here the only dependency is the workspace id, so the reader opens once for each page load. The reader is the Durable Streams TypeScript client. It reads from the start, then follows the stream live.
+
+```ts title="src/subscription.ts"
+    return Effect.gen(function* () {
+      // ...
+      const response = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: (signal) =>
+            stream<JsonValue>({
+              url,
+              live: true,
+              json: true,
+              signal,
+              warnOnHttp: false,
+              fetch: trackedFetch((isOnline) => offer(Message.ChangedConnection({ isOnline }))),
+            }),
+          catch: () => "Unable to open the workspace stream",
+        }),
+        (opened) => Effect.sync(() => opened.cancel()),
+      );
+
+      response.subscribeJson<JsonValue>((batch) => offer(batchMessage(batch)));
+```
+
+`batchMessage` decodes each item with the contract's `StateEvent` schema. `update` applies the changes to the rows. A change that carries the txid of a pending write confirms that write, so the write leaves the pending list. The page leaves its loading state at the first batch that is up to date, as `preload` does in the base app.
+
+```ts title="src/update.ts"
+    ReceivedStateBatch: ({ changes, isUpToDate }) => {
+      const confirmed = confirmedTxids(changes);
+
+      return {
+        model: modifyFields(model, {
+          rows: (rows) => applyChanges(rows, changes),
+          // A change with a write's txid confirms it. The stream row now holds
+          // the server's version, so the local one can go.
+          pending: Array.filter(({ txid }) => !Array.contains(confirmed, txid)),
+          sync: (sync) => (isUpToDate ? Sync.Live() : sync),
+        }),
+      };
+    },
+```
+
+## 2. Write first, then wait for the txid
+
+`update` is pure, so it cannot make ids, txids or times. A submit returns a `GenerateStamp` Command with the user's intent. When the stamp comes back, `update` adds the pending write and returns a `SendWrite` Command. The browser still picks the row id and the txid, as in the base app.
+
+```ts title="src/update.ts"
+    CompletedGenerateStamp: ({ intent, stamp: generated }) => {
+      const pending = toPendingWrite(intent, generated, writerOf(model));
+
+      // A new project is selected at once. If the server refuses it, the
+      // selection falls back to the first project.
+      const maybeNewProjectId = Write.matchOrElse(
+        pending.write,
+        { CreateProject: ({ project }) => Option.some(project.id) },
+        () => model.maybeSelectedProjectId,
+      );
+
+      return {
+        model: modifyFields(model, {
+          pending: Array.append(pending),
+          maybeSelectedProjectId: () => maybeNewProjectId,
+        }),
+        commands: [SendWrite({ workspaceId: model.workspaceId, pending })],
+      };
+    },
+
+    // The row stays pending until its txid arrives on the stream.
+    SucceededSendWrite: () => ({ model }),
+
+    FailedSendWrite: ({ txid, error }) => {
+      const noticeId = model.nextNoticeId;
+
+      return {
+        model: modifyFields(model, {
+          pending: Array.filter((write) => write.txid !== txid),
+          notices: Array.append({ id: noticeId, message: error }),
+          nextNoticeId: (id) => id + 1,
+        }),
+        commands: [WaitBeforeNoticeDismissal({ noticeId })],
+      };
+    },
+```
+
+A refused write is one Message. It removes the pending write and adds a notice with the server's `error` text. A second Command removes the notice after four seconds.
+
+## 3. Pending rows are a view of the Model
+
+The Model keeps the stream rows and the pending writes apart. The page lays the pending writes over the rows on each render. When a write leaves the pending list, its change goes away from the page. That is the whole rollback.
+
+```ts title="src/domain/workspace.ts"
+export const workspaceView = (rows: Rows, pending: ReadonlyArray<PendingWrite>): Workspace => {
+  const overlaid = Array.reduce(pending, rows, (current, { write }) =>
+    Write.match(write, {
+      // ...
+    }),
+  );
+
+  const pendingKeys = new Set(Array.map(pending, ({ write }) => writeKey(write)));
+
+  const shown = <A extends { readonly id: string }>(row: A): Shown<A> => ({
+    row,
+    isPending: pendingKeys.has(row.id),
+  });
+```
+
+The issue row uses the base app's class names, so the base stylesheet fades a pending row.
+
+```ts title="src/view/issues.ts"
+  return h.keyed("article")(
+    issue.id,
+    [h.Class(isPending ? "issue-row pending" : "issue-row"), h.AriaBusy(isPending)],
+```
+
+## 4. Derive in the view
+
+The filter and the counts are not in the Model. The view computes them on each render from the rows, the pending writes and the selected filter. A workspace is small, so nothing is cached.
+
+```ts title="src/view/issues.ts"
+const inProject = issuesIn(workspace, project.id);
+const counts = statusCounts(inProject);
+const visible = visibleIssues(inProject, model.filter);
+```
+
+```ts title="src/domain/workspace.ts"
+export const statusCounts = (issues: ReadonlyArray<Shown<Issue>>): Record<StatusFilter, number> => {
+  const counts = countBy(issues, ({ row }) => row.status);
+
+  return {
+    all: issues.length,
+    open: counts.open ?? 0,
+    in_progress: counts.in_progress ?? 0,
+    done: counts.done ?? 0,
+  };
+};
+```
+
+## 5. Reuse the server
+
+The server entry is the base app's layer graph. It imports the base layers and serves this variant's page. The page imports the base stylesheet.
+
+```ts title="server/index.ts"
+// The base app's server layers. This variant changes only the page.
+import { ApiLive, ApiNotFoundLive } from "issue-tracker-demo/server/api.ts";
+import { ServerConfig, serverIdleTimeoutSeconds } from "issue-tracker-demo/server/config.ts";
+import { IssueTrackerLive, SeedLive } from "issue-tracker-demo/server/issue-tracker.ts";
+import { StorageLive, Workspaces } from "issue-tracker-demo/server/streams.ts";
+// The Foldkit page. Bun bundles its scripts and the base app's stylesheet.
+import index from "../public/index.html";
+```
+
+## Versions and the build
+
+Foldkit `0.169.0` asks for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.0.5`. The root `overrides` entry for `effect` gives one copy of Effect in the install and in the browser bundle. Bun warns about the `@effect/platform-browser` peer.
+
+Bun bundles the page through its HTML import, without Foldkit's Vite plugin. Without the plugin, Foldkit matches nodes by position and key, so the view keys each list by row id. Foldkit takes `import.meta.hot` to be Vite's HMR API, so the server turns off Bun's hot module reloading for this page.
+
+## Limits
+
+- The Model holds every row of the workspace, and the view derives the lists on each render. This suits a demo workspace.
+- Form fields are plain elements, not `@foldkit/ui` components, so that the page keeps the base app's markup.
+- Foldkit's Model-preserving reload and its devtools bridge need the Vite dev server, so they are off.
+- The other limits of the [base app](/docs/demos/issue-tracker#limits) still hold.

@@ -29,6 +29,14 @@ export const demoExamples = new Map<string, readonly [string, ...Array<string>]>
       "examples/issue-tracker-demo-contract",
     ],
   ],
+  [
+    "issue-tracker-foldkit",
+    [
+      "examples/issue-tracker-demo-foldkit",
+      "examples/issue-tracker-demo",
+      "examples/issue-tracker-demo-contract",
+    ],
+  ],
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
   ["fold-agent", ["examples/fold-agent"]],
