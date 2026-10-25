@@ -7,7 +7,7 @@ not change. A command appends domain events to an event stream. A projection
 writes the same project, issue and comment rows to the same State stream at
 `/streams/workspace/:workspaceId`.
 
-The [guide](https://streamsy.dev/docs/demos/issue-tracker-event-sourced) shows
+The [guide](https://streamsy.dev/docs/demos/issue-tracker/event-sourced) shows
 only what differs from the base app.
 
 ## Run it

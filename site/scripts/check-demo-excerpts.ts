@@ -10,7 +10,8 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 const demos = fileURLToPath(new URL("../content/docs/demos/", import.meta.url));
 
 /**
- * Each demo page, by slug, and the example folders that its titled excerpts quote.
+ * Each demo page, by its path in `content/docs/demos` without `.mdx`, and the example
+ * folders that its titled excerpts quote.
  * The first folder is the page's own example. A fence title is a path relative to
  * it. A title that starts with the name of another listed folder, for example
  * `issue-tracker-demo-contract/api.ts`, quotes that folder. `index` lists the
@@ -20,9 +21,9 @@ const demos = fileURLToPath(new URL("../content/docs/demos/", import.meta.url));
 export const demoExamples = new Map<string, readonly [string, ...Array<string>]>([
   ["hackernews-newest-stream", ["examples/hackernews-newest-stream"]],
   ["hex-board", ["examples/hex-board"]],
-  ["issue-tracker", ["examples/issue-tracker-demo", "examples/issue-tracker-demo-contract"]],
+  ["issue-tracker/index", ["examples/issue-tracker-demo", "examples/issue-tracker-demo-contract"]],
   [
-    "issue-tracker-event-sourced",
+    "issue-tracker/event-sourced",
     [
       "examples/issue-tracker-demo-event-sourced",
       "examples/issue-tracker-demo",
@@ -30,7 +31,7 @@ export const demoExamples = new Map<string, readonly [string, ...Array<string>]>
     ],
   ],
   [
-    "issue-tracker-foldkit",
+    "issue-tracker/foldkit",
     [
       "examples/issue-tracker-demo-foldkit",
       "examples/issue-tracker-demo",
@@ -229,7 +230,7 @@ export const checkDemoExcerpts = async (): Promise<void> => {
 
   const pages = Array.sort(
     Array.map(
-      Array.filter(await readdir(demos), (name) => name.endsWith(".mdx")),
+      Array.filter(await readdir(demos, { recursive: true }), (name) => name.endsWith(".mdx")),
       (name) => name.slice(0, -".mdx".length),
     ),
     Order.String,
