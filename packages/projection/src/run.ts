@@ -1,4 +1,5 @@
-import { Array, Effect, Record } from "effect";
+/* oxlint-disable typescript/no-misused-spread -- CheckpointRecord and Range are Schema.Struct plain data records. */
+import { Array, Effect, Option, Record } from "effect";
 import {
   inputEntries,
   emptySlice,
@@ -16,6 +17,7 @@ import {
   type Details,
   type Result as Settled,
 } from "./commit/internal.ts";
+import { forget } from "./forget.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Executable } from "./executable.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
@@ -79,6 +81,20 @@ const step = Effect.fn("Projection.pass")(function* <
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
   const before = yield* restore(projection, projection.commit);
+
+  if (before.record.ended) {
+    yield* forget(projection);
+
+    // The last unit already committed this state. Report it with its own offsets.
+    return {
+      status: "source-closed",
+      units: 0,
+      items: 0,
+      offsets: offsetsOf<Inputs>(before.record),
+      encoded: before.record.state,
+    };
+  }
+
   const pending = before.record.pending;
 
   if (pending !== undefined && !isPinned(projection.commit))
@@ -108,11 +124,22 @@ const step = Effect.fn("Projection.pass")(function* <
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Each slice is reproduced through its declared codec; TS cannot infer the mapped keys from a string record.
     batch = slices as Slices<Inputs>;
   } else {
-    const read = yield* readInputs(projection.inputs, before.record.inputs);
+    const read = yield* readInputs(
+      projection.inputs,
+      before.record.inputs,
+      Option.isSome(before.loaded.record),
+    );
+
     batch = read.slices;
     count = read.items;
 
-    if (count === 0)
+    const terminal = Array.some(
+      Record.toEntries<string, Slice<unknown>>(batch),
+      ([name, slice]) =>
+        slice.gone === true || (slice.closed && slice.upToDate && !before.record.closed?.[name]),
+    );
+
+    if (count === 0 && !terminal)
       return {
         status: Array.every(Record.values<string, Slice<unknown>>(batch), (slice) => slice.closed)
           ? "source-closed"
@@ -123,6 +150,11 @@ const step = Effect.fn("Projection.pass")(function* <
         encoded: before.record.state,
       };
   }
+
+  const gone = Array.some(
+    Record.values<string, Slice<unknown>>(batch),
+    (slice) => slice.gone === true,
+  );
 
   const ranges = pending?.ranges ?? rangesOf(batch);
 
@@ -135,7 +167,19 @@ const step = Effect.fn("Projection.pass")(function* <
   );
 
   const { pending: _pending, ...record } = before.record;
-  const next = { ...record, inputs: advance(record.inputs, ranges) };
+  const closed = { ...record.closed };
+
+  for (const [name, slice] of Record.toEntries<string, Slice<unknown>>(batch)) {
+    if (slice.closed && slice.upToDate) closed[name] = true;
+  }
+
+  const next = {
+    ...record,
+    inputs: advance(record.inputs, ranges),
+    closed,
+  };
+
+  if (gone) Object.assign(next, { ended: true });
   const outputs: Record<string, Details["outputs"][string]> = {};
 
   for (const [name, address] of Record.toEntries(projection.streams ?? {})) {
@@ -187,7 +231,12 @@ const step = Effect.fn("Projection.pass")(function* <
       ranges: Record.fromEntries(
         Array.map(Record.toEntries(ranges), ([name, range]) => [
           name,
-          { from: range.from, nextOffset: range.nextOffset, count: batch[name]?.items.length ?? 0 },
+          {
+            ...range,
+            count: batch[name]?.items.length ?? 0,
+            closed: batch[name]?.closed ?? false,
+            upToDate: batch[name]?.upToDate ?? false,
+          },
         ]),
       ),
     },
@@ -205,8 +254,11 @@ const step = Effect.fn("Projection.pass")(function* <
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Declarations produce the Commit Result union; the generic Result erases it.
   const stored = settled(next, result as Settled);
 
+  // After a gone input, report the state that the final unit committed, even though forget deletes the record.
+  if (gone) yield* forget(projection);
+
   return {
-    status: "progress",
+    status: gone ? "source-closed" : "progress",
     units: 1,
     items: count,
     offsets: offsetsOf<Inputs>(next),
@@ -269,7 +321,8 @@ export const progressOf = <Inputs extends InputMap, S>(
 
 /**
  * Repeats pass until caught up, closed, or limited, then decodes the state of the last
- * pass once. Use one writer per key.
+ * pass once. After a gone input, the result holds the state that the final unit
+ * committed, although the kernel then deletes the record. Use one writer per key.
  */
 export const run = Effect.fn("Projection.run")(function* <
   Inputs extends InputMap,

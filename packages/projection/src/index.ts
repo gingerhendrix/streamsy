@@ -8,6 +8,8 @@ export type { DecideSpec } from "./decide.ts";
 
 export type { FollowOptions } from "./follow.ts";
 
+export type { AttachOptions, Attachable } from "./attach.ts";
+
 export type { RunOptions } from "./read.ts";
 
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
@@ -47,3 +49,5 @@ export {
 export { CheckpointRecord } from "./checkpoint-store.ts";
 
 export { ProjectionRetry } from "./retry.ts";
+
+export { ProjectionWakeup } from "./wakeup.ts";

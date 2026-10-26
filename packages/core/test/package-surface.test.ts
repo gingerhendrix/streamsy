@@ -35,3 +35,18 @@ test("public roots isolate internals", () => {
   expect(Record.keys(Protocol.Protocol)).not.toContain("create");
   expect(Record.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
 });
+
+test("Streamsy keeps declaration internals and wake classification private", () => {
+  for (const name of [
+    "isWake",
+    "WakeKey",
+    "declareStream",
+    "wireApi",
+    "DeclaredClass",
+    "Bound",
+    "Wires",
+    "WakeApi",
+  ]) {
+    expect(Record.keys(Root.Streamsy)).not.toContain(name);
+  }
+});

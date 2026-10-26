@@ -499,6 +499,7 @@ it("fork none refuses before any storage operation, even for an existing target"
         producer: () => forbidden,
         mutate: () => forbidden,
         changes: () => Stream.die("unexpected changes"),
+        committed: forbidden,
         nextExpiry: forbidden,
       });
 

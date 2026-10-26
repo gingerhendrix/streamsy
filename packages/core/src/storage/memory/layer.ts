@@ -1,4 +1,4 @@
-import { Array, Context, Predicate, Effect, Layer, Option } from "effect";
+import { Array, Context, Predicate, Effect, Layer, Option, PubSub } from "effect";
 import { attachOwner, ownerOf } from "../../internal/owner.ts";
 import { Storage } from "../storage.ts";
 import {
@@ -107,7 +107,18 @@ export const layer = (
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
       const committed: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const bus = yield* createNotifier;
-      const owner = yield* makeBoundary(committed, bus.publish);
+
+      const feed = yield* Effect.acquireRelease(
+        PubSub.unbounded<ReadonlyArray<StreamId>>(),
+        PubSub.shutdown,
+      );
+
+      const owner = yield* makeBoundary(committed, (ids) =>
+        Effect.andThen(
+          bus.publish,
+          ids.size === 0 ? Effect.void : PubSub.publish(feed, [...ids]).pipe(Effect.asVoid),
+        ),
+      );
 
       const commit = (state: State, mutation: Mutation): CommitResult | MutationRejected => {
         const changed = new Set<StreamId>();
@@ -223,12 +234,15 @@ export const layer = (
             if (Predicate.isTagged(result, "MutationRejected")) return yield* result;
             const { outcome, changed } = result;
 
-            if (changed.size > 0) yield* owner.changed;
+            // Report the operation ids. A purge cascade also changes soft-deleted
+            // parents, but an earlier commit already reported their delete.
+            if (changed.size > 0) yield* owner.changed(ids);
 
             return outcome;
           }).pipe(owner.withTransaction, Effect.uninterruptible);
         }),
         changes: (id) => changes(committed, bus, id, chain, interval),
+        committed: PubSub.subscribe(feed),
         nextExpiry: owner.access((state) =>
           Option.fromUndefinedOr(state.deadlines[0]).pipe(
             Option.map((deadline) => ({ ...deadline })),

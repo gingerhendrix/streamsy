@@ -65,8 +65,9 @@ and checkpoint commit together. External calls are at least once. Memory hosts
 provide no `Transaction`.
 
 `Commit.producer` pins ranges and producer sequences. Retries append with the
-same positions; handlers must be deterministic. Foreign outputs must already
-exist. Same-owner outputs can be created automatically. There is no atomicity
+same positions; handlers must be deterministic. A missing output on the
+checkpoint's owner is created on the first append. An output on another owner
+must already exist: its owner creates it at start. There is no atomicity
 across producer outputs. Chain projections for sinks with different guarantees.
 
 `Commit.atLeastOnce` pins before processing, so retries keep `unit.key`.
@@ -107,6 +108,65 @@ items. `Streamsy.state` accepts `DurableState.upsert("card", row)` and
 `DurableState.remove("card", key)` from `@streamsy/core`. Each change names its
 collection. Two outputs cannot name the same stream or an input.
 
+## Wake streams
+
+`Projection.wake` writes a `Streamsy.wake` stream from one source stream. It is
+`mapAccumBatch` with `Commit.producer`. Each unit appends one upsert
+`{ stream, offset, closed? }`, so several source writes in one unit fold into
+one row. It reads committed storage, so every write path counts: toolkit calls,
+HTTP, other projections and raw `StreamsWriter` writes.
+
+```ts
+const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: UserKey, folderId: FolderKey },
+  input: Files,
+  output: UserWake,
+});
+```
+
+Here `Files.at` takes `user` and `folderId`, and `UserWake.at` takes
+`user`. Each Files id supplies both params for attachment. The wake stream can live on another owner. The producer creates it on
+the first append, and a retry answers `Duplicate`, so delivery is effectively
+once for each binding. Rows of one source arrive in source order. A reader that
+comes before the first append gets 404 unless the owner calls the normal State
+service's `create` to make an empty stream available. `Streamsy.wake` is a State
+preset with `wakeCollections`; a `Streamsy.state` declaration with those
+collections also works as the output.
+
+| Source event       | Wake change                                   |
+| ------------------ | --------------------------------------------- |
+| Append             | Upsert with the new tail, one for each unit   |
+| Close with a body  | Upsert with `closed: true` in the same unit   |
+| Close, no body     | Upsert with `closed: true` at the same offset |
+| Remove, TTL expiry | State delete of the source id, then `forget`  |
+| Create, empty      | None until the first append                   |
+
+A removed or expired source answers `StreamGone` or `StreamNotFound`. A
+binding with a checkpoint then appends the delete with its next producer
+sequence and forgets itself. A stream id never returns, so the delete is final.
+A binding with no checkpoint keeps the `history-unavailable` fault, because its
+source never existed for it. A drained closed source reports `source-closed`.
+`Projection.follow` ends when its input closes. Observe a later removal with
+`Projection.attach` or another explicit run.
+
+All projections receive terminal outcomes through their input slices. A close
+with no new items still makes one unit with `slice.closed`; the checkpoint
+records the close so subsequent runs do not repeat that empty unit. Batch
+handlers (`process` and `mapAccumBatch`) can react even when `slice.items` is
+empty; per-item handlers have no entries to process.
+
+When an input with a checkpoint is confirmed gone, the kernel runs a final
+unit with `slice.gone: true`, then forgets the binding by default. Lost history
+on a live input still fails. Other storage faults fail the pass and remain
+available to the normal retry policy.
+
+A pending unit replays its pinned input ranges. If the input is removed
+between the pin and the settle, the replay fails with `range-unreproducible`
+and the pin stays. The final gone unit does not run for that binding. Keep
+source history until pending units settle, or call `Projection.forget` on the
+binding after you clean up its outputs.
+
 ## Hosts
 
 | Layer                         | Provides                     | Requires                        |
@@ -130,6 +190,49 @@ const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
 `CheckpointStore.layerMemory` is standalone. It keeps checkpoints in the
 process and does not join the stream owner, so processing is at least once. Use
 it for rebuilt values, tests, and a remote host (`RemoteStreams.layer`).
+
+### Attached projections
+
+`Projection.attach(projection)` runs a projection whenever a local commit
+writes one of its inputs. The storage reports the stream ids of each commit
+through `Storage.committed`. For each id, the input's `parse` gives the params,
+and the runner runs `projection.at(params)`. So a new member of a family gets
+its binding on its first commit, and the app names no bindings.
+
+```ts
+const host = Layer.mergeAll(Api, Projection.attach(filesWake)).pipe(
+  Layer.provideMerge(CheckpointStore.layer),
+  Layer.provideMerge(BunStorage.layer(streams, { path })),
+);
+```
+
+Each input must give every projection param, so that one id picks one binding.
+`attach` throws a `RangeError` when an input does not. Inputs on another owner
+never commit here, so they never trigger. Do not also run an attached binding
+under `Projection.follow`.
+
+The set of bindings with work lives in memory. If the process stops after a
+commit and before the run, the binding is late until its source gets its next
+write. The next run catches up from the checkpoint while the source history remains
+available. Removal before that run uses the final gone unit instead. A commit
+by another process on the same SQL file does not show.
+
+On Cloudflare, acquire a wakeup in the object's layer scope. Local commits
+fill the same runner's pending set; `next` answers "now" while it has work,
+and each alarm drains one pass (100 units per binding by default).
+
+```ts
+StreamsyObject.make({
+  app,
+  layer,
+  wakeups: [ProjectionWakeup.attach(filesWake)],
+});
+```
+
+Both forms accept `retry: Schedule.Schedule<unknown>`. Bun applies it with
+`Effect.retry` to a drain pass; the alarm host uses its delays to re-arm instead
+of sleeping inside an alarm. The default is capped, jittered exponential backoff.
+A finite schedule stops retries when exhausted.
 
 SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.

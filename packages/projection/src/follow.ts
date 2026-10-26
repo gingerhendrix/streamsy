@@ -20,9 +20,10 @@ export interface FollowOptions extends RunOptions {
  * authoritative. Only the response cursor is kept, so the next hint on that
  * input echoes it. A closed input answers `readNext` at once, so a closed and
  * drained input parks for the interval instead of waking every cycle; the
- * open inputs, and the interval itself, decide when the next run happens.
+ * open inputs, and the interval itself, decide when the next run happens. A
+ * gone input wakes the next run so it can end the binding.
  */
-const hint = Effect.fn("Projection.wake")(function* <R>(
+const hint = Effect.fn("Projection.hint")(function* <R>(
   input: string,
   address: Streamsy.Address<unknown, R>,
   offset: string,
@@ -31,14 +32,6 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
 ) {
   const cursor = (yield* Ref.get(cursors))[input];
   const { wire: reader } = yield* address.stream;
-
-  const historyUnavailable = () =>
-    new ProjectionFault({
-      phase: "read",
-      reason: "history-unavailable",
-      input,
-      message: `Required history of ${address.id} after ${offset} is unavailable`,
-    });
 
   const storageFailure = (cause: unknown) =>
     new ProjectionFault({
@@ -65,8 +58,8 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
           message: cause.message,
           cause,
         }),
-      StreamNotFound: () => historyUnavailable(),
-      StreamGone: () => historyUnavailable(),
+      StreamNotFound: () => Effect.void,
+      StreamGone: () => Effect.void,
       NotSupported: (error) =>
         new ProjectionFault({
           phase: "read",
@@ -90,7 +83,9 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
  * cycle runs only when the consumer pulls, so a slow consumer gets one element that
  * covers all the input that arrived meanwhile. The stream emits after the first cycle,
  * after each cycle that commits a unit or reaches `limit`, and after the last cycle
- * when every input is closed; then it ends. A wake that finds no input emits nothing.
+ * when every input is closed or an input is gone; then it ends. After a gone input, the
+ * last element holds the state that the final unit committed, and the kernel then
+ * deletes the record. A wake that finds no input emits nothing.
  * Options are checked at the first pull. On HTTP backends a parked hint is cancelled
  * and replaced once per `repairIntervalMs` until an input changes. One
  * `Projection.follow` span covers the whole stream.

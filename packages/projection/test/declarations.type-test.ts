@@ -80,6 +80,8 @@ const statefulOutputs = Projection.mapAccumBatch({
     Effect.succeed([count + batch.input.items.length, { result: batch.input.items }] as const),
 });
 
+const statefulRun = Projection.run(statefulOutputs.at({ id: "a" }));
+
 const statefulRead = Projection.read(statefulOutputs.at({ id: "a" }));
 
 const statelessRead = Projection.read(named);
@@ -95,6 +97,7 @@ type ElementOf<T> = T extends Stream.Stream<infer A, any, any> ? A : never;
 type StreamServices<T> = T extends Stream.Stream<any, any, infer R> ? R : never;
 
 export type Checks = [
+  Assert<Same<Effect.Services<typeof statefulRun>, Input | Result | CheckpointStore>>,
   Assert<Same<SuccessOf<typeof foldedRead>["state"], typeof Totals.Type>>,
   Assert<Same<keyof SuccessOf<typeof foldedRead>["offsets"], "input" | "other">>,
   Assert<Same<SuccessOf<typeof foldedRead>["offsets"]["other"], string>>,

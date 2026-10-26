@@ -13,9 +13,11 @@ import {
   Layer,
   Match,
   Option,
+  PubSub,
   Queue,
   Record,
   Stream,
+  Scope,
 } from "effect";
 import { TestClock } from "effect/testing";
 import { ProducerId, StreamId, type ChangeSnapshot, type StreamRecord } from "../schema/index.ts";
@@ -254,6 +256,32 @@ export const StorageContract = {
             yield* both;
             expect(yield* records.read("checkpoint")).toEqual(Option.some("1"));
             expect(Option.isSome(yield* storage.record(id))).toBe(true);
+          }),
+      );
+      recordsTest(
+        "R3 committed reports a transaction's ids after its commit and nothing after a rollback",
+        ({ boundary }) =>
+          Effect.gen(function* () {
+            const storage = yield* Storage;
+            const other = StreamId.make("other");
+            const committed = yield* storage.committed;
+
+            const failed = yield* Effect.exit(
+              boundary.withTransaction(Effect.andThen(mutate(create()), Effect.fail("rollback"))),
+            );
+
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([]);
+
+            yield* boundary.withTransaction(
+              Effect.gen(function* () {
+                yield* mutate(create());
+                yield* mutate(create(record(other)));
+                // Nothing shows before the commit.
+                expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([]);
+              }),
+            );
+            expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([[id, other]]);
           }),
       );
       test(
@@ -926,6 +954,70 @@ export const StorageContract = {
         }),
         options.expected.fork === "chain" && options.expected.atomicScope === "store",
         "requires chain fork and store atomic scope",
+      );
+      test(
+        "34a committed broadcasts without replay and releases each subscription independently",
+        Effect.gen(function* () {
+          const storage = yield* Storage;
+          let released = 0;
+          const scope = yield* Scope.fork(yield* Scope.Scope);
+
+          const first = yield* storage.committed.pipe(
+            Effect.tap(() =>
+              Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  released += 1;
+                }),
+              ),
+            ),
+            Scope.provide(scope),
+          );
+
+          yield* mutate(create());
+          expect(yield* PubSub.take(first)).toEqual([id]);
+          const second = yield* storage.committed;
+          expect(yield* PubSub.takeUpTo(second, Infinity)).toEqual([]);
+          yield* mutate(append());
+          expect(yield* PubSub.take(first)).toEqual([id]);
+          expect(yield* PubSub.take(second)).toEqual([id]);
+          yield* Scope.close(scope, Exit.void);
+          expect(released).toBe(1);
+          yield* mutate(remove());
+          expect(yield* PubSub.take(second)).toEqual([id]);
+        }),
+      );
+      test(
+        "35 committed reports the ids of create, append, delete and expiry after commit",
+        Effect.gen(function* () {
+          const storage = yield* Storage;
+          const expiring = StreamId.make("expiring");
+          const committed = yield* storage.committed;
+
+          yield* mutate(create());
+          expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([[id]]);
+          yield* mutate(append());
+          rejected(yield* Effect.flip(mutate(create())), "exists");
+          yield* mutate(remove());
+          yield* mutate(
+            create({
+              ...record(expiring),
+              lifecycle: { closed: false, softDeleted: false, expiresAtMs: 100 },
+            }),
+          );
+          yield* mutate({
+            _tag: "Delete",
+            streamId: expiring,
+            reason: "expiry",
+            expectedExpiresAtMs: 100,
+          });
+          // The rejected create reports nothing.
+          expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([
+            [id],
+            [id],
+            [expiring],
+            [expiring],
+          ]);
+        }),
       );
     });
   },

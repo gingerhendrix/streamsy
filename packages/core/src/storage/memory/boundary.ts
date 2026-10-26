@@ -2,6 +2,7 @@ import { Context, Effect, Option, Semaphore } from "effect";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { attachOwner } from "../../internal/owner.ts";
 import { CommitBoundary } from "../commit-boundary.ts";
+import type { StreamId } from "../../schema/index.ts";
 import { copyState, type State } from "./state.ts";
 
 /**
@@ -17,6 +18,7 @@ interface Draft {
   readonly fiberId: number;
   readonly state: State;
   readonly records: Map<string, string>;
+  readonly ids: Set<StreamId>;
   active: boolean;
   changed: boolean;
 }
@@ -25,7 +27,10 @@ class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
 
-export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
+export const makeBoundary = (
+  committed: State,
+  publish: (ids: ReadonlySet<StreamId>) => Effect.Effect<void>,
+) =>
   Effect.gen(function* () {
     const owner = {};
     const lock = yield* Semaphore.make(1);
@@ -54,6 +59,7 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
               fiberId: fiber.id,
               state: copyState(committed),
               records: new Map(committedRecords),
+              ids: new Set(),
               active: true,
               changed: false,
             };
@@ -65,7 +71,9 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
                     Object.assign(committed, draft.state);
                     committedRecords = draft.records;
                   }).pipe(
-                    Effect.andThen(Effect.suspend(() => (draft.changed ? publish : Effect.void))),
+                    Effect.andThen(
+                      Effect.suspend(() => (draft.changed ? publish(draft.ids) : Effect.void)),
+                    ),
                   ),
                 ),
                 Effect.ensuring(
@@ -82,10 +90,13 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
     const access = <A>(f: (state: State) => A) =>
       Effect.map(current, (draft) => f(Option.isSome(draft) ? draft.value.state : committed));
 
-    const changed = Effect.map(current, (draft) => {
-      if (Option.isNone(draft)) throw new Error("Memory mutation requires an owner");
-      draft.value.changed = true;
-    });
+    const changed = (ids: Iterable<StreamId>) =>
+      Effect.map(current, (draft) => {
+        if (Option.isNone(draft)) throw new Error("Memory mutation requires an owner");
+        draft.value.changed = true;
+
+        for (const id of ids) draft.value.ids.add(id);
+      });
 
     const boundary = CommitBoundary.of({ withTransaction });
 

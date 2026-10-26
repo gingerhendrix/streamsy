@@ -751,6 +751,7 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
       return boundary
         .mutation({
           keys: [STORAGE_KEY],
+          ids,
           effect: applyMutation(sql, mutation),
           retryable: (error) => Predicate.isTagged(error, "StorageFault") && error.retryable,
         })
@@ -762,6 +763,7 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
     }),
     changes: (id): Stream.Stream<ChangeSnapshot, StorageFault> =>
       boundary.changes({ keys: [STORAGE_KEY], read: snapshot(sql, id) }),
+    committed: boundary.committed,
     nextExpiry: attempt(
       "nextExpiry",
       sql<ExpiryDatabaseRow>`SELECT expires_at_ms AS at, stream_id FROM streamsy_streams

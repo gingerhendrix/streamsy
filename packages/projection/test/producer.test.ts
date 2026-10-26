@@ -435,6 +435,62 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
   );
 });
 
+for (const appended of [false, true]) {
+  layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
+    it.effect(
+      `a removal ${appended ? "after" : "before"} the pinned append keeps the pin and fails range-unreproducible`,
+      () =>
+        Effect.gen(function* () {
+          const s = scenario(`gone-pin-${appended}`);
+          yield* s.initialize;
+
+          const bound = Projection.mapAccumBatch({
+            ...s.definition,
+            commit: Commit.producer,
+            state: { schema: Schema.Null, initial: null },
+            mapAccumBatch: (_state, batch) =>
+              [
+                null,
+                {
+                  output: batch.input.gone ? ["gone"] : Array.map(batch.input.items, String),
+                },
+              ] as const,
+          }).at({});
+
+          const crash = appended
+            ? withCheckpointStore(Projection.run(bound), (owner) => ({
+                compareAndSet: (key, token, record) =>
+                  record.pending === undefined
+                    ? Effect.fail(
+                        new ProjectionFault({
+                          phase: "checkpoint",
+                          reason: "storage-failure",
+                          message: "after append",
+                        }),
+                      )
+                    : owner.compareAndSet(key, token, record),
+              }))
+            : withWriter(Projection.run(bound), failingAppends(1).patch);
+
+          fault(yield* crash.pipe(Effect.result));
+          expect(pinnedRecord((yield* stored(bound)).record).pending.ranges.input?.count).toBe(3);
+          yield* Streams.remove(s.input);
+          const writes = recordingAppends();
+
+          const failure = fault(
+            yield* withWriter(Projection.run(bound), writes.patch).pipe(Effect.result),
+          );
+
+          expect(failure.reason).toBe("range-unreproducible");
+          expect(failure.input).toBe("input");
+          expect(writes.positions).toEqual([]);
+          expect(yield* readAll(s.output)).toEqual(appended ? ["1", "2", "3"] : []);
+          expect(pinnedRecord((yield* stored(bound)).record).pending.ranges.input?.count).toBe(3);
+        }),
+    );
+  });
+}
+
 layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
   it.effect("a short reproduction fails pin/range-unreproducible", () =>
     Effect.gen(function* () {

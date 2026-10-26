@@ -30,6 +30,7 @@ const allowedMethods: Readonly<Record<Access["access"], string>> = {
 
 export interface RoutesOptions extends Omit<HttpOptions, "pathPrefix"> {
   readonly prefix?: `/${string}`;
+  /** The access of each stream on this mount. */
   readonly access: Access["access"] | ((stream: Any) => Access["access"]);
 }
 
@@ -41,7 +42,7 @@ export function routes<const Keys extends ReadonlyArray<Any>>(
 export function routes(group: Group.Group, options: RoutesOptions) {
   const entries: ReadonlyArray<Access> = Array.map(group.streams, (stream) => ({
     stream,
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed host policy is a literal or a callback, not external input.
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed mount policy is a literal or callback.
     access: typeof options.access === "function" ? options.access(stream) : options.access,
   }));
 

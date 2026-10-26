@@ -63,6 +63,7 @@ baseIt("tells controls and changes apart", () => {
 
   expect(Array.map(items, StreamAddress.isControl)).toEqual([true, false, false, true]);
   expect(Array.map(items, StreamAddress.isChange)).toEqual([false, true, true, false]);
+  expect(Array.map(items, StreamAddress.isUpsert)).toEqual([false, true, false, false]);
 });
 
 baseIt("passes controls through DurableState.changes and stamps a missing offset", () => {

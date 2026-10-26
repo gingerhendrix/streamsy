@@ -119,7 +119,11 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
       expect(batches[1]).toEqual({ a: { closed: true, items: 0 }, b: { closed: false, items: 1 } });
       yield* Streams.append(b, [], { close: true });
       expect((yield* Projection.run(projection)).status).toBe("source-closed");
-      expect(batches).toHaveLength(2);
+      expect(batches).toHaveLength(3);
+      expect(batches[2]).toEqual({
+        a: { items: 0, closed: true },
+        b: { items: 0, closed: true },
+      });
     }),
   );
 });

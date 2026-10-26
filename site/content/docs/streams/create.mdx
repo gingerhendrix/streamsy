@@ -88,6 +88,8 @@ See the upstream [fork page](https://durablestreams.com/fork).
 
 `remove(params)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is kept until its last child is removed.
 
+Never reuse a stream id. A stream is append-only: its offsets only go up, and a reader keeps its offset as a cursor. Do not create a stream again under the id of a removed or expired stream. A stream with a reused id starts again at a lower offset, so readers, projections and wake streams that saved an offset for the old stream skip or misread the new one. Streamsy does not detect a reused id. Give each new stream a new id.
+
 ## Over HTTP
 
 | Method                          | Operation | Access |

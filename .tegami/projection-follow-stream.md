@@ -15,7 +15,7 @@ A follower in the same process, such as a page, a TUI or a test, had no signal f
 - The stream is pull based. The next cycle runs only when the consumer pulls, so a slow consumer gets one element for all the input that arrived meanwhile. Use `Stream.buffer({ capacity: 1, strategy: "sliding" })` to decouple a slow consumer.
 - An invalid `limit` or `repairIntervalMs` fails the stream at its first pull. Before, the `yield*` of `follow` failed.
 - `Projection.run` now gives the `state` that the last pass of its cycle left. `Projection.pass` keeps its own result type, `PassResult`, with the `progress` status and no state.
-- One `Projection.follow` span covers the whole stream. Each `Projection.pass` and `Projection.wake` span of the follower is a child of it.
+- One `Projection.follow` span covers the whole stream. Each `Projection.pass` and `Projection.hint` span of the follower is a child of it.
 - The wake hints, the retry of `storage-failure` and the repair interval do not change.
 
 To migrate a caller:

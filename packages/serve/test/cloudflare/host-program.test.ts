@@ -14,6 +14,7 @@ const failingStorage = Storage.of({
   producer: () => Effect.succeedNone,
   mutate: () => Effect.die("unused"),
   changes: () => Stream.empty,
+  committed: Effect.die("unexpected committed subscription"),
   nextExpiry: Effect.suspend(() =>
     failDeadline
       ? Effect.fail(

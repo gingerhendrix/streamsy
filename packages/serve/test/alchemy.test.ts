@@ -115,3 +115,76 @@ baseIt.effect("Alchemy router preserves the stub's HttpServerError", () =>
       expect(result.cause.reasons).toMatchObject([{ _tag: "Fail", error }]);
   }),
 );
+
+baseIt.effect("Alchemy router answers 404 for a reserved /__ path without forwarding", () =>
+  Effect.gen(function* () {
+    const response = yield* Host.router({
+      placement: Host.Placement.byKey(() => "index"),
+      objects: {
+        getByName: () => {
+          throw new Error("must not forward");
+        },
+      },
+    }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request("/__wake/wake")));
+
+    expect(response.status).toBe(404);
+    expect(HttpServerResponse.toWeb(response).headers.get("x-content-type-options")).toBe(
+      "nosniff",
+    );
+  }),
+);
+
+baseIt.effect(
+  "Alchemy objectFetch sends a web request to the named stub and returns its answer",
+  () =>
+    Effect.gen(function* () {
+      const names: Array<string> = [];
+
+      const send = Host.objectFetch({
+        getByName: (name) => {
+          names.push(name);
+
+          return {
+            fetch: (received) =>
+              Effect.map(received.text, (body) =>
+                HttpServerResponse.text(`${received.method} ${body}`, { status: 201 }),
+              ),
+          };
+        },
+      });
+
+      expect(names).toEqual([]);
+
+      const response = yield* send(
+        "index",
+        new Request("https://streamsy.internal/__wake/wake", { method: "POST", body: "row" }),
+      );
+
+      expect(names).toEqual(["index"]);
+      expect(response.status).toBe(201);
+      expect(yield* Effect.promise(() => response.text())).toBe("POST row");
+    }),
+);
+
+baseIt.effect("Alchemy objectFetch preserves a stub failure as the transport error cause", () =>
+  Effect.gen(function* () {
+    const input = request("/__wake/wake");
+
+    const failure = new HttpServerError.HttpServerError({
+      reason: new HttpServerError.RequestParseError({ request: input }),
+    });
+
+    const send = Host.objectFetch({
+      getByName: () => ({ fetch: () => Effect.fail(failure) }),
+    });
+
+    const error = yield* send("owner", new Request("https://streamsy.internal/__wake/wake")).pipe(
+      Effect.flip,
+    );
+
+    expect(error).toMatchObject({
+      _tag: "HttpClientError",
+      reason: { _tag: "TransportError", cause: failure },
+    });
+  }),
+);

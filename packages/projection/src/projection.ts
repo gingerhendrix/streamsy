@@ -16,6 +16,8 @@ export { pass, run } from "./run.ts";
 
 export { follow } from "./follow.ts";
 
+export { attach } from "./attach.ts";
+
 export { items };
 
 export const key = (projection: Identity): ProjectionKey => ({
@@ -40,3 +42,5 @@ export { read } from "./snapshot.ts";
 export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
+
+export { wake } from "./wake.ts";

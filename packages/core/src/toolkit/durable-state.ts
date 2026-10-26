@@ -1,4 +1,5 @@
 import { Array, Data, Predicate, Record, type Types } from "effect";
+import { isControl, isUpsert } from "./address.ts";
 import type {
   Collections,
   CollectionsChange,
@@ -167,3 +168,112 @@ const stampControl = (entry: StateControl, offset: string | undefined): StateCon
   offset === undefined || entry.headers.offset !== undefined
     ? entry
     : { headers: { control: entry.headers.control, offset } };
+
+/** The rows of one collection, by State key. */
+export type Rows<C extends Collections> = {
+  readonly [K in keyof C & string]: ReadonlyMap<string, C[K]["schema"]["Type"]>;
+};
+
+/**
+ * The materialized state of a Durable State stream: the latest row for each key
+ * of each collection. `snapshot` holds the keys seen since an open
+ * `snapshot-start`, and is `undefined` outside a snapshot.
+ */
+export interface Materialized<C extends Collections> {
+  readonly rows: Rows<C>;
+  readonly snapshot: ReadonlySet<string> | undefined;
+}
+
+/** A row key that is unique across collections, for snapshot bookkeeping. */
+const snapshotKey = (type: string, key: string): string => `${type}\u0000${key}`;
+
+/** Empty materialized state for the collections of `address`. */
+export function materialized<C extends Collections>(address: {
+  readonly collections: C;
+}): Materialized<C> {
+  const rows: Record<string, ReadonlyMap<string, unknown>> = {};
+
+  for (const type of Record.keys(address.collections)) rows[type] = new Map();
+
+  // SAFETY: the loop writes one empty map under each collection name of `C`.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The invariant is stated in the comment above.
+  return { rows: rows as Rows<C>, snapshot: undefined };
+}
+
+/**
+ * Fold State events into materialized state, with the State protocol rules:
+ *
+ * - `upsert` sets the row of its key, and `delete` removes it.
+ * - `reset` clears every collection.
+ * - `snapshot-end` removes each row that no change since `snapshot-start` named.
+ *   A snapshot may span several calls.
+ *
+ * The input state is not changed. Only the collections that `events` touch are copied.
+ */
+export function materialize<C extends Collections>(
+  state: Materialized<C>,
+  events: Iterable<CollectionsEvent<C>>,
+): Materialized<C> {
+  const rows = new Map<string, Map<string, unknown>>();
+  let cleared = false;
+  let snapshot = state.snapshot === undefined ? undefined : new Set(state.snapshot);
+
+  const source = (type: string): ReadonlyMap<string, unknown> | undefined =>
+    cleared ? undefined : Record.has(state.rows, type) ? state.rows[type] : undefined;
+
+  const writable = (type: string): Map<string, unknown> => {
+    const existing = rows.get(type);
+
+    if (existing !== undefined) return existing;
+    const copy = new Map(source(type));
+    rows.set(type, copy);
+
+    return copy;
+  };
+
+  for (const event of events) {
+    if (isControl(event)) {
+      const control = event.headers.control;
+
+      if (control === "reset") {
+        cleared = true;
+        rows.clear();
+        snapshot = undefined;
+      } else if (control === "snapshot-start") snapshot = new Set();
+      else if (snapshot !== undefined) {
+        const seen = snapshot;
+
+        for (const type of Record.keys(state.rows)) {
+          const table = writable(type);
+
+          for (const key of Array.fromIterable(table.keys()))
+            if (!seen.has(snapshotKey(type, key))) table.delete(key);
+        }
+
+        snapshot = undefined;
+      }
+
+      continue;
+    }
+
+    const table = writable(event.type);
+
+    if (isUpsert(event)) {
+      table.set(event.key, event.value);
+      snapshot?.add(snapshotKey(event.type, event.key));
+    } else {
+      table.delete(event.key);
+      snapshot?.delete(snapshotKey(event.type, event.key));
+    }
+  }
+
+  const next: Record<string, ReadonlyMap<string, unknown>> = {};
+
+  for (const type of Record.keys(state.rows))
+    next[type] = rows.get(type) ?? (cleared ? new Map() : state.rows[type]);
+
+  // SAFETY: `next` has one map under each collection name of `state.rows`, and
+  // each map holds only values that a change of that collection carried.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The invariant is stated in the comment above.
+  return { rows: next as Rows<C>, snapshot };
+}

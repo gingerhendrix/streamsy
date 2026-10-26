@@ -191,6 +191,12 @@ export const isChange = <E extends StateEvent<unknown>>(
   event: E,
 ): event is Exclude<E, StateControl> => !isControl(event);
 
+/** True for an upsert change, with its value available. */
+export const isUpsert = <E extends StateEvent<unknown>>(
+  event: E,
+): event is Extract<E, StateUpsert<unknown>> =>
+  isChange(event) && event.headers.operation === "upsert";
+
 const control = (name: StateControlName, options: { readonly offset?: string }): StateControl => ({
   headers:
     options.offset === undefined ? { control: name } : { control: name, offset: options.offset },

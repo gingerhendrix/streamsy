@@ -196,3 +196,44 @@ layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
     }),
   );
 });
+
+layer(Layer.merge(host, CheckpointStore.layerMemory))((it) => {
+  it.effect(
+    "a removal after an at-least-once pin keeps the pin and fails range-unreproducible",
+    () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const seen: { items: readonly number[]; gone: boolean }[] = [];
+
+        const bound = Projection.process({
+          id: "gone-pending",
+          params: {},
+          inputs: { input: Input },
+          commit: Commit.atLeastOnce,
+          process: (batch) =>
+            Effect.sync(() => {
+              seen.push({ items: batch.input.items, gone: batch.input.gone === true });
+            }),
+        }).at({});
+
+        const store = yield* CheckpointStore;
+        expect(
+          (yield* Projection.run(bound).pipe(
+            Effect.provideService(CheckpointStore, {
+              ...store,
+              compareAndSet: (key, token, record) =>
+                record.pending === undefined
+                  ? Effect.fail(fault)
+                  : store.compareAndSet(key, token, record),
+            }),
+            Effect.result,
+          ))._tag,
+        ).toBe("Failure");
+        yield* (yield* Input).remove({});
+        const result = yield* Projection.run(bound).pipe(Effect.result);
+        expect(result._tag === "Failure" && result.failure.reason).toBe("range-unreproducible");
+        expect(seen).toEqual([{ items: [1], gone: false }]);
+        expect(Option.isSome((yield* store.load(bound)).record)).toBe(true);
+      }),
+  );
+});

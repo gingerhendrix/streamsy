@@ -2,7 +2,7 @@
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
 Node, Deno and Cloudflare host glue and durable action delivery. Requires Effect
-`4.0.1`.
+`4.0.5`.
 
 ```ts
 import { Layer, Schema } from "effect";
@@ -85,8 +85,8 @@ The Durable Object host does not get a stop signal and uses neither.
 | `/bun`                                                               | `listener`, its options and defaults                                                                                                                               |
 | `/node`                                                              | `listener`, its options and defaults                                                                                                                               |
 | `/deno`                                                              | `listener`, its options and defaults; `nodeSqliteCompat`                                                                                                           |
-| `/cloudflare`                                                        | `StreamsyObject`, placement router/rules, alarm service                                                                                                            |
-| `/alchemy`                                                           | `objectHandlers`, placement router/rules, alarm service                                                                                                            |
+| `/cloudflare`                                                        | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`                                                                             |
+| `/alchemy`                                                           | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`                                                                               |
 | `/action`                                                            | Unchanged action declarations                                                                                                                                      |
 | `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sql` | Action delivery and backing APIs; `createSqlOutboxBacking` runs on SQLite, Postgres and MySQL                                                                      |
 
@@ -106,3 +106,36 @@ Guides: [Serve routes](https://streamsy.dev/docs/http/serve),
 [Cloudflare](https://streamsy.dev/docs/hosting/cloudflare),
 [Host contract](https://streamsy.dev/docs/hosting/host-contract),
 [Alchemy](https://streamsy.dev/docs/hosting/cloudflare#alchemy).
+
+## Object links and projection wakeups
+
+`ObjectLink.make({ group, prefix, placement, access })` from `/cloudflare` or
+`/alchemy` declares an internal protocol mount and its client together. Add
+`link.routes` to the owner app and the client to the caller's `links`.
+The prefix must start with `/__`. Both public placement routers return 404
+for paths whose first segment starts with `__`, without calling an object.
+The owner still needs the explicit internal route.
+
+Both hosts use one `ObjectLink` and one `LinkClient`. A native Cloudflare
+object takes `links: (env) => [link.client(env.OWNERS)]`. Alchemy
+`objectHandlers` takes `links: [link.client(objectFetch(owners))]`. A linked
+declaration must not also be provided by local storage; the host rejects that
+clash during acquisition.
+
+`ObjectStreams.layer(group, { objects, placement, prefix })` builds the same
+remote stream services for an existing protocol mount. `objects` is a native
+namespace or an `ObjectFetch`: `(name, request) => Effect<Response,
+HttpClientError>`. The client uses `HttpClient.make`, retaining caller context,
+tracing and interruption. Alchemy's `objectFetch` adapts its stub Effects.
+
+Access is mount policy for every stream. `Streamsy.wake` is a State preset
+with the normal writer service. Use `read` for public projection outputs,
+`full` when an internal producer creates its output, or `append` when the
+owner creates it first. `Serve.mount` accepts GET and HEAD.
+
+Object hosts acquire `ProjectionWakeup.attach(projection)` from
+`@streamsy/projection` in their scope through `wakeups: [...]`. Local
+`Storage.committed` events populate its in-memory pending set. Alarms drain
+bounded passes. Retry options take an Effect `Schedule`; finite schedules stop
+on exhaustion. A crash can leave work pending until the next source commit.
+See the [projection host reference](https://streamsy.dev/docs/hosting/cloudflare#projections).

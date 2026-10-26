@@ -23,6 +23,7 @@ import * as Route from "./route.ts";
 import * as StreamAddress from "./address.ts";
 import * as Streams from "./streams.ts";
 
+/** The protocol wires that `bind` gives each declaration. */
 interface Wires {
   readonly reader: Reader<StreamsFault>;
   readonly writer: Writer<StreamsFault>;

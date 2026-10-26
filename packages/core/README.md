@@ -2,7 +2,7 @@
 
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
 protocol. Typed stream declarations, stream services, an in-process memory Layer, an
-HTTP app, and a client for remote hosts. Version 0.4.0 requires
+HTTP app, and a client for remote hosts. Requires
 `effect@4.0.5`.
 
 ```sh
@@ -158,6 +158,127 @@ changes and write it unchanged. With an `offset`, a control that has no offset
 gets that offset. `Serve.state` serves stored controls as they are. It still
 refuses the `x-streamsy-state-reset: snapshot` request header, because the
 server does not make snapshots.
+
+## Materialize State
+
+`DurableState.materialize(state, events)` folds State items into one map of rows
+for each collection. Start from `DurableState.materialized(address)`. It applies
+the State rules: an upsert sets a row, a delete removes it, `reset` clears every
+collection, and `snapshot-end` removes each row that the snapshot did not name. A
+snapshot can span several calls. The input state does not change.
+
+```ts
+let state = DurableState.materialized(Board.at({ id }));
+
+for (const batch of batches) state = DurableState.materialize(state, batch.items);
+
+state.rows.card; // ReadonlyMap<string, Card>
+```
+
+## Wake streams
+
+A wake stream indexes the writes of a family of streams. It is a State stream
+with one row for each source stream: `{ stream, offset, closed? }`, keyed by the
+source id. The row holds the source tail after its last write. A client follows
+one wake stream and reads only the source streams that moved past its saved
+cursors.
+
+```ts
+class Files extends Streamsy.state<Files>()("App/Files", "folders/:folderId/files", {
+  params: { folderId: FolderKey },
+  collections: { file: { schema: FileValue, key: "path" } },
+}) {}
+
+class UserWake extends Streamsy.wake<UserWake>()("App/UserWake", "users/:user/wake", {
+  params: { user: UserKey },
+}) {}
+
+const streams = Streamsy.group(Files, UserWake);
+```
+
+A wake declaration names no sources. A projection writes its rows:
+`Projection.wake` from `@streamsy/projection` links one source stream to one
+wake stream, with params of its own. The source and the wake stream can live on
+different storage owners. See the projection README.
+
+`Streamsy.wake` is a preset for `Streamsy.state` with `wakeCollections`.
+It has the normal State service, including `create`, `append`, `remove`,
+`read`, `follow`, `fold` and `collect`. Use `DurableState.materialize` to fold
+its events into the latest rows.
+
+`Projection.wake` opts its output into creation on the first append, including
+on another owner. The owner can call the normal State service's `create` to
+make an empty stream available before that append. A repeated create answers
+`Exists`:
+
+```ts
+const start = Effect.gen(function* () {
+  const wake = yield* UserWake;
+  yield* wake.create({ user });
+});
+```
+
+HTTP access is mount policy. Choose read access for projection outputs on a
+public mount and full access on an internal mount where producers create and
+append them:
+
+```ts
+Http.routes(streams, {
+  prefix: "/streams",
+  access: (stream) => (stream === UserWake ? "read" : "full"),
+});
+Http.routes(Streamsy.group(UserWake), { prefix: "/__wake", access: "full" });
+```
+
+`Streamsy.followWake` turns wake batches into actions:
+
+```ts
+const actions = Streamsy.followWake(
+  UserWake,
+  { user },
+  {
+    from: saved.wake,
+    cursors: saved.cursors,
+  },
+);
+// Each batch: { items: WakeItem[], offset }. An item is Dirty, Removed, Reset or Snapshot.
+// Save each source cursor first, then save `offset` as the wake cursor.
+```
+
+A client with its own HTTP reader does not need a `RemoteStreams` stack.
+It decodes each page with `Streamsy.WakeMessage` and calls the pure
+`Streamsy.wakeActions`, which `followWake` also uses:
+
+```ts
+const decodePage = Schema.decodeUnknownEffect(Schema.Array(Streamsy.WakeMessage));
+
+const handle = (page: unknown, snapshot?: ReadonlySet<StreamId>) =>
+  Effect.map(decodePage(page), (events) =>
+    Streamsy.wakeActions(events, { cursors: saved.cursors, snapshot }),
+  );
+// { items, snapshot }: items as above. Pass snapshot to the call for the next page.
+```
+
+A wake row lags its source by one projection pass, on the same owner and on
+another one. The client reads each source to its tail, so the lag costs
+latency only.
+
+A wake row relies on append-only streams. The `offset` of a source only goes up,
+so a client compares it with its saved cursor. Never reuse a source id: do not
+create a stream again under the id of a removed or expired stream. The new
+stream starts at a lower offset, and a client with a saved cursor skips its
+items. The projection also treats a gone source as removed for good.
+
+## Local commit events
+
+`Storage.committed` is a scoped
+`Effect<PubSub.Subscription<ReadonlyArray<StreamId>>>`. The subscription exists
+when the effect returns, so a later commit always lands in it. Memory and SQL
+storage publish the ids touched by each successful local commit after it
+commits. Rolled-back writes publish nothing. Each subscriber gets its own
+subscription, which its scope releases. Events are best effort and have no replay; commits from
+another process do not appear. `Storage.changes(id)` remains the per-stream
+read notification source. Custom storage adapters must provide `committed`.
 
 ## Documentation
 

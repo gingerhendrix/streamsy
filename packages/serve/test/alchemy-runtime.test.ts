@@ -15,13 +15,98 @@ import {
   routes as protocolRoutes,
 } from "@streamsy/core/protocol";
 import { expect, it as baseIt } from "@effect/vitest";
-import { Array, Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
+import {
+  Array,
+  Cause,
+  Clock,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+} from "effect";
 import { StorageFault, MemoryStorage, Streamsy } from "@streamsy/core";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { AlarmSlot } from "../src/cloudflare/alarm.ts";
 import { TestClock } from "effect/testing";
 import { Wakeup, Wakeups, makeWakeups } from "../src/cloudflare/wakeup.ts";
-import { objectHandlers } from "../src/alchemy.ts";
+import { ObjectLink, Placement, objectFetch, objectHandlers } from "../src/alchemy.ts";
+
+const caller = Context.Reference("AlchemyTest/Caller", { defaultValue: () => "missing" });
+
+class LinkedNotes extends Streamsy.json<LinkedNotes>()("AlchemyTest/Notes", "notes", {
+  params: {},
+  schema: Schema.String,
+}) {}
+
+baseIt.effect("Alchemy links retain the caller context and trace through ObjectStreams", () =>
+  Effect.gen(function* () {
+    let seen: { caller: string; traceId: string; traceparent: string | undefined } | undefined;
+
+    const link = ObjectLink.make({
+      group: Streamsy.group(LinkedNotes),
+      prefix: "/__notes",
+      placement: Placement.byKey(() => "owner"),
+      access: "full",
+    });
+
+    const transport = objectFetch({
+      getByName: (name) => ({
+        fetch: (input) =>
+          Effect.gen(function* () {
+            expect(name).toBe("owner");
+            seen = {
+              caller: yield* caller,
+              traceId: (yield* Effect.currentSpan.pipe(Effect.orDie)).traceId,
+              traceparent: input.headers.traceparent,
+            };
+
+            return HttpServerResponse.empty({
+              status: 201,
+              headers: {
+                "content-type": "application/json",
+                "stream-next-offset": "0000000000000000_0000000000000000",
+              },
+            });
+          }),
+      }),
+    });
+
+    const handlers = yield* objectHandlers({
+      app: HttpRouter.add(
+        "POST",
+        "/probe",
+        Effect.flatMap(LinkedNotes, (notes) => notes.create({})).pipe(
+          Effect.as(HttpServerResponse.empty({ status: 204 })),
+          Effect.orDie,
+        ),
+      ),
+      layer: Layer.merge(
+        MemoryStorage.layerProtocol(),
+        Layer.succeed(AlarmSlot, {
+          current: Effect.succeedNone,
+          arm: () => Effect.void,
+          clear: Effect.void,
+        }),
+      ),
+      links: [link.client(transport)],
+    });
+
+    yield* Effect.gen(function* () {
+      const root = yield* Effect.currentSpan;
+      const response = yield* request(handlers, "/probe", "POST");
+      expect(response.status).toBe(204);
+      expect(seen?.caller).toBe("request-context");
+      expect(seen?.traceId).toBe(root.traceId);
+      expect(seen?.traceparent).toContain(root.traceId);
+    }).pipe(Effect.provideService(caller, "request-context"), Effect.withSpan("test.caller"));
+  }),
+);
 
 baseIt.effect.each(["typed", "defect"])(
   "Alchemy retries %s acquisition failures and closes its scope",
@@ -261,7 +346,11 @@ baseIt.effect.each(["failure", "still due"])("%s backs off and caps", (mode) =>
         name: "app/retry",
         next: Effect.sync(() => due),
         run: Effect.suspend(() => (fail ? Effect.fail("down") : Effect.void)),
-        retry: { initial: "1 second", max: "2 seconds" },
+        retry: Schedule.exponential("1 second").pipe(
+          Schedule.modifyDelay(({ duration }) =>
+            Effect.succeed(Duration.min(duration, Duration.seconds(2))),
+          ),
+        ),
       }),
     ]);
 
@@ -461,7 +550,7 @@ baseIt.effect("a failing app next still arms expiry after a PUT with a TTL", () 
             );
           }),
           run: Effect.void,
-          retry: { initial: "1 minute", max: "1 hour" },
+          retry: Schedule.exponential("1 minute"),
         }),
       ],
     });
@@ -743,5 +832,134 @@ baseIt.effect("POST enqueue arms the alarm and its turn delivers the SQLite outb
     expect(delivered).toEqual(["docs/version-1"]);
     expect((yield* store.list(notices.name, undefined))[0]?.state).toBe("delivered");
     expect(scheduled).toEqual(Option.none());
+  }),
+);
+
+baseIt.effect(
+  "the object host closes scoped wakeups after failed acquisition and owner shutdown",
+  () =>
+    Effect.gen(function* () {
+      let acquisitions = 0;
+      let releases = 0;
+
+      const source = Effect.acquireRelease(
+        Effect.sync(() => {
+          acquisitions += 1;
+
+          return Wakeup.make({
+            // The first acquisition fails on duplicate names after both resources exist.
+            name: acquisitions <= 2 ? "app/duplicate" : `app/scoped/${acquisitions}`,
+            next: Effect.succeedNone,
+            run: Effect.void,
+          });
+        }),
+        () =>
+          Effect.sync(() => {
+            releases += 1;
+          }),
+      );
+
+      yield* Effect.gen(function* () {
+        const handlers = yield* objectHandlers<StreamsReader | StreamsWriter>({
+          app: protocolRoutes({ prefix: "/streams" }),
+          layer: Layer.merge(
+            MemoryStorage.layerProtocol(),
+            Layer.succeed(AlarmSlot, {
+              current: Effect.succeedNone,
+              arm: () => Effect.void,
+              clear: Effect.void,
+            }),
+          ),
+          wakeups: [source, source],
+        });
+
+        expect((yield* request(handlers, "/streams/s", "OPTIONS")).status).toBe(503);
+        expect(releases).toBe(2);
+        expect((yield* request(handlers, "/streams/s", "OPTIONS")).status).toBe(204);
+        expect((yield* request(handlers, "/streams/s", "OPTIONS")).status).toBe(204);
+        expect(acquisitions).toBe(4);
+        expect(releases).toBe(2);
+      }).pipe(Effect.scoped);
+      expect(releases).toBe(4);
+    }),
+);
+
+baseIt.effect("a finite alarm retry schedule stops rearming when exhausted", () =>
+  Effect.gen(function* () {
+    let current = Option.none<number>();
+    let attempts = 0;
+
+    const context = yield* Layer.build(
+      Layer.merge(
+        MemoryStorage.layerProtocol(),
+        Layer.succeed(AlarmSlot, {
+          current: Effect.sync(() => current),
+          arm: (at) =>
+            Effect.sync(() => {
+              current = Option.some(at);
+            }),
+          clear: Effect.sync(() => {
+            current = Option.none();
+          }),
+        }),
+      ),
+    );
+
+    const scheduler = yield* makeWakeups(context, [
+      Wakeup.make({
+        name: "app/finite",
+        next: Effect.succeedSome(0),
+        run: Effect.suspend(() => {
+          attempts += 1;
+
+          return Effect.fail("down");
+        }),
+        retry: Schedule.recurs(1),
+      }),
+    ]);
+
+    yield* scheduler.alarm;
+    expect(Option.isSome(current)).toBe(true);
+    yield* scheduler.alarm;
+    expect(current).toEqual(Option.none());
+    yield* scheduler.alarm;
+    expect(attempts).toBe(2);
+  }),
+);
+
+baseIt.effect("an asynchronous next that answers now runs in the current alarm turn", () =>
+  Effect.gen(function* () {
+    let due = true;
+    let runs = 0;
+    let reads = 0;
+
+    const context = yield* Layer.build(
+      Layer.merge(
+        MemoryStorage.layerProtocol(),
+        Layer.succeed(AlarmSlot, {
+          current: Effect.succeedNone,
+          arm: () => Effect.void,
+          clear: Effect.void,
+        }),
+      ),
+    );
+
+    const scheduler = yield* makeWakeups(context, [
+      Wakeup.make({
+        name: "app/async-now",
+        next: Effect.gen(function* () {
+          yield* TestClock.setTime(++reads);
+
+          return due ? Option.some(yield* Clock.currentTimeMillis) : Option.none<number>();
+        }),
+        run: Effect.sync(() => {
+          runs += 1;
+          due = false;
+        }),
+      }),
+    ]);
+
+    yield* scheduler.alarm;
+    expect(runs).toBe(1);
   }),
 );

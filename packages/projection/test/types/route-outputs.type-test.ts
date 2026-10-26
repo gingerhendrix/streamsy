@@ -106,3 +106,31 @@ Projection.emit({
   commit: Commit.producer,
   emit: () => ({}),
 });
+
+class WakeState extends Streamsy.state<WakeState>()("routes/WakeState", "wake/:id", {
+  params: { id: Schema.String },
+  collections: Streamsy.wakeCollections,
+}) {}
+
+export const wakeState = Projection.wake({
+  id: "state-wake",
+  params: { id: Schema.String },
+  input: Numbers,
+  output: WakeState,
+});
+
+Projection.wake({
+  id: "json-wake",
+  params: { id: Schema.String },
+  input: Numbers,
+  // @ts-expect-error a JSON declaration is not a State declaration with wake collections
+  output: Numbers,
+});
+
+Projection.wake({
+  id: "wrong-state-wake",
+  params: { id: Schema.String },
+  input: Numbers,
+  // @ts-expect-error a State declaration must have the wake collections
+  output: Board,
+});

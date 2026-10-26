@@ -5,7 +5,12 @@ export const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Sc
 
 export const Counter = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
-export const Range = Schema.Struct({ from: Schema.String, nextOffset: Schema.String });
+const terminal = {
+  closed: Schema.optionalKey(Schema.Boolean),
+  gone: Schema.optionalKey(Schema.Literal(true)),
+};
+
+export const Range = Schema.Struct({ from: Schema.String, nextOffset: Schema.String, ...terminal });
 
 export interface Range extends Schema.Schema.Type<typeof Range> {}
 
@@ -14,6 +19,8 @@ export const PinnedRange = Schema.Struct({
   from: Schema.String,
   nextOffset: Schema.String,
   count: Counter,
+  upToDate: Schema.optionalKey(Schema.Boolean),
+  ...terminal,
 });
 
 export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
@@ -33,7 +40,7 @@ export interface Unit<P = Record<string, string>> {
   readonly version: number;
   readonly generation: number;
   readonly params: P;
-  /** Only the inputs that contributed items; a retry reproduces exactly these. */
+  /** The inputs that contributed items or a terminal outcome; retries reproduce these. */
   readonly ranges: Record<string, Range>;
   readonly key: string;
 }
@@ -46,13 +53,36 @@ export const canonicalParams = (params: Record<string, string>): string =>
     ),
   );
 
+/** The terminal keys of a slice or range. A false or absent key is left out. */
+export interface Terminal {
+  closed?: true;
+  gone?: true;
+}
+
+export const terminalOf = (source: {
+  readonly closed?: boolean | undefined;
+  readonly gone?: boolean | undefined;
+}): Terminal => {
+  const keys: Terminal = {};
+
+  if (source.closed === true) keys.closed = true;
+
+  if (source.gone === true) keys.gone = true;
+
+  return keys;
+};
+
 export const canonicalRanges = (ranges: Record<string, Range>): string =>
   JSON.stringify(
     Record.fromEntries(
-      Array.map(Array.sort(Record.keys(ranges), Order.String), (k) => [
-        k,
-        { from: ranges[k]?.from, nextOffset: ranges[k]?.nextOffset },
-      ]),
+      Array.map(Array.sort(Record.keys(ranges), Order.String), (k) => {
+        const range = ranges[k];
+
+        return [
+          k,
+          { from: range?.from, nextOffset: range?.nextOffset, ...terminalOf(range ?? {}) },
+        ];
+      }),
     ),
   );
 

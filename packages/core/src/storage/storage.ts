@@ -1,6 +1,6 @@
 // The accepted storage contract explicitly names StorageShape.
 /* oxlint-disable anti-slop/no-shape-in-symbol-names */
-import { Context, type Effect, type Option, type Stream } from "effect";
+import { Context, type Effect, type Option, type PubSub, type Scope, type Stream } from "effect";
 import type { StorageFault } from "../fault.ts";
 import type {
   StreamId,
@@ -29,6 +29,19 @@ export interface StorageShape {
     mutation: Mutation,
   ) => Effect.Effect<MutationApplied, MutationRejected | StorageFault>;
   readonly changes: (id: StreamId) => Stream.Stream<ChangeSnapshot, StorageFault>;
+  /**
+   * Subscribe to the stream ids of later local commits. The subscription exists when
+   * this effect returns, so a commit after that point always lands in it. Each item
+   * holds the ids that one commit created, appended to or deleted, after that commit.
+   * A rolled-back mutation reports nothing. In process and best effort: a commit by
+   * another process on the same database does not show, and nothing replays after a
+   * restart. The scope releases the subscription.
+   */
+  readonly committed: Effect.Effect<
+    PubSub.Subscription<ReadonlyArray<StreamId>>,
+    never,
+    Scope.Scope
+  >;
   readonly nextExpiry: Effect.Effect<
     Option.Option<{ readonly at: number; readonly streamId: StreamId }>,
     StorageFault

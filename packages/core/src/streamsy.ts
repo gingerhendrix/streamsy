@@ -17,3 +17,19 @@ export {
   type Services,
   type Host,
 } from "./toolkit/streamsy.ts";
+
+export {
+  wake,
+  followWake,
+  wakeActions,
+  WakeMessage,
+  WakeRow,
+  wakeCollections,
+  type WakeBatch,
+  type WakeCollections,
+  type WakeEvent,
+  WakeItem,
+  type FollowWakeOptions,
+  type WakeActions,
+  type WakeActionsOptions,
+} from "./toolkit/wake.ts";

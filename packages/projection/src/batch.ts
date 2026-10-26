@@ -13,6 +13,8 @@ export interface Slice<A> {
   readonly nextOffset: string;
   readonly upToDate: boolean;
   readonly closed: boolean;
+  /** The input is gone. This final unit is followed by forgetting the binding. */
+  readonly gone?: boolean;
 }
 
 export type Slices<Inputs extends InputMap> = {

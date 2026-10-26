@@ -3,13 +3,24 @@ import { CommitBoundary, ZERO_OFFSET, type StorageFault } from "@streamsy/core";
 import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
 import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import { Counter, PendingUnit, canonicalParams, encodeKey, type Range } from "./unit.ts";
+import {
+  Counter,
+  PendingUnit,
+  canonicalParams,
+  encodeKey,
+  terminalOf,
+  type Range,
+} from "./unit.ts";
 
 export const CheckpointRecord = Schema.Struct({
   identity: Schema.Struct({ inputs: Schema.Record(Schema.String, Schema.String) }),
   /** Input key to accepted offset; the next pass reads after these. */
   inputs: Schema.Record(Schema.String, Schema.String),
   pending: Schema.optionalKey(PendingUnit),
+  /** Inputs whose terminal close has already been processed. */
+  closed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+  /** The final gone unit committed; only forgetting remains. */
+  ended: Schema.optionalKey(Schema.Literal(true)),
   state: Schema.optionalKey(Schema.String),
   adapters: Schema.Struct({
     outputs: Schema.optionalKey(
@@ -310,11 +321,17 @@ export const advance = (
     ]),
   );
 
-/** Only the inputs that contributed items; the unit key and any pin come from these. */
+/** Items and terminal outcomes contribute ranges, including zero-length terminal ranges. */
 export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string, Range> =>
   Record.fromEntries(
     Array.map(
-      Array.filter(Record.toEntries(slices), ([, slice]) => slice.items.length > 0),
-      ([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }],
+      Array.filter(
+        Record.toEntries(slices),
+        ([, slice]) => slice.items.length > 0 || slice.closed || slice.gone === true,
+      ),
+      ([name, slice]): [string, Range] => [
+        name,
+        { from: slice.from, nextOffset: slice.nextOffset, ...terminalOf(slice) },
+      ],
     ),
   );

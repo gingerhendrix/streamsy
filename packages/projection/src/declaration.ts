@@ -64,6 +64,8 @@ export interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
   readonly version: number;
   readonly generation: number;
   readonly params: Codecs;
+  /** The declared inputs, before `at` binds them. */
+  readonly inputs: Inputs;
   /** Throws a RangeError when a param does not encode. */
   readonly at: (params: StreamRoute.Params<Codecs>) => Bound;
   /** Tries declaration inputs in order. Shared inputs return only their declared subset. */
@@ -138,6 +140,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
     version,
     generation,
     params: definition.params,
+    inputs: definition.inputs,
     at: (params) =>
       bind({
         id: definition.id,

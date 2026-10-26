@@ -13,6 +13,7 @@ const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamI
     producer: () => Effect.succeedNone,
     mutate: () => Effect.die("unused"),
     changes: () => Stream.empty,
+    committed: Effect.die("unexpected committed subscription"),
     nextExpiry: Effect.succeed(
       Option.isSome(next)
         ? Option.some({ ...next.value, streamId: StreamId.make(next.value.streamId) })

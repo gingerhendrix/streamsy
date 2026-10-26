@@ -2,8 +2,8 @@ import { layer } from "@effect/vitest";
 import { Commit } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
 import { expect } from "vitest";
-import { Array, Deferred, Effect, Fiber, Option, Schema } from "effect";
-import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
+import { Array, Deferred, Effect, Fiber, Option, Schema, Stream } from "effect";
+import { StorageFault, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { SqlClient } from "effect/sql";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -191,17 +191,131 @@ layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
 });
 
 layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
-  it.effect("missing history preserves the accepted record", () =>
+  it.effect("a close with no items gives one closed unit, including an empty stream", () =>
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      const seen: { closed: boolean; items: readonly number[] }[] = [];
+
+      const bound = Projection.process({
+        id: "observe-close",
+        params: {},
+        inputs: { input },
+        commit: Commit.transaction,
+        process: (batch) =>
+          Effect.sync(() => {
+            seen.push(batch.input);
+          }),
+      }).at({});
+
+      expect((yield* Projection.run(bound)).units).toBe(0);
+      yield* Streams.append(input, [], { close: true });
+      const ended = yield* Projection.run(bound);
+      expect(ended.status).toBe("source-closed");
+      expect(ended.units).toBe(1);
+      expect(ended.items).toBe(0);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.closed).toBe(true);
+      expect(seen[0]?.items).toEqual([]);
+      expect((yield* Projection.run(bound)).units).toBe(0);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("a gone input runs a final empty unit and forgets by default", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Projection.pass(positives);
-      const before = yield* inspect;
       yield* Streams.remove(input);
-      const failed = fault(yield* failure(Projection.run(positives)));
-      expect(failed.phase).toBe("read");
-      expect(failed.reason).toBe("history-unavailable");
-      expect(failed.input).toBe("input");
-      expect(yield* inspect).toEqual(before);
+      const seen: boolean[] = [];
+
+      const bound = Projection.process({
+        id: positives.id,
+        params: {},
+        inputs: { input },
+        commit: Commit.transaction,
+        process: (batch) =>
+          Effect.sync(() => {
+            seen.push(batch.input.gone === true);
+          }),
+      }).at({});
+
+      const ended = yield* Projection.run(bound);
+      expect(ended.status).toBe("source-closed");
+      expect(ended.units).toBe(1);
+      expect(ended.items).toBe(0);
+      expect(seen).toEqual([true]);
+      expect((yield* inspect).loaded.token).toBe("0");
+      const again = fault(yield* failure(Projection.run(bound)));
+      expect(again.reason).toBe("history-unavailable");
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("after a gone input, run gives the state that the final unit committed", () =>
+    Effect.gen(function* () {
+      yield* initialize;
+      const before = yield* Projection.run(sum);
+      expect(before.state).toBe(3);
+      yield* Streams.remove(input);
+
+      const ended = yield* Projection.run(sum);
+      expect(ended).toMatchObject({ status: "source-closed", units: 1, items: 0, state: 3 });
+      expect(ended.offsets).toEqual(before.offsets);
+
+      // The kernel forgot the binding, so a checkpoint read gives the initial state.
+      const read = yield* Projection.read(sum);
+      expect(read.state).toBe(0);
+      expect(read.offsets).toEqual({ input: ZERO_OFFSET });
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("the last follow element after a gone input holds the final committed state", () =>
+    Effect.gen(function* () {
+      yield* initialize;
+      const before = yield* Projection.run(sum);
+      yield* Streams.remove(input);
+
+      const elements = yield* Projection.follow(sum).pipe(Stream.runCollect);
+      expect(elements).toHaveLength(1);
+      expect(elements[0]).toMatchObject({ status: "source-closed", units: 1, state: 3 });
+      expect(elements[0]?.offsets).toEqual(before.offsets);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("a forget retry gives the state and offsets of the ended record", () =>
+    Effect.gen(function* () {
+      yield* initialize;
+      const before = yield* Projection.run(sum);
+      yield* Streams.remove(input);
+      const store = yield* CheckpointStore;
+
+      const failed = yield* Projection.run(sum).pipe(
+        Effect.provideService(CheckpointStore, {
+          ...store,
+          remove: () =>
+            Effect.fail(
+              new ProjectionFault({
+                phase: "checkpoint",
+                reason: "storage-failure",
+                message: "forget failed",
+              }),
+            ),
+        }),
+        Effect.result,
+      );
+
+      expect(failed._tag).toBe("Failure");
+
+      const retried = yield* Projection.run(sum);
+      expect(retried).toMatchObject({ status: "source-closed", units: 0, items: 0, state: 3 });
+      expect(retried.offsets).toEqual(before.offsets);
+      expect((yield* Projection.read(sum)).state).toBe(0);
     }),
   );
 });
@@ -439,6 +553,76 @@ layer(FamilyFixture.withFamilies(layerSqlite(1), Numbers, Doubled))((it) => {
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(101);
       expect(result.items).toBe(101);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("a failed head check after lost history fails the pass without forgetting", () =>
+    Effect.gen(function* () {
+      yield* initialize;
+      yield* Projection.run(positives);
+      const before = yield* inspect;
+      yield* Streams.remove(input);
+      const reader = yield* StreamsReader;
+
+      const checked = yield* Projection.run(positives).pipe(
+        FamilyFixture.provideReader({
+          ...reader,
+          head: () =>
+            Effect.fail(
+              new StorageFault({ operation: "head", message: "head unavailable", retryable: true }),
+            ),
+        }),
+        Effect.result,
+      );
+
+      expect(checked).toMatchObject({ _tag: "Failure", failure: { reason: "storage-failure" } });
+      expect(yield* inspect).toEqual(before);
+    }),
+  );
+});
+
+layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
+  it.effect("a committed gone unit only retries forgetting after a remove failure", () =>
+    Effect.gen(function* () {
+      yield* initialize;
+      let calls = 0;
+
+      const bound = Projection.process({
+        id: "gone-forget",
+        params: {},
+        inputs: { input },
+        commit: Commit.transaction,
+        process: () =>
+          Effect.sync(() => {
+            calls += 1;
+          }),
+      }).at({});
+
+      yield* Projection.run(bound);
+      yield* Streams.remove(input);
+      const store = yield* CheckpointStore;
+      expect(
+        (yield* Projection.run(bound).pipe(
+          Effect.provideService(CheckpointStore, {
+            ...store,
+            remove: () =>
+              Effect.fail(
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "storage-failure",
+                  message: "forget failed",
+                }),
+              ),
+          }),
+          Effect.result,
+        ))._tag,
+      ).toBe("Failure");
+      expect(calls).toBe(2);
+      expect((yield* Projection.run(bound)).units).toBe(0);
+      expect(calls).toBe(2);
+      expect((yield* store.load(bound)).token).toBe("0");
     }),
   );
 });

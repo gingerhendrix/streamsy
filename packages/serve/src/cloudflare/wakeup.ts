@@ -8,6 +8,9 @@ import {
   Exit,
   Option,
   Predicate,
+  Pull,
+  Schedule,
+  type Scope,
   Semaphore,
 } from "effect";
 import { Storage, type StorageFault } from "@streamsy/core";
@@ -31,11 +34,18 @@ export interface Wakeup<R = never> {
    * name is not reentrant, so a run must not call its own wakeup's `run`.
    */
   readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
-  readonly retry?: {
-    readonly initial?: Duration.Input;
-    readonly max?: Duration.Input;
-  };
+  /** Alarm retries use this schedule's delays without sleeping in an alarm. */
+  readonly retry?: Schedule.Schedule<unknown>;
 }
+
+/** The host acquires effectful wakeups in the same scope as its storage layer. */
+export type WakeupSource<R = never> =
+  | Wakeup<R | Wakeups>
+  | Effect.Effect<Wakeup<R | Wakeups>, never, R | Scope.Scope>;
+
+const defaultRetry = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.hours(1)))),
+);
 
 // Each acquired object supplies its own permits to requests and alarms.
 const Permits = Context.Reference<ReadonlyMap<string, Semaphore.Semaphore> | undefined>(
@@ -104,10 +114,16 @@ export const expiry: Wakeup<Storage> = Wakeup.make({
 /** Internal object owner. Its context closes over the same services as fetch. */
 export const makeWakeups = <R>(
   context: Context.Context<Storage | AlarmSlot | R>,
-  definitions: ReadonlyArray<Wakeup<Storage | Wakeups | R>> = [],
+  definitions: ReadonlyArray<WakeupSource<Storage | R>> = [],
 ) =>
   Effect.gen(function* () {
-    const wakeups = Array.map([expiry, ...definitions], (wakeup) => Wakeup.make(wakeup));
+    const acquired = yield* Effect.forEach(definitions, (definition) =>
+      Effect.isEffect(definition)
+        ? definition.pipe(Effect.provide(context))
+        : Effect.succeed(definition),
+    );
+
+    const wakeups = Array.map([expiry, ...acquired], (wakeup) => Wakeup.make(wakeup));
     const names = new Set<string>();
 
     for (const wakeup of wakeups) {
@@ -120,13 +136,20 @@ export const makeWakeups = <R>(
     const reconcilePermit = yield* Semaphore.make(1);
     const turnPermit = yield* Semaphore.make(1);
 
-    const states = Array.map(wakeups, (wakeup) => ({
-      wakeup,
-      failures: 0,
-      floor: 0,
-      initial: Duration.toMillis(wakeup.retry?.initial ?? "1 second"),
-      max: Duration.toMillis(wakeup.retry?.max ?? "1 hour"),
-    }));
+    const states = yield* Effect.forEach(wakeups, (wakeup) =>
+      Effect.gen(function* () {
+        const policy = wakeup.retry ?? defaultRetry;
+
+        return {
+          wakeup,
+          failures: 0,
+          floor: 0,
+          exhausted: false,
+          policy,
+          step: yield* Schedule.toStep(policy),
+        };
+      }),
+    );
 
     const slot = Context.get(context, AlarmSlot);
     // Initialized before any of the effects below are executed.
@@ -134,15 +157,26 @@ export const makeWakeups = <R>(
 
     type State = (typeof states)[number];
 
-    const backOff = (state: State, at: number) => {
-      state.failures += 1;
-      state.floor = at + Math.min(state.max, state.initial * 2 ** (state.failures - 1));
-    };
+    const backOff = (state: State, at: number) =>
+      Effect.gen(function* () {
+        state.failures += 1;
 
-    const recover = (state: State) => {
-      state.failures = 0;
-      state.floor = 0;
-    };
+        const delay = yield* state.step(at, undefined).pipe(
+          Effect.map(([, duration]) => Option.some(duration)),
+          Pull.catchDone(() => Effect.succeedNone),
+        );
+
+        state.exhausted = Option.isNone(delay);
+        state.floor = Option.isSome(delay) ? at + Duration.toMillis(delay.value) : 0;
+      });
+
+    const recover = (state: State) =>
+      Effect.gen(function* () {
+        state.failures = 0;
+        state.floor = 0;
+        state.exhausted = false;
+        state.step = yield* Schedule.toStep(state.policy);
+      });
 
     const status = Effect.forEach(states, (state) =>
       state.wakeup.next.pipe(
@@ -158,16 +192,19 @@ export const makeWakeups = <R>(
     // A failing `next` must not stop other deadlines from arming. The broken
     // wakeup retries on its own backoff, which grows at most once per floor.
     const deadlineOf = (state: State, now: number) =>
-      state.wakeup.next.pipe(
-        Effect.map(Option.map((next) => Math.max(next, state.floor))),
-        Effect.catchCause((cause) => {
-          if (state.floor <= now) backOff(state, now);
+      state.exhausted
+        ? Effect.succeedNone
+        : state.wakeup.next.pipe(
+            Effect.map(Option.map((next) => Math.max(next, state.floor))),
+            Effect.catchCause((cause) => {
+              return Effect.gen(function* () {
+                if (state.floor <= now) yield* backOff(state, now);
+                yield* Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
 
-          return Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause).pipe(
-            Effect.as(Option.some(state.floor)),
+                return state.exhausted ? Option.none<number>() : Option.some(state.floor);
+              });
+            }),
           );
-        }),
-      );
 
     // A forced pass replaces the in-flight guard, which is always earlier than real work.
     const reconcileWith = (force: boolean) =>
@@ -213,16 +250,16 @@ export const makeWakeups = <R>(
 
         for (const state of states) {
           const attempt = Effect.gen(function* () {
-            const at = yield* Clock.currentTimeMillis;
-
-            if (state.floor > at) return;
+            if (state.exhausted || state.floor > (yield* Clock.currentTimeMillis)) return;
             const next = yield* state.wakeup.next;
+            // `next` can read storage or receive committed events before answering "now".
+            const at = yield* Clock.currentTimeMillis;
 
             if (Option.isNone(next) || next.value > at) return;
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
-              backOff(state, yield* Clock.currentTimeMillis);
+              yield* backOff(state, yield* Clock.currentTimeMillis);
               yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
 
               return;
@@ -234,17 +271,19 @@ export const makeWakeups = <R>(
             const after = yield* state.wakeup.next;
 
             if (!reportsMore(exit.value) && Option.isSome(after) && after.value <= at)
-              backOff(state, yield* Clock.currentTimeMillis);
-            else recover(state);
+              yield* backOff(state, yield* Clock.currentTimeMillis);
+            else yield* recover(state);
           });
 
           yield* attempt.pipe(
             Effect.catchCause((cause) =>
               Clock.currentTimeMillis.pipe(
                 Effect.flatMap((at) => {
-                  backOff(state, at);
-
-                  return Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
+                  return backOff(state, at).pipe(
+                    Effect.andThen(
+                      Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause),
+                    ),
+                  );
                 }),
               ),
             ),

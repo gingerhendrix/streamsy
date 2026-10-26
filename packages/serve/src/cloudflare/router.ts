@@ -14,6 +14,14 @@ const badRequest = (message: string): Response =>
 const internalError = (): Response =>
   new Response("Internal server error", { status: 500, headers: securityHeaders });
 
+const notFound = (): Response => new Response(null, { status: 404, headers: securityHeaders });
+
+/**
+ * Paths whose first segment starts with `__` belong to object links and
+ * other internal mounts. No package router forwards them to an object.
+ */
+export const isReserved = (pathname: string): boolean => pathname.startsWith("/__");
+
 const invalidPlacement = (): Response => badRequest("Invalid placement key");
 
 export const resolvePlacement = (
@@ -41,6 +49,9 @@ export const router = <Env>(options: RouterOptions<Env>): ExportedHandler<Env> =
   return {
     fetch(request, env) {
       const url = new URL(request.url);
+
+      if (isReserved(url.pathname)) return notFound();
+
       const streamPath = path.strip(url.pathname);
 
       if (!streamPath || streamPath === url.pathname)

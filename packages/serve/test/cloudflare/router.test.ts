@@ -251,3 +251,27 @@ test("byRoute routes a fork to the child's stream object", async () => {
   expect(await response?.text()).toBe("user/bo");
   expect(namespace.names).toEqual(["user/bo"]);
 });
+
+test("router answers 404 for a reserved /__ path and calls no object", async () => {
+  const namespace = makeNamespace();
+
+  const handler = router({
+    namespace: () => namespace,
+    placement: Placement.byKey(() => "index"),
+  });
+
+  for (const path of ["/__wake/wake", "/__link", "/__"]) {
+    const response = await invoke(
+      handler,
+      new Request(`https://streams.test${path}`, { method: "POST" }),
+    );
+
+    expect(response?.status).toBe(404);
+    expect(response?.headers.get("x-content-type-options")).toBe("nosniff");
+  }
+
+  expect(namespace.names).toEqual([]);
+
+  const allowed = await invoke(handler, new Request("https://streams.test/_x/a"));
+  expect(allowed?.status).toBe(200);
+});

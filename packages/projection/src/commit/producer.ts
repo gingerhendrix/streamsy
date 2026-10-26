@@ -4,15 +4,52 @@ import { Array, Effect, Option, Record } from "effect";
 import { isStreamsFault } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
+import {
+  CheckpointStore,
+  type CheckpointRecord,
+  type CheckpointStoreApi,
+} from "../checkpoint-store.ts";
 import { ProjectionFault } from "../fault.ts";
 import { make, type Emitted, type Accumulated, type OutputNames } from "./model.ts";
 import { canonicalParams } from "../unit.ts";
-import { beforeRecord, detailsOf, load, remove, pin, withState } from "./internal.ts";
+import {
+  beforeRecord,
+  detailsOf,
+  load,
+  remove,
+  pin,
+  withState,
+  type ResolvedOutput,
+} from "./internal.ts";
 
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
 export const producerId = (id: string, version: number, params: Record<string, string>): string =>
   `${id}/v${version}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
+
+/** The head of one output. A missing output on the checkpoint's owner is created here. */
+export const prepareOutput = (output: ResolvedOutput, store: CheckpointStoreApi) => {
+  const { wire, owner: outputOwner } = output.service;
+
+  return wire.head(output.address.id).pipe(
+    Effect.catchTag("StreamNotFound", (cause) =>
+      outputOwner !== ownerOf(store.load)
+        ? Effect.fail(cause)
+        : Streams.create(output.address).pipe(
+            Effect.provideService(StreamsWriter, wire),
+            Effect.andThen(wire.head(output.address.id)),
+          ),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new ProjectionFault({
+          phase: "pin",
+          reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
+          message: `Cannot prepare output ${output.address.id}`,
+          cause,
+        }),
+    ),
+  );
+};
 
 /** The pin write is the last save before the append, so its conflict is a pin failure. */
 const asPin = (fault: ProjectionFault): ProjectionFault =>
@@ -61,7 +98,6 @@ export const producer = pin(
         const before = { record: beforeRecord(request), token: request.loaded.token };
         const { identity, adapters } = before.record;
         const streams = detailsOf(request).outputs;
-        const ranges = request.unit.ranges;
         const positions = { ...adapters.outputs };
 
         for (const [name, position] of Record.toEntries(positions)) {
@@ -121,27 +157,7 @@ export const producer = pin(
         if (pending === undefined && Record.keys(seqs).length > 0) {
           for (const [name, output] of Record.toEntries(streams)) {
             if (seqs[name] === undefined) continue;
-            const { wire, owner: outputOwner } = output.service;
-
-            const head = yield* wire.head(output.address.id).pipe(
-              Effect.catchTag("StreamNotFound", (cause) =>
-                outputOwner !== ownerOf(owner.load)
-                  ? Effect.fail(cause)
-                  : Streams.create(output.address).pipe(
-                      Effect.provideService(StreamsWriter, wire),
-                      Effect.andThen(wire.head(output.address.id)),
-                    ),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new ProjectionFault({
-                    phase: "pin",
-                    reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
-                    message: `Cannot prepare output ${output.address.id}`,
-                    cause,
-                  }),
-              ),
-            );
+            const head = yield* prepareOutput(output, owner);
 
             if (head.closed)
               return yield* new ProjectionFault({
@@ -158,18 +174,12 @@ export const producer = pin(
             adapters: { outputs: { ...positions } },
             pending: {
               seqs,
-              ranges: Record.fromEntries(
-                Array.map(Record.toEntries(ranges), ([name, range]) => [
-                  name,
-                  {
-                    from: range.from,
-                    nextOffset: range.nextOffset,
-                    count: detailsOf(request).ranges[name]?.count ?? 0,
-                  },
-                ]),
-              ),
+              ranges: detailsOf(request).ranges,
             },
           };
+
+          if (before.record.closed !== undefined)
+            Object.assign(pinned, { closed: before.record.closed });
 
           if (before.record.state !== undefined)
             Object.assign(pinned, { state: before.record.state });

@@ -193,11 +193,12 @@ const program = Projection.run(orderTotalsProjection, { limit: 10 });
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-| Runner              | Does                                                                     |
-| ------------------- | ------------------------------------------------------------------------ |
-| `Projection.pass`   | Runs one unit                                                            |
-| `Projection.run`    | Runs units until caught up, closed, or at the limit                      |
-| `Projection.follow` | Runs to caught up, then waits for a change. Returns a `Stream` of cycles |
+| Runner              | Does                                                                      |
+| ------------------- | ------------------------------------------------------------------------- |
+| `Projection.pass`   | Runs one unit                                                             |
+| `Projection.run`    | Runs units until caught up, closed, or at the limit                       |
+| `Projection.follow` | Runs to caught up, then waits for a change. Returns a `Stream` of cycles  |
+| `Projection.attach` | A Layer that runs the binding of each input id that a local commit writes |
 
 `run` and each `follow` element give a `Progress`. It has the `state` and `offsets` that the last pass of the cycle left, and the `status`, `units`, and `items` of the cycle. `state` is `undefined` when the projection has no `state:`. `pass` gives `status`, `units`, `items`, and `offsets`.
 
@@ -228,6 +229,43 @@ The stream emits after the first cycle, also when it commits nothing. After that
 The stream is pull based. The next cycle runs only when the consumer pulls, so a slow consumer gets one element for all the input that arrived while it worked. The consumer's pace sets the follower's pace. Add `Stream.buffer({ capacity: 1, strategy: "sliding" })` to decouple them. A consumer failure stops the follower, so catch render errors in the consumer.
 
 `follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults fail the stream. Interrupt the consumer to stop the follower. Each wait is bounded by `repairIntervalMs`, which defaults to 30 000 ms. Create every input before starting the follower.
+
+## Terminal inputs and wake streams
+
+A closed input with no new items still makes one unit with `slice.closed`.
+The checkpoint records that close, so another run does not repeat the empty
+unit. Batch handlers can react to it; per-item handlers have no entries.
+A confirmed gone input with a checkpoint makes one final unit with
+`slice.gone: true`, then the kernel forgets the binding by default. The last
+`run` result or `follow` element holds the state and offsets that the final
+unit committed. `Projection.read` gives the initial state after that, because
+the record is gone. A missing
+input without a checkpoint still fails with `history-unavailable`. Missing
+history on a live input and storage failures remain faults.
+
+A pending unit replays its pinned ranges. If an input is removed between the
+pin and the settle, the replay fails with `range-unreproducible` and the pin
+stays. The final gone unit does not run for that binding. Retain history until
+pending work settles, or forget the binding after you clean up its outputs.
+
+`Projection.follow` ends when all inputs close. A later removal needs an
+attached projection or another explicit run.
+
+`Streamsy.wake` is the normal State service with fixed `Streamsy.wakeCollections`.
+`Projection.wake({ id, params, input, output })` emits one keyed row
+`{ stream, offset, closed? }` per source and deletes it when the source is gone.
+The producer creates a missing wake stream on its own owner. A wake stream on
+another owner must exist before the first append, so its owner calls the State
+service's `create` at start.
+
+On Bun or Node, build `Projection.attach(filesWake)` beside the API and over
+the same storage and checkpoint layers, before writes begin. Each input id
+must supply every projection parameter. Its local `Storage.committed`
+subscription selects bindings; remote inputs do not trigger it. The pending set has no
+replay and lives in memory. A crash before processing waits for another source
+commit. Retry takes a `Schedule`; the default is capped, jittered exponential
+backoff. Use one writer per binding. Cloudflare uses scoped
+[`ProjectionWakeup.attach`](/docs/hosting/cloudflare#projections).
 
 ## Triggers
 

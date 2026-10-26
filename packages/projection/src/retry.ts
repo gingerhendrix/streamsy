@@ -11,7 +11,7 @@ const defaultRetry = Schedule.exponential("200 millis").pipe(
   ),
 );
 
-/** Default storage-failure retry for follow; an explicit options.retry takes precedence. */
+/** Default retry for following and attached runners; an explicit options.retry takes precedence. */
 export const ProjectionRetry = Context.Reference<Schedule.Schedule<unknown>>(
   "@streamsy/projection/ProjectionRetry",
   { defaultValue: () => defaultRetry },

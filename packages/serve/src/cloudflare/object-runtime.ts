@@ -8,7 +8,7 @@ import {
 import { Http, type Storage, type StorageFault } from "@streamsy/core";
 import { AlarmSlot } from "./alarm.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This private composition root acquires the scheduler with the object context before compiling either host.
-import { Wakeups, RequestTouch, makeWakeups, type Wakeup } from "./wakeup.ts";
+import { Wakeups, RequestTouch, makeWakeups, type WakeupSource } from "./wakeup.ts";
 import { withMutationReconciliation } from "./host-program.ts";
 
 export type ObjectServices<R = never> = Storage | Wakeups | R;
@@ -71,7 +71,7 @@ export function acquireObject<A, R>(
     context: Context.Context<ObjectServices<R>>,
     alarm: Effect.Effect<void>,
   ) => Effect.Effect<A, never, Scope.Scope>,
-  wakeups?: ReadonlyArray<Wakeup<ObjectServices<R>>>,
+  wakeups?: ReadonlyArray<WakeupSource<Storage | R>>,
 ): Effect.Effect<Effect.Effect<A, StorageFault>, never, Scope.Scope> {
   return Effect.gen(function* () {
     const owner = yield* Scope.Scope;
@@ -82,7 +82,9 @@ export function acquireObject<A, R>(
       return yield* Effect.gen(function* () {
         const context = yield* Layer.buildWithScope(layer, attempt);
 
-        const scheduler = yield* makeWakeups(context, wakeups);
+        const scheduler = yield* makeWakeups(context, wakeups).pipe(
+          Effect.provideService(Scope.Scope, attempt),
+        );
 
         return yield* compile(scheduler.context, scheduler.alarm).pipe(
           Effect.provideService(Scope.Scope, attempt),

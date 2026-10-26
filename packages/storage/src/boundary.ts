@@ -6,6 +6,7 @@ import {
   Layer,
   Option,
   Queue,
+  PubSub,
   Schedule,
   Scheduler,
   Scope,
@@ -13,10 +14,16 @@ import {
 } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, SqlError } from "effect/sql";
-import type { CommitBoundaryApi } from "@streamsy/core";
+import type { CommitBoundaryApi, StreamId } from "@streamsy/core";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
-class PendingInvalidations extends Context.Service<PendingInvalidations, Set<string>>()(
+interface Pending {
+  readonly keys: Set<string>;
+  /** Stream ids that the transaction's mutations wrote, for `Storage.committed`. */
+  readonly ids: Set<StreamId>;
+}
+
+class PendingInvalidations extends Context.Service<PendingInvalidations, Pending>()(
   "@streamsy/storage/PendingInvalidations",
 ) {}
 
@@ -58,6 +65,7 @@ const noop = () => {};
 export interface BoundaryRuntime extends CommitBoundaryApi {
   readonly mutation: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
+    readonly ids: ReadonlyArray<StreamId>;
     readonly effect: Effect.Effect<A, E, R>;
     readonly retryable: (error: E) => boolean;
   }) => Effect.Effect<A, E | SqlError.SqlError, R>;
@@ -65,6 +73,12 @@ export interface BoundaryRuntime extends CommitBoundaryApi {
     readonly keys: ReadonlyArray<string>;
     readonly read: Effect.Effect<A, E, R>;
   }) => Stream.Stream<A, E, R>;
+  /** `Storage.committed`: a subscription to the ids of each later owned commit. */
+  readonly committed: Effect.Effect<
+    PubSub.Subscription<ReadonlyArray<StreamId>>,
+    never,
+    Scope.Scope
+  >;
 }
 
 export class BoundaryRuntimeService extends Context.Service<
@@ -122,6 +136,12 @@ const makeBoundary = (
     const sql = yield* SqlClient.SqlClient;
     const reactivity = yield* Reactivity.Reactivity;
     const subscriptions = new Set<ActiveSubscription>();
+
+    const feed = yield* Effect.acquireRelease(
+      PubSub.unbounded<ReadonlyArray<StreamId>>(),
+      PubSub.shutdown,
+    );
+
     let closed = false;
 
     yield* Effect.addFinalizer(() =>
@@ -141,7 +161,7 @@ const makeBoundary = (
     const ownedTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => {
         if (probe !== undefined) probe.transactionAttempts += 1;
-        const pending = new Set<string>();
+        const pending: Pending = { keys: new Set(), ids: new Set() };
         let bodyCompleted = false;
 
         const transactionBody = body.pipe(
@@ -173,12 +193,15 @@ const makeBoundary = (
 
         return guardedTransaction.pipe(
           Effect.tap(() => {
-            if (pending.size === 0) return Effect.void;
+            if (pending.keys.size === 0) return Effect.void;
 
             if (probe !== undefined) probe.invalidations += 1;
 
-            return reactivity.invalidate([...pending]);
+            return reactivity.invalidate([...pending.keys]);
           }),
+          Effect.tap(() =>
+            pending.ids.size === 0 ? Effect.void : PubSub.publish(feed, [...pending.ids]),
+          ),
         );
       });
 
@@ -196,7 +219,7 @@ const makeBoundary = (
         });
       });
 
-    const mutation: BoundaryRuntime["mutation"] = ({ keys, effect, retryable }) =>
+    const mutation: BoundaryRuntime["mutation"] = ({ keys, ids, effect, retryable }) =>
       Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
         Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pendingBefore) => {
           // This check is deliberately before `effect`: a foreign raw ambient
@@ -212,7 +235,9 @@ const makeBoundary = (
               return Effect.sync(() => {
                 // A mutation that succeeds is applied: a rejection travels on the error
                 // channel and rolls the transaction back.
-                for (const key of keys) pending.value.add(key);
+                for (const key of keys) pending.value.keys.add(key);
+
+                for (const id of ids) pending.value.ids.add(id);
               });
             }),
           );
@@ -314,7 +339,7 @@ const makeBoundary = (
         }),
       );
 
-    return { withTransaction, mutation, changes };
+    return { withTransaction, mutation, changes, committed: PubSub.subscribe(feed) };
   });
 
 export const boundaryLayer = (

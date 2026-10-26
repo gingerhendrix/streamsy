@@ -44,8 +44,8 @@ const normalizeSqliteDefect = <A, R>(
   acquisition: Effect.Effect<A, SqlError.SqlError, R>,
 ): Effect.Effect<A, StorageFault, R> =>
   acquisition.pipe(
-    // Since 4.0.1, SqliteClient.make fails with SqlError where it used to die with the
-    // native error. Turn it back into that defect so one path classifies both.
+    // Classify the native cause of SqlError and direct acquisition defects
+    // through the same path.
     Effect.catch((error) => Effect.die(error.reason.cause)),
     Effect.catchCause((cause) =>
       Result.match(Cause.findDefect(cause), {

@@ -22,6 +22,7 @@ const adapter: StorageShape = {
   producer: (id, producerId) => Effect.succeed(Option.none()),
   mutate: (mutation) => Effect.die("not implemented"),
   changes: (id) => Stream.empty,
+  committed: Effect.die("not implemented"),
   nextExpiry: Effect.succeed(Option.none()),
 };
 
@@ -35,6 +36,7 @@ export const layer = Layer.succeed(Storage, adapter);
 | `producer(id, producerId)` | The last accepted producer state                                                      |
 | `mutate(mutation)`         | Applies one ordered set of operations in one transaction                              |
 | `changes(id)`              | A level-triggered stream of change snapshots                                          |
+| `committed`                | A scoped PubSub subscription to stream-id arrays after successful local commits       |
 | `nextExpiry`               | The earliest indexed deadline                                                         |
 | `capabilities`             | What the adapter can do                                                               |
 
@@ -100,6 +102,13 @@ Each wake carries a `ChangeSnapshot` with `present`, `currentOffset`, `closed`, 
 - Register the subscriber before the first snapshot.
 - A `push` adapter keeps one pending wake for each subscriber.
 - Interrupting the subscriber, or closing the owner, releases the subscription.
+
+`committed` broadcasts once after the outer transaction commits, with every
+touched stream id. Rollback publishes nothing. Hold one scoped PubSub and set
+`committed` to `PubSub.subscribe(feed)`, so the subscription exists when the
+effect returns. A caller that wants a Stream uses `Stream.fromSubscription`.
+Subscribers receive no replay, and writes by other processes do not appear. It drives
+attached projections independently of the coalesced `changes(id)` notifications.
 
 ## Forks and expiry
 
