@@ -18,6 +18,7 @@ import {
   Schema,
   Schedule,
   Stream,
+  Tracer,
   type Scope,
 } from "effect";
 import { TestClock } from "effect/testing";
@@ -426,6 +427,40 @@ test("follow emits the first cycle, each commit and the close, and skips idle wa
         { status: "source-closed", units: 1, items: 1, state: 15 },
       ]);
       expect(cycles[2]?.offsets.input).toBe((yield* Streams.head(input)).nextOffset);
+    }),
+  ));
+
+test("one Projection.follow span covers every pass of the stream", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [7, 8], { close: true });
+      const spans: globalThis.Array<Tracer.NativeSpan> = [];
+
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+
+          return span;
+        },
+      });
+
+      const last = yield* lastOf(Projection.follow(sum)).pipe(Effect.withTracer(tracer));
+
+      expect(last).toMatchObject({ status: "source-closed", state: 15 });
+      const follows = Array.filter(spans, (span) => span.name === "Projection.follow");
+      expect(follows).toHaveLength(1);
+
+      const underFollow = (span: Tracer.AnySpan): boolean =>
+        Option.match(span instanceof Tracer.NativeSpan ? span.parent : Option.none(), {
+          onNone: () => false,
+          onSome: (parent) => parent === follows[0] || underFollow(parent),
+        });
+
+      const passes = Array.filter(spans, (span) => span.name === "Projection.pass");
+      expect(passes.length).toBeGreaterThan(0);
+      expect(Array.every(passes, underFollow)).toBe(true);
     }),
   ));
 

@@ -92,7 +92,8 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
  * after each cycle that commits a unit or reaches `limit`, and after the last cycle
  * when every input is closed; then it ends. A wake that finds no input emits nothing.
  * Options are checked at the first pull. On HTTP backends a parked hint is cancelled
- * and replaced once per `repairIntervalMs` until an input changes.
+ * and replaced once per `repairIntervalMs` until an input changes. One
+ * `Projection.follow` span covers the whole stream.
  */
 export const follow = <Inputs extends InputMap, E, R, Q, Result, P, S = never, OR = never>(
   projection: Executable<Inputs, E, R, Q, Result, P, S, OR>,
@@ -180,4 +181,4 @@ export const follow = <Inputs extends InputMap, E, R, Q, Result, P, S = never, O
         }),
       );
     }),
-  );
+  ).pipe(Stream.withSpan("Projection.follow"));
