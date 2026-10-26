@@ -1,0 +1,24 @@
+---
+title: How the reference works
+description: One page for each group of exports in the @streamsy packages. Every signature on these pages is checked against the package at build.
+---
+
+The guides show how to use Streamsy. These pages list what each package exports.
+
+Each page starts with the import that it uses. Then each export has a section with:
+
+- its signature, as you would write it after that import;
+- what it does, and the rules that the signature does not show;
+- a link to the guide that uses it, when one exists.
+
+The site build compares each signature with the real export. A signature that no longer matches the package stops the build.
+
+## `@streamsy/core`
+
+| Page                                               | Exports                                                  |
+| -------------------------------------------------- | -------------------------------------------------------- |
+| [Producer](/docs/reference/core/producer)          | `Producer.Position`, `Producer.next`                     |
+| [DurableState](/docs/reference/core/durable-state) | `upsert`, `remove`, `changes` and their types            |
+| [Errors](/docs/reference/core/errors)              | The protocol errors, the error unions, `isProtocolError` |
+
+The other packages and entry points do not have reference pages yet.

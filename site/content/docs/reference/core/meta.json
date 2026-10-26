@@ -1,0 +1,4 @@
+{
+  "title": "@streamsy/core",
+  "pages": ["producer", "durable-state", "errors"]
+}

@@ -1,0 +1,59 @@
+---
+title: Producer
+description: Reference for the Producer namespace in @streamsy/core. A producer position makes an append safe to retry.
+---
+
+```ts
+import { Producer } from "@streamsy/core";
+```
+
+A producer position names one writer and counts its appends. Send it with an append, and the server accepts each position one time. For the retry flow, see [Producer retries](/docs/streams/write#producer-retries).
+
+## `Producer.Position`
+
+```ts
+// ---cut-start---
+import { Producer } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Position = {
+  readonly producerId: string;
+  readonly producerEpoch: number;
+  readonly producerSeq: number;
+};
+// ---cut-after---
+same<Position, Producer.Position>(true);
+```
+
+| Field           | Meaning                                                                   |
+| --------------- | ------------------------------------------------------------------------- |
+| `producerId`    | Names the writer                                                          |
+| `producerEpoch` | A higher epoch fences out writers with a lower one. You choose the epochs |
+| `producerSeq`   | Counts the appends in one epoch. It starts at 0 for each new epoch        |
+
+The append option `producer` takes this type. `ProducerOptions` is the same type under another name.
+
+## `Producer.next`
+
+```ts
+// ---cut-start---
+import { Producer } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function next(position: Producer.Position): Producer.Position;
+// ---cut-after---
+same<typeof next, typeof Producer.next>(true);
+```
+
+Returns the position with `producerSeq` one higher. The other fields stay the same.
+
+Call it only after the append returns `Appended` or `Duplicate`. If a writer cannot make the same payload again after a restart, store the payload with its position before the append. After the restart, send both again. `Duplicate` then tells you that the first send landed.
+
+```ts
+import { Producer } from "@streamsy/core";
+
+const first: Producer.Position = { producerId: "importer", producerEpoch: 0, producerSeq: 0 };
+const second = Producer.next(first);
+```
+
+`second.producerSeq` is `1`.

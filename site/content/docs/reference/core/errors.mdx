@@ -1,0 +1,533 @@
+---
+title: Errors
+description: Reference for the protocol errors in @streamsy/core. Each error is a tagged class that you can catch by its tag.
+---
+
+```ts
+import { OffsetMismatch, StaleEpoch, isProtocolError, type AppendErrorFor } from "@streamsy/core";
+```
+
+The stream operations fail with these errors when the protocol rejects a request. Each one is a `Schema.TaggedError`. It is an `Error`, it has a `_tag`, and you can `yield*` it in `Effect.gen`. Catch one by its tag:
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { Notes } from "./streams.ts";
+
+const write = Effect.flatMap(Notes, (notes) =>
+  notes.append({}, [{ id: "n1", text: "hello" }]),
+).pipe(Effect.catchTag("StreamClosed", (error) => Effect.succeed(error.offset)));
+```
+
+Each block below shows the `_tag` and the fields of one error. Every error also has `message`, `name` and `stack`. `StreamId` is a branded `string`.
+
+For the faults that are not protocol rejections, such as `StorageFault` and `EncodeFault`, see [Write › Errors](/docs/streams/write#errors).
+
+## Error classes
+
+### `StreamNotFound`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StreamNotFound {
+  readonly _tag: "StreamNotFound";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<StreamNotFound, Fields<Core.StreamNotFound>>(true);
+```
+
+No stream has this id.
+
+### `StreamGone`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StreamGone {
+  readonly _tag: "StreamGone";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<StreamGone, Fields<Core.StreamGone>>(true);
+```
+
+The stream was deleted.
+
+### `StreamClosed`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StreamClosed {
+  readonly _tag: "StreamClosed";
+  readonly id: StreamId;
+  readonly offset: string;
+}
+// ---cut-after---
+same<StreamClosed, Fields<Core.StreamClosed>>(true);
+```
+
+An append went to a closed stream. `offset` is the tail where the stream closed.
+
+### `OffsetMismatch`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface OffsetMismatch {
+  readonly _tag: "OffsetMismatch";
+  readonly id: StreamId;
+  readonly expected: string;
+  readonly actual: string;
+}
+// ---cut-after---
+same<OffsetMismatch, Fields<Core.OffsetMismatch>>(true);
+```
+
+The tail is not the `expectedOffset` of the append. `actual` is the tail now. Nothing was written. See [Conditional writes](/docs/streams/write#conditional-writes).
+
+### `AppendConflict`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface AppendConflict {
+  readonly _tag: "AppendConflict";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<AppendConflict, Fields<Core.AppendConflict>>(true);
+```
+
+The append does not fit the stream. The content type is different, or `Stream-Seq` did not advance. `message` says which.
+
+### `StreamBusy`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StreamBusy {
+  readonly _tag: "StreamBusy";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<StreamBusy, Fields<Core.StreamBusy>>(true);
+```
+
+Storage rejected the write each time that the append tried it. Try again. Over HTTP, this is a `503`.
+
+### `StaleEpoch`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StaleEpoch {
+  readonly _tag: "StaleEpoch";
+  readonly id: StreamId;
+  readonly currentEpoch: number;
+}
+// ---cut-after---
+same<StaleEpoch, Fields<Core.StaleEpoch>>(true);
+```
+
+A writer with a higher producer epoch exists. `currentEpoch` is that epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
+
+### `ProducerGap`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface ProducerGap {
+  readonly _tag: "ProducerGap";
+  readonly id: StreamId;
+  readonly expectedSeq: number;
+  readonly receivedSeq: number;
+}
+// ---cut-after---
+same<ProducerGap, Fields<Core.ProducerGap>>(true);
+```
+
+The producer skipped a sequence number. `expectedSeq` is the next number that the server accepts.
+
+### `InvalidEpochSeq`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidEpochSeq {
+  readonly _tag: "InvalidEpochSeq";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<InvalidEpochSeq, Fields<Core.InvalidEpochSeq>>(true);
+```
+
+The producer epoch or sequence is not valid. The typed `append` treats this as a defect, because its options rule it out.
+
+### `InvalidAppendRequest`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidAppendRequest {
+  readonly _tag: "InvalidAppendRequest";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<InvalidAppendRequest, Fields<Core.InvalidAppendRequest>>(true);
+```
+
+The append request is not valid, for example an append with no items and no `close`. `message` says why. The typed `append` treats this as a defect.
+
+### `CreateConflict`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface CreateConflict {
+  readonly _tag: "CreateConflict";
+  readonly id: StreamId;
+  readonly reason?:
+    "config-mismatch" | "soft-deleted" | "fork-content-type" | "fork-source-soft-deleted";
+}
+// ---cut-after---
+same<CreateConflict, Fields<Core.CreateConflict>>(true);
+```
+
+A create or fork does not match the stream that has this id. `reason` says why. A response over HTTP does not carry the reason, so the remote client leaves it out. `message` describes the conflict.
+
+### `ForkSourceNotFound`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface ForkSourceNotFound {
+  readonly _tag: "ForkSourceNotFound";
+  readonly id: StreamId;
+  readonly source: StreamId;
+}
+// ---cut-after---
+same<ForkSourceNotFound, Fields<Core.ForkSourceNotFound>>(true);
+```
+
+A fork named a source stream that does not exist. `id` is the new stream and `source` is the missing one.
+
+### `InvalidForkRequest`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidForkRequest {
+  readonly _tag: "InvalidForkRequest";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<InvalidForkRequest, Fields<Core.InvalidForkRequest>>(true);
+```
+
+The fork offset is not valid, or it is past the tail of the source. `message` says which.
+
+### `NotSupported`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface NotSupported {
+  readonly _tag: "NotSupported";
+  readonly id: StreamId;
+  readonly feature: string;
+}
+// ---cut-after---
+same<NotSupported, Fields<Core.NotSupported>>(true);
+```
+
+The host or the remote client does not support `feature`, for example `fork`, `producer` or `expected-offset`. The memory and storage hosts do not fail with this error on an append.
+
+### `InvalidReadRequest`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidReadRequest {
+  readonly _tag: "InvalidReadRequest";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<InvalidReadRequest, Fields<Core.InvalidReadRequest>>(true);
+```
+
+The read request is not valid, for example an offset in the wrong format. `message` says why.
+
+### `CreateConflictReason`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CreateConflictReason =
+  "config-mismatch" | "soft-deleted" | "fork-content-type" | "fork-source-soft-deleted";
+// ---cut-after---
+same<CreateConflictReason, Core.CreateConflictReason>(true);
+```
+
+| Reason                     | Meaning                                                   |
+| -------------------------- | --------------------------------------------------------- |
+| `config-mismatch`          | A stream with this id exists with another configuration   |
+| `soft-deleted`             | The id belongs to a deleted stream                        |
+| `fork-content-type`        | The fork asked for a content type other than the source's |
+| `fork-source-soft-deleted` | The fork source was deleted                               |
+
+## Errors by operation
+
+Each operation fails with one of these unions.
+
+### `HeadError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamGone, StreamNotFound } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type HeadError = StreamNotFound | StreamGone;
+// ---cut-after---
+same<HeadError, Core.HeadError>(true);
+```
+
+The errors of `head`.
+
+### `ReadError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { InvalidReadRequest, StreamGone, StreamNotFound } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
+// ---cut-after---
+same<ReadError, Core.ReadError>(true);
+```
+
+The errors of `read`.
+
+### `ReadNextError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { InvalidReadRequest, NotSupported, StreamGone, StreamNotFound } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ReadNextError = StreamNotFound | StreamGone | InvalidReadRequest | NotSupported;
+// ---cut-after---
+same<ReadNextError, Core.ReadNextError>(true);
+```
+
+The errors of one `readNext` call, the read that can wait for new data.
+
+### `CreateError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  CreateConflict,
+  ForkSourceNotFound,
+  InvalidForkRequest,
+  NotSupported,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
+// ---cut-after---
+same<CreateError, Core.CreateError>(true);
+```
+
+The errors of `create` and `fork`.
+
+### `AppendBaseError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  AppendConflict,
+  NotSupported,
+  StreamBusy,
+  StreamClosed,
+  StreamGone,
+  StreamNotFound,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendBaseError =
+  StreamNotFound | StreamGone | StreamClosed | StreamBusy | AppendConflict | NotSupported;
+// ---cut-after---
+same<AppendBaseError, Core.AppendBaseError>(true);
+```
+
+The errors that any append can get, whatever its options.
+
+### `AppendError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  AppendBaseError,
+  InvalidAppendRequest,
+  InvalidEpochSeq,
+  OffsetMismatch,
+  ProducerGap,
+  StaleEpoch,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendError =
+  | AppendBaseError
+  | InvalidAppendRequest
+  | OffsetMismatch
+  | StaleEpoch
+  | ProducerGap
+  | InvalidEpochSeq;
+// ---cut-after---
+same<AppendError, Core.AppendError>(true);
+```
+
+Every error of the protocol append.
+
+### `AppendErrorFor`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  AppendBaseError,
+  AppendErrorFor,
+  OffsetMismatch,
+  ProducerGap,
+  Producer,
+  StaleEpoch,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type NoOptions = AppendErrorFor<{}>;
+// AppendBaseError
+
+type Conditional = AppendErrorFor<{ expectedOffset: string }>;
+// AppendBaseError | OffsetMismatch
+
+type WithProducer = AppendErrorFor<{ producer: Producer.Position }>;
+// AppendBaseError | StaleEpoch | ProducerGap
+// ---cut-after---
+same<NoOptions, AppendBaseError>(true);
+same<Conditional, AppendBaseError | OffsetMismatch>(true);
+same<WithProducer, AppendBaseError | StaleEpoch | ProducerGap>(true);
+```
+
+The errors that an append with options `O` can get. `OffsetMismatch` needs `expectedOffset`. `StaleEpoch` and `ProducerGap` need `producer`. An option that the type of `O` allows counts as set.
+
+### `RemoveError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamBusy, StreamGone, StreamNotFound } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type RemoveError = StreamNotFound | StreamGone | StreamBusy;
+// ---cut-after---
+same<RemoveError, Core.RemoveError>(true);
+```
+
+The errors of `remove`.
+
+### `ProtocolError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  AppendError,
+  CreateError,
+  HeadError,
+  ReadNextError,
+  RemoveError,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ProtocolError = HeadError | ReadNextError | CreateError | AppendError | RemoveError;
+// ---cut-after---
+same<ProtocolError, Core.ProtocolError>(true);
+```
+
+Every protocol rejection.
+
+## Guards
+
+### `isProtocolError`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { isProtocolError as real, type ProtocolError } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isProtocolError(error: { readonly _tag: string }): error is ProtocolError;
+// ---cut-after---
+same<typeof isProtocolError, typeof real>(true);
+```
+
+`true` when the `_tag` of `error` is the tag of a protocol error. The HTTP edge uses it to send every protocol rejection through one mapper.

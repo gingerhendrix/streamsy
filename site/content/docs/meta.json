@@ -1,3 +1,13 @@
 {
-  "pages": ["index", "tutorial", "streams", "projections", "http", "hosting", "demos", "..."]
+  "pages": [
+    "index",
+    "tutorial",
+    "streams",
+    "projections",
+    "http",
+    "hosting",
+    "reference",
+    "demos",
+    "..."
+  ]
 }

@@ -1,0 +1,183 @@
+---
+title: DurableState
+description: Reference for the DurableState namespace in @streamsy/core. It builds the change events of a Durable State stream.
+---
+
+```ts
+import { DurableState, StreamAddress } from "@streamsy/core";
+import type { Array } from "effect";
+```
+
+`DurableState` builds the items that you append to a `Streamsy.state` stream. `upsert` and `remove` describe one change. `changes` adds the key and the headers, and checks each change against the collections of the address. For a worked example, see [Durable State changes](/docs/streams/write#durable-state-changes).
+
+## `DurableState.upsert`
+
+```ts
+// ---cut-start---
+import { DurableState } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function upsert<const Type extends string, A>(
+  type: Type,
+  value: A,
+  options?: { readonly headers?: DurableState.ChangeHeaders },
+): DurableState.Upsert<A, Type>;
+// ---cut-after---
+same<typeof upsert, typeof DurableState.upsert>(true);
+```
+
+Describes an insert or an update of `value` in the collection `type`. You do not give a key. `changes` reads it from the key field of the value.
+
+## `DurableState.remove`
+
+```ts
+// ---cut-start---
+import { DurableState } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function remove<const Type extends string, A = never>(
+  type: Type,
+  key: string | number,
+  options?: { readonly oldValue?: A; readonly headers?: DurableState.ChangeHeaders },
+): DurableState.Delete<NoInfer<A>, Type>;
+// ---cut-after---
+same<typeof remove, typeof DurableState.remove>(true);
+```
+
+Describes a delete by key from the collection `type`. Give `oldValue` to also write the deleted value as `old_value`.
+
+## `DurableState.changes`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import type { Array } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function changes<C extends StreamAddress.Collections, RD, RE>(
+  address: StreamAddress.StateAddress<C, RD, RE>,
+  options: { readonly offset?: string },
+  entries: Array.NonEmptyReadonlyArray<DurableState.Entry<C>>,
+): Array.NonEmptyReadonlyArray<StreamAddress.CollectionsEvent<C>>;
+declare function changes<C extends StreamAddress.Collections, RD, RE>(
+  address: StreamAddress.StateAddress<C, RD, RE>,
+  options: { readonly offset?: string },
+  entries: ReadonlyArray<DurableState.Entry<C>>,
+): ReadonlyArray<StreamAddress.CollectionsEvent<C>>;
+// ---cut-after---
+same<typeof changes, typeof DurableState.changes>(true);
+```
+
+Turns entries into the events that you append to `address`. A non-empty array in gives a non-empty array out.
+
+For each change, `changes`:
+
+- reads the key from the key field of an upserted value, or takes the key given to `remove`;
+- sets `headers.offset` to `options.offset`, when you give one;
+- sets `headers.txid` to `${offset}:${index}`, unless the change sets its own `txid`;
+- copies `timestamp` and `from` from the change headers.
+
+A control entry, such as `StreamAddress.reset()`, passes through. It gets `options.offset` only when it has no offset of its own.
+
+A change to a collection that the address does not declare does not compile. At run time, a key that is `null`, `undefined` or empty throws a `TypeError`.
+
+## `DurableState.ChangeHeaders`
+
+```ts
+// ---cut-start---
+import { DurableState } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ChangeHeaders {
+  readonly txid?: string;
+  readonly timestamp?: string;
+  readonly from?: string;
+}
+// ---cut-after---
+same<ChangeHeaders, DurableState.ChangeHeaders>(true);
+```
+
+The headers that one change can set. `changes` sets `operation` and `offset` itself.
+
+## `DurableState.Upsert`
+
+```ts
+// ---cut-start---
+import { DurableState } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Upsert<A, Type extends string = string> = {
+  readonly _tag: "Upsert";
+  readonly type: Type;
+  readonly value: A;
+  readonly headers?: DurableState.ChangeHeaders;
+};
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+same<Upsert<Issue, "issue">, DurableState.Upsert<Issue, "issue">>(true);
+same<Upsert<Issue>, DurableState.Upsert<Issue>>(true);
+```
+
+What `upsert` returns.
+
+## `DurableState.Delete`
+
+```ts
+// ---cut-start---
+import { DurableState } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Delete<A, Type extends string = string> = {
+  readonly _tag: "Delete";
+  readonly type: Type;
+  readonly key: string | number;
+  readonly oldValue?: A;
+  readonly headers?: DurableState.ChangeHeaders;
+};
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+same<Delete<Issue, "issue">, DurableState.Delete<Issue, "issue">>(true);
+same<Delete<Issue>, DurableState.Delete<Issue>>(true);
+```
+
+What `remove` returns.
+
+## `DurableState.Change`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Change<C extends StreamAddress.Collections> = {
+  [K in keyof C & string]:
+    DurableState.Upsert<C[K]["schema"]["Type"], K> | DurableState.Delete<C[K]["schema"]["Type"], K>;
+}[keyof C & string];
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+type Project = { readonly id: number; readonly name: string };
+type Tracker = {
+  issue: StreamAddress.Collection<Issue, Issue, never, never, "id">;
+  project: StreamAddress.Collection<Project, Project, never, never, "id">;
+};
+same<Change<Tracker>, DurableState.Change<Tracker>>(true);
+```
+
+A pending change to any collection of `C`. For each collection, the `type` and the value type match.
+
+## `DurableState.Entry`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Entry<C extends StreamAddress.Collections> =
+  DurableState.Change<C> | StreamAddress.StateControl;
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+type Tracker = { issue: StreamAddress.Collection<Issue, Issue, never, never, "id"> };
+same<Entry<Tracker>, DurableState.Entry<Tracker>>(true);
+```
+
+One item for `changes`: a change, or a State control.
