@@ -15,9 +15,11 @@ const snippetsPackage = join(process.cwd(), "../tools/docs-snippets");
 
 /**
  * Shared modules, put beside every block. A block imports one through a hidden
- * `streams.ts`, for example `export * from "./shop-streams.ts";`.
+ * `streams.ts`, for example `export * from "./shop-streams.ts";`. A reference page
+ * block imports `./reference-check.ts` in its hidden lines to compare a shown
+ * signature with the real export.
  */
-const sharedModules = ["shop-streams.ts", "notes-streams.ts"];
+const sharedModules = ["shop-streams.ts", "notes-streams.ts", "reference-check.ts"];
 
 /** Compiler options for docs code blocks, on top of the Twoslash defaults. */
 export const snippetCompilerOptions = {
