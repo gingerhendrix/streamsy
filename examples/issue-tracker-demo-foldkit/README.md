@@ -11,25 +11,32 @@ what differs from the base app.
 
 ## Run it
 
-From the repository root:
+The page is a Vite app with Foldkit's Vite plugin. The base app's server
+answers `/api` and `/streams`, and Vite sends those paths to it. Run each in
+its own terminal, from the repository root:
 
 ```bash
 bun install --frozen-lockfile
 bun run build
+bun run --cwd examples/issue-tracker-demo-foldkit dev:api
 bun run --cwd examples/issue-tracker-demo-foldkit dev
 ```
 
-Open <http://localhost:1338>. The settings are the base app's settings.
+Open <http://localhost:1338>. `dev:api` starts the base server on port 1339.
+The base server's settings still apply, for example `ISSUE_TRACKER_DB`.
 
-| Variable           | Default       | Meaning                                            |
-| ------------------ | ------------- | -------------------------------------------------- |
-| `PORT`             | `1338`        | HTTP port                                          |
-| `ISSUE_TRACKER_DB` | unset         | SQLite file for the workspaces; unset keeps memory |
-| `NODE_ENV`         | `development` | `production` turns off console echoing             |
+| Variable            | Default                 | Meaning                                                           |
+| ------------------- | ----------------------- | ----------------------------------------------------------------- |
+| `ISSUE_TRACKER_API` | `http://localhost:1339` | The server that Vite sends `/api` and `/streams` to               |
+| `ISSUE_TRACKER_DB`  | unset                   | For `dev:api`: SQLite file for the workspaces; unset keeps memory |
 
-The dev server has no hot module reloading. Foldkit reads `import.meta.hot`
-as Vite's HMR API, and Bun's `import.meta.hot` refuses those calls. Reload
-the page after an edit.
+An edit reloads the page and keeps the Model, so a half-typed field or a
+selected filter stays. The Foldkit DevTools badge shows in the corner. The
+`.mcp.json` file starts the Foldkit DevTools MCP server, so an agent can read
+the Model and the Message history of the running page.
+
+`bun run build` in this folder writes the page to `dist/`. `bun run preview`
+serves `dist/` on port 1338 with the same proxy.
 
 ## How it differs
 
@@ -43,10 +50,10 @@ the page after an edit.
 | `src/domain/`         | Pure code: apply changes, lay pending writes over rows, the derived lists and counts |
 | `src/view/`           | The view, with the base app's markup and class names                                 |
 | `src/resources.ts`    | The browser services that the runtime gives to every Command                         |
-| `server/index.ts`     | The base app's server layers, with this variant's page                               |
+| `src/entry.ts`        | Reads the Flags and starts the Foldkit runtime                                       |
+| `vite.config.ts`      | Foldkit's Vite plugin, and the proxy to the base app's server                        |
 
-Nothing in `server/` except the entry is new. It imports the base app's API,
-storage and seed layers.
+This variant has no server code. The base app's server is the server.
 
 ### Try it by hand
 
@@ -70,26 +77,34 @@ This is the base app's script. Every variant must pass it.
 ```bash
 bun run --cwd examples/issue-tracker-demo-foldkit test:unit
 bun run --cwd examples/issue-tracker-demo-foldkit typecheck
-bun run --cwd examples/issue-tracker-demo-foldkit smoke:http
+bun run --cwd examples/issue-tracker-demo-foldkit build
 ```
 
-The unit tests drive `update` with Foldkit's `story` helper: the stream fold,
-a write that stays pending until its txid arrives, a refused write that rolls
-back with a notice, the rename field, and empty input. Other tests cover the
-pure workspace functions and the batch-to-Message mapping. The HTTP smoke is
-the base app's smoke, run against this folder.
+The tests use Foldkit's test tools in Vitest with `happy-dom`. Story tests
+(`test/update.test.ts`) drive `update` with Messages and check the Model and
+the Commands: the stream fold, a write that stays pending until its txid
+arrives, a refused write that rolls back with a notice, the rename field, and
+empty input. Scene tests (`test/scene.test.ts`) drive the page through the
+view: they type and click, resolve the Commands, and check that a new issue
+shows faded and then solid, that a refused change rolls back with the server's
+message, and that the filter chips count each status. Other tests cover the
+pure workspace functions, the batch-to-Message mapping, and the JSON codec
+that keeps the Model across a reload.
+
+The server is the base app's server, so the base app's `smoke:http` covers it.
 
 ## Limits
 
-- `effect` is `4.0.5`. Foldkit `0.169.0` asks for exactly `4.0.0` as a peer.
-  The root `overrides` entry keeps one copy of `effect`, and Bun warns about
-  the `@effect/platform-browser` peer. Check both again when Foldkit or Effect
-  moves.
-- No Foldkit Vite plugin. Its view identity and Model-preserving reload are
-  off. The view keys its lists by row id, as Foldkit's builds without the
-  plugin need.
+- `effect` is `4.0.5`. Foldkit `0.169.0` and its tools ask for exactly
+  `4.0.0` as a peer. The root `overrides` entry keeps one copy of `effect`,
+  and Bun warns about the `@effect/platform-browser` peer. The Vite plugin
+  brings `@effect/platform-node-shared@4.0.0` for its Node side. Check all of
+  these again when Foldkit or Effect moves.
+- With two tabs open, a reload after an edit gives both tabs the Model of the
+  tab that changed last.
 - Form fields are plain elements, not `@foldkit/ui` components, so the page
-  keeps the base app's markup and stylesheet.
+  keeps the base app's markup and stylesheet. `@foldkit/ui` is installed only
+  because the DevTools overlay needs it.
 - The Model keeps every row of the workspace, and the view derives the lists
   on each render. This suits a demo workspace.
 - The other limits of the base app still hold.

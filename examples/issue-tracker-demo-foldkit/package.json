@@ -4,26 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot server/index.ts",
-    "start": "NODE_ENV=production bun server/index.ts",
-    "smoke:http": "bun run ../issue-tracker-demo/scripts/http-smoke.ts .",
+    "dev": "vite",
+    "dev:api": "PORT=1339 bun run --cwd ../issue-tracker-demo dev",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "bun run test:unit",
-    "test:unit": "bun --bun vitest run --dir test",
+    "test:unit": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@durable-streams/client": "^0.2.7",
     "@effect/platform-browser": "4.0.5",
-    "@effect/platform-bun": "4.0.5",
     "@streamsy/issue-tracker-demo-contract": "workspace:*",
-    "@streamsy/serve": "workspace:*",
     "effect": "4.0.5",
     "foldkit": "0.169.0",
-    "issue-tracker-demo": "workspace:*",
-    "typescript": "catalog:"
+    "issue-tracker-demo": "workspace:*"
   },
   "devDependencies": {
-    "bun-types": "^1.4.3",
+    "@foldkit/devtools": "0.169.0",
+    "@foldkit/devtools-mcp": "0.25.0",
+    "@foldkit/ui": "0.169.0",
+    "@foldkit/vite-plugin": "0.28.0",
+    "happy-dom": "21.0.4",
+    "typescript": "catalog:",
+    "vite": "8.3.5",
     "vitest": "catalog:"
   }
 }

@@ -46,7 +46,7 @@ const trackedFetch = (report: (isOnline: boolean) => void): typeof globalThis.fe
       },
     );
 
-  return Object.assign(tracked, { preconnect: globalThis.fetch.preconnect });
+  return tracked;
 };
 
 /**

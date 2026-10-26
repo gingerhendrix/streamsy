@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
-    "plugins": [{ "name": "@effect/language-service", "barrelImportPackages": ["effect"] }],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "barrelImportPackages": ["effect"]
+      }
+    ],
     "target": "ES2022",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
@@ -12,7 +17,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["bun-types"]
+    "types": ["vite/client"]
   },
-  "include": ["src", "server", "test"]
+  "include": ["src", "test", "vite.config.ts", "vitest.config.ts"]
 }
