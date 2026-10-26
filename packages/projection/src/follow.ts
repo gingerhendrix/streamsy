@@ -5,7 +5,7 @@ import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
-import { catchUp, withState, type Cycle, type Progress } from "./run.ts";
+import { catchUp, progressOf, type Cycle, type Progress } from "./run.ts";
 import type { Offsets, StateValue } from "./snapshot.ts";
 
 export interface FollowOptions extends RunOptions {
@@ -84,7 +84,7 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
 
 /**
  * Follows a projection as a pull stream. Each element is one committed cycle: the
- * state and offsets of one checkpoint read, plus the units and items of the cycle.
+ * state and offsets that the last pass left, plus the units and items of the cycle.
  *
  * To run the stream is to be the writer, so run one `follow` stream per key. The next
  * cycle runs only when the consumer pulls, so a slow consumer gets one element that
@@ -176,7 +176,7 @@ export const follow = <Inputs extends InputMap, E, R, Q, Result, P, S = never, O
           if (previous?.status === "source-closed") return undefined;
           const result = yield* next(previous);
 
-          return [yield* retrying(withState(projection, result)), result] as const;
+          return [yield* progressOf(projection, result), result] as const;
         }),
       );
     }),

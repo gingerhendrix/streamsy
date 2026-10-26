@@ -110,6 +110,62 @@ for (const [name, host] of hosts) {
   });
 
   layer(host)((it) => {
+    it.effect(`${name}: run loads the checkpoint once per pass and reads no more`, () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const store = yield* CheckpointStore;
+        let loads = 0;
+
+        const counted = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.provideService(CheckpointStore, {
+              ...store,
+              load: (key) =>
+                Effect.suspend(() => {
+                  loads += 1;
+
+                  return store.load(key);
+                }),
+            }),
+          );
+
+        // The same declaration under a second id, driven by hand: one unit, then an empty pass.
+        const manual = Projection.fold({
+          id: "snapshot-totals-manual",
+          params: {},
+          inputs: { input, words },
+          state: { schema: Totals, initial: { sum: 0, count: 0 } },
+          fold: (state, entry) => ({
+            sum: state.sum + (entry.input === "input" ? entry.item : 0),
+            count: state.count + 1,
+          }),
+        }).at({});
+
+        expect((yield* counted(Projection.pass(manual))).status).toBe("progress");
+        expect((yield* counted(Projection.pass(manual))).status).toBe("caught-up");
+        const byPass = loads;
+        loads = 0;
+        expect((yield* counted(Projection.pass(manual))).status).toBe("caught-up");
+        const byIdlePass = loads;
+        loads = 0;
+
+        const progress = yield* counted(Projection.run(totals));
+
+        expect(progress).toMatchObject({ status: "caught-up", units: 1, items: 3 });
+        expect(loads).toBe(byPass);
+        expect(progress.state).toEqual({ sum: 5, count: 3 });
+        const { state, offsets } = progress;
+        expect({ state, offsets }).toEqual(yield* Projection.read(totals));
+        // A run that finds no input gives the stored state of its only pass.
+        loads = 0;
+        const idle = yield* counted(Projection.run(totals));
+        expect(idle).toEqual({ ...progress, units: 0, items: 0 });
+        expect(loads).toBe(byIdlePass);
+      }),
+    );
+  });
+
+  layer(host)((it) => {
     it.effect(
       `${name}: an outputs handler gets the prior state and its returned state is saved`,
       () =>

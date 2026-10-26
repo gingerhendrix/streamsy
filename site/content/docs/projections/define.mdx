@@ -199,7 +199,7 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 | `Projection.run`    | Runs units until caught up, closed, or at the limit                      |
 | `Projection.follow` | Runs to caught up, then waits for a change. Returns a `Stream` of cycles |
 
-`run` and each `follow` element give a `Progress`. It has the `state` and `offsets` of one checkpoint read after the cycle, and the `status`, `units`, and `items` of the cycle. `state` is `undefined` when the projection has no `state:`. `pass` gives `status`, `units`, `items`, and `offsets`.
+`run` and each `follow` element give a `Progress`. It has the `state` and `offsets` that the last pass of the cycle left, and the `status`, `units`, and `items` of the cycle. `state` is `undefined` when the projection has no `state:`. `pass` gives `status`, `units`, `items`, and `offsets`.
 
 | Status          | Meaning                                |
 | --------------- | -------------------------------------- |

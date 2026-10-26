@@ -142,8 +142,8 @@ until caught up, closed, or its optional unit limit. `follow` returns a `Stream`
 that runs to caught up, then waits for changes, with a default repair interval of
 30 seconds. Remote inputs work with `follow` and `run`.
 
-`run` and each `follow` element give a `Progress`: the `state` and `offsets` of one
-checkpoint read after the cycle, plus `status`, `units`, and `items`. The stream
+`run` and each `follow` element give a `Progress`: the `state` and `offsets` that
+the last pass left, plus `status`, `units`, and `items`. The stream
 emits after the first cycle, after each cycle that commits a unit or reaches
 `limit`, and after the last cycle when every input is closed; then it ends. A wake
 that finds no input emits nothing. Invalid options fail the stream at its first pull.

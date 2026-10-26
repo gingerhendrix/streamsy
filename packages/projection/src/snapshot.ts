@@ -33,6 +33,31 @@ export type Readable<Inputs extends InputMap, S, Q> = Identity & {
   readonly commit: Pick<Commit<never, never, Q>, "load">;
 };
 
+/** Internal: what `stateOf` needs to decode a stored state. */
+export type Decodable<S> = Identity & { readonly state?: BoundState<S> };
+
+/**
+ * Internal: decodes one encoded state field. The result is the declared initial value
+ * when no state is stored, and `undefined` when the declaration has no `state:`.
+ */
+export const stateOf = Effect.fnUntraced(function* <S = never>(
+  projection: Decodable<S>,
+  encoded: string | undefined,
+): Effect.fn.Return<StateValue<S>, ProjectionFault> {
+  const declared = projection.state;
+
+  const stored =
+    declared === undefined
+      ? Option.none()
+      : yield* decodeState(projection, declared.schema, Option.fromUndefinedOr(encoded));
+
+  // SAFETY: the state is undefined exactly when the declaration has no state.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The declaration supplies S exactly when state exists; TS cannot reduce StateValue for a generic S.
+  return (
+    declared === undefined ? undefined : Option.getOrElse(stored, declared.initial)
+  ) as StateValue<S>;
+});
+
 /**
  * Reads the state and offsets from one checkpoint record, so the state
  * always matches the offsets. Before the first unit, the state is the declared initial
@@ -45,21 +70,8 @@ export const read = Effect.fn("Projection.read")(function* <
 >(
   projection: Readable<Inputs, S, Q>,
 ): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Q> {
-  const declared = projection.state;
   const restored = yield* restore(projection, projection.commit);
-  const encoded = Option.fromUndefinedOr(restored.record.state);
-
-  const stored =
-    declared === undefined
-      ? Option.none()
-      : yield* decodeState(projection, declared.schema, encoded);
-
-  // SAFETY: the state is undefined exactly when the declaration has no state.
-  // oxlint-disable typescript/no-unsafe-type-assertion -- SAFETY: The declaration supplies S exactly when state exists; TS cannot reduce StateValue for a generic S.
-  const state = (
-    declared === undefined ? undefined : Option.getOrElse(stored, declared.initial)
-  ) as StateValue<S>;
-  // oxlint-enable typescript/no-unsafe-type-assertion
+  const state = yield* stateOf(projection, restored.record.state);
 
   return { state, offsets: offsetsOf<Inputs>(restored.record) };
 });

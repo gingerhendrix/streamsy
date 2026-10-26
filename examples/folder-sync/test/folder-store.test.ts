@@ -425,9 +425,8 @@ for (const [name, storage] of [
           );
 
           expect((yield* store.read("race", "a")).head).toEqual(last);
-          // Two racing loads, the winner's first-write checkpoint and the state read that
-          // Projection.run does after it, and the loser's second fold.
-          expect(loads).toBe(5);
+          // Two racing loads, the winner's first-write checkpoint, and the loser's second fold.
+          expect(loads).toBe(4);
           expect((yield* files.collect({ folderId: "race" })).items).toHaveLength(3);
         }),
     );

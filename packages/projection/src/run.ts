@@ -9,15 +9,21 @@ import {
 } from "./batch.ts";
 import { advance, rangesOf, restore } from "./checkpoint-store.ts";
 import { HandlerFailed, type Pending } from "./commit.ts";
-import { isPinned, setDetails, type Details } from "./commit/internal.ts";
+import {
+  isPinned,
+  setDetails,
+  withState as settled,
+  type Details,
+  type Result as Settled,
+} from "./commit/internal.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Executable } from "./executable.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import {
   offsetsOf,
-  read as readSnapshot,
+  stateOf,
+  type Decodable,
   type Offsets,
-  type Readable,
   type Snapshot,
   type StateValue,
 } from "./snapshot.ts";
@@ -40,11 +46,24 @@ export interface Progress<S, Inputs extends InputMap = InputMap> extends Snapsho
   readonly items: number;
 }
 
-/** Internal: a cycle before its state is read. The offsets come from the last pass. */
-export type Cycle<Inputs extends InputMap = InputMap> = Omit<Progress<unknown, Inputs>, "state">;
+/** Internal: a pass result plus the encoded state of the record that the pass left. */
+interface Step<Inputs extends InputMap = InputMap> extends PassResult<Inputs> {
+  readonly encoded: string | undefined;
+}
 
-/** Restore and adapt one input unit; the Commit owns every write. */
-export const pass = Effect.fn("Projection.pass")(function* <
+/**
+ * Internal: a cycle before its state is decoded. The offsets and the encoded state come
+ * from the last pass, so they always match.
+ */
+export type Cycle<Inputs extends InputMap = InputMap> = Omit<Progress<unknown, Inputs>, "state"> & {
+  readonly encoded: string | undefined;
+};
+
+/**
+ * Internal: one pass that also returns the encoded state it committed, or the stored
+ * state when it found no input.
+ */
+const step = Effect.fn("Projection.pass")(function* <
   Inputs extends InputMap,
   E,
   R,
@@ -55,7 +74,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
 ): Effect.fn.Return<
-  PassResult<Inputs>,
+  Step<Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
@@ -101,6 +120,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
         units: 0,
         items: 0,
         offsets: offsetsOf<Inputs>(before.record),
+        encoded: before.record.state,
       };
   }
 
@@ -124,10 +144,19 @@ export const pass = Effect.fn("Projection.pass")(function* <
   }
 
   let prepared: unknown;
+  // The last result of `run`. The Commit stores the state of the run that it commits.
+  let result: Result | undefined;
 
   const processed = Effect.suspend(() =>
     projection.process(batch, unit, before.record.state, prepared),
-  ).pipe(Effect.mapError((error) => new HandlerFailed({ error })));
+  ).pipe(
+    Effect.tap((value) =>
+      Effect.sync(() => {
+        result = value;
+      }),
+    ),
+    Effect.mapError((error) => new HandlerFailed({ error })),
+  );
 
   // SAFETY: the runner requires Exclude<R, P> from its caller; apply supplies P in the same Effect context.
   // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion, typescript/no-unsafe-type-assertion -- TypeScript cannot prove that apply supplies P for Exclude<R, P>; see SAFETY.
@@ -172,8 +201,27 @@ export const pass = Effect.fn("Projection.pass")(function* <
     ),
   );
 
-  return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(next) };
+  // SAFETY: every Commit settles a Result of the shared union; settled() reads only `encoded`.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Declarations produce the Commit Result union; the generic Result erases it.
+  const stored = settled(next, result as Settled);
+
+  return {
+    status: "progress",
+    units: 1,
+    items: count,
+    offsets: offsetsOf<Inputs>(next),
+    encoded: stored.state,
+  };
 });
+
+/** Restore and adapt one input unit; the Commit owns every write. */
+export const pass = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+): Effect.Effect<
+  PassResult<Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+> => Effect.map(step(projection), ({ encoded: _encoded, ...result }) => result);
 
 /** Internal: repeats pass until caught up, closed, or limited. The caller validates options. */
 export const catchUp = Effect.fnUntraced(function* <
@@ -196,29 +244,32 @@ export const catchUp = Effect.fnUntraced(function* <
   let units = 0;
   let items = 0;
   let offsets: Offsets<Inputs>;
+  let encoded: string | undefined;
 
   do {
-    const result = yield* pass(projection);
+    const result = yield* step(projection);
     units += result.units;
     items += result.items;
     offsets = result.offsets;
+    encoded = result.encoded;
 
-    if (result.status !== "progress") return { status: result.status, units, items, offsets };
+    if (result.status !== "progress")
+      return { status: result.status, units, items, offsets, encoded };
   } while (units < cap);
 
-  return { status: "limit-reached", units, items, offsets };
+  return { status: "limit-reached", units, items, offsets, encoded };
 });
 
-/** Internal: a cycle with the state and offsets of one checkpoint read. */
-export const withState = <Inputs extends InputMap, S, Q>(
-  projection: Readable<Inputs, S, Q>,
-  cycle: Cycle<Inputs>,
-): Effect.Effect<Progress<StateValue<S>, Inputs>, ProjectionFault, Q> =>
-  Effect.map(readSnapshot(projection), (snapshot) => ({ ...cycle, ...snapshot }));
+/** Internal: a cycle with its state decoded once. It reads no checkpoint. */
+export const progressOf = <Inputs extends InputMap, S>(
+  projection: Decodable<S>,
+  { encoded, ...cycle }: Cycle<Inputs>,
+): Effect.Effect<Progress<StateValue<S>, Inputs>, ProjectionFault> =>
+  Effect.map(stateOf(projection, encoded), (state) => ({ ...cycle, state }));
 
 /**
- * Repeats pass until caught up, closed, or limited, then reads the state once.
- * Use one writer per key.
+ * Repeats pass until caught up, closed, or limited, then decodes the state of the last
+ * pass once. Use one writer per key.
  */
 export const run = Effect.fn("Projection.run")(function* <
   Inputs extends InputMap,
@@ -239,5 +290,5 @@ export const run = Effect.fn("Projection.run")(function* <
 > {
   yield* validateOptions(options);
 
-  return yield* withState(projection, yield* catchUp(projection, options));
+  return yield* progressOf(projection, yield* catchUp(projection, options));
 });
