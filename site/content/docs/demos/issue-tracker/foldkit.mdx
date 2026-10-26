@@ -11,15 +11,16 @@ The source is in [`examples/issue-tracker-demo-foldkit`](https://github.com/ging
 
 ## Run it
 
-From the repository root:
+The page is a Vite app. The base app's server answers `/api` and `/streams`. Run each in its own terminal, from the repository root:
 
 ```bash
 bun install --frozen-lockfile
 bun run build
+bun run --cwd examples/issue-tracker-demo-foldkit dev:api
 bun run --cwd examples/issue-tracker-demo-foldkit dev
 ```
 
-Open http://localhost:1338. The settings are the base app's settings. The dev server has no hot module reloading, so reload the page after an edit.
+Open http://localhost:1338. `dev:api` starts the base server on port 1339, with the base app's settings. An edit reloads the page and keeps the Model.
 
 ## What changes
 
@@ -30,7 +31,7 @@ Open http://localhost:1338. The settings are the base app's settings. The dev se
 | Optimistic writes | `onMutate`, `mutationFn` and `awaitTxId`       | A list of pending writes in the Model, cleared by txid        |
 | Rollback          | TanStack DB removes the local row              | `update` removes the pending write                            |
 | Derived lists     | Live queries                                   | Pure functions that the view calls                            |
-| Server            | `server/`                                      | The base app's layers, imported, with this variant's page     |
+| Server            | `server/`                                      | The base app's server. Vite serves the page and proxies to it |
 
 The stream route, the JSON API, the status codes and the rules are the base app's. A 422 still means that the work-in-progress rule refused the change.
 
@@ -175,27 +176,53 @@ export const statusCounts = (issues: ReadonlyArray<Shown<Issue>>): Record<Status
 
 ## 5. Reuse the server
 
-The server entry is the base app's layer graph. It imports the base layers and serves this variant's page. The page imports the base stylesheet.
+This variant has no server code. Foldkit's Vite plugin builds the page, and Vite sends `/api` and `/streams` to the base app's server. The page imports the base stylesheet.
 
-```ts title="server/index.ts"
-// The base app's server layers. This variant changes only the page.
-import { ApiLive, ApiNotFoundLive } from "issue-tracker-demo/server/api.ts";
-import { ServerConfig, serverIdleTimeoutSeconds } from "issue-tracker-demo/server/config.ts";
-import { IssueTrackerLive, SeedLive } from "issue-tracker-demo/server/issue-tracker.ts";
-import { StorageLive, Workspaces } from "issue-tracker-demo/server/streams.ts";
-// The Foldkit page. Bun bundles its scripts and the base app's stylesheet.
-import index from "../public/index.html";
+```ts title="vite.config.ts"
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, import.meta.dirname, "ISSUE_TRACKER_");
+  const api = env["ISSUE_TRACKER_API"] ?? "http://localhost:1339";
+  const proxy = { "/api": api, "/streams": api };
+
+  return {
+    plugins: [foldkit()],
+    optimizeDeps: { entries: ["src/entry.ts"] },
+    server: { port: 1338, strictPort: true, proxy },
+    preview: { port: 1338, strictPort: true, proxy },
+  };
+});
+```
+
+The plugin keeps the Model across a reload after an edit, gives the view stable node identity, and adds the Foldkit DevTools to the page.
+
+## 6. Test through Foldkit's test tools
+
+The tests run in Vitest with `happy-dom` and Foldkit's matchers. Story tests send Messages to `update` and check the Model and the Commands. Scene tests render the view, type and click, resolve each Command with its result Message, and check the page. This scene follows a status change that the work-in-progress rule refuses.
+
+```ts title="test/scene.test.ts"
+    scene(
+      { update, view },
+      given(live),
+      change(label("Status for Fix the reader"), "in_progress"),
+      Command.resolve(
+        GenerateStamp,
+        Message.CompletedGenerateStamp({ intent, stamp: stamp("tx-2") }),
+      ),
+      expect(pendingRow).toExist(),
+      // ...
+      Command.resolve(SendWrite, Message.FailedSendWrite({ txid: "tx-2", error: wipNotice })),
+      expect(pendingRow).toBeAbsent(),
+      expect(text(wipNotice, { exact: false })).toExist(),
+      expect(label("Status for Fix the reader")).toHaveValue("open"),
 ```
 
 ## Versions and the build
 
-Foldkit `0.169.0` asks for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.0.5`. The root `overrides` entry for `effect` gives one copy of Effect in the install and in the browser bundle. Bun warns about the `@effect/platform-browser` peer.
-
-Bun bundles the page through its HTML import, without Foldkit's Vite plugin. Without the plugin, Foldkit matches nodes by position and key, so the view keys each list by row id. Foldkit takes `import.meta.hot` to be Vite's HMR API, so the server turns off Bun's hot module reloading for this page.
+Foldkit `0.169.0` and its tools ask for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.0.5`. The root `overrides` entry for `effect` gives one copy of Effect in the install and in the browser bundle. Bun warns about the `@effect/platform-browser` peer.
 
 ## Limits
 
 - The Model holds every row of the workspace, and the view derives the lists on each render. This suits a demo workspace.
 - Form fields are plain elements, not `@foldkit/ui` components, so that the page keeps the base app's markup.
-- Foldkit's Model-preserving reload and its devtools bridge need the Vite dev server, so they are off.
+- With two tabs open, a reload after an edit gives both tabs the Model of the tab that changed last.
 - The other limits of the [base app](/docs/demos/issue-tracker#limits) still hold.
