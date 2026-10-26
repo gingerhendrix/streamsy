@@ -61,7 +61,7 @@ export class Folders extends Streamsy.state<Folders>()("FolderSync/Folders", "fo
 
 export class Files extends Streamsy.state<Files>()("FolderSync/Files", "folders/:folderId/files", {
   params: { folderId: FolderKey },
-  collections: { file: { schema: File, key: "path" } },
+  collections: { file: { schema: FileValue, key: "path" } },
 }) {}
 ```
 
