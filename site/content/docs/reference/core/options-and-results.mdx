@@ -1,0 +1,330 @@
+---
+title: Options and results
+description: Reference for the protocol options and results in @streamsy/core. The stream methods take these options and succeed with these results.
+---
+
+```ts
+import {
+  AppendResult,
+  CreateResult,
+  type AppendCallOptions,
+  type AppendOptions,
+  type CreateOptions,
+  type HeadResult,
+  type ProducerOptions,
+  type ReadMessage,
+  type ReadNextOptions,
+  type ReadNextResult,
+  type ReadOptions,
+  type ReadResult,
+} from "@streamsy/core";
+```
+
+The methods of a stream class take these options and succeed with these results. A result type that has a `_tag` is also a value, with constructors and matchers. For the failures, see [Toolkit types](/docs/reference/core/toolkit) and [Errors](/docs/reference/core/errors).
+
+## Create
+
+### `CreateOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface CreateOptions {
+  readonly contentType?: string;
+  readonly ttlSeconds?: number;
+  readonly expiresAt?: string;
+  readonly closed?: boolean;
+  readonly forkedFrom?: string;
+  readonly forkOffset?: string;
+  readonly forkSubOffset?: number;
+  readonly initialData?: Uint8Array;
+}
+// ---cut-after---
+same<CreateOptions, Core.CreateOptions>(true);
+```
+
+| Option          | Meaning                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------- |
+| `contentType`   | The content type of the stream. A stream class sets it from the address                 |
+| `ttlSeconds`    | Time to live. Each append and each read starts it again                                 |
+| `expiresAt`     | A fixed expiry time                                                                     |
+| `closed`        | Makes the stream closed                                                                 |
+| `forkedFrom`    | The id of the source stream of a fork. `fork` sets it from `source`                     |
+| `forkOffset`    | The child gets every source message up to and including this offset                     |
+| `forkSubOffset` | Takes part of the next source message too. For JSON it counts messages, otherwise bytes |
+| `initialData`   | The first messages, written in the same operation                                       |
+
+Set `ttlSeconds` or `expiresAt`, not both. A fork with neither one keeps the expiry of its source.
+
+A `create` on an id that exists succeeds with `Exists` when the options match the stream. Otherwise it fails with `CreateConflict`. See [Create and fork](/docs/streams/create).
+
+### `CreateResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CreateResult =
+  | {
+      readonly _tag: "Created";
+      readonly nextOffset: string;
+      readonly contentType: string;
+      readonly closed: boolean;
+    }
+  | {
+      readonly _tag: "Exists";
+      readonly nextOffset: string;
+      readonly contentType: string;
+      readonly closed: boolean;
+    };
+// ---cut-after---
+same<CreateResult, Core.CreateResult>(true);
+```
+
+`Created` when the stream is new. `Exists` when a stream with this id and the same options was there. `nextOffset` is the tail of the stream.
+
+`CreateResult` is also an Effect `Data.taggedEnum`. Use its matcher to handle both cases:
+
+```ts
+import { CreateResult } from "@streamsy/core";
+
+declare const result: CreateResult;
+
+const isNew = CreateResult.$match(result, {
+  Created: () => true,
+  Exists: () => false,
+});
+```
+
+## Append
+
+### `AppendCallOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { AppendOptions } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendCallOptions = Omit<AppendOptions, "data" | "contentType">;
+// ---cut-after---
+same<AppendCallOptions, Core.AppendCallOptions>(true);
+```
+
+The options of `append` on a stream class: `seq`, `producer`, `close` and `expectedOffset`. The address gives the body and the content type.
+
+### `AppendOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { ProducerOptions } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface AppendOptions {
+  readonly data: Uint8Array;
+  readonly contentType: string;
+  readonly seq?: string;
+  readonly producer?: ProducerOptions;
+  readonly close?: boolean;
+  readonly expectedOffset?: string;
+}
+// ---cut-after---
+same<AppendOptions, Core.AppendOptions>(true);
+```
+
+The options of one append on the protocol writer.
+
+| Option           | Meaning                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| `data`           | The encoded body                                                                     |
+| `contentType`    | Must match the content type of the stream                                            |
+| `seq`            | The `Stream-Seq` of the writer. Each `seq` must sort after the last one, as a string |
+| `producer`       | The producer position. The server accepts each position one time                     |
+| `close`          | Closes the stream after this append. With an empty body, it only closes              |
+| `expectedOffset` | Appends only when the tail is this offset                                            |
+
+A different content type, or a `seq` that does not sort after the last one, fails with `AppendConflict`. With `expectedOffset`, a different tail fails with `OffsetMismatch`, and nothing changes: no messages, no close, no producer state. `expectedOffset` is a Streamsy extension to the Durable Streams protocol. See [Conditional writes](/docs/streams/write#conditional-writes).
+
+### `ProducerOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ProducerOptions {
+  readonly producerId: string;
+  readonly producerEpoch: number;
+  readonly producerSeq: number;
+}
+// ---cut-after---
+same<ProducerOptions, Core.ProducerOptions>(true);
+```
+
+The same fields as [`Producer.Position`](/docs/reference/core/producer#producerposition). The field rules are on that page.
+
+### `AppendResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendResult =
+  | {
+      readonly _tag: "Appended";
+      readonly offset: string;
+      readonly producerEpoch?: number;
+      readonly producerSeq?: number;
+      readonly closed: boolean;
+    }
+  | {
+      readonly _tag: "Duplicate";
+      readonly offset: string;
+      readonly producerEpoch: number;
+      readonly producerSeq: number;
+      readonly closed: boolean;
+    };
+// ---cut-after---
+same<AppendResult, Core.AppendResult>(true);
+```
+
+| Case        | When                                              | `offset`                                  |
+| ----------- | ------------------------------------------------- | ----------------------------------------- |
+| `Appended`  | The append wrote its items                        | The tail after this append                |
+| `Duplicate` | The server accepted this producer position before | The tail now, at or after the first write |
+
+`Appended` has `producerEpoch` and `producerSeq` when the append had a `producer`. `Duplicate` gives the epoch and the last accepted sequence of the producer. `closed` is `true` when the stream is closed after the call.
+
+Like `CreateResult`, `AppendResult` is also a `Data.taggedEnum` value with `$is` and `$match`.
+
+## Read
+
+### `ReadOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadOptions {
+  offset?: string;
+}
+// ---cut-after---
+same<ReadOptions, Core.ReadOptions>(true);
+```
+
+A read starts after `offset`. It does not include the message at `offset`.
+
+| `offset`         | Reads from                    |
+| ---------------- | ----------------------------- |
+| Not set, or `-1` | The start of the stream       |
+| `now`            | The current tail              |
+| An offset        | The message after this offset |
+
+Any other value fails with `InvalidReadRequest`.
+
+### `ReadNextOptions`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadNextOptions {
+  offset: string;
+  cursor?: string;
+}
+// ---cut-after---
+same<ReadNextOptions, Core.ReadNextOptions>(true);
+```
+
+The options of one long-poll wait, which `session` does. `offset` takes the same values as in `ReadOptions`. `cursor` is the `cursor` of the last `ReadNextResult`. Send it back, so that a CDN can join the waits of many readers. See [Session](/docs/streams/read#session).
+
+### `ReadResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { ReadMessage } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadResult {
+  readonly contentType: string;
+  readonly messages: ReadonlyArray<ReadMessage>;
+  readonly nextOffset: string;
+  readonly upToDate: boolean;
+  readonly closed: boolean;
+}
+// ---cut-after---
+same<ReadResult, Core.ReadResult>(true);
+```
+
+One batch from the protocol reader, before the codec decodes it.
+
+| Field        | Meaning                                                                                             |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| `messages`   | The stored messages after the read offset                                                           |
+| `nextOffset` | The offset of the last message in the batch, or the tail when the batch is empty. Read on from here |
+| `upToDate`   | `true` when `nextOffset` is the tail of the stream                                                  |
+| `closed`     | `true` when the stream is closed and this batch reached the tail                                    |
+
+A stream class decodes this into a [`Batch`](/docs/reference/core/toolkit#batch).
+
+### `ReadNextResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { ReadResult } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadNextResult extends ReadResult {
+  readonly cursor: string;
+  readonly timedOut: boolean;
+}
+// ---cut-after---
+same<ReadNextResult, Core.ReadNextResult>(true);
+```
+
+The result of one long-poll wait. `timedOut` is `true` when the wait ended with no new messages. `cursor` goes in the next `ReadNextOptions`.
+
+### `ReadMessage`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadMessage {
+  readonly data: Uint8Array;
+}
+// ---cut-after---
+same<ReadMessage, Core.ReadMessage>(true);
+```
+
+One stored message, as bytes. Storage keeps the offset and the time of each message. A read does not give them.
+
+### `HeadResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface HeadResult {
+  readonly contentType: string;
+  readonly nextOffset: string;
+  readonly ttlSeconds?: number;
+  readonly expiresAt?: string;
+  readonly closed: boolean;
+}
+// ---cut-after---
+same<HeadResult, Core.HeadResult>(true);
+```
+
+The tail and the configuration of a stream, with no messages. `nextOffset` is the tail. A `head` does not start the time to live again.

@@ -1,0 +1,282 @@
+---
+title: Toolkit types
+description: Reference for the toolkit types in @streamsy/core. The methods of a stream class return these batches, folds and failures.
+---
+
+```ts
+import type {
+  AppendFailure,
+  Batch,
+  Collected,
+  CreateFailure,
+  DecideSpec,
+  Decided,
+  Decision,
+  Folded,
+  FollowFailure,
+  HeadFailure,
+  OffsetMismatch,
+  ReadFailure,
+  RemoveFailure,
+} from "@streamsy/core";
+import type { Effect, Function, Schedule } from "effect";
+```
+
+The methods of a stream class decode items, fold them, and name their failures with these types. The method list is on the [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) section. The protocol options and results are on [Options and results](/docs/reference/core/options-and-results).
+
+## Results
+
+### `Batch`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Batch<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly nextOffset: string;
+  readonly upToDate: boolean;
+  readonly closed: boolean;
+}
+// ---cut-after---
+same<Batch<string>, Core.Batch<string>>(true);
+```
+
+One batch of decoded items. `read` and `follow` give a stream of batches. `nextOffset`, `upToDate` and `closed` have the same meaning as in [`ReadResult`](/docs/reference/core/options-and-results#readresult). Keep `nextOffset` to read on later.
+
+`follow` does not give an empty batch, except the last batch of a closed stream.
+
+### `Collected`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Collected<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly offset: string;
+}
+// ---cut-after---
+same<Collected<string>, Core.Collected<string>>(true);
+```
+
+What `collect` returns: every item up to the tail, and the tail that the read reached. Pass `offset` as `expectedOffset` for a [conditional write](/docs/streams/write#conditional-writes), or as `offset` to read on.
+
+### `Folded`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Folded<S> {
+  readonly state: S;
+  readonly offset: string;
+}
+// ---cut-after---
+same<Folded<number>, Core.Folded<number>>(true);
+```
+
+What `fold` returns: the folded value, and the tail that the read reached. To fold on later, pass the same value as `initial` and `offset` in the options. See [Fold](/docs/streams/read#fold).
+
+### `DecideSpec`
+
+```ts
+// ---cut-start---
+import type { Effect, Function, Schedule } from "effect";
+import type * as Core from "@streamsy/core";
+import type { Decision, OffsetMismatch } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface DecideSpec<A, S, B, E, R> {
+  readonly initial: Function.LazyArg<S>;
+  readonly fold: (state: S, item: A) => S;
+  readonly decide: (
+    state: S,
+    at: { readonly offset: string },
+  ) => Effect.Effect<Decision<B, NoInfer<A>>, E, R>;
+  readonly retry?: Schedule.Schedule<unknown, OffsetMismatch>;
+}
+// ---cut-after---
+interface Fail {
+  readonly fail: unique symbol;
+}
+interface Service {
+  readonly service: unique symbol;
+}
+same<
+  DecideSpec<string, number, boolean, Fail, Service>,
+  Core.DecideSpec<string, number, boolean, Fail, Service>
+>(true);
+```
+
+The input of `decide`, which reads, decides and then appends.
+
+| Field     | Meaning                                                                               |
+| --------- | ------------------------------------------------------------------------------------- |
+| `initial` | Makes the start value of the fold. Each call makes a new one                          |
+| `fold`    | Adds one item to the state                                                            |
+| `decide`  | Returns a value and the items to append. `at.offset` is the tail that the state is at |
+| `retry`   | The retries after a lost race. Default: `Schedule.recurs(3)`                          |
+
+`decide` must not write, and it must not change `state`. After a lost race, the call folds on from the same state.
+
+The append sets `expectedOffset` to the tail that was read. When it fails with `OffsetMismatch`, the call reads the new items, folds them, and decides again while `retry` allows. Then it fails with the last `OffsetMismatch`. With the default, a call makes at most four appends. A fault is not retried, because a lost reply can hide an append that landed. See [Read, fold, append](/docs/streams/write#read-fold-append).
+
+### `Decision`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Decision<B, A> {
+  readonly value: B;
+  readonly items: ReadonlyArray<A>;
+}
+// ---cut-after---
+same<Decision<number, string>, Core.Decision<number, string>>(true);
+```
+
+What one `decide` step returns. `value` goes back to the caller. An empty `items` means "no write": the call returns with no append and no tail check.
+
+### `Decided`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Decided<B> {
+  readonly value: B;
+  readonly offset: string;
+  readonly appended: boolean;
+}
+// ---cut-after---
+same<Decided<number>, Core.Decided<number>>(true);
+```
+
+What `decide` returns. `offset` is the new tail after a write, or the tail that was read when there was no write. `appended` tells you which.
+
+## Failures
+
+Each failure type is the union of the protocol errors and the faults that one method can get. The protocol errors are on [Errors](/docs/reference/core/errors), and the faults are on [Faults](/docs/reference/core/faults).
+
+### `ReadFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  DecodeFault,
+  InvalidReadRequest,
+  StreamGone,
+  StreamNotFound,
+  StreamsFault,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ReadFailure = StreamNotFound | StreamGone | InvalidReadRequest | StreamsFault | DecodeFault;
+// ---cut-after---
+same<ReadFailure, Core.ReadFailure>(true);
+```
+
+The failures of `read`, `collect` and `fold`.
+
+### `FollowFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { NotSupported, ReadFailure } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type FollowFailure = ReadFailure | NotSupported;
+// ---cut-after---
+same<FollowFailure, Core.FollowFailure>(true);
+```
+
+The failures of `follow`. A remote host can refuse a live read with `NotSupported`. `session` has this union without `DecodeFault`, because it does not decode.
+
+### `AppendFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { AppendCallOptions, AppendErrorFor, EncodeFault, StreamsFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendFailure<O = AppendCallOptions> = AppendErrorFor<O> | StreamsFault | EncodeFault;
+// ---cut-after---
+same<AppendFailure, Core.AppendFailure>(true);
+same<AppendFailure<{}>, Core.AppendFailure<{}>>(true);
+same<AppendFailure<{ expectedOffset: string }>, Core.AppendFailure<{ expectedOffset: string }>>(
+  true,
+);
+```
+
+The failures of `append` with the options `O`. [`AppendErrorFor`](/docs/reference/core/errors#appenderrorfor) adds `OffsetMismatch` only when `O` has `expectedOffset`, and `StaleEpoch` and `ProducerGap` only when `O` has `producer`.
+
+```ts
+// ---cut-start---
+import type { AppendFailure, OffsetMismatch } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Plain = Extract<AppendFailure<{}>, OffsetMismatch>;
+// never
+
+type Conditional = Extract<AppendFailure<{ expectedOffset: string }>, OffsetMismatch>;
+// OffsetMismatch
+// ---cut-after---
+same<Plain, never>(true);
+same<Conditional, OffsetMismatch>(true);
+```
+
+A host that answers with a rejection that the options rule out is a bug. The append then dies.
+
+### `CreateFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { CreateError, StreamsFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CreateFailure = CreateError | StreamsFault;
+// ---cut-after---
+same<CreateFailure, Core.CreateFailure>(true);
+```
+
+The failures of `create` and `fork`.
+
+### `HeadFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { HeadError, StreamsFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type HeadFailure = HeadError | StreamsFault;
+// ---cut-after---
+same<HeadFailure, Core.HeadFailure>(true);
+```
+
+The failures of `head`.
+
+### `RemoveFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { RemoveError, StreamsFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type RemoveFailure = RemoveError | StreamsFault;
+// ---cut-after---
+same<RemoveFailure, Core.RemoveFailure>(true);
+```
+
+The failures of `remove`.

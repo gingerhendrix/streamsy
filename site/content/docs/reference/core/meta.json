@@ -1,4 +1,14 @@
 {
   "title": "@streamsy/core",
-  "pages": ["producer", "durable-state", "errors"]
+  "pages": [
+    "streamsy",
+    "stream-address",
+    "producer",
+    "durable-state",
+    "options-and-results",
+    "toolkit",
+    "errors",
+    "faults",
+    "ids-and-offsets"
+  ]
 }

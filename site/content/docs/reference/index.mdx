@@ -15,10 +15,16 @@ The site build compares each signature with the real export. A signature that no
 
 ## `@streamsy/core`
 
-| Page                                               | Exports                                                  |
-| -------------------------------------------------- | -------------------------------------------------------- |
-| [Producer](/docs/reference/core/producer)          | `Producer.Position`, `Producer.next`                     |
-| [DurableState](/docs/reference/core/durable-state) | `upsert`, `remove`, `changes` and their types            |
-| [Errors](/docs/reference/core/errors)              | The protocol errors, the error unions, `isProtocolError` |
+| Page                                                            | Exports                                                             |
+| --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [Streamsy](/docs/reference/core/streamsy)                       | The stream class factories, `group`, `Wildcard` and the class types |
+| [StreamAddress](/docs/reference/core/stream-address)            | Addresses, collections, and the State changes and controls          |
+| [Producer](/docs/reference/core/producer)                       | `Producer.Position`, `Producer.next`                                |
+| [DurableState](/docs/reference/core/durable-state)              | `upsert`, `remove`, `changes` and their types                       |
+| [Options and results](/docs/reference/core/options-and-results) | The options of create, append and read, and their results           |
+| [Toolkit types](/docs/reference/core/toolkit)                   | `Batch`, the fold and decide types, and the failure unions          |
+| [Errors](/docs/reference/core/errors)                           | The protocol errors, the error unions, `isProtocolError`            |
+| [Faults](/docs/reference/core/faults)                           | The storage, transport and codec faults, and their guards           |
+| [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, `compare`        |
 
-The other packages and entry points do not have reference pages yet.
+These pages cover the application exports of the `@streamsy/core` root. The storage contract exports, the `Http` namespace, the `/remote`, `/protocol` and `/testing` entry points, and the other packages do not have reference pages yet.

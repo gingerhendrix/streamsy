@@ -1,0 +1,575 @@
+---
+title: StreamAddress
+description: Reference for the StreamAddress namespace in @streamsy/core. An address names one stream and holds its codec.
+---
+
+```ts
+import { StreamAddress, type StreamId } from "@streamsy/core";
+import type { Schema } from "effect";
+```
+
+An address names one stream and gives the codec of its items. Making an address gets no service and no resource. A stream class makes its addresses with `at(params)`, so most code does not call these functions. See [Templates and addresses](/docs/streams/declare#templates-and-addresses).
+
+The State types follow the [Durable State protocol](https://durablestreams.com/durable-state). For the change helpers that most writers use, see [`DurableState`](/docs/reference/core/durable-state).
+
+## Addresses
+
+### `StreamAddress.json`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function json<A, I, RD, RE>(
+  id: string,
+  options: { readonly schema: Schema.Codec<A, I, RD, RE> },
+): StreamAddress.StreamAddress<A, RD, RE>;
+// ---cut-after---
+same<typeof json, typeof StreamAddress.json>(true);
+```
+
+The address of a JSON stream. The content type is `application/json`. The codec encodes each item to a JSON string with `schema`.
+
+### `StreamAddress.bytes`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function bytes(
+  id: string,
+  options?: { readonly contentType?: string },
+): StreamAddress.StreamAddress<Uint8Array>;
+// ---cut-after---
+same<typeof bytes, typeof StreamAddress.bytes>(true);
+```
+
+The address of a byte stream. The default content type is `application/octet-stream`. The items of one append become one stored message.
+
+### `StreamAddress.state`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function state<const C extends StreamAddress.Collections>(
+  id: string,
+  options: { readonly collections: C & StreamAddress.ValidCollections<C> },
+): StreamAddress.StateAddress<C>;
+// ---cut-after---
+same<typeof state, typeof StreamAddress.state>(true);
+```
+
+The address of a Durable State stream. It is a JSON address. Each key of `collections` is the `type` of one collection on the wire. The codec reads and writes the changes of every collection and the three State controls.
+
+### `StreamAddress.StreamAddress`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamAddress, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StreamAddress<A, RD = never, RE = never> {
+  readonly _tag: "Json" | "Bytes";
+  readonly id: StreamId;
+  readonly contentType: string;
+  readonly codec: Schema.Codec<A, string | Uint8Array, RD, RE>;
+}
+// ---cut-after---
+interface Decoding {
+  readonly decoding: unique symbol;
+}
+same<StreamAddress<string>, StreamAddress.StreamAddress<string>>(true);
+same<StreamAddress<string, Decoding>, StreamAddress.StreamAddress<string, Decoding>>(true);
+```
+
+| Field         | Meaning                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `_tag`        | `Json` when each item is one message, `Bytes` when the items of one append join into one message |
+| `id`          | The stream id                                                                                    |
+| `contentType` | The content type that `create` sends                                                             |
+| `codec`       | Encodes an item to the wire form, and decodes it back                                            |
+
+`RD` holds the services that the codec needs to decode, and `RE` the services that it needs to encode.
+
+### `StreamAddress.StateAddress`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateAddress<
+  C extends StreamAddress.Collections,
+  RD = StreamAddress.CollectionsDecodingServices<C>,
+  RE = StreamAddress.CollectionsEncodingServices<C>,
+> extends StreamAddress.StreamAddress<StreamAddress.CollectionsEvent<C>, RD, RE> {
+  readonly collections: C;
+}
+// ---cut-after---
+type C = StreamAddress.Collections;
+same<StateAddress<C>, StreamAddress.StateAddress<C>>(true);
+```
+
+A JSON address that also keeps its collections. `DurableState.changes` reads the key field of each collection from `collections`.
+
+## Collections
+
+### `StreamAddress.Collection`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Collection<
+  A,
+  I,
+  RD,
+  RE,
+  Key extends StreamAddress.StateKey<A> = StreamAddress.StateKey<A>,
+> {
+  readonly schema: Schema.Codec<A, I, RD, RE>;
+  readonly key: Key;
+}
+// ---cut-after---
+type Issue = { readonly id: string; readonly rank: number; readonly done: boolean };
+same<Collection<Issue, Issue, never, never>, StreamAddress.Collection<Issue, Issue, never, never>>(
+  true,
+);
+same<
+  Collection<Issue, Issue, never, never, "rank">,
+  StreamAddress.Collection<Issue, Issue, never, never, "rank">
+>(true);
+```
+
+One collection of a State stream: its value schema and the value field that gives the change `key`.
+
+### `StreamAddress.Collections`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Collections = Record<string, StreamAddress.Collection<any, any, any, any, any>>;
+// ---cut-after---
+same<Collections, StreamAddress.Collections>(true);
+```
+
+The collections of a State stream, keyed by the `type` that names each one on the wire.
+
+### `StreamAddress.ValidCollections`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ValidCollections<C extends StreamAddress.Collections> = {
+  readonly [K in keyof C]: C[K]["key"] extends StreamAddress.StateKey<C[K]["schema"]["Type"]>
+    ? C[K]
+    : { readonly key: StreamAddress.StateKey<C[K]["schema"]["Type"]> };
+};
+// ---cut-after---
+const Issue = Schema.Struct({ id: Schema.String, done: Schema.Boolean });
+type Good = { readonly issue: { readonly schema: typeof Issue; readonly key: "id" } };
+type Bad = { readonly issue: { readonly schema: typeof Issue; readonly key: "done" } };
+same<ValidCollections<Good>, StreamAddress.ValidCollections<Good>>(true);
+same<ValidCollections<Bad>, StreamAddress.ValidCollections<Bad>>(true);
+```
+
+Checks that each `key` names a `string` or `number` field of its own collection. A wrong key keeps the other collections as they are. The compiler then reports the error on the `key` of the wrong collection.
+
+### `StreamAddress.StateKey`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateKey<A> = {
+  [K in keyof A]-?: A[K] extends string | number ? K : never;
+}[keyof A];
+// ---cut-after---
+type Issue = { readonly id: string; readonly rank?: number; readonly done: boolean };
+same<StateKey<Issue>, StreamAddress.StateKey<Issue>>(true);
+same<StreamAddress.StateKey<Issue>, "id">(true);
+```
+
+The value fields that can be a State key: the fields of type `string` or `number`. An optional field cannot be a key.
+
+### `StreamAddress.CollectionsEvent`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsEvent<C extends StreamAddress.Collections> =
+  StreamAddress.CollectionsChange<C> | StreamAddress.StateControl;
+// ---cut-after---
+type C = StreamAddress.Collections;
+same<CollectionsEvent<C>, StreamAddress.CollectionsEvent<C>>(true);
+```
+
+The items of a State stream: the changes of every collection, and the State controls.
+
+### `StreamAddress.CollectionsChange`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsChange<C extends StreamAddress.Collections> = {
+  [K in keyof C & string]: StreamAddress.StateChange<C[K]["schema"]["Type"], K>;
+}[keyof C & string];
+// ---cut-after---
+const Project = Schema.Struct({ id: Schema.String });
+const Issue = Schema.Struct({ id: Schema.String, rank: Schema.Number });
+type C = {
+  readonly project: { readonly schema: typeof Project; readonly key: "id" };
+  readonly issue: { readonly schema: typeof Issue; readonly key: "id" };
+};
+same<CollectionsChange<C>, StreamAddress.CollectionsChange<C>>(true);
+```
+
+The union of the changes of every collection. The `type` field tells them apart, so a check of `type` narrows `value`.
+
+### `StreamAddress.CollectionsEncodedEvent`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsEncodedEvent<C extends StreamAddress.Collections> =
+  StreamAddress.CollectionsEncodedChange<C> | StreamAddress.StateControl;
+// ---cut-after---
+type C = StreamAddress.Collections;
+same<CollectionsEncodedEvent<C>, StreamAddress.CollectionsEncodedEvent<C>>(true);
+```
+
+The wire form of [`CollectionsEvent`](#streamaddresscollectionsevent).
+
+### `StreamAddress.CollectionsEncodedChange`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsEncodedChange<C extends StreamAddress.Collections> = {
+  [K in keyof C & string]: StateEncodedChange<C[K]["schema"]["Encoded"], K>;
+}[keyof C & string];
+
+// StateEncodedChange has no exported name. It is the wire form of one change.
+type StateEncodedChange<A, Type extends string = string> =
+  | (Omit<StreamAddress.StateUpsert<A, Type>, "headers"> & {
+      readonly headers: Omit<StreamAddress.StateHeaders, "operation"> & {
+        readonly operation: "insert" | "update" | "upsert";
+      };
+    })
+  | StreamAddress.StateDelete<A, Type>;
+// ---cut-after---
+const Issue = Schema.Struct({ id: Schema.String, rank: Schema.NumberFromString });
+type C = { readonly issue: { readonly schema: typeof Issue; readonly key: "id" } };
+same<CollectionsEncodedChange<C>, StreamAddress.CollectionsEncodedChange<C>>(true);
+```
+
+The wire form of the changes of every collection. An upsert on the wire can have the operation `insert`, `update` or `upsert`. A read decodes all three as `upsert`.
+
+### `StreamAddress.CollectionsDecodingServices`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsDecodingServices<C extends StreamAddress.Collections> =
+  C[keyof C]["schema"]["DecodingServices"];
+// ---cut-after---
+type C = StreamAddress.Collections;
+same<CollectionsDecodingServices<C>, StreamAddress.CollectionsDecodingServices<C>>(true);
+```
+
+The services that the collection schemas need to decode.
+
+### `StreamAddress.CollectionsEncodingServices`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CollectionsEncodingServices<C extends StreamAddress.Collections> =
+  C[keyof C]["schema"]["EncodingServices"];
+// ---cut-after---
+type C = StreamAddress.Collections;
+same<CollectionsEncodingServices<C>, StreamAddress.CollectionsEncodingServices<C>>(true);
+```
+
+The services that the collection schemas need to encode.
+
+## Changes and controls
+
+### `StreamAddress.isChange`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isChange<E extends StreamAddress.StateEvent<unknown>>(
+  event: E,
+): event is Exclude<E, StreamAddress.StateControl>;
+// ---cut-after---
+same<typeof isChange, typeof StreamAddress.isChange>(true);
+```
+
+`true` for an upsert or a delete. Use it before you read the `type` or the `key` of a State item.
+
+### `StreamAddress.isControl`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isControl<E extends StreamAddress.StateEvent<unknown>>(
+  event: E,
+): event is Extract<E, StreamAddress.StateControl>;
+// ---cut-after---
+same<typeof isControl, typeof StreamAddress.isControl>(true);
+```
+
+`true` for a control message. A control has `headers.control`, and a change has `headers.operation`.
+
+### `StreamAddress.reset`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function reset(options?: { readonly offset?: string }): StreamAddress.StateControl;
+// ---cut-after---
+same<typeof reset, typeof StreamAddress.reset>(true);
+```
+
+A `reset` control. A reader clears its materialized state, then applies the items after the control. See [Control messages](/docs/streams/write#control-messages).
+
+### `StreamAddress.snapshotStart`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function snapshotStart(options?: { readonly offset?: string }): StreamAddress.StateControl;
+// ---cut-after---
+same<typeof snapshotStart, typeof StreamAddress.snapshotStart>(true);
+```
+
+A `snapshot-start` control. The changes from here to the next `snapshot-end` are a complete snapshot.
+
+### `StreamAddress.snapshotEnd`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function snapshotEnd(options?: { readonly offset?: string }): StreamAddress.StateControl;
+// ---cut-after---
+same<typeof snapshotEnd, typeof StreamAddress.snapshotEnd>(true);
+```
+
+A `snapshot-end` control. It closes the snapshot that `snapshot-start` opened.
+
+The three control functions leave out `headers.offset` when you do not give `offset`.
+
+```ts
+import { StreamAddress } from "@streamsy/core";
+
+const controls = [StreamAddress.snapshotStart(), StreamAddress.snapshotEnd({ offset: "42" })];
+```
+
+`controls[0].headers` is `{ control: "snapshot-start" }`.
+
+### `StreamAddress.stateChange`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function stateChange<A, I, RD, RE, const Type extends string>(options: {
+  readonly schema: Schema.Codec<A, I, RD, RE>;
+  readonly type: Type;
+}): Schema.Codec<StreamAddress.StateChange<A, Type>, StateEncodedChange<I, Type>, RD, RE>;
+
+// StateEncodedChange has no exported name. It is the wire form of one change.
+type StateEncodedChange<A, Type extends string = string> =
+  | (Omit<StreamAddress.StateUpsert<A, Type>, "headers"> & {
+      readonly headers: Omit<StreamAddress.StateHeaders, "operation"> & {
+        readonly operation: "insert" | "update" | "upsert";
+      };
+    })
+  | StreamAddress.StateDelete<A, Type>;
+// ---cut-after---
+same<typeof stateChange, typeof StreamAddress.stateChange>(true);
+```
+
+The codec for the upserts and the deletes of one collection. `state` makes one of these for each collection. Leave out an optional header. Do not set it to `undefined`.
+
+### `StreamAddress.stateControl`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const stateControl: Schema.Codec<StreamAddress.StateControl>;
+// ---cut-after---
+same<typeof stateControl, typeof StreamAddress.stateControl>(true);
+```
+
+The codec for the State controls. It needs no services.
+
+### `StreamAddress.StateEvent`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateEvent<A, Type extends string = string> =
+  StreamAddress.StateChange<A, Type> | StreamAddress.StateControl;
+// ---cut-after---
+same<StateEvent<number>, StreamAddress.StateEvent<number>>(true);
+same<StateEvent<number, "n">, StreamAddress.StateEvent<number, "n">>(true);
+```
+
+One item of a State stream: a change of one collection, or a control.
+
+### `StreamAddress.StateChange`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateChange<A, Type extends string = string> =
+  StreamAddress.StateUpsert<A, Type> | StreamAddress.StateDelete<A, Type>;
+// ---cut-after---
+same<StateChange<number>, StreamAddress.StateChange<number>>(true);
+same<StateChange<number, "n">, StreamAddress.StateChange<number, "n">>(true);
+```
+
+A change of one collection. `headers.operation` tells an upsert from a delete.
+
+### `StreamAddress.StateUpsert`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateUpsert<A, Type extends string = string> {
+  readonly type: Type;
+  readonly key: string;
+  readonly value: A;
+  readonly headers: StreamAddress.StateHeaders & { readonly operation: "upsert" };
+}
+// ---cut-after---
+same<StateUpsert<number>, StreamAddress.StateUpsert<number>>(true);
+same<StateUpsert<number, "n">, StreamAddress.StateUpsert<number, "n">>(true);
+```
+
+An insert or an update of the row `key` in the collection `type`.
+
+### `StreamAddress.StateDelete`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateDelete<A, Type extends string = string> {
+  readonly type: Type;
+  readonly key: string;
+  readonly old_value?: A;
+  readonly headers: StreamAddress.StateHeaders & { readonly operation: "delete" };
+}
+// ---cut-after---
+same<StateDelete<number>, StreamAddress.StateDelete<number>>(true);
+same<StateDelete<number, "n">, StreamAddress.StateDelete<number, "n">>(true);
+```
+
+A delete of the row `key` in the collection `type`. `old_value` is the row before the delete, when the writer sent it.
+
+### `StreamAddress.StateHeaders`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateHeaders {
+  readonly operation: "upsert" | "delete";
+  readonly offset?: string;
+  readonly txid?: string;
+  readonly timestamp?: string;
+  readonly from?: string;
+}
+// ---cut-after---
+same<StateHeaders, StreamAddress.StateHeaders>(true);
+```
+
+The headers of a change. Leave out `offset` and `txid` when they have no value. Do not set them to `undefined`.
+
+### `StreamAddress.StateControl`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateControl {
+  readonly headers: {
+    readonly control: StreamAddress.StateControlName;
+    readonly offset?: string;
+  };
+}
+// ---cut-after---
+same<StateControl, StreamAddress.StateControl>(true);
+```
+
+A control message. It has no `type` and no `key`.
+
+### `StreamAddress.StateControlName`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateControlName = "snapshot-start" | "snapshot-end" | "reset";
+// ---cut-after---
+same<StateControlName, StreamAddress.StateControlName>(true);
+```
+
+The three State controls, from section 4.2 of the Durable State protocol.

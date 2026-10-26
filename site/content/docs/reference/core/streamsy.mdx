@@ -1,0 +1,616 @@
+---
+title: Streamsy
+description: Reference for the Streamsy namespace in @streamsy/core. It declares stream classes and groups them for a host.
+---
+
+```ts
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import type {
+  AppendCallOptions,
+  AppendResult,
+  CreateOptions,
+  CreateResult,
+  DecodeFault,
+  HeadResult,
+  ReadNextOptions,
+  ReadNextResult,
+  ReadOptions,
+  StreamsFault,
+} from "@streamsy/core";
+import type { Reader, StreamRoute, Streams, Writer } from "@streamsy/core/protocol";
+import type { Context, Effect, Function, Option, Schema, Stream } from "effect";
+```
+
+A stream class declares a set of streams with one id template and one codec. A group lists the stream classes that one host keeps. For a worked example, see [Declare streams](/docs/streams/declare).
+
+The root of `@streamsy/core` also exports each member of `Streamsy` under its own name, for example `json` and `group`. The two names are the same export.
+
+`StreamRoute` comes from `@streamsy/core/protocol`. Its `ParamCodecs` type is a record with one `Schema.Codec<unknown, string>` for each template parameter. `Params<C>` is the decoded record, and `ExactTemplateParams` makes the compiler check that the template and the record name the same parameters.
+
+## `Streamsy.json`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function json<Self>(): <
+  const Name extends string,
+  const Template extends string,
+  Codecs extends StreamRoute.ParamCodecs,
+  A,
+  I,
+  RD,
+  RE,
+>(
+  name: Name,
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly schema: Schema.Codec<A, I, RD, RE>;
+  },
+) => Streamsy.JsonClass<Self, Name, Template, Codecs, A, I, RD, RE>;
+// ---cut-after---
+same<typeof json, typeof Streamsy.json>(true);
+```
+
+Declares a stream class whose items are JSON values of `schema`. Each item of an append is one stored message. The content type is `application/json`.
+
+Call it in two steps, then extend the result:
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+const Note = Schema.Struct({ id: Schema.String, text: Schema.String });
+
+class Drafts extends Streamsy.json<Drafts>()("Notes/Drafts", "drafts/:draftId", {
+  params: { draftId: Schema.String },
+  schema: Note,
+}) {}
+```
+
+The rules for each argument:
+
+- `name` is the global name of the service. Its key is `@streamsy/core/Stream/<name>`. Two classes with the same name are the same service, so give each name an application namespace, such as `Notes/Drafts`. `Wildcard` is reserved.
+- `template` has one path segment for each `:name` parameter, for example `drafts/:draftId`.
+- `params` has one codec for each `:name` in the template, and no other codec. The compiler checks this. When the template type is a plain `string`, the call throws a `RangeError` instead.
+
+## `Streamsy.bytes`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function bytes<Self>(): <
+  const Name extends string,
+  const Template extends string,
+  Codecs extends StreamRoute.ParamCodecs,
+>(
+  name: Name,
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly contentType?: string;
+  },
+) => Streamsy.BytesClass<Self, Name, Template, Codecs>;
+// ---cut-after---
+same<typeof bytes, typeof Streamsy.bytes>(true);
+```
+
+Declares a stream class whose items are `Uint8Array` values. All items of one append become one stored message. The default content type is `application/octet-stream`.
+
+The `name`, `template` and `params` rules are the same as for [`Streamsy.json`](#streamsyjson). An append of an empty `Uint8Array` item dies with a `RangeError`.
+
+## `Streamsy.state`
+
+```ts
+// ---cut-start---
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function state<Self>(): <
+  const Name extends string,
+  const Template extends string,
+  Codecs extends StreamRoute.ParamCodecs,
+  const Collections extends StreamAddress.Collections,
+>(
+  name: Name,
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly collections: Collections & StreamAddress.ValidCollections<Collections>;
+  },
+) => Streamsy.StateClass<Self, Name, Template, Codecs, Collections>;
+// ---cut-after---
+same<typeof state, typeof Streamsy.state>(true);
+```
+
+Declares a Durable State stream class. Each key of `collections` is the `type` of one collection on the wire. Each entry gives the value schema and the value field that becomes the change `key`. The items are [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent) values: the changes of every collection, and the State controls.
+
+The `name`, `template` and `params` rules are the same as for [`Streamsy.json`](#streamsyjson). Each `key` must name a `string` or `number` field of its own collection. The compiler reports a wrong `key` on that collection. To make changes, see [`DurableState`](/docs/reference/core/durable-state).
+
+## `Streamsy.custom`
+
+```ts
+// ---cut-start---
+import type { Option } from "effect";
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function custom<Self>(): <const Name extends string, P, A, RD, RE>(
+  name: Name,
+  options: {
+    readonly parse: (id: string) => Option.Option<P>;
+    readonly address: (params: P) => StreamAddress.StreamAddress<A, RD, RE>;
+  },
+) => Streamsy.CustomClass<Self, Name, P, A, RD, RE>;
+// ---cut-after---
+same<typeof custom, typeof Streamsy.custom>(true);
+```
+
+Declares a stream class for an id grammar that a template cannot express. `parse` returns the parameters of an id that the class owns, or `None`. `address` builds the address for the parameters. `parse(address(params).id)` must give `params` back.
+
+A custom class has an empty `template`. A group does not check it for overlap with other classes. The first class in the group that matches an id owns it.
+
+## `Streamsy.group`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function group<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  ...keys: Keys
+): Streamsy.Group<Keys>;
+// ---cut-after---
+same<typeof group, typeof Streamsy.group>(true);
+```
+
+Lists the stream classes that one host keeps and serves. Storage Layers, `Http.routes` and `RemoteStreams.layer` take a group. The group and its list are frozen.
+
+`group` throws a `RangeError` when:
+
+- two classes have the same name;
+- two classes have the same template;
+- two templates can match the same id;
+- `Streamsy.Wildcard` is not the last class.
+
+See [Groups](/docs/streams/declare#groups).
+
+## `Streamsy.Wildcard`
+
+```ts
+// ---cut-start---
+import { Option } from "effect";
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class Wildcard extends Streamsy.custom<Wildcard>()("Wildcard", {
+  parse: (id: string) => Option.some({ id }),
+  address: ({ id }: { readonly id: string }) => StreamAddress.bytes(id),
+}) {}
+// ---cut-after---
+same<typeof Wildcard, typeof Streamsy.Wildcard>(true);
+same<Wildcard, Streamsy.Wildcard>(true);
+```
+
+A custom stream class that owns every id. Its items are bytes with the content type `application/octet-stream`. Put it last in a group, to keep and serve the ids that no other class owns.
+
+## `Streamsy.Class`
+
+```ts
+// ---cut-start---
+import type { Context, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Class<
+  Self,
+  Name extends string,
+  P,
+  A,
+  RD,
+  RE,
+  R extends StreamRoute.StreamRoute<P, A, RD, RE>,
+> = Context.ServiceClass<Self, `@streamsy/core/Stream/${Name}`, Streamsy.Api<P, A, RD, RE>> &
+  R & {
+    readonly at: (params: P) => ReturnType<R["address"]> & Streamsy.Address<A, Self, RD, RE>;
+  };
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+interface Item {
+  readonly id: string;
+}
+interface Decoding {
+  readonly decoding: unique symbol;
+}
+type P = { readonly noteId: string };
+type R = StreamRoute.StreamRoute<P, Item>;
+same<
+  Class<Self, "Notes", P, Item, never, never, R>,
+  Streamsy.Class<Self, "Notes", P, Item, never, never, R>
+>(true);
+type RD = StreamRoute.StreamRoute<P, Item, Decoding>;
+same<
+  Class<Self, "Notes", P, Item, Decoding, never, RD>,
+  Streamsy.Class<Self, "Notes", P, Item, Decoding, never, RD>
+>(true);
+```
+
+The type of every stream class. A class is three things at once:
+
+| Part              | Gives                                                                       |
+| ----------------- | --------------------------------------------------------------------------- |
+| An Effect service | `yield* Notes` gives the [`Streamsy.Api`](#streamsyapi) of the stream class |
+| The route `R`     | `template`, `match(id)` and `parse(id)`                                     |
+| `at(params)`      | The address of one stream, with the `stream` key of the class               |
+
+`at` throws a `RangeError` when a parameter does not encode to a valid id segment. See [Templates and addresses](/docs/streams/declare#templates-and-addresses) for the id rules.
+
+`RD` holds the services that the codec needs to decode, and `RE` the services that it needs to encode. Both are `never` for most schemas.
+
+## `Streamsy.Api`
+
+```ts
+// ---cut-start---
+import type { Effect, Function, Stream } from "effect";
+import type {
+  AppendCallOptions,
+  AppendResult,
+  CreateOptions,
+  CreateResult,
+  DecodeFault,
+  HeadResult,
+  ReadNextOptions,
+  ReadNextResult,
+  ReadOptions,
+  StreamsFault,
+} from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
+import type { Reader, StreamRoute, Streams, Writer } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Api<P, A, RD = never, RE = never> {
+  readonly owner: object;
+  readonly route: StreamRoute.StreamRoute<P, A, RD, RE>;
+  readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
+  readonly create: (
+    params: P,
+    options?: Omit<CreateOptions, "contentType">,
+  ) => Effect.Effect<CreateResult, Streams.CreateFailure>;
+  readonly append: <const O extends AppendCallOptions = {}>(
+    params: P,
+    items: Streams.AppendItems<A, O>,
+    options?: O,
+  ) => Effect.Effect<AppendResult, Streams.AppendFailure<O>, RE>;
+  readonly read: (
+    params: P,
+    options?: ReadOptions,
+  ) => Stream.Stream<Streams.Batch<A>, Streams.ReadFailure, RD>;
+  readonly fold: <S>(
+    params: P,
+    initial: Function.LazyArg<S>,
+    f: (state: S, item: A) => S,
+    options?: ReadOptions,
+  ) => Effect.Effect<Streams.Folded<S>, Streams.ReadFailure, RD>;
+  readonly collect: (
+    params: P,
+    options?: ReadOptions,
+  ) => Effect.Effect<Streams.Collected<A>, Streams.ReadFailure, RD>;
+  readonly decide: <S, B, E, R>(
+    params: P,
+    spec: Streams.DecideSpec<A, S, B, E, R>,
+  ) => Effect.Effect<
+    Streams.Decided<B>,
+    Streams.ReadFailure | Streams.AppendFailure<{ expectedOffset: string }> | E,
+    RD | RE | R
+  >;
+  readonly follow: (
+    params: P,
+    options?: Streams.FollowOptions,
+  ) => Stream.Stream<Streams.Batch<A>, Streams.FollowFailure, RD>;
+  readonly session: (
+    params: P,
+    options: ReadNextOptions,
+  ) => Effect.Effect<ReadNextResult, Exclude<Streams.FollowFailure, DecodeFault>>;
+  readonly head: (params: P) => Effect.Effect<HeadResult, Streams.HeadFailure>;
+  readonly remove: (params: P) => Effect.Effect<void, Streams.RemoveFailure>;
+  readonly fork: (
+    params: P,
+    source: P,
+    options?: Omit<CreateOptions, "contentType" | "forkedFrom">,
+  ) => Effect.Effect<CreateResult, Streams.CreateFailure>;
+}
+// ---cut-after---
+interface Item {
+  readonly id: string;
+}
+interface Decoding {
+  readonly decoding: unique symbol;
+}
+interface Encoding {
+  readonly encoding: unique symbol;
+}
+type P = { readonly noteId: string };
+same<Api<P, Item>, Streamsy.Api<P, Item>>(true);
+same<Api<P, Item, Decoding, Encoding>, Streamsy.Api<P, Item, Decoding, Encoding>>(true);
+```
+
+The service of a stream class. Each method takes the parameters of one stream first, and reaches only the ids of its own class. An id outside the class dies with a `RangeError`.
+
+| Method    | Does                                                          | Guide                                                      |
+| --------- | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| `create`  | Makes the stream. The address gives the content type          | [Create](/docs/streams/create#create)                      |
+| `fork`    | Makes a child stream from a `source` of the same class        | [Fork](/docs/streams/create#fork)                          |
+| `remove`  | Deletes the stream                                            | [Remove](/docs/streams/create#remove)                      |
+| `append`  | Encodes the items and writes them as one atomic append        | [Append](/docs/streams/write#append)                       |
+| `read`    | Reads stored batches after `offset`, up to the current tail   | [Read](/docs/streams/read#read)                            |
+| `collect` | Reads to the current tail and returns every item              | [Read](/docs/streams/read#read)                            |
+| `fold`    | Reads to the current tail and folds every item into one value | [Fold](/docs/streams/read#fold)                            |
+| `decide`  | Folds, decides, then appends with `expectedOffset`            | [Read, fold, append](/docs/streams/write#read-fold-append) |
+| `follow`  | Reads, then waits for new batches until the stream closes     | [Follow](/docs/streams/read#follow)                        |
+| `session` | Does one raw long-poll wait                                   | [Session](/docs/streams/read#session)                      |
+| `head`    | Returns the tail and the configuration, with no messages      | [Read](/docs/streams/read)                                 |
+
+`append` takes a non-empty list of items, unless `options` has `close: true`. Its error type lists only the rejections that `options` make possible. See [`AppendErrorFor`](/docs/reference/core/errors#appenderrorfor).
+
+`fork` fails with `ForkSourceNotFound` when `source` is outside the class. `session`, `head` and `remove` do not decode items, so their errors have no `DecodeFault`.
+
+`owner`, `route` and `wire` are for Projection, Serve and the storage hosts. An application uses the methods.
+
+## `Streamsy.Address`
+
+```ts
+// ---cut-start---
+import type { Context } from "effect";
+import { Streamsy, StreamAddress, type StreamsFault } from "@streamsy/core";
+import type { Reader, Writer } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Address<A, R, RD = never, RE = never> = StreamAddress.StreamAddress<A, RD, RE> & {
+  readonly stream: Context.Key<
+    R,
+    { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
+  >;
+};
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+interface Decoding {
+  readonly decoding: unique symbol;
+}
+same<Address<string, Self>, Streamsy.Address<string, Self>>(true);
+same<Address<string, Self, Decoding>, Streamsy.Address<string, Self, Decoding>>(true);
+```
+
+What `at(params)` returns: a [`StreamAddress.StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress) and the service key of its class. An address names one stream. It holds no data, and it is not an Effect `Ref`. Projection inputs, `DurableState.changes` and Serve routes take addresses.
+
+## `Streamsy.JsonClass`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type JsonClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends StreamRoute.ParamCodecs,
+  A,
+  I,
+  RD,
+  RE,
+> = Streamsy.Class<
+  Self,
+  Name,
+  StreamRoute.Params<C>,
+  A,
+  RD,
+  RE,
+  ReturnType<typeof StreamRoute.json<T, C, A, I, RD, RE>>
+>;
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+type C = { readonly draftId: Schema.Codec<string, string> };
+type Item = { readonly id: string };
+type Encoded = { readonly id: string };
+same<
+  JsonClass<Self, "Drafts", "drafts/:draftId", C, Item, Encoded, never, never>,
+  Streamsy.JsonClass<Self, "Drafts", "drafts/:draftId", C, Item, Encoded, never, never>
+>(true);
+```
+
+What [`Streamsy.json`](#streamsyjson) returns. `I` is the encoded form of an item.
+
+## `Streamsy.BytesClass`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type BytesClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends StreamRoute.ParamCodecs,
+> = Streamsy.Class<
+  Self,
+  Name,
+  StreamRoute.Params<C>,
+  Uint8Array,
+  never,
+  never,
+  ReturnType<typeof StreamRoute.bytes<T, C>>
+>;
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+type C = { readonly blobId: Schema.Codec<string, string> };
+same<
+  BytesClass<Self, "Blobs", "blobs/:blobId", C>,
+  Streamsy.BytesClass<Self, "Blobs", "blobs/:blobId", C>
+>(true);
+```
+
+What [`Streamsy.bytes`](#streamsybytes) returns.
+
+## `Streamsy.StateClass`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends StreamRoute.ParamCodecs,
+  Collections extends StreamAddress.Collections,
+> = Streamsy.Class<
+  Self,
+  Name,
+  StreamRoute.Params<C>,
+  StreamAddress.CollectionsEvent<Collections>,
+  StreamAddress.CollectionsDecodingServices<Collections>,
+  StreamAddress.CollectionsEncodingServices<Collections>,
+  ReturnType<typeof StreamRoute.state<T, C, Collections>>
+>;
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+const Issue = Schema.Struct({ id: Schema.String, title: Schema.String });
+type C = { readonly workspaceId: Schema.Codec<string, string> };
+type Collections = { readonly issue: { readonly schema: typeof Issue; readonly key: "id" } };
+same<
+  StateClass<Self, "Workspace", "workspaces/:workspaceId", C, Collections>,
+  Streamsy.StateClass<Self, "Workspace", "workspaces/:workspaceId", C, Collections>
+>(true);
+```
+
+What [`Streamsy.state`](#streamsystate) returns. The decoding and encoding services are those of every collection schema.
+
+## `Streamsy.CustomClass`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CustomClass<Self, Name extends string, P, A, RD, RE> = Streamsy.Class<
+  Self,
+  Name,
+  P,
+  A,
+  RD,
+  RE,
+  ReturnType<typeof StreamRoute.custom<P, A, RD, RE>>
+>;
+// ---cut-after---
+interface Self {
+  readonly self: unique symbol;
+}
+type P = { readonly id: string };
+same<
+  CustomClass<Self, "Any", P, Uint8Array, never, never>,
+  Streamsy.CustomClass<Self, "Any", P, Uint8Array, never, never>
+>(true);
+```
+
+What [`Streamsy.custom`](#streamsycustom) returns.
+
+## `Streamsy.Group`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Group<Keys extends ReadonlyArray<Streamsy.Any> = ReadonlyArray<Streamsy.Any>> {
+  readonly streams: Keys;
+}
+// ---cut-after---
+same<Group, Streamsy.Group>(true);
+same<
+  Group<readonly [typeof Streamsy.Wildcard]>,
+  Streamsy.Group<readonly [typeof Streamsy.Wildcard]>
+>(true);
+```
+
+What [`Streamsy.group`](#streamsygroup) returns. `streams` keeps the classes in the order that you gave them.
+
+## `Streamsy.Any`
+
+```ts
+// ---cut-start---
+import type { Context } from "effect";
+import { Streamsy, type StreamsFault } from "@streamsy/core";
+import type { Reader, Writer } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Any extends Context.Key<
+  { readonly [Context.ServiceTypeId]: typeof Context.ServiceTypeId },
+  { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
+> {
+  readonly template: string;
+  readonly match: (id: string) => boolean;
+}
+// ---cut-after---
+same<Any, Streamsy.Any>(true);
+```
+
+Any stream class, with only the parts that a host needs: the service key, the template and `match`. A group and a storage Layer take a list of `Any`.
+
+## `Streamsy.Services`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Services<G extends Streamsy.Group> = G["streams"][number]["Identifier"];
+// ---cut-after---
+type G = Streamsy.Group<readonly [typeof Streamsy.Wildcard]>;
+same<Services<G>, Streamsy.Services<G>>(true);
+same<Services<G>, Streamsy.Wildcard>(true);
+```
+
+The union of the service types of the classes in a group.
+
+## `Streamsy.Host`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Host<G extends Streamsy.Group> = Streamsy.Services<G>;
+// ---cut-after---
+type G = Streamsy.Group<readonly [typeof Streamsy.Wildcard]>;
+same<Host<G>, Streamsy.Host<G>>(true);
+```
+
+What every host Layer gives for a group: the services of its stream classes. `MemoryStorage.layer(group)` and the other storage Layers give `Host<typeof group>`.

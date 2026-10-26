@@ -1,0 +1,171 @@
+---
+title: Faults
+description: Reference for the faults in @streamsy/core. A fault is a storage, transport or codec failure, as opposed to a protocol rejection.
+---
+
+```ts
+import {
+  DecodeFault,
+  EncodeFault,
+  StorageFault,
+  StreamsFault,
+  TransportFault,
+  isRetryableFault,
+  isStreamsFault,
+} from "@streamsy/core";
+```
+
+A fault tells you that the call could not run. The store, the network or the codec failed. A protocol rejection is different: the request ran, and the protocol said no. Rejections are on the [Errors](/docs/reference/core/errors) page.
+
+Each fault is a `Schema.TaggedError`, like the protocol errors. It is an `Error`, it has a `_tag`, and you can `yield*` it in `Effect.gen`. Each block shows the `_tag` and the other fields. Every fault also has a `message` string and an optional `cause`, which holds the failure underneath.
+
+| Fault            | Source                |
+| ---------------- | --------------------- |
+| `StorageFault`   | A local store         |
+| `TransportFault` | The remote Layer      |
+| `EncodeFault`    | The codec, on a write |
+| `DecodeFault`    | The codec, on a read  |
+
+## Fault classes
+
+### `StorageFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface StorageFault {
+  readonly _tag: "StorageFault";
+  readonly operation: string;
+  readonly retryable: boolean;
+}
+// ---cut-after---
+same<StorageFault, Fields<Core.StorageFault>>(true);
+```
+
+A local store failed. `operation` names the storage call. The storage adapter sets `retryable` to `true` when the same call can succeed later.
+
+### `TransportFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface TransportFault {
+  readonly _tag: "TransportFault";
+  readonly operation: string;
+  readonly reason: "request" | "response" | "decode" | "configuration";
+  readonly status?: number;
+  readonly retryable: boolean;
+}
+// ---cut-after---
+same<TransportFault, Fields<Core.TransportFault>>(true);
+```
+
+The remote Layer could not complete a call. A protocol rejection from the host is not a `TransportFault`. It has its own error.
+
+| `reason`        | Meaning                                                                           |
+| --------------- | --------------------------------------------------------------------------------- |
+| `request`       | The HTTP request failed, for example on a network drop                            |
+| `response`      | The response does not follow the protocol, for example a header is missing or bad |
+| `decode`        | The client cannot read or decode the response body                                |
+| `configuration` | The remote configuration is not valid, or the client cannot make the request      |
+
+`status` is the HTTP status, when a response came. `retryable` is computed from the other fields. It is `true` for a failed request, a `429`, and a `5xx`.
+
+### `EncodeFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface EncodeFault {
+  readonly _tag: "EncodeFault";
+}
+// ---cut-after---
+same<EncodeFault, Fields<Core.EncodeFault>>(true);
+```
+
+An item of an append does not encode with the codec of the address. Nothing was written. `cause` holds the schema error.
+
+### `DecodeFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface DecodeFault {
+  readonly _tag: "DecodeFault";
+}
+// ---cut-after---
+same<DecodeFault, Fields<Core.DecodeFault>>(true);
+```
+
+A stored message does not decode with the codec of the address. The read stops. `message` names the stream and the message index in the batch, and `cause` holds the schema error. The application chooses the offset to continue from. See [Read › Errors](/docs/streams/read#errors).
+
+## Unions and guards
+
+### `StreamsFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StorageFault, TransportFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StreamsFault = StorageFault | TransportFault;
+// ---cut-after---
+same<StreamsFault, Core.StreamsFault>(true);
+```
+
+A storage or a transport fault. Every stream call can fail with one. `StreamsFault` is also the `Schema` of this union, so you can decode or check a value with it.
+
+### `isStreamsFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StorageFault, TransportFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isStreamsFault<I>(input: I): input is I & (StorageFault | TransportFault);
+// ---cut-after---
+same<typeof isStreamsFault, typeof Core.isStreamsFault>(true);
+```
+
+`true` for a `StorageFault` or a `TransportFault`, and `false` for a protocol rejection or a codec fault.
+
+### `isRetryableFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamsFault } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isRetryableFault(error: unknown): error is StreamsFault;
+// ---cut-after---
+same<typeof isRetryableFault, typeof Core.isRetryableFault>(true);
+```
+
+`true` for a `StreamsFault` with `retryable` set to `true`. `follow` uses this check, and it retries only these faults, from the same offset.
+
+Retry a write with care. After a lost reply, the append can be in the stream already. Send a [producer position](/docs/reference/core/producer) with the append, so that a retry is safe.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Schedule } from "effect";
+import { isRetryableFault } from "@streamsy/core";
+import { Notes } from "./streams.ts";
+
+const all = Effect.flatMap(Notes, (notes) => notes.collect({})).pipe(
+  Effect.retry({ while: isRetryableFault, schedule: Schedule.recurs(3) }),
+);
+```

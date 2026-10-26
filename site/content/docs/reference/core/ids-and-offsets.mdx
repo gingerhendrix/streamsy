@@ -1,0 +1,100 @@
+---
+title: Ids and offsets
+description: Reference for the id and offset exports in @streamsy/core. A stream id names a stream, and an offset is a position in it.
+---
+
+```ts
+import { Offset, ProducerId, StreamId, ZERO_OFFSET, compare } from "@streamsy/core";
+import type { Brand } from "effect";
+```
+
+A stream id names one stream. An offset is a position in one stream. Each export with a capital letter is two things with one name: a branded `string` type, and an Effect `Schema` that checks a value and brands it. See [Offsets](/docs/streams/declare#offsets).
+
+## `ZERO_OFFSET`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const ZERO_OFFSET: Offset;
+// ---cut-after---
+same<typeof ZERO_OFFSET, typeof Core.ZERO_OFFSET>(true);
+```
+
+The position before the first message: `0000000000000000_0000000000000000`.
+
+- A new stream has this tail.
+- As an `expectedOffset`, it means "append only when the stream is empty". See [Conditional writes](/docs/streams/write#conditional-writes).
+
+## `compare`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function compare(a: string, b: string): number;
+// ---cut-after---
+same<typeof compare, typeof Core.compare>(true);
+```
+
+Returns `-1` when `a` is before `b`, `0` when they are equal, and `1` when `a` is after `b`. It compares the strings in code unit order. Offsets of one stream have a fixed width, so this order is the stream order.
+
+Compare only offsets of the same stream.
+
+## `StreamId`
+
+```ts
+// ---cut-start---
+import type { Brand } from "effect";
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StreamId = string & Brand.Brand<"StreamId">;
+// ---cut-after---
+same<StreamId, Core.StreamId>(true);
+```
+
+The id of a stream, such as `drafts/main`. Results and errors carry it, for example `StreamNotFound.id`. A stream class makes ids for you with `at(params)`. To brand a string yourself, call the schema:
+
+```ts
+import { StreamId } from "@streamsy/core";
+
+const id: StreamId = StreamId.make("drafts/main");
+```
+
+The `StreamId` schema accepts any string. For the id rules that a stream class applies, see [Templates and addresses](/docs/streams/declare#templates-and-addresses).
+
+## `Offset`
+
+```ts
+// ---cut-start---
+import type { Brand } from "effect";
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Offset = string & Brand.Brand<"Offset">;
+// ---cut-after---
+same<Offset, Core.Offset>(true);
+```
+
+A position in one stream. The `Offset` schema accepts 16 digits, an underscore, and 16 digits. `Offset.make` throws for any other value.
+
+Most results and options type an offset as a plain `string`, for example `Batch.nextOffset` and `expectedOffset`. Keep each offset as the opaque value that a result gave you. Do not build one from parts.
+
+## `ProducerId`
+
+```ts
+// ---cut-start---
+import type { Brand } from "effect";
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ProducerId = string & Brand.Brand<"ProducerId">;
+// ---cut-after---
+same<ProducerId, Core.ProducerId>(true);
+```
+
+The id of a producer in storage. The `Storage` contract keys producer state by it. An application uses the plain `producerId` string of [`Producer.Position`](/docs/reference/core/producer#producerposition).
