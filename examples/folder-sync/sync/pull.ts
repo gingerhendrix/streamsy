@@ -1,7 +1,13 @@
 import { StreamAddress } from "@streamsy/core";
 import { Array, Effect, Schema } from "effect";
 import type { FileValue } from "../server/domain.ts";
-import { applyChanges, isReset, isUpsert, type FileMessage } from "../server/messages.ts";
+import {
+  applyChanges,
+  isReset,
+  isUpsert,
+  type FileChange,
+  type FileMessage,
+} from "../server/messages.ts";
 import { RemoteFailure, type SyncRemote } from "./client.ts";
 import { folderPath, type SyncContext } from "./context.ts";
 import { historyRewound, ignoredPath } from "./decisions.ts";
@@ -16,7 +22,7 @@ export class HistoryRewound extends Schema.TaggedError<
 }) {}
 
 /** The metadata key of a folder's saved cursor. */
-const cursorKey = (folderId: string) => `cursor:${folderId}`;
+export const cursorKey = (folderId: string) => `cursor:${folderId}`;
 
 type Page = Effect.Success<ReturnType<(typeof SyncRemote.Service)["page"]>>;
 
@@ -124,10 +130,19 @@ export const puller = (context: SyncContext, { observe, install }: Install) => {
     rows: ReadonlyArray<FileMessage>,
     cursor: string,
   ) {
+    // A wake catch-up page can hold several changes of one path. Install only the
+    // last, so the disk never shows an older version on the way to the head.
+    const last = new Map<string, FileChange>();
+
+    for (const change of rows) {
+      if (StreamAddress.isControl(change) || ignoredPath(change.key)) continue;
+      last.delete(change.key);
+      last.set(change.key, change);
+    }
+
     yield* gate.withPermit(
       Effect.gen(function* () {
-        for (const change of rows) {
-          if (StreamAddress.isControl(change) || ignoredPath(change.key)) continue;
+        for (const change of last.values()) {
           yield* observe(folderId, change.key);
           yield* install(folderId, change.key, isUpsert(change) ? change.value : null);
         }

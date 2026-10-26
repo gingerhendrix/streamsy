@@ -4,6 +4,26 @@ import { Effect } from "effect";
 import { SyncState, stateLayer } from "../../sync/state.ts";
 
 layer(stateLayer(":memory:"))((it) => {
+  it.effect("loads folder cursors without other metadata and observes later saves", () =>
+    Effect.gen(function* () {
+      const state = yield* SyncState;
+      yield* state.set("wakeCursor", "wake");
+      yield* state.set("server", "https://example.test");
+      yield* state.set("cursor:docs", "first");
+      yield* state.set("cursor:docs:notes", "nested");
+
+      expect(yield* state.cursors()).toEqual(
+        new Map([
+          ["docs", "first"],
+          ["docs:notes", "nested"],
+        ]),
+      );
+
+      yield* state.set("cursor:docs", "second");
+      expect((yield* state.cursors()).get("docs")).toBe("second");
+    }),
+  );
+
   it.effect(
     "settlement rebases queued observations and rejection retains an immutable content source",
     () =>

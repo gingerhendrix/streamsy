@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function -- Native Workers fetch/scheduled transport boundary. */
+/* oxlint-disable effecttsgo/async-function -- Native Workers fetch transport boundary. */
 import { Option, Schema } from "effect";
 import { Http } from "@streamsy/core";
 import { bearerMatches } from "../server/auth.ts";
@@ -6,7 +6,6 @@ import { FolderId } from "../server/domain.ts";
 import { FolderKey } from "../server/streams.ts";
 import { handleBlobRequest } from "./blob-api.ts";
 import { folderObject, indexObject } from "./placement.ts";
-import type { ScheduledController } from "@cloudflare/workers-types";
 import type { Env } from "./env.ts";
 
 export { FolderObject } from "./objects.ts";
@@ -46,14 +45,6 @@ const discardBody = async (request: Request) => {
   }
 };
 
-/** The hourly backstop checks source tails from every stored folder cursor. */
-export const scheduledWake = async (env: Env) => {
-  const response = await indexObject(env).fetch("https://internal/__catchup", { method: "POST" });
-
-  if (!response.ok) throw new Error(`Index catch-up answered ${response.status}`);
-  await response.text();
-};
-
 /** Forward to a Durable Object. A failed call means the object could not start. */
 const forward = async (
   object: { fetch: (request: Request) => Promise<Response> },
@@ -82,16 +73,6 @@ export default {
       await discardBody(request);
 
       return json("Unauthorized", 401);
-    }
-
-    if (url.pathname === "/api/admin/wake" && request.method === "POST") {
-      try {
-        await scheduledWake(env);
-
-        return new Response("awake");
-      } catch {
-        return json("Index catch-up failed", 503);
-      }
     }
 
     // The index object owns the registry. It validates the body, registers the
@@ -127,7 +108,12 @@ export default {
 
     if (url.pathname.startsWith("/api/blobs/")) return handleBlobRequest(request, env);
 
-    if (["/api/ls", "/api/search", "/streams/folders", "/health"].includes(url.pathname))
+    // The index object owns the registry, the wake stream and search.
+    if (
+      ["/api/ls", "/api/search", "/streams/folders", "/streams/wake", "/health"].includes(
+        url.pathname,
+      )
+    )
       return indexObject(env).fetch(request);
 
     if (
@@ -138,8 +124,5 @@ export default {
       return json("Not found", 404);
 
     return env.ASSETS.fetch(request);
-  },
-  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    await scheduledWake(env);
   },
 };

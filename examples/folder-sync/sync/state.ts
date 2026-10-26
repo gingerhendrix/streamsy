@@ -149,6 +149,14 @@ const make = Effect.gen(function* () {
     return (yield* sql<{ value: string }>`SELECT value FROM metadata WHERE key = ${key}`)[0]?.value;
   });
 
+  /** All saved folder cursors, keyed by folder id. */
+  const cursors = Effect.fn("SyncState.cursors")(function* () {
+    const rows = yield* sql<{ folderId: string; value: string }>`
+      SELECT substr(key, 8) AS folderId, value FROM metadata WHERE key LIKE 'cursor:%'`;
+
+    return new Map(Array.map(rows, (row) => [row.folderId, row.value] as const));
+  });
+
   const set = Effect.fn("SyncState.set")(function* (key: string, value: string) {
     yield* sql`INSERT INTO metadata (key, value) VALUES (${key}, ${value})
       ON CONFLICT (key) DO UPDATE SET value = excluded.value`;
@@ -180,6 +188,7 @@ const make = Effect.gen(function* () {
     reject,
     rejected,
     get,
+    cursors,
     set,
     folders,
     addFolder,

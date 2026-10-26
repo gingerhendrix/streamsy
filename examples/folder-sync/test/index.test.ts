@@ -1,4 +1,4 @@
-import { StorageFault, StreamAddress, StreamGone, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, StreamAddress } from "@streamsy/core";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -6,7 +6,7 @@ import { Array, Effect, Layer, Logger, Option, Result, Schedule, Schema, Stream 
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { FileIndex, FileIndexLive } from "../server/file-index.ts";
-import { IndexLive, runIndex } from "../server/index-followers.ts";
+import { IndexLive } from "../server/index-live.ts";
 import {
   applyIndexChanges,
   initialiseSearch,
@@ -17,10 +17,9 @@ import {
 import type { FileMessage } from "../server/messages.ts";
 import { BlobStore } from "../server/blob-store.ts";
 import { prepareContent } from "../server/domain.ts";
-import { Files, Folders } from "../server/streams.ts";
-import { IndexRunner, IndexRunnerLive } from "../worker/index-runner.ts";
-import { registerFolder } from "../server/folder-registry.ts";
+import { Files, Folders, FolderWake } from "../server/streams.ts";
 import { sqliteHost } from "../server/storage.ts";
+import { filesWake, WakeLive } from "../server/wake.ts";
 import { storedText } from "./content.ts";
 
 class NotReady extends Schema.TaggedError<NotReady, { readonly brand: unique symbol }>()(
@@ -91,48 +90,6 @@ layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
 });
 
 layer(graph, { excludeTestServices: true })((it) => {
-  it.effect("a gone bootstrap folder does not block registry discovery of a healthy folder", () =>
-    Effect.gen(function* () {
-      const store = yield* FolderStore;
-      const files = yield* Files;
-      const index = yield* FileIndex;
-      yield* store.create("gone-bootstrap", "Gone", "gone-bootstrap");
-      yield* store.create("healthy-bootstrap", "Healthy", "healthy-bootstrap");
-
-      for (const folderId of ["gone-bootstrap", "healthy-bootstrap"])
-        yield* store.commit(folderId, "a", {
-          ...(yield* storedText("needle")),
-          txid: folderId,
-          author: "test",
-          parent: null,
-        });
-      const goneId = Files.at({ folderId: "gone-bootstrap" }).id;
-      const messages: unknown[] = [];
-      const logger = Logger.make(({ message }) => messages.push(message));
-      yield* Layer.build(IndexLive).pipe(
-        Effect.provideService(Files, {
-          ...files,
-          wire: {
-            ...files.wire,
-            read: (id, options) =>
-              id === goneId ? Effect.fail(new StreamGone({ id })) : files.wire.read(id, options),
-          },
-        }),
-        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
-      );
-      yield* until(index.list({ folder: "healthy-bootstrap" }), (rows) => rows.length === 1);
-      expect(yield* index.list({ folder: "gone-bootstrap" })).toEqual([]);
-      expect(
-        Array.filter(messages, (entry) =>
-          String(entry).includes("gone-bootstrap history is unavailable at bootstrap"),
-        ),
-      ).toHaveLength(1);
-      expect(
-        Array.some(messages, (entry) => String(entry).includes("Index follower folders failed")),
-      ).toBe(false);
-    }),
-  );
-
   it.effect("Bun indexes a stored reset and following changes once, keeping its cursor", () =>
     Effect.gen(function* () {
       yield* initialiseSearch;
@@ -150,7 +107,7 @@ layer(graph, { excludeTestServices: true })((it) => {
           ]),
         ),
       });
-      yield* runIndex("stored-reset");
+      yield* Projection.run(search.at({ folderId: "stored-reset" }));
       expect(Array.map(yield* index.list({ folder: "stored-reset" }), (row) => row.path)).toEqual([
         "after",
       ]);
@@ -158,150 +115,51 @@ layer(graph, { excludeTestServices: true })((it) => {
       const before = (yield* Projection.read(search.at({ folderId: "stored-reset" }))).offsets
         .input;
 
-      yield* runIndex("stored-reset");
+      yield* Projection.run(search.at({ folderId: "stored-reset" }));
       expect((yield* Projection.read(search.at({ folderId: "stored-reset" }))).offsets.input).toBe(
         before,
       );
     }),
   );
 
-  it.effect("Bun rebuilds a gone cursor from the beginning and rejects a gone bootstrap", () =>
+  it.effect("a deleted folder runs the final index step and forgets its checkpoint", () =>
     Effect.gen(function* () {
-      yield* initialiseSearch;
+      yield* Layer.build(IndexLive);
       const store = yield* FolderStore;
       const files = yield* Files;
-      yield* store.create("gone-index", "Gone", "folder");
-      yield* store.commit("gone-index", "a", {
+      const index = yield* FileIndex;
+      yield* Layer.build(WakeLive);
+      yield* store.create("deleted-index", "Deleted", "create");
+      yield* store.commit("deleted-index", "a", {
         ...(yield* storedText("needle")),
         txid: "one",
         author: "test",
         parent: null,
       });
-      yield* runIndex("gone-index");
-      const reads: string[] = [];
-      let gone = false;
+      yield* until(index.list({ folder: "deleted-index" }), (rows) => rows.length === 1);
+      const wake = yield* FolderWake;
 
-      const wrapped = {
-        ...files,
-        wire: {
-          ...files.wire,
-          read: (
-            id: Parameters<typeof files.wire.read>[0],
-            options?: Parameters<typeof files.wire.read>[1],
-          ) => {
-            reads.push(options?.offset ?? ZERO_OFFSET);
+      const present = wake
+        .collect({})
+        .pipe(
+          Effect.map(({ items }) =>
+            DurableState.materialize(DurableState.materialized(FolderWake), items).rows.stream.has(
+              Files.at({ folderId: "deleted-index" }).id,
+            ),
+          ),
+        );
 
-            if (!gone) {
-              gone = true;
-
-              return Effect.fail(new StreamGone({ id }));
-            }
-
-            return files.wire.read(id, options);
-          },
-        },
-      };
-
-      yield* runIndex("gone-index").pipe(Effect.provideService(Files, wrapped));
-      expect(reads[0]).not.toBe(ZERO_OFFSET);
-      expect(reads.slice(1)).toContain(ZERO_OFFSET);
-      let attempts = 0;
-
-      const failed = yield* runIndex("gone-index").pipe(
-        Effect.provideService(Files, {
-          ...files,
-          wire: {
-            ...files.wire,
-            read: (id) => {
-              attempts++;
-
-              return Effect.fail(new StreamGone({ id }));
-            },
-          },
-        }),
-        Effect.result,
+      yield* until(present, (value) => value);
+      yield* files.remove({ folderId: "deleted-index" });
+      yield* until(index.list({ folder: "deleted-index" }), (rows) => rows.length === 0);
+      yield* until(present, (value) => !value);
+      yield* until(
+        (yield* CheckpointStore).load(filesWake.at({ folderId: "deleted-index" })),
+        (loaded) => loaded.token === "0",
       );
-
-      expect(Result.isFailure(failed)).toBe(true);
-      expect(attempts).toBe(2);
-    }),
-  );
-
-  it.effect("Worker runner indexes registered folders and skips one with no stream yet", () =>
-    Effect.gen(function* () {
-      yield* initialiseSearch;
-      const store = yield* FolderStore;
-      const index = yield* FileIndex;
-      const content = yield* storedText("needle");
-      yield* store.create("runner-a", "A", "runner-a");
-      // The Worker registers a folder before its object creates the stream.
-      yield* registerFolder({ folderId: "runner-pending", title: "Pending", txid: "pending" });
-      yield* store.commit("runner-a", "a.md", {
-        ...content,
-        author: "test",
-        txid: "a",
-        parent: null,
-      });
-
-      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each test builds one runner over the shared test graph.
-      const runner = yield* IndexRunner.pipe(Effect.provide(IndexRunnerLive));
-      yield* runner.catchup;
-
-      const paths = index
-        .list({ folder: "runner-a" })
-        .pipe(Effect.map((rows) => Array.map(rows, (row) => row.path)));
-
-      expect(yield* paths).toEqual(["a.md"]);
-
-      // A ping folds on from the saved checkpoint.
-      yield* store.commit("runner-a", "b.md", {
-        ...content,
-        author: "test",
-        txid: "b",
-        parent: null,
-      });
-      yield* runner.moved("runner-a");
-      expect(yield* paths).toEqual(["a.md", "b.md"]);
-      yield* runner.moved("runner-pending");
-    }),
-  );
-
-  it.effect("Worker catch-up reports a failing folder and still indexes the others", () =>
-    Effect.gen(function* () {
-      yield* initialiseSearch;
-      const store = yield* FolderStore;
-      const index = yield* FileIndex;
-      const files = yield* Files;
-      const content = yield* storedText("needle");
-      yield* store.create("runner-broken", "Broken", "runner-broken");
-      yield* store.create("runner-healthy", "Healthy", "runner-healthy");
-      yield* store.commit("runner-healthy", "h.md", {
-        ...content,
-        author: "test",
-        txid: "h",
-        parent: null,
-      });
-      const broken = Files.at({ folderId: "runner-broken" }).id;
-
-      const runner = yield* IndexRunner.pipe(
-        // oxlint-disable-next-line effecttsgo/strict-effect-provide -- The runner reads through a Files service with one failing folder.
-        Effect.provide(IndexRunnerLive),
-        Effect.provideService(Files, {
-          ...files,
-          wire: {
-            ...files.wire,
-            read: (id, options) =>
-              id === broken
-                ? Effect.fail(
-                    new StorageFault({ operation: "read", message: "down", retryable: true }),
-                  )
-                : files.wire.read(id, options),
-          },
-        }),
-      );
-
-      expect(Result.isFailure(yield* Effect.result(runner.catchup))).toBe(true);
-      expect(yield* index.list({ folder: "runner-healthy" })).toHaveLength(1);
+      expect(
+        (yield* (yield* CheckpointStore).load(search.at({ folderId: "deleted-index" }))).token,
+      ).toBe("0");
     }),
   );
 

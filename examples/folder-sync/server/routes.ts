@@ -16,6 +16,9 @@ export const folderStreamUrl = (folderId: string) =>
 /** The registry State stream of every folder. */
 export const FOLDERS_STREAM_URL = "/streams/folders";
 
+/** The wake stream: one row for each folder `Files` stream, with its tail. */
+export const WAKE_STREAM_URL = "/streams/wake";
+
 /** One immutable content-addressed blob. */
 export const blobUrl = (hash: string) => `/api/blobs/${hash}`;
 

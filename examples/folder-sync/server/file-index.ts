@@ -4,7 +4,7 @@ import picomatch from "picomatch";
 import { InvalidFile } from "./domain.ts";
 import { ListedFile, SearchResult, snippetParts } from "./index-rows.ts";
 
-/** Queries over the index tables. The followers in `index-followers.ts` fill them. */
+/** Queries over the index tables. Attached projections fill them. */
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

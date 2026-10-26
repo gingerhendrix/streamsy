@@ -1,27 +1,22 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault, Streamsy } from "@streamsy/core";
-import { RemoteStreams } from "@streamsy/core/remote";
+import { Projection, ProjectionWakeup } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { Cause, ConfigProvider, Context, Effect, Layer, Option, Schema } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpRouter,
-  HttpServer,
-  HttpServerResponse,
-} from "effect/http";
+import { Cause, ConfigProvider, Context, Effect, Layer, Schema } from "effect";
+import { HttpRouter, HttpServer } from "effect/http";
 import { HealthLive } from "../server/api.ts";
-import { CreateFolder, FolderId } from "../server/domain.ts";
+import { CreateFolder } from "../server/domain.ts";
 import { FileIndexLive } from "../server/file-index.ts";
 import { registerFolder } from "../server/folder-registry.ts";
 import { createFailures, FolderCreateFailed, folderRoutes } from "../server/folder-routes.ts";
-import { jsonBody, WriterTokenLive } from "../server/http.ts";
+import { WriterTokenLive } from "../server/http.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
 import { initialiseSearch } from "../server/search-index.ts";
-import { Files, FolderKey, Folders } from "../server/streams.ts";
+import { Files, Folders, FolderWake } from "../server/streams.ts";
 import type { Env } from "./env.ts";
-import { IndexRunner, IndexRunnerLive } from "./index-runner.ts";
+import { wakeSearch } from "./search.ts";
+import { filesLink, wakeLink } from "./links.ts";
 import { folderObject } from "./placement.ts";
 import { objectStorage } from "./storage.ts";
 
@@ -67,33 +62,8 @@ const folderStreams = (env: Env) =>
     }),
   );
 
-/** An HTTP client whose stream reads go to the folder object that owns each stream. */
-const folderObjectClient = (env: Env) =>
-  Layer.effect(
-    HttpClient.HttpClient,
-    Effect.map(HttpClient.HttpClient, (client) =>
-      HttpClient.transform(client, (response) =>
-        Effect.provideService(response, FetchHttpClient.Fetch, (input, init) => {
-          const request = new Request(input, init);
-          const match = /^\/streams\/folders\/([^/]+)\/files$/.exec(new URL(request.url).pathname);
-
-          return Option.match(Schema.decodeOption(FolderKey)(match?.[1] ?? ""), {
-            onNone: () => Promise.resolve(new Response(null, { status: 404 })),
-            onSome: (folderId) => folderObject(env, folderId).fetch(request),
-          });
-        }),
-      ),
-    ),
-  ).pipe(Layer.provide(FetchHttpClient.layer));
-
-/** `Files` on the index object reads every folder through its owner. */
-const remoteFiles = (env: Env) =>
-  RemoteStreams.layer(Streamsy.group(Files), { baseUrl: "https://internal/streams" }).pipe(
-    Layer.provide(folderObjectClient(env)),
-  );
-
-const IndexInternal = Layer.mergeAll(
-  // The Worker edge checked the token, and this route checks it again.
+// The Worker edge checked the token, and this route checks it again.
+const IndexInternal =
   // The stream comes first, so a reader that finds the folder in the registry can read it.
   // A crash between the two leaves an unlisted empty stream. A retry creates it again
   // without change and then registers the folder.
@@ -105,48 +75,27 @@ const IndexInternal = Layer.mergeAll(
         ),
       ),
     ),
-  ),
-  HttpRouter.add(
-    "POST",
-    "/__moved",
-    Effect.gen(function* () {
-      const input = yield* jsonBody(Schema.Struct({ folderId: FolderId }));
-      yield* (yield* IndexRunner).moved(input.folderId);
-
-      return HttpServerResponse.text("indexed");
-    }).pipe(Effect.orDie),
-  ),
-  HttpRouter.add(
-    "POST",
-    "/__catchup",
-    Effect.gen(function* () {
-      yield* (yield* IndexRunner).catchup;
-
-      return HttpServerResponse.text("indexed");
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("Index catch-up deferred", cause).pipe(
-          Effect.as(
-            HttpServerResponse.jsonUnsafe({ error: "Index catch-up deferred" }, { status: 503 }),
-          ),
-        ),
-      ),
-    ),
-  ),
-);
+  );
 
 const indexInitialise = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* initialiseSearch;
     yield* (yield* Folders).create({});
+    // Create the empty wake stream, so that a reader gets an empty stream and not 404.
+    yield* (yield* FolderWake).create({});
   }),
 );
 
+// Acquisition replays the wake rows after the durable `wakeSearch` cursor before
+// the host admits requests or arms its scoped wakeup.
+const indexBootstrap = Layer.effectDiscard(Projection.run(wakeSearch.at({}))).pipe(
+  Layer.provide(indexInitialise),
+);
+
 const indexLayer = (state: DurableObjectState, env: Env) =>
-  Layer.mergeAll(FileIndexLive, IndexRunnerLive, folderStreams(env), WriterTokenLive).pipe(
-    Layer.provideMerge(indexInitialise),
-    Layer.provideMerge(remoteFiles(env)),
-    Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders))),
+  Layer.mergeAll(FileIndexLive, folderStreams(env), WriterTokenLive).pipe(
+    Layer.provideMerge(indexBootstrap),
+    Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders, FolderWake))),
     Layer.provideMerge(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ FOLDER_SYNC_WRITER_TOKEN: env.WRITER_TOKEN }),
@@ -170,12 +119,19 @@ const IndexApp = Layer.mergeAll(
   HealthLive,
   IndexInternal,
   Serve.mount(Folders, "/streams/folders"),
+  Serve.mount(FolderWake, "/streams/wake"),
+  // Folder objects append wake rows here through the object stub. The Worker
+  // edge answers 404 for every `/__` path, so no client reaches this mount.
+  wakeLink.routes,
 );
 
 export class IndexObject extends StreamsyObject.make<
   Env,
-  Layer.Success<ReturnType<typeof indexLayer>>
+  Layer.Success<ReturnType<typeof indexLayer>>,
+  Files
 >({
   app: IndexApp,
   layer: indexLayer,
+  links: (env) => [filesLink.client(env.FOLDERS)],
+  wakeups: [ProjectionWakeup.attach(wakeSearch)],
 }) {}

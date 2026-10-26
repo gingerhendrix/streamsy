@@ -7,8 +7,9 @@ import { ServerConfig } from "./config.ts";
 import { FolderStoreLive, Initialise } from "./folder-store.ts";
 import { IndexApiLive } from "./index-api.ts";
 import { FileIndexLive } from "./file-index.ts";
-import { IndexLive } from "./index-followers.ts";
-import { Folders } from "./streams.ts";
+import { IndexLive } from "./index-live.ts";
+import { WakeLive } from "./wake.ts";
+import { Folders, FolderWake } from "./streams.ts";
 import { mountFiles } from "./file-stream.ts";
 import { StorageLive } from "./storage.ts";
 
@@ -37,6 +38,7 @@ const Server = Serve.layer(
     IndexApiLive,
     HealthLive,
     Serve.mount(Folders, "/streams/folders"),
+    Serve.mount(FolderWake, "/streams/wake"),
     mountFiles(),
   ),
   {
@@ -46,6 +48,7 @@ const Server = Serve.layer(
   Layer.provide(Listener),
   Layer.provide(FileIndexLive),
   Layer.provide(IndexLive),
+  Layer.provide(WakeLive),
   Layer.provide(Initialise),
   Layer.provide(FolderStoreLive),
   Layer.provide(StorageLive),

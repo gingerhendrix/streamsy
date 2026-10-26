@@ -1,4 +1,4 @@
-import { Offset } from "@streamsy/core";
+import { Offset, Streamsy } from "@streamsy/core";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
@@ -18,6 +18,7 @@ import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect
 import { testDirectory } from "../../scripts/test-directory.ts";
 import { prepareContent } from "../../server/domain.ts";
 import { FileMessage } from "../../server/messages.ts";
+import { Files } from "../../server/streams.ts";
 import { fileUrl as fileRoute, folderStreamUrl, streamRead } from "../../server/routes.ts";
 import { runSync, sync } from "../../sync/engine.ts";
 import { RemoteFailure, SyncRemote, remoteLayer } from "../../sync/client.ts";
@@ -152,7 +153,126 @@ const initialiseMirror = Effect.fn("SyncTest.initialiseMirror")(function* (direc
   return yield* inspect(directory);
 });
 
+/** True once the mirror finished its start. */
+const isReady = (state: typeof SyncState.Service) =>
+  state.get("ready").pipe(
+    Effect.map((value) => value === "true"),
+    Effect.orDie,
+  );
+
+/** A wake offset past every real folder cursor. */
+const farOffset = "9999999999999999_9999999999999999";
+
+/**
+ * A wake read that, after the mirror is ready, gives `times` pages with one row
+ * for `folderId` past its cursor. The page keeps the wake cursor where it was.
+ */
+const nudge = (
+  remote: typeof SyncRemote.Service,
+  state: typeof SyncState.Service,
+  folderId: string,
+  times: number,
+) => {
+  let left = times;
+
+  return (offset: string, live: boolean) =>
+    Effect.gen(function* () {
+      // The first wake read starts at -1, which is no stream offset to keep.
+      if (left === 0 || offset === "-1" || !(yield* isReady(state)))
+        return yield* remote.wake(offset, live);
+      left -= 1;
+      const stream = Files.at({ folderId }).id;
+
+      const rows = yield* Schema.decodeEffect(Schema.Array(Streamsy.WakeMessage))([
+        {
+          type: "stream",
+          key: stream,
+          value: { stream, offset: farOffset },
+          headers: { operation: "upsert" },
+        },
+      ]);
+
+      return {
+        rows,
+        cursor: yield* Schema.decodeEffect(Offset)(offset),
+        upToDate: true,
+        reset: false,
+      };
+    }).pipe(Effect.orDie);
+};
+
 layer(runtime, { excludeTestServices: true })((it) => {
+  it.effect(
+    "three folders hold live reads only on the registry and the wake stream; a remote write still lands",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* testDirectory("sync-wake-live-");
+        const server = yield* host(directory);
+        const fs = yield* FileSystem.FileSystem;
+
+        for (const folderId of ["wake/a", "wake/b", "wake/c"]) {
+          yield* create(server.url, folderId);
+          yield* put(server.url, folderId, "start.md", `${folderId} start`, `start-${folderId}`);
+        }
+
+        const mirror = `${directory}/mirror`;
+        const state = yield* initialiseMirror(mirror);
+        // The path of every live read that the CLI sends.
+        const live: Array<string> = [];
+
+        const counting = Layer.effect(
+          HttpClient.HttpClient,
+          Effect.map(HttpClient.HttpClient, (client) =>
+            HttpClient.mapRequest(client, (request) => {
+              const url = new URL(request.url);
+
+              if (url.searchParams.has("live")) live.push(url.pathname);
+
+              return request;
+            }),
+          ),
+        ).pipe(Layer.provide(FetchHttpClient.layer));
+
+        const context = yield* Layer.build(
+          remoteLayer(server.url, token).pipe(Layer.provide(counting)),
+        );
+
+        const remote = yield* SyncRemote.pipe(Effect.provideContext(context));
+
+        const daemon = yield* runSync({
+          server: server.url,
+          directory: mirror,
+          writable: [],
+          token,
+          settleMillis: 30,
+        }).pipe(
+          Effect.provideService(SyncState, state),
+          Effect.provideService(SyncRemote, remote),
+          Effect.forkScoped,
+        );
+
+        yield* until(state.get("ready"), (value) => value === "true");
+
+        for (const folderId of ["wake/a", "wake/b", "wake/c"])
+          expect(yield* fs.readFileString(`${mirror}/${folderId}/start.md`)).toBe(
+            `${folderId} start`,
+          );
+
+        yield* put(server.url, "wake/b", "later.md", "moved", "later");
+        yield* until(
+          fs.readFileString(`${mirror}/wake/b/later.md`).pipe(Effect.orElseSucceed(() => "")),
+          (value) => value === "moved",
+        );
+        yield* until(state.get("wakeCursor"), (value) => value !== undefined);
+
+        expect(Array.sort(Array.dedupe(live), Order.String)).toEqual([
+          "/streams/folders",
+          "/streams/wake",
+        ]);
+        yield* Fiber.interrupt(daemon);
+      }),
+  );
+
   it.effect("writer authorization failures stop the daemon and leave its write in the outbox", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("sync-unauthorized-");
@@ -621,17 +741,13 @@ layer(runtime, { excludeTestServices: true })((it) => {
       let replayed = false;
       let resetSent = false;
 
+      // After the start, only a wake row reads a folder. The write below gives one.
       const modified = SyncRemote.of({
         ...remote,
         page: (folder, offset, live) =>
           Effect.gen(function* () {
-            if (folder === "daily/demo" && live && !resetSent) {
+            if (folder === "daily/demo" && (yield* isReady(state)) && !resetSent) {
               resetSent = true;
-              yield* put(server.url, "daily/demo", "a.md", "after reset", "after").pipe(
-                // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test fixture owns a separately authenticated request runtime.
-                Effect.provide(runtime),
-                Effect.orDie,
-              );
               yield* Deferred.succeed(injected, undefined);
 
               return {
@@ -654,6 +770,8 @@ layer(runtime, { excludeTestServices: true })((it) => {
         Effect.forkScoped,
       );
 
+      yield* until(state.get("ready"), (value) => value === "true");
+      yield* put(server.url, "daily/demo", "a.md", "after reset", "after");
       yield* Deferred.await(injected);
       yield* until(
         fs.readFileString(`${mirror}/daily/demo/a.md`),
@@ -687,6 +805,8 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
         const modified = SyncRemote.of({
           ...remote,
+          // Two wake rows past the folder cursor, after the start: each reads the folder once.
+          wake: nudge(remote, state, "daily/demo", 2),
           page: (folder, offset, live) =>
             Effect.gen(function* () {
               if (folder !== "daily/demo") return yield* remote.page(folder, offset, live);
@@ -694,7 +814,7 @@ layer(runtime, { excludeTestServices: true })((it) => {
 
               if (
                 (phase === "bootstrap" && offset === "-1") ||
-                (phase === "live" && live && !injected)
+                (phase === "live" && (yield* isReady(state)) && !injected)
               ) {
                 injected = true;
                 yield* Deferred.succeed(applied, undefined);

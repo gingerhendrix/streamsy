@@ -44,14 +44,15 @@ FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync dev
 
 This builds the browser and Worker and starts Miniflare on port 1339. Durable Objects and R2 persist locally under `.scratch/worker/`. `FOLDER_SYNC_WORKER_STATE` changes that directory. Use the same seed and mirror commands. No remote Cloudflare resources are needed.
 
-## Two streams, durable versions
+## State streams, durable versions
 
-| URL                                  | Collection | Key        |
-| ------------------------------------ | ---------- | ---------- |
-| `/streams/folders`                   | `folder`   | `folderId` |
-| `/streams/folders/<folderKey>/files` | `file`     | `path`     |
+| URL                                  | Collection | Key              |
+| ------------------------------------ | ---------- | ---------------- |
+| `/streams/folders`                   | `folder`   | `folderId`       |
+| `/streams/folders/<folderKey>/files` | `file`     | `path`           |
+| `/streams/wake`                      | `stream`   | source stream id |
 
-Both routes use the stock read-only State server. PUT, POST and DELETE get 405. The registry holds folder IDs and titles. A file upsert holds `path`, `version`, `hash`, `size`, `author` and optional `text`. A delete has no value or version. Headers carry the operation, txid and server timestamp. Each append holds one change.
+These routes use the stock read-only State server. PUT, POST and DELETE get 405. The registry holds folder IDs and titles. A file upsert holds `path`, `version`, `hash`, `size`, `author` and optional `text`. A delete has no value or version. Headers carry the operation, txid and server timestamp. Each append holds one change.
 
 ```ts title="server/streams.ts"
 export class Folders extends Streamsy.state<Folders>()("FolderSync/Folders", "folders", {
@@ -109,7 +110,7 @@ mutationFn: async ({ file, base, txid, bytes, onAccepted }: EditFile) => {
 
 History replays the folder stream and filters by path. Earlier content comes from its saved value or blob hash. Markdown and MDX display without executing HTML or JSX. Snippets render as escaped text. Drafts stay in memory and are lost on navigation or reload.
 
-The CLI stores a cursor per folder and each path's version, remote hash and local hash. It bootstraps by replay and follows each folder live. An existing file uses its observed version with `If-Match`; a new file uses `If-None-Match: *`. A 412 keeps the local bytes as a `name.conflict-<client>[-n].ext` sibling, takes the server file at the original path and syncs the sibling as a new file. A delete without an observed version sends no request. Read-only edits are backed up before restoration.
+The CLI stores a cursor per folder and each path's version, remote hash and local hash. It bootstraps by replay, then follows one wake stream. Wake rows select the dirty folders to catch up. Each folder cursor settles before the page's wake cursor, so a restart safely replays unfinished work. An existing file uses its observed version with `If-Match`; a new file uses `If-None-Match: *`. A 412 keeps the local bytes as a `name.conflict-<client>[-n].ext` sibling, takes the server file at the original path and syncs the sibling as a new file. A delete without an observed version sends no request. Read-only edits are backed up before restoration.
 
 Before installing resumed files, the CLI compares each saved cursor with a HEAD tail. A tail lexicographically before the cursor stops it with `HistoryRewound`. Resolve the server restore or use a fresh mirror. A reset clears state and keeps the cursor moving; a 410 replays from `-1`.
 
@@ -127,7 +128,7 @@ Shell globs use the session snapshot. List again after external edits. Empty dir
 
 `/api/ls` lists live metadata with optional folder, prefix and glob filters. `/api/search?q=<query>&folder=<id>` searches current text with FTS5, relevance ordering and a 100-hit limit. Bad queries get 400. Snippets are `{ text, match }` segments. Binary and deleted files have no search text. Blob text is capped at 1 MiB. Preparation reads one blob prefix at a time instead of holding every blob's text in memory.
 
-Bun follows source streams in process. The Worker reads them over HTTP after best-effort pings. The hourly cron catches up after a lost ping. The local harness runs the same pass on startup and hourly; authenticated `POST /api/admin/wake` runs it immediately. Index rows and consumed cursors commit together. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
+Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches its search driver to its own FolderWake commits and reads Files through a read-only `/__files` link. Index rows and consumed cursors commit together. At start, the Worker replays the wake rows after the durable `wakeSearch` cursor. Bun runs the search binding of each registered or indexed folder once, because attach keeps pending work in memory. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
 
 ## Measurements and limits
 
@@ -140,5 +141,5 @@ A 32 MiB binary upload and second-client pull took 0.719 s on Bun and 1.266 s on
 - Old mirror state has no migration. Use fresh directories. A writable stream import also needs its owner's durable counter and current heads.
 - A restored missing blob is not reindexed until another write or an index rebuild.
 - Sync scans hash selected files. An editor can still save during the final local read-to-rename window. A stopped delete during an interrupted first install can be restored on restart.
-- Worker creation spans two objects. A crash between registration and initialization needs a create retry. Lost pings can leave search stale until cron.
+- Worker creation spans two objects. A crash between registration and initialization needs a create retry. A crash after a Files commit but before its wake row is produced can leave the Worker index stale until the next source write.
 - The browser has no phone cache. R2 verification and restart checks run on local workerd; there is no hosted deployment.

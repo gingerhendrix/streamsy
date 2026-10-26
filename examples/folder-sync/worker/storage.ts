@@ -4,7 +4,6 @@ import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { BlobFailure, BlobStore } from "../server/blob-store.ts";
-import { streams } from "../server/streams.ts";
 import type { Env } from "./env.ts";
 
 const webCrypto = Layer.succeed(
@@ -49,11 +48,8 @@ export const r2Blobs = (env: Env) =>
     }),
   );
 
-export const objectStorage = (
-  state: DurableObjectState,
-  env: Env,
-  group: Streamsy.Group = streams,
-) =>
+/** Each object owns only the streams in `group`. */
+export const objectStorage = (state: DurableObjectState, env: Env, group: Streamsy.Group) =>
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer, r2Blobs(env)).pipe(
     Layer.provideMerge(DurableObjectStorage.layer(group, { client: { storage: state.storage } })),
     Layer.provideMerge(webCrypto),

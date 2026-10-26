@@ -14,11 +14,6 @@ export class Shared extends Streamsy.json<Shared>()("Assumptions/Shared", "share
   schema: Schema.Struct({ folderId: Schema.String, text: Schema.String }),
 }) {}
 
-export class Registry extends Streamsy.json<Registry>()("Assumptions/Registry", "registry", {
-  params: {},
-  schema: Schema.Struct({ folderId: Schema.String }),
-}) {}
-
 export const emitted = Projection.emit({
   id: "assumption-folder-emits",
   params: { folderId: Schema.String },
@@ -31,7 +26,7 @@ export const emitted = Projection.emit({
 export const host = (filename: string) =>
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(
-      BunStorage.layer(Streamsy.group(Files, Shared, Registry), {
+      BunStorage.layer(Streamsy.group(Files, Shared), {
         client: { filename },
       }),
     ),

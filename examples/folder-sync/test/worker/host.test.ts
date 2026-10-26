@@ -32,7 +32,7 @@ const fileUrl = (url: string, folderId: string, path = "a.md") =>
 const streamUrl = (url: string, folderId: string) =>
   `${url}/streams/folders/${Schema.encodeSync(FolderKey)(folderId)}/files`;
 
-const jsonPost = (url: string, body: typeof CreateFolder.Type | { dropPings: boolean }) =>
+const jsonPost = (url: string, body: typeof CreateFolder.Type | { pauseIndex: boolean }) =>
   HttpClient.post(url, { headers, body: HttpBody.jsonUnsafe(body) });
 
 const create = (url: string, folderId: string, title = folderId) =>
@@ -297,31 +297,18 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "the hourly cron catches up source cursors after lost pings, including deletes",
+      "wake commits index changed folders and file deletes through local wake commits",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
           const folderId = "daily/opaque-雪";
           yield* create(host.url, folderId);
-          const disabled = yield* jsonPost(`${host.url}/api/admin/test-index`, { dropPings: true });
-          expect(disabled.status).toBe(200);
-          yield* disabled.text;
-          yield* head(yield* commit(host.url, folderId, "cronneedle", "lost-ping"));
-          expect(yield* listed(host.url)).toEqual([]);
-          const before = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
-          expect(yield* before.json).toEqual([]);
-          const runtime = yield* Effect.promise(() => host.mf.getWorker());
-          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
-          expect(yield* listed(host.url)).toMatchObject([{ folderId, path: "a.md", version: 1 }]);
-          const hits = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
+          yield* head(yield* commit(host.url, folderId, "wakeneedle", "wake-index"));
+          yield* until(listed(host.url), (rows) => rows.length === 1);
+          const hits = yield* HttpClient.get(`${host.url}/api/search?q=wakeneedle`);
           expect(yield* hits.json).toHaveLength(1);
           yield* remove(host.url, folderId, 1);
-          expect(yield* listed(host.url)).toHaveLength(1);
-          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
-          expect(yield* listed(host.url)).toEqual([]);
-          const removed = yield* HttpClient.get(`${host.url}/api/search?q=cronneedle`);
-          expect(yield* removed.json).toEqual([]);
-          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          yield* until(listed(host.url), (rows) => rows.length === 0);
           expect(yield* changes(host.url, folderId)).toHaveLength(2);
         }),
       { timeout: 15000 },
@@ -390,7 +377,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "workerd enforces auth and indexes pinged writes with ranking, safe snippets and portable globs",
+      "workerd enforces auth and indexes wake-driven writes with ranking, safe snippets and portable globs",
       () =>
         Effect.gen(function* () {
           const host = yield* worker;
@@ -481,7 +468,6 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           const directory = yield* testDirectory("worker-index-restart-");
           const host = yield* launch(directory);
           yield* create(host.url, "blobs");
-          yield* jsonPost(`${host.url}/api/admin/test-index`, { dropPings: true });
           const prefix = "capneedle ";
           const large = prefix + "x".repeat(1024 * 1024 - prefix.length - 1) + "☃ beyondcapneedle";
 
@@ -527,8 +513,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           if (missingHash === undefined || largeHash === undefined)
             return yield* Effect.die("Missing test blob hash");
           yield* Effect.promise(() => bucket.delete(missingHash));
-          const runtime = yield* Effect.promise(() => host.mf.getWorker());
-          yield* Effect.promise(() => runtime.scheduled({ cron: "0 * * * *" }));
+          yield* until(listed(host.url), (rows) => rows.length === 3);
           expect(Array.map(yield* listed(host.url), (row) => row.path)).toEqual([
             "binary",
             "large",
@@ -551,9 +536,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           yield* Effect.promise(host.stop);
           const restarted = yield* launch(directory);
           yield* head(yield* commit(restarted.url, "blobs", "freshneedle", "after-restart"));
-          const wake = yield* HttpClient.post(`${restarted.url}/api/admin/wake`, { headers });
-          expect(wake.status).toBe(200);
-          yield* wake.text;
+          yield* until(listed(restarted.url), (rows) => rows.length === 4);
           expect(yield* listed(restarted.url)).toHaveLength(4);
 
           for (const query of ["capneedle", "freshneedle"]) {
@@ -657,9 +640,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
             [3, 2],
             [4, 3],
           ]);
-          const wake = yield* HttpClient.post(`${again.url}/api/admin/wake`, { headers });
-          expect(wake.status).toBe(200);
-          yield* wake.text;
+          yield* until(listed(again.url), (rows) => rows[0]?.version === 4);
           expect(yield* listed(again.url)).toMatchObject([{ folderId: "daily/demo", version: 4 }]);
           const registry = yield* HttpClient.get(`${again.url}/streams/folders?offset=-1`);
           expect(yield* registry.json).toHaveLength(1);

@@ -5,7 +5,7 @@ import { ConfigProvider, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import { ApiLive } from "../server/api.ts";
 import { FileIndexLive } from "../server/file-index.ts";
-import { IndexLive } from "../server/index-followers.ts";
+import { IndexLive } from "../server/index-live.ts";
 import { FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { IndexApiLive } from "../server/index-api.ts";
 import { Folders } from "../server/streams.ts";

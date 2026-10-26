@@ -22,7 +22,7 @@ import {
 } from "./domain.ts";
 import { registerFolder } from "./folder-registry.ts";
 import { fileOf, folderView, headOf, type FolderView } from "./folder-view.ts";
-import { Files, Folders } from "./streams.ts";
+import { Files, Folders, FolderWake } from "./streams.ts";
 
 /** Save the folder view after this many landed writes, and on the first write in a process. */
 export const CHECKPOINT_EVERY = 32;
@@ -318,5 +318,7 @@ export const Initialise = Layer.effectDiscard(
   Effect.gen(function* () {
     const folders = yield* Folders;
     yield* folders.create({});
+    // Create the empty wake stream, so that a reader gets an empty stream and not 404.
+    yield* (yield* FolderWake).create({});
   }),
 );

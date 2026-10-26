@@ -106,17 +106,17 @@ export const applyIndexChanges = Effect.fn("Search.apply")(function* (
 });
 
 /** Each folder's SQL rows and input cursor commit together on the index owner. */
-export const search = {
-  at: (params: { folderId: string }) =>
-    Projection.process({
-      id: "folder-index",
-      params: { folderId: FolderKey },
-      inputs: { input: Files },
-      commit: Commit.transaction,
-      prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
-      process: (_batch, unit, prepared) => applyIndexChanges(unit.params.folderId, prepared),
-    }).at(params),
-};
+export const search = Projection.process({
+  id: "folder-index",
+  params: { folderId: FolderKey },
+  inputs: { input: Files },
+  commit: Commit.transaction,
+  prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
+  process: (batch, unit, prepared) =>
+    batch.input.gone
+      ? clearIndexFolder(unit.params.folderId)
+      : applyIndexChanges(unit.params.folderId, prepared),
+});
 
 export const initialiseSearch = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

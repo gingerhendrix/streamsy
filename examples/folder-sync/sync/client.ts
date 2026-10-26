@@ -1,4 +1,4 @@
-import { Offset } from "@streamsy/core";
+import { Offset, Streamsy } from "@streamsy/core";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { Head, Version, VersionFromString } from "../server/domain.ts";
@@ -9,6 +9,7 @@ import {
   folderStreamUrl,
   FOLDERS_STREAM_URL,
   streamRead,
+  WAKE_STREAM_URL,
 } from "../server/routes.ts";
 import type { Pending } from "./state.ts";
 
@@ -88,6 +89,10 @@ const makeRemote = (server: string, token?: string) =>
 
     const page = (folderId: string, offset: string, live: boolean) =>
       pageAt(folderStreamUrl(folderId), FileMessage, offset, live);
+
+    /** One page of the wake stream: one row for each folder stream that moved. */
+    const wake = (offset: string, live: boolean) =>
+      pageAt(WAKE_STREAM_URL, Streamsy.WakeMessage, offset, live);
 
     const tail = Effect.fn("SyncRemote.tail")(function* (folderId: string) {
       const response = yield* request(
@@ -190,7 +195,7 @@ const makeRemote = (server: string, token?: string) =>
       return yield* Schema.decodeUnknownEffect(receipt)(yield* response.json);
     });
 
-    return { folders, page, tail, body, head, upload, push };
+    return { folders, page, wake, tail, body, head, upload, push };
   });
 
 export class SyncRemote extends Context.Service<

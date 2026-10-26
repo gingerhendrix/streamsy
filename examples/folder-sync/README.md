@@ -78,15 +78,30 @@ Durable Objects and R2 use local disk state under `.scratch/worker/`.
 Use the same seed, browser token and mirror commands above.
 
 Each folder object owns its file stream and the checkpoint of its folder view.
-The index object owns the folder registry and search. After a commit, a
-best-effort ping asks the index to catch up. The hourly cron checks every folder
-cursor after a lost ping. The local harness runs the same pass on startup and
-each hour. An authenticated `POST /api/admin/wake` runs it immediately.
-The Worker checks the writer token at its edge, and each object checks it again.
+The index object owns the folder registry, wake stream and search index. The
+Worker checks the writer token at its edge, and each object checks it again.
+
+`ProjectionWakeup.attach(filesWake)` runs from a folder object's
+alarm after each local `Files` commit. It appends the folder's current tail to
+`FolderWake` through `wakeLink` in `worker/links.ts`. The index object's own
+wake commits drive a second attached projection, `wakeSearch`, which reads each
+affected folder through the read-only `filesLink`. Both links use internal
+`/__` mounts that the Worker edge never forwards. Public streams stay read-only.
+Search rows and each folder's source checkpoint commit together; the wake
+checkpoint advances only after every affected folder has caught up. A removed
+folder produces a wake delete, clears its index rows and forgets its binding.
+
+When the index object starts, it compares durable wake rows with search
+checkpoints and catches up dirty folders without another write. It also checks
+indexed folders whose wake row disappeared and resumes unacknowledged wake
+batches. The pending set in each folder object still lives in memory: a stop
+before a source commit produces its wake row can delay that row until the next
+folder write. Bun uses `Projection.attach` for both search and wake production;
+its startup pass also reads the registry to recover missed source commits.
 
 `build:worker` writes two bundles. `public/worker/index.js` is the deploy
 bundle. `public/worker/test-worker.js` adds test switches from
-`test/worker/test-worker.ts`, such as dropping folder pings, and only the Worker
+`test/worker/test-worker.ts`, such as pausing index alarms, and only the Worker
 tests load it.
 
 Blob routes run in the Worker entry and stream directly to local R2. Uploads
@@ -97,7 +112,7 @@ use no remote Cloudflare resources.
 ## Deploy to Cloudflare
 
 `alchemy.run.ts` declares one Worker, the two Durable Object classes and one R2
-bucket. The Worker serves the browser assets and runs the hourly cron. Alchemy
+bucket. The Worker serves the browser assets. Alchemy
 keeps the stack state in `.alchemy/` in this folder. The CLI runs under Node and
 uses the default Alchemy profile.
 
@@ -122,15 +137,36 @@ On Cloudflare, an upload without `Content-Length` (for example
 `Transfer-Encoding: chunked`) still succeeds. The edge gives the Worker a declared
 length. The 400 applies only on local workerd.
 
-## Two State streams
+## Three State streams
 
 | URL                                  | Collection | Key        |
 | ------------------------------------ | ---------- | ---------- |
 | `/streams/folders`                   | `folder`   | `folderId` |
 | `/streams/folders/<folderKey>/files` | `file`     | `path`     |
+| `/streams/wake`                      | `stream`   | `stream`   |
 
-Both use the stock read-only State server. PUT, POST and DELETE get 405. Folder
-values contain `{ folderId, title }`. File upserts have this shape:
+All three use the stock read-only State server. PUT, POST and DELETE get 405.
+Folder values contain `{ folderId, title }`.
+
+The wake stream has one row for each folder `Files` stream. The row holds the
+stream id and its tail after its last write:
+
+```json
+{
+  "type": "stream",
+  "key": "folders/646f6373/files",
+  "value": { "stream": "folders/646f6373/files", "offset": "0000000000000003_0000000000000000" },
+  "headers": { "operation": "upsert" }
+}
+```
+
+The `files-wake` projection writes the rows (`server/wake.ts`). A row lags its
+folder write by one projection pass. A reader that saved a folder cursor
+compares it with `offset` and reads the folder only when the row is past it.
+Offsets are fixed-width strings, so a string compare orders them. The host
+creates the empty wake stream at start, so a reader never gets 404.
+
+File upserts have this shape:
 
 ```json
 {
@@ -304,9 +340,25 @@ lexicographically before the cursor stops sync with `HistoryRewound`. Restore
 the server history or use a fresh mirror after resolving the restore. No file
 version is compared numerically to detect a rewind.
 
-Each folder bootstraps by replay, then stays live. Unchanged local files take
-remote content. A local edit names the version that its disk copy came from as
-its parent. A new path names the tombstone version when the path was deleted,
+Each folder bootstraps by replay and catches up once. The CLI then holds two
+live reads, whatever the number of folders: the registry and the wake stream.
+It holds no live read for each folder. A new registry entry starts the folder:
+map, initialise and catch up. A wake row for a started, selected folder that is
+past its saved cursor catches that folder up from the cursor to its tail. Rows
+for folders that are not selected are skipped. A row for a selected folder that
+has not started yet waits for the registry, whose start reads to the tail. A
+wake delete logs a warning and keeps the mirror. A stored reset in the wake
+stream catches up every started folder.
+
+The CLI saves each folder cursor with the changes that it covers, and the wake
+cursor (`wakeCursor`) only after every row of the page is handled. A stop
+between the two reads the same rows again; the offset check skips the folders
+that were already read. A wake 410 catches up every started folder and reads the
+wake stream again from `-1`. The wake read uses the same retry as other remote
+reads. A server without `/streams/wake` answers 404, which stops the CLI.
+
+Unchanged local files take remote content. A local edit names the version that
+its disk copy came from as its parent. A new path names the tombstone version when the path was deleted,
 or `null`. Every write lands: a pulled change installs over the local file, and
 a local edit that is still queued is sent later and becomes the head. A first
 sync that finds a local file with other bytes than the server commits the local
@@ -391,11 +443,16 @@ Render snippet segments as text. Deleted files and binary content have no search
 text. Blob text is capped at the first 1 MiB. Preparation reads one blob prefix
 at a time, so a page does not hold every blob's text in memory.
 
-Both indexes run the same search projection (`server/search-index.ts`) with
-`Projection.run`, and each commits its rows with the projection checkpoint. Bun
-follows each folder stream in process. On the Worker, the index object reads
-each `Files` stream from its folder object over HTTP after a ping or the cron. Search and listing are eventually consistent. A missing blob
-keeps file metadata without searchable text and does not stall later changes.
+Both hosts use the search projection in `server/search-index.ts`, committing SQL
+rows with its source checkpoint. Bun attaches it directly to local `Files`
+commits. The Worker attaches `wakeSearch` to the index object's local
+`FolderWake` commits, then reads affected `Files` streams through `filesLink`.
+At start, the Worker index replays the wake rows after the durable `wakeSearch`
+cursor. Bun runs the search binding of each registered or indexed folder once,
+because attach keeps its pending work in memory. An index restart needs no new
+folder write.
+Search and listing are eventually consistent. A missing blob keeps file metadata
+without searchable text and does not stall later changes.
 
 ## Local measurements
 
@@ -456,8 +513,8 @@ full replay and scans suit a small demo corpus. There is no phone cache.
 
 Worker creation spans the registry and folder objects. The folder object creates
 the stream before the registry lists the folder. A crash between them leaves an
-unlisted empty stream, and a retry of the create lists it. A lost ping can leave
-search stale until the hourly pass. Restart tests use local workerd. One deployed
+unlisted empty stream, and a retry of the create lists it. A folder object that stops before producing a wake row can leave search stale
+until its next write. Restart and dirty-row catch-up tests use local workerd. One deployed
 run on Cloudflare covered the HTTP smoke, seed, sync mirrors, the browser, the
-agent filesystem and a redeploy. No test checked the hourly cron after a lost ping
-on Cloudflare.
+agent filesystem and a redeploy. The attached indexing and startup catch-up
+changes have local workerd coverage.

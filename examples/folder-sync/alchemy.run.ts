@@ -27,8 +27,6 @@ export default Alchemy.Stack(
         runWorkerFirst: true,
         notFoundHandling: "single-page-application",
       },
-      // Lost folder pings recover when the index checks every folder cursor.
-      crons: ["0 * * * *"],
     });
 
     return { url: worker.url };

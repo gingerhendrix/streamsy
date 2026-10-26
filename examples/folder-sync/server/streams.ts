@@ -19,8 +19,13 @@ export class Files extends Streamsy.state<Files>()("FolderSync/Files", "folders/
   collections: { file: { schema: FileValue, key: "path" } },
 }) {}
 
+/** One row for each folder `Files` stream: its id and tail. Projections write it; clients read. */
+export class FolderWake extends Streamsy.wake<FolderWake>()("FolderSync/FolderWake", "wake", {
+  params: {},
+}) {}
+
 export type FileChange = StreamAddress.CollectionsChange<typeof Files.collections>;
 
 export type FolderChange = StreamAddress.CollectionsChange<typeof Folders.collections>;
 
-export const streams = Streamsy.group(Folders, Files);
+export const streams = Streamsy.group(Folders, Files, FolderWake);
