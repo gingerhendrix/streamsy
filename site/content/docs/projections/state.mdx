@@ -90,7 +90,7 @@ The [hex board demo](/docs/demos/hex-board) measures state size. Its final encod
 
 Before you call it:
 
-1. Stop the `follow` fiber for that key.
+1. Stop the follower for that key.
 2. Wait for other processes and direct `Projection.pass` calls.
 3. For an output projection, delete the output streams first, or use a new generation. Its producer sequence starts again.
 
