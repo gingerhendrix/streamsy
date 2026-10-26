@@ -1,7 +1,7 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Commit, Projection } from "@streamsy/projection";
-import { Deferred, Effect, Fiber, Scope } from "effect";
+import { Deferred, Effect, Fiber, Stream } from "effect";
 import { emitted, Files, host, Registry, Shared } from "./fixtures.ts";
 
 layer(host(":memory:"), { excludeTestServices: true })((it) => {
@@ -29,7 +29,7 @@ layer(host(":memory:"), { excludeTestServices: true })((it) => {
             if (started.has(item.folderId)) return;
             const bound = emitted.at(item);
             yield* Projection.run(bound);
-            yield* Projection.follow(bound).pipe(Effect.provideService(Scope.Scope, scope));
+            yield* Stream.runDrain(Projection.follow(bound)).pipe(Effect.forkIn(scope));
             started.add(item.folderId);
 
             if (item.folderId === "after") yield* Deferred.succeed(seen, undefined);
@@ -38,7 +38,7 @@ layer(host(":memory:"), { excludeTestServices: true })((it) => {
       }).at({});
 
       yield* Projection.run(triggers);
-      const follower = yield* Projection.follow(triggers);
+      const follower = yield* Stream.runDrain(Projection.follow(triggers)).pipe(Effect.forkScoped);
       yield* files.create({ folderId: "after" });
       yield* files.append({ folderId: "after" }, ["second"]);
       yield* registry.append({}, [{ folderId: "after" }]);

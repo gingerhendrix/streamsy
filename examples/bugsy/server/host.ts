@@ -2,7 +2,7 @@ import { Streamsy } from "@streamsy/core";
 import { CheckpointStore, Projection, Transaction, type ProjectionKey } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Cause, Context, Effect, Exit, Fiber, Layer, Record, type Scope } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Record, Stream, type Scope } from "effect";
 import type { Reactivity } from "effect/reactivity";
 import { SqlClient } from "effect/sql";
 import { tracker, outputStreams } from "./outputs.ts";
@@ -48,11 +48,12 @@ const startupFailed =
       ? Effect.failCause(cause)
       : Effect.logError("projection startup failed", key, cause);
 
-/** Log how a watcher ended, in a fiber that the layer scope owns. */
+/** Run a watcher in a fiber that the layer scope owns, and log how it ended. */
 const watchEnded =
   (key: ProjectionKey) =>
-  <A, E>(fiber: Fiber.Fiber<A, E>) =>
-    Fiber.await(fiber).pipe(
+  <A, E, R>(follower: Stream.Stream<A, E, R>) =>
+    Stream.runLast(follower).pipe(
+      Effect.exit,
       Effect.flatMap((exit) =>
         Exit.isSuccess(exit)
           ? Effect.logInfo("projection watcher ended successfully", key, exit)
@@ -80,8 +81,8 @@ export const applicationLayer = <E>(
         yield* Projection.run(outputs).pipe(
           Effect.catchCause(startupFailed(Projection.key(outputs))),
         );
-        yield* Projection.follow(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
-        yield* Projection.follow(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
+        yield* Projection.follow(rows).pipe(watchEnded(Projection.key(rows)));
+        yield* Projection.follow(outputs).pipe(watchEnded(Projection.key(outputs)));
       }
     }),
   ).pipe(Layer.provideMerge(hostLayer(storage)));

@@ -1,7 +1,7 @@
 import { ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { Projection, ProjectionFault } from "@streamsy/projection";
-import { Cause, Duration, Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
+import { Cause, Duration, Effect, Layer, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { afterLastReset, isUpsert } from "./messages.ts";
 import { clearIndexFolder, initialiseSearch, search } from "./search-index.ts";
@@ -110,7 +110,7 @@ export const IndexLive = Layer.effectDiscard(
         Effect.gen(function* () {
           yield* runIndex(folderId);
 
-          return yield* Projection.follow(bound).pipe(Effect.flatMap(Fiber.join));
+          return yield* Stream.runDrain(Projection.follow(bound));
         }),
       ).pipe(Effect.forkIn(scope));
       started.add(folderId);

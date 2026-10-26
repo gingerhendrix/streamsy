@@ -1,5 +1,5 @@
 import { CheckpointStore, Projection, ProjectionRetry } from "@streamsy/projection";
-import { Cause, Context, Effect, Fiber, FiberMap, Layer } from "effect";
+import { Cause, Context, Effect, FiberMap, Layer, Stream } from "effect";
 import { readModel } from "./read-model.ts";
 import { WorkspaceEvents, Workspaces } from "./streams.ts";
 
@@ -30,13 +30,11 @@ export const ProjectionWatchersLive = Layer.effect(
     const runner = (workspaceId: string) => {
       const rows = readModel.at({ workspaceId });
 
-      return Effect.scoped(
-        Effect.gen(function* () {
-          yield* Projection.run(rows);
+      return Effect.gen(function* () {
+        yield* Projection.run(rows);
 
-          return yield* Fiber.join(yield* Projection.follow(rows));
-        }),
-      ).pipe(
+        return yield* Stream.runDrain(Projection.follow(rows));
+      }).pipe(
         Effect.tapCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.void

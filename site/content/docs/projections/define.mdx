@@ -193,42 +193,41 @@ const program = Projection.run(orderTotalsProjection, { limit: 10 });
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-| Runner              | Does                                                        |
-| ------------------- | ----------------------------------------------------------- |
-| `Projection.pass`   | Runs one unit                                               |
-| `Projection.run`    | Runs units until caught up, closed, or at the limit         |
-| `Projection.follow` | Runs to caught up, then waits for a change. Returns a fiber |
+| Runner              | Does                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `Projection.pass`   | Runs one unit                                                            |
+| `Projection.run`    | Runs units until caught up, closed, or at the limit                      |
+| `Projection.follow` | Runs to caught up, then waits for a change. Returns a `Stream` of cycles |
 
-`run` and `pass` give a `Progress` with `status`, `units`, `items`, and `offsets`.
+`run` and each `follow` element give a `Progress`. It has the `state` and `offsets` of one checkpoint read after the cycle, and the `status`, `units`, and `items` of the cycle. `state` is `undefined` when the projection has no `state:`. `pass` gives `status`, `units`, `items`, and `offsets`.
 
-| Status          | Meaning                         |
-| --------------- | ------------------------------- |
-| `progress`      | The pass processed a unit       |
-| `caught-up`     | An empty pass                   |
-| `source-closed` | Every input is closed and read  |
-| `limit-reached` | The run processed `limit` units |
+| Status          | Meaning                                |
+| --------------- | -------------------------------------- |
+| `progress`      | `pass` only: the pass processed a unit |
+| `caught-up`     | The last pass was empty                |
+| `source-closed` | Every input is closed and read         |
+| `limit-reached` | The cycle processed `limit` units      |
 
-`limit` has no default. A bad `limit` or `repairIntervalMs` fails with `load / invalid-options`.
+`limit` has no default. A bad `limit` or `repairIntervalMs` fails with `load / invalid-options`. For `follow`, the stream fails at its first pull.
 
 ```ts
 // @include: define-order-totals
 // @filename: index.ts
 // ---cut---
-import { Effect, Fiber } from "effect";
+import { Effect, Stream } from "effect";
 import { Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 
-const serve = Effect.scoped(
-  Effect.gen(function* () {
-    const fiber = yield* Projection.follow(orderTotalsProjection, {
-      repairIntervalMs: 30000,
-    });
-    return yield* Fiber.join(fiber);
-  }),
+const serve = Projection.follow(orderTotalsProjection, { repairIntervalMs: 30000 }).pipe(
+  Stream.runForEach(({ state, offsets }) => Effect.log("committed", state, offsets)),
 );
 ```
 
-`follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults end the fiber. Close the scope to stop it. Each wait is bounded by `repairIntervalMs`, which defaults to 30 000 ms. Create every input before starting the follower.
+The stream emits after the first cycle, also when it commits nothing. After that it emits after each cycle that commits a unit or reaches `limit`, and after the last cycle when every input is closed. Then it ends. A wake that finds no input emits nothing.
+
+The stream is pull based. The next cycle runs only when the consumer pulls, so a slow consumer gets one element for all the input that arrived while it worked. The consumer's pace sets the follower's pace. Add `Stream.buffer({ capacity: 1, strategy: "sliding" })` to decouple them. A consumer failure stops the follower, so catch render errors in the consumer.
+
+`follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults fail the stream. Interrupt the consumer to stop the follower. Each wait is bounded by `repairIntervalMs`, which defaults to 30 000 ms. Create every input before starting the follower.
 
 ## Triggers
 
@@ -237,14 +236,17 @@ A process-lifetime loop:
 ```ts
 // @include: define-order-totals
 // @filename: index.ts
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
 import { Orders, shop } from "./streams.ts";
 // ---cut---
 Effect.gen(function* () {
-  const fiber = yield* Projection.follow(orderTotalsProjection);
+  const fiber = yield* Projection.follow(orderTotalsProjection).pipe(
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
 });
 ```
 
@@ -271,7 +273,7 @@ Follow input changes. Changes during a run join into one more run:
 ```ts
 // @include: define-order-totals
 // @filename: index.ts
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { orderTotalsProjection } from "./order-totals.ts";
@@ -295,10 +297,13 @@ const ordersByWorkspace = Projection.emit({
 });
 // ---cut---
 Effect.gen(function* () {
-  const projectionFiber = yield* Projection.follow(orderTotalsProjection, { limit: 5 });
+  const projectionFiber = yield* Projection.follow(orderTotalsProjection, { limit: 5 }).pipe(
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
   const workspaceFiber = yield* Projection.follow(ordersByWorkspace.at({ workspaceId: "ws-42" }), {
     limit: 5,
-  });
+  }).pipe(Stream.runDrain, Effect.forkScoped);
 });
 ```
 
@@ -342,7 +347,7 @@ await Effect.runPromise(hand.pipe(Effect.provide(host)));
 | `follow` | Any stream Layer, including remote |
 | `run`    | Any stream Layer                   |
 
-Use one writer for each projection key: one `follow`, or one `run` at a time. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
+Use one writer for each projection key: one running `follow` stream, or one `run` at a time. Each run of a `follow` stream value is a new writer. `Stream.share` gives one follower to several consumers, and stops it after the last consumer exits. To keep a projection up with no consumer, drain it and publish each element to a `SubscriptionRef`. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
 
 The [Bugsy demo](/docs/demos/bugsy) uses request and change triggers on one key.
 
@@ -356,7 +361,7 @@ declare const toTotals: (
   items: ReadonlyArray<typeof orderSchema.Type>,
 ) => ReadonlyArray<typeof totalSchema.Type>;
 // ---cut---
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
 
@@ -382,7 +387,7 @@ const bound = ordersByWorkspace.at({ workspaceId: "ws-42" });
 const params = ordersByWorkspace.parse("facts/ws-42");
 const follow = Effect.gen(function* () {
   const fibers = yield* Effect.forEach([{ workspaceId: "ws-42" }], (params) =>
-    Projection.follow(ordersByWorkspace.at(params)),
+    Stream.runDrain(Projection.follow(ordersByWorkspace.at(params))).pipe(Effect.forkScoped),
   );
 });
 ```

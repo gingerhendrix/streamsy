@@ -26,6 +26,13 @@ export const offsetsOf = <Inputs extends InputMap>(record: {
 
 export type StateValue<S> = [S] extends [never] ? undefined : S;
 
+/** Internal: what `read` needs from a bound projection. */
+export type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit<never, never, Q>, "load">;
+};
+
 /**
  * Reads the state and offsets from one checkpoint record, so the state
  * always matches the offsets. Before the first unit, the state is the declared initial
@@ -36,11 +43,7 @@ export const read = Effect.fn("Projection.read")(function* <
   S = never,
   Q = never,
 >(
-  projection: Identity & {
-    readonly inputs: Inputs;
-    readonly state?: BoundState<S>;
-    readonly commit: Pick<Commit<never, never, Q>, "load">;
-  },
+  projection: Readable<Inputs, S, Q>,
 ): Effect.fn.Return<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Q> {
   const declared = projection.state;
   const restored = yield* restore(projection, projection.commit);

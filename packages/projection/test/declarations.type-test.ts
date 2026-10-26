@@ -1,6 +1,6 @@
 import { Commit } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
-import { Layer, Effect, Schema, type Scope } from "effect";
+import { Layer, Effect, Schema, Stream } from "effect";
 import { Streamsy, StreamAddress, MemoryStorage } from "@streamsy/core";
 import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import {
@@ -65,6 +65,10 @@ const folded = Projection.fold({
 
 const foldedRead = Projection.read(folded.at({ id: "a" }));
 
+const foldedRun = Projection.run(folded.at({ id: "a" }));
+
+const foldedFollow = Projection.follow(folded.at({ id: "a" }));
+
 const statefulOutputs = Projection.mapAccumBatch({
   commit: Commit.producer,
   id: "types/stateful-outputs",
@@ -86,6 +90,10 @@ type Assert<T extends true> = T;
 
 type SuccessOf<T> = T extends Effect.Effect<infer A, any, any> ? A : never;
 
+type ElementOf<T> = T extends Stream.Stream<infer A, any, any> ? A : never;
+
+type StreamServices<T> = T extends Stream.Stream<any, any, infer R> ? R : never;
+
 export type Checks = [
   Assert<Same<SuccessOf<typeof foldedRead>["state"], typeof Totals.Type>>,
   Assert<Same<keyof SuccessOf<typeof foldedRead>["offsets"], "input" | "other">>,
@@ -95,16 +103,19 @@ export type Checks = [
   Assert<Same<SuccessOf<typeof statelessRead>["state"], undefined>>,
   Assert<Same<keyof SuccessOf<typeof statelessRead>["offsets"], "input" | "other">>,
   Assert<Same<keyof SuccessOf<typeof namedRun>["offsets"], "input" | "other">>,
+  Assert<Same<SuccessOf<typeof namedRun>["state"], undefined>>,
+  Assert<Same<SuccessOf<typeof foldedRun>["state"], typeof Totals.Type>>,
+  Assert<
+    Same<SuccessOf<typeof foldedRun>["status"], "caught-up" | "limit-reached" | "source-closed">
+  >,
+  Assert<Same<ElementOf<typeof foldedFollow>["state"], typeof Totals.Type>>,
+  Assert<Same<keyof ElementOf<typeof foldedFollow>["offsets"], "input" | "other">>,
+  Assert<Same<ElementOf<typeof namedFollow>["state"], undefined>>,
   Assert<Same<Effect.Services<typeof foldedRead>, CheckpointStore>>,
   Assert<Same<Extract<keyof typeof statefulOutputs, "state">, never>>,
   Assert<Same<Effect.Services<typeof processRun>, Input | Transaction | CheckpointStore>>,
   Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | CheckpointStore>>,
-  Assert<
-    Same<
-      Effect.Services<typeof namedFollow>,
-      Input | Other | Result | CheckpointStore | Scope.Scope
-    >
-  >,
+  Assert<Same<StreamServices<typeof namedFollow>, Input | Other | Result | CheckpointStore>>,
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
 ];
 

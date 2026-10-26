@@ -3,7 +3,7 @@ import { CommitBoundary, StorageFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { expect, layer } from "@effect/vitest";
-import { Array, Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
+import { Array, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import * as Families from "./support/families.ts";
 import { memoryHost } from "./support/memory-host.ts";
 
@@ -188,7 +188,9 @@ for (const [name, host] of hosts) {
         const reader = yield* StreamsReader;
         let first = true;
 
-        const follower = yield* Projection.follow(total, { repairIntervalMs: 10 }).pipe(
+        const follower = yield* Stream.runLast(
+          Projection.follow(total, { repairIntervalMs: 10 }),
+        ).pipe(
           Families.provideReader({
             ...reader,
             read: (id, options) =>
@@ -202,6 +204,7 @@ for (const [name, host] of hosts) {
                 return yield* reader.read(id, options);
               }),
           }),
+          Effect.forkScoped,
         );
 
         yield* Deferred.await(reading);
@@ -229,7 +232,10 @@ for (const [name, host] of hosts) {
           { concurrency: "unbounded" },
         );
         yield* Streams.append(input, [0], { close: true });
-        expect((yield* Fiber.join(follower)).status).toBe("source-closed");
+        const last = Option.getOrThrow(yield* Fiber.join(follower));
+        expect(last.status).toBe("source-closed");
+        // The last element carries the committed state of the close.
+        expect(last.state).toBe(23);
         expect((yield* Projection.current(total)).state).toBe(23);
       }).pipe(Effect.timeout("5 seconds")),
     ),

@@ -180,19 +180,17 @@ const boot = Effect.gen(function* () {
 }).pipe(Effect.withSpan("IssueTracker.boot"));
 ```
 
-A runner catches up from the checkpoint, then follows input changes with `Projection.follow`. A `FiberMap` keeps one runner for each workspace. The layer scope owns the map, so every runner stops before the storage closes. A failure is logged, and the runner starts again on the `ProjectionRetry` schedule.
+A runner catches up from the checkpoint, then drains the `Projection.follow` stream, which runs on each input change. A `FiberMap` keeps one runner for each workspace. The layer scope owns the map, so every runner stops before the storage closes. A failure is logged, and the runner starts again on the `ProjectionRetry` schedule.
 
 ```ts title="server/watchers.ts"
     const runner = (workspaceId: string) => {
       const rows = readModel.at({ workspaceId });
 
-      return Effect.scoped(
-        Effect.gen(function* () {
-          yield* Projection.run(rows);
+      return Effect.gen(function* () {
+        yield* Projection.run(rows);
 
-          return yield* Fiber.join(yield* Projection.follow(rows));
-        }),
-      ).pipe(
+        return yield* Stream.runDrain(Projection.follow(rows));
+      }).pipe(
 ```
 
 `CheckpointStore.layer` keeps the checkpoints in the same storage as the streams. With `ISSUE_TRACKER_DB` set, the events, the rows and the checkpoints are in one SQLite file, and a restart resumes each projection from its checkpoint.

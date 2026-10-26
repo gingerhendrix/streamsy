@@ -253,11 +253,11 @@ At startup the server runs each projection once for each workspace, then watches
         // Startup and background failures are isolated to their address.
         yield* Projection.run(rows).pipe(Effect.catchCause(startupFailed(Projection.key(rows))));
         // ...
-        yield* Projection.follow(rows).pipe(Effect.flatMap(watchEnded(Projection.key(rows))));
-        yield* Projection.follow(outputs).pipe(Effect.flatMap(watchEnded(Projection.key(outputs))));
+        yield* Projection.follow(rows).pipe(watchEnded(Projection.key(rows)));
+        yield* Projection.follow(outputs).pipe(watchEnded(Projection.key(outputs)));
 ```
 
-Each key has one writer. Startup `run` finishes before its watcher starts. The command path never runs a writer. A second writer is a deployment fault detected by a moved checkpoint token. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
+`watchEnded` drains each `follow` stream in a fiber that the layer scope owns, and logs how it ended. Each key has one writer. Startup `run` finishes before its watcher starts. The command path never runs a writer. A second writer is a deployment fault detected by a moved checkpoint token. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
 
 See [Running](/docs/projections/define#running) and [Triggers](/docs/projections/define#triggers).
 

@@ -12,7 +12,7 @@ export type { RunOptions } from "./read.ts";
 
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 
-export type { Progress } from "./run.ts";
+export type { PassResult, Progress } from "./run.ts";
 
 export type { Offsets, Snapshot } from "./snapshot.ts";
 

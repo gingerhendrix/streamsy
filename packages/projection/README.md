@@ -138,12 +138,31 @@ Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/chec
 ## Run and recover
 
 `declaration.at(params)` binds a projection. `pass` runs one unit; `run` continues
-until caught up, closed, or its optional unit limit. `follow` returns a scoped
-fiber and waits for changes, with a default repair interval of 30 seconds. Remote inputs
-work with `follow` and `run`.
+until caught up, closed, or its optional unit limit. `follow` returns a `Stream`
+that runs to caught up, then waits for changes, with a default repair interval of
+30 seconds. Remote inputs work with `follow` and `run`.
 
-Use one writer per projection key: one `follow`, or one `run` at a
-time. Schedules must not overlap. A second writer is a deployment fault; a
+`run` and each `follow` element give a `Progress`: the `state` and `offsets` of one
+checkpoint read after the cycle, plus `status`, `units`, and `items`. The stream
+emits after the first cycle, after each cycle that commits a unit or reaches
+`limit`, and after the last cycle when every input is closed; then it ends. A wake
+that finds no input emits nothing. Invalid options fail the stream at its first pull.
+
+```ts
+// Forks the follower into the caller's scope; closing the scope stops it.
+const follower = Projection.follow(bound).pipe(Stream.runDrain, Effect.forkScoped);
+```
+
+The stream is pull based: the next cycle runs only when the consumer pulls, so a
+slow consumer gets one element for all the input that arrived meanwhile. The
+consumer's pace sets the follower's pace; add
+`Stream.buffer({ capacity: 1, strategy: "sliding" })` to decouple them. A consumer
+failure or interruption stops the follower. `Stream.share` fans one follower out to
+several consumers and stops it after the last one exits; to keep a projection up
+with no consumer, drain it and publish each element to a `SubscriptionRef`.
+
+Use one writer per projection key: one running `follow` stream, or one `run` at a
+time. Each run of a `follow` stream value is a new writer. Schedules must not overlap. A second writer is a deployment fault; a
 moved checkpoint token fails with `token-conflict`. External handlers may have
 already run. Any number of `current` and `decide` calls can run beside the
 follower, including inside a caller transaction. Table and stateless output

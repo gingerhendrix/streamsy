@@ -14,8 +14,10 @@ import {
   Exit,
   Option,
   Layer,
+  Queue,
   Schema,
   Schedule,
+  Stream,
   type Scope,
 } from "effect";
 import { TestClock } from "effect/testing";
@@ -60,6 +62,30 @@ const withReader = <A, E, R>(
     );
   });
 
+/** Runs a follower to its last element: the terminal close. */
+const lastOf = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+  Stream.runLast(stream).pipe(Effect.map(Option.getOrThrow));
+
+/**
+ * Runs a follower in the test scope and keeps each element in a queue. The queue has no
+ * bound, so the follower does not wait for the test to read an element.
+ */
+const observe = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+  Effect.gen(function* () {
+    const seen = yield* Queue.unbounded<A>();
+
+    const fiber = yield* stream.pipe(
+      Stream.runForEach((element) => Queue.offer(seen, element)),
+      Effect.forkScoped,
+    );
+
+    /** Waits, without a second writer, for the first element that matches. */
+    const until = (predicate: (element: A) => boolean) =>
+      Stream.fromQueue(seen).pipe(Stream.takeUntil(predicate), Stream.runCollect);
+
+    return { seen, fiber, until };
+  });
+
 /** A wake hint that parks forever and reports when it is parked and when it is released. */
 const parkedHint = Effect.gen(function* () {
   const parked = yield* Deferred.make<void>();
@@ -84,9 +110,9 @@ test("follow repairs a missed wake and closes", () =>
       const hint = yield* parkedHint;
 
       const fiber = yield* withReader(
-        Projection.follow(positives, { repairIntervalMs: 100 }),
+        lastOf(Projection.follow(positives, { repairIntervalMs: 100 })),
         hint.patch,
-      );
+      ).pipe(Effect.forkScoped);
 
       yield* Deferred.await(hint.parked);
       yield* Streams.append(input, [7], { close: true });
@@ -106,7 +132,9 @@ test("follow cancellation releases parked waits", () =>
       const hint = yield* parkedHint;
       yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* withReader(Projection.follow(positives), hint.patch);
+          yield* withReader(Stream.runDrain(Projection.follow(positives)), hint.patch).pipe(
+            Effect.forkScoped,
+          );
           yield* Deferred.await(hint.parked);
         }),
       );
@@ -121,7 +149,10 @@ test("follow defaults to a 30 second repair interval", () =>
       yield* Streams.create(input);
       yield* Streams.create(output);
       const hint = yield* parkedHint;
-      const fiber = yield* withReader(Projection.follow(positives), hint.patch);
+
+      const fiber = yield* withReader(lastOf(Projection.follow(positives)), hint.patch).pipe(
+        Effect.forkScoped,
+      );
 
       yield* Deferred.await(hint.parked);
       yield* Streams.append(input, [7], { close: true });
@@ -143,7 +174,6 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.create(b);
       yield* Streams.create(target);
       yield* Streams.append(a, [1]);
-      const woke = yield* Deferred.make<void>();
 
       const projection = Projection.process({
         commit: Commit.transaction,
@@ -158,8 +188,6 @@ test("a write to the second input wakes a two-input follower", () =>
             );
 
             if (Array.isReadonlyArrayNonEmpty(entries)) yield* Streams.append(target, entries);
-
-            if (batch.b.items.length > 0) yield* Deferred.succeed(woke, undefined);
           }),
       }).at({});
 
@@ -167,7 +195,10 @@ test("a write to the second input wakes a two-input follower", () =>
       let hints = 0;
 
       const fiber = yield* withReader(
-        Projection.follow(projection, { repairIntervalMs: 10_000 }),
+        Projection.follow(projection, { repairIntervalMs: 10_000 }).pipe(
+          Stream.take(2),
+          Stream.runCollect,
+        ),
         (reader) => ({
           readNext: (id, options) =>
             Effect.gen(function* () {
@@ -178,24 +209,20 @@ test("a write to the second input wakes a two-input follower", () =>
               return yield* reader.readNext(id, options);
             }),
         }),
-      );
+      ).pipe(Effect.forkScoped);
 
       // Both inputs are parked on their hints after the first run drains `a`.
       yield* Deferred.await(parked);
       expect(yield* readAll(target)).toEqual(["a:1"]);
       yield* Streams.append(b, [2]);
-      yield* Deferred.await(woke);
-      // The handler signalled inside its transaction; the commit is visible once the token moves.
+      // The second element is the committed cycle that the write to `b` woke.
+      const [first, second] = yield* Fiber.join(fiber);
+      expect(first).toMatchObject({ status: "caught-up", units: 1, items: 1 });
+      expect(second).toMatchObject({ status: "caught-up", units: 1, items: 1 });
+      expect(second?.offsets.b).toBe((yield* Streams.head(b)).nextOffset);
       const owner = yield* CheckpointStore;
-
-      for (let spins = 0; spins < 1000; spins += 1) {
-        if ((yield* owner.load(Projection.key(projection))).token === "2") break;
-        yield* Effect.yieldNow;
-      }
-
       expect((yield* owner.load(Projection.key(projection))).token).toBe("2");
       expect(yield* readAll(target)).toEqual(["a:1", "b:2"]);
-      yield* Fiber.interrupt(fiber);
     }).pipe(
       Effect.scoped,
       Effect.provide(FamilyFixture.withFamilies(Layer.merge(layerSqlite(), TestClock.layer()))),
@@ -234,7 +261,7 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       let hints = 0;
 
       const fiber = yield* withReader(
-        Projection.follow(projection, { repairIntervalMs: 100 }),
+        Stream.runDrain(Projection.follow(projection, { repairIntervalMs: 100 })),
         (reader) => ({
           read: (id, options) =>
             Effect.suspend(() => {
@@ -249,7 +276,7 @@ test("a closed and drained input beside an open one does not wake every cycle", 
               return reader.readNext(id, options);
             }),
         }),
-      );
+      ).pipe(Effect.forkScoped);
 
       // The first run is one non-empty pass and one empty pass, then one hint per input.
       const settle = (expectedHints: number) =>
@@ -293,7 +320,7 @@ test("a completed wake hint echoes its cursor on the next hint for that input", 
       const second = yield* Deferred.make<void>();
 
       const fiber = yield* withReader(
-        Projection.follow(positives, { repairIntervalMs: 10_000 }),
+        Stream.runDrain(Projection.follow(positives, { repairIntervalMs: 10_000 })),
         () => ({
           readNext: (_id, options) => {
             cursors.push(options.cursor);
@@ -311,7 +338,7 @@ test("a completed wake hint echoes its cursor on the next hint for that input", 
               : Deferred.succeed(second, undefined).pipe(Effect.andThen(Effect.never));
           },
         }),
-      );
+      ).pipe(Effect.forkScoped);
 
       yield* Deferred.await(second);
       expect(cursors).toEqual([undefined, "cursor-1"]);
@@ -319,9 +346,12 @@ test("a completed wake hint echoes its cursor on the next hint for that input", 
     }),
   ));
 
-test("follow rejects invalid options before reading", () =>
+test("follow rejects invalid options at the first pull, before reading", () =>
   run(
     Effect.gen(function* () {
+      yield* Streams.create(input);
+      let reads = 0;
+
       for (const options of [
         { repairIntervalMs: 0 },
         { repairIntervalMs: -1 },
@@ -329,14 +359,158 @@ test("follow rejects invalid options before reading", () =>
         { repairIntervalMs: 1.5 },
         { limit: 0 },
       ]) {
-        const result = yield* Projection.follow(positives, options).pipe(Effect.result);
+        // Building the stream does no work; the failure comes when it runs.
+        const follower = Projection.follow(positives, options);
+
+        const result = yield* withReader(Stream.runDrain(follower), (reader) => ({
+          read: (id, readOptions) =>
+            Effect.suspend(() => {
+              reads += 1;
+
+              return reader.read(id, readOptions);
+            }),
+        })).pipe(Effect.result);
+
         expect(result._tag).toBe("Failure");
 
-        if (result._tag === "Failure") {
-          expect(result.failure.phase).toBe("load");
-          expect(result.failure.reason).toBe("invalid-options");
-        }
+        if (result._tag === "Failure")
+          expect(result.failure).toMatchObject({ phase: "load", reason: "invalid-options" });
       }
+
+      expect(reads).toBe(0);
+    }),
+  ));
+
+const sum = Projection.fold({
+  id: "follow-sum",
+  params: {},
+  inputs: { input },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (total, { item }) => total + item,
+}).at({});
+
+test("follow emits the first cycle, each commit and the close, and skips idle wakes", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      const hints = yield* Queue.unbounded<number>();
+      let count = 0;
+
+      const fiber = yield* withReader(
+        Stream.runCollect(Projection.follow(sum, { repairIntervalMs: 100 })),
+        (reader) => ({
+          readNext: (id, options) =>
+            Effect.suspend(() => Queue.offer(hints, (count += 1))).pipe(
+              Effect.andThen(reader.readNext(id, options)),
+            ),
+        }),
+      ).pipe(Effect.forkScoped);
+
+      // The first cycle commits nothing, emits, and parks on hint 1.
+      expect(yield* Queue.take(hints)).toBe(1);
+      // Two repair wakes find no input and emit nothing.
+      yield* TestClock.adjust(100);
+      expect(yield* Queue.take(hints)).toBe(2);
+      yield* TestClock.adjust(100);
+      expect(yield* Queue.take(hints)).toBe(3);
+      yield* Streams.append(input, [7]);
+      expect(yield* Queue.take(hints)).toBe(4);
+      yield* Streams.append(input, [8], { close: true });
+      const cycles = yield* Fiber.join(fiber);
+
+      expect(
+        Array.map(cycles, ({ status, units, items, state }) => ({ status, units, items, state })),
+      ).toEqual([
+        { status: "caught-up", units: 0, items: 0, state: 0 },
+        { status: "caught-up", units: 1, items: 1, state: 7 },
+        { status: "source-closed", units: 1, items: 1, state: 15 },
+      ]);
+      expect(cycles[2]?.offsets.input).toBe((yield* Streams.head(input)).nextOffset);
+    }),
+  ));
+
+test("a slow consumer gets one cycle for the input that arrived while it worked", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      let calls = 0;
+
+      const counted = Projection.process({
+        commit: Commit.atLeastOnce,
+        id: "follow-slow-consumer",
+        params: {},
+        inputs: { input },
+        process: () =>
+          Effect.sync(() => {
+            calls += 1;
+          }),
+      }).at({});
+
+      const seen = yield* Queue.unbounded<{ readonly units: number; readonly items: number }>();
+
+      const fiber = yield* Projection.follow(counted).pipe(
+        Stream.runForEach((progress) =>
+          Queue.offer(seen, progress).pipe(Effect.andThen(Effect.sleep("1 second"))),
+        ),
+        Effect.forkScoped,
+      );
+
+      expect(yield* Queue.take(seen)).toMatchObject({ units: 0, items: 0 });
+      // The consumer is busy, so the follower does not pull, wait or run.
+      yield* Streams.append(input, [1]);
+      yield* Streams.append(input, [2]);
+      yield* Streams.append(input, [3]);
+
+      for (let spins = 0; spins < 50; spins += 1) yield* Effect.yieldNow;
+      expect(calls).toBe(0);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Queue.take(seen)).toMatchObject({ units: 1, items: 3 });
+      expect(calls).toBe(1);
+      yield* Fiber.interrupt(fiber);
+    }),
+  ));
+
+test("a consumer that takes one element ends the follower before any wait", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.create(output);
+      yield* Streams.append(input, [7]);
+      const hint = yield* parkedHint;
+
+      const cycles = yield* withReader(
+        Projection.follow(positives).pipe(Stream.take(1), Stream.runCollect),
+        hint.patch,
+      );
+
+      expect(Array.map(cycles, ({ status, units }) => [status, units])).toEqual([["caught-up", 1]]);
+      expect(yield* Deferred.isDone(hint.parked)).toBe(false);
+    }),
+  ));
+
+test("interrupting the consumer stops the follower and releases its parked wait", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.create(output);
+      const hint = yield* parkedHint;
+      const first = yield* Deferred.make<number>();
+
+      const fiber = yield* withReader(
+        Projection.follow(positives).pipe(
+          Stream.runForEach((progress) => Deferred.succeed(first, progress.units)),
+        ),
+        hint.patch,
+      ).pipe(Effect.forkScoped);
+
+      expect(yield* Deferred.await(first)).toBe(0);
+      yield* Deferred.await(hint.parked);
+      yield* Fiber.interrupt(fiber);
+      yield* Deferred.await(hint.released);
+      yield* Streams.append(input, [7]);
+
+      for (let spins = 0; spins < 50; spins += 1) yield* Effect.yieldNow;
+      expect(yield* readAll(output)).toEqual([]);
     }),
   ));
 
@@ -366,7 +540,9 @@ for (const point of ["read", "append"] as const) {
           emit: (entry) => Effect.succeed({ output: [entry.item] }),
         }).at({});
 
-        const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
+        const result = yield* lastOf(
+          Projection.follow(projection, { retry: Schedule.recurs(1) }),
+        ).pipe(
           FamilyFixture.provideReader({
             ...reader,
             read: (id, options) =>
@@ -389,7 +565,7 @@ for (const point of ["read", "append"] as const) {
           }),
         );
 
-        expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+        expect(result.status).toBe("source-closed");
         expect(yield* readAll(output)).toEqual([1, 2, 3]);
       }),
     ));
@@ -420,8 +596,10 @@ test("follow does not retry non-storage faults or handler failures", () =>
             }),
         }).at({});
 
-        const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(3) });
-        const result = yield* Fiber.join(fiber).pipe(Effect.result);
+        const result = yield* Stream.runDrain(
+          Projection.follow(projection, { retry: Schedule.recurs(3) }),
+        ).pipe(Effect.result);
+
         expect(result._tag).toBe("Failure");
 
         if (result._tag === "Failure") expect(result.failure).toBe(error);
@@ -439,7 +617,7 @@ test("default follow backoff retries a read after the clock advances", () =>
       const failed = yield* Deferred.make<void>();
       let reads = 0;
 
-      const fiber = yield* withReader(Projection.follow(positives), (reader) => ({
+      const fiber = yield* withReader(lastOf(Projection.follow(positives)), (reader) => ({
         read: (id, options) =>
           Effect.suspend(() => {
             reads += 1;
@@ -458,7 +636,7 @@ test("default follow backoff retries a read after the clock advances", () =>
                 )
               : reader.read(id, options);
           }),
-      }));
+      })).pipe(Effect.forkScoped);
 
       yield* Deferred.await(failed);
       yield* TestClock.adjust(240);
@@ -503,7 +681,7 @@ test("follow resets a finite retry budget after a successful cycle between outag
       }).at({});
 
       const fiber = yield* withReader(
-        Projection.follow(projection, { retry: Schedule.recurs(1) }),
+        lastOf(Projection.follow(projection, { retry: Schedule.recurs(1) })),
         (reader) => ({
           read: (id, options) =>
             Effect.suspend(() => {
@@ -522,7 +700,7 @@ test("follow resets a finite retry budget after a successful cycle between outag
           readNext: (id, options) =>
             Deferred.succeed(parked, undefined).pipe(Effect.andThen(reader.readNext(id, options))),
         }),
-      );
+      ).pipe(Effect.forkScoped);
 
       yield* Deferred.await(parked);
       expect(yield* readAll(output)).toEqual([1]);
@@ -557,15 +735,15 @@ for (const explicit of [false, true]) {
             }),
         };
 
-        const fiber = yield* Projection.follow(
-          positives,
-          explicit ? { retry: Schedule.recurs(2) } : {},
+        const result = yield* Stream.runDrain(
+          Projection.follow(positives, explicit ? { retry: Schedule.recurs(2) } : {}),
         ).pipe(
           Effect.provideService(ProjectionRetry, Schedule.recurs(0)),
           FamilyFixture.provideReader(broken),
+          Effect.result,
         );
 
-        expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
+        expect(result._tag).toBe("Failure");
         expect(attempts).toBe(explicit ? 3 : 1);
         // run stays single-shot: one read, no retry.
         yield* Projection.run(positives).pipe(FamilyFixture.provideReader(broken), Effect.result);
@@ -584,8 +762,8 @@ for (const cause of [
         yield* Streams.create(input);
         let reads = 0;
 
-        const fiber = yield* withReader(
-          Projection.follow(positives, { retry: Schedule.recurs(3) }),
+        const failure = yield* withReader(
+          Stream.runDrain(Projection.follow(positives, { retry: Schedule.recurs(3) })),
           () => ({
             read: () =>
               Effect.suspend(() => {
@@ -594,9 +772,8 @@ for (const cause of [
                 return Effect.fail(cause);
               }),
           }),
-        );
+        ).pipe(Effect.flip);
 
-        const failure = yield* Effect.flip(Fiber.join(fiber));
         expect(failure).toBeInstanceOf(ProjectionFault);
         expect(failure).toMatchObject({ reason: "storage-failure", cause, retryable: false });
         expect(reads).toBe(1);
@@ -621,19 +798,6 @@ class FollowRoute1 extends Streamsy.json<FollowRoute1>()(
     schema: Schema.Finite,
   },
 ) {}
-
-/** Wait for the follower checkpoint without starting another writer. */
-const awaitCheckpoint = (projection: Parameters<typeof Projection.key>[0], offset: string) =>
-  Effect.gen(function* () {
-    const store = yield* CheckpointStore;
-
-    while (true) {
-      const loaded = yield* store.load(Projection.key(projection));
-
-      if (Option.isSome(loaded.record) && loaded.record.value.inputs.input === offset) return;
-      yield* Effect.yieldNow;
-    }
-  });
 
 layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it) => {
   it.effect("changes during an in-flight run coalesce to one follow-up run", () =>
@@ -672,7 +836,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
           }),
       }).at({});
 
-      const fiber = yield* Projection.follow(projection);
+      const follower = yield* observe(Projection.follow(projection));
       yield* Streams.append(source, [1]);
       yield* Deferred.await(entered);
       yield* Streams.append(source, [2]);
@@ -680,13 +844,14 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
       yield* Streams.append(source, [4]);
       yield* Deferred.succeed(release, undefined);
       yield* Deferred.await(second);
-      yield* awaitCheckpoint(projection, (yield* Streams.head(source)).nextOffset);
+      const end = (yield* Streams.head(source)).nextOffset;
+      yield* follower.until((progress) => progress.offsets.input === end);
       expect(calls).toBe(2);
       expect(yield* readAll(target)).toEqual([1, 2, 3, 4]);
       const tail = yield* Streams.head(source);
       const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
-      yield* Fiber.interrupt(fiber);
+      yield* Fiber.interrupt(follower.fiber);
     }),
   );
 });
@@ -716,14 +881,21 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1 })))((it) => {
           }),
       }).at({});
 
-      const fiber = yield* Projection.follow(projection, { limit: 1 });
+      const follower = yield* observe(Projection.follow(projection, { limit: 1 }));
       yield* Deferred.await(drained);
-      yield* awaitCheckpoint(projection, (yield* Streams.head(source)).nextOffset);
+      const end = (yield* Streams.head(source)).nextOffset;
+      const cycles = yield* follower.until((progress) => progress.offsets.input === end);
+      // Each limited cycle emits; the empty cycle that finds the backlog drained does not.
+      expect(Array.map(cycles, ({ status, units }) => [status, units])).toEqual([
+        ["limit-reached", 1],
+        ["limit-reached", 1],
+        ["limit-reached", 1],
+      ]);
       expect(seen).toEqual([1, 2, 3]);
       const tail = yield* Streams.head(source);
       const loaded = yield* (yield* CheckpointStore).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
-      yield* Fiber.interrupt(fiber);
+      yield* Fiber.interrupt(follower.fiber);
     }),
   );
 });
@@ -754,7 +926,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
       yield* Streams.create(bRef);
 
       const fibers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
-        Projection.follow(declared.at({ workspaceId })),
+        Stream.runDrain(Projection.follow(declared.at({ workspaceId }))).pipe(Effect.forkScoped),
       );
 
       yield* Streams.append(aRef, [1]);
@@ -787,7 +959,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
       const fibers = yield* Effect.scoped(
         Effect.gen(function* () {
           const followers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
-            Projection.follow(declared.at({ workspaceId })).pipe(
+            Stream.runDrain(Projection.follow(declared.at({ workspaceId }))).pipe(
               Effect.provideService(FollowRoute2, {
                 ...route,
                 wire: {
@@ -802,6 +974,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
                     }),
                 },
               }),
+              Effect.forkScoped,
             ),
           );
 

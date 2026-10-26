@@ -2,7 +2,7 @@ import { it as baseIt, layer } from "@effect/vitest";
 import { Commit, Transaction } from "@streamsy/projection";
 import { Protocol } from "@streamsy/core/protocol";
 import { expect } from "vitest";
-import { Array, Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import { Array, Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
@@ -82,7 +82,7 @@ layer(host)((it) => {
 
       const parked = yield* Deferred.make<void>();
 
-      const fiber = yield* Projection.follow(projection).pipe(
+      const fiber = yield* Stream.runLast(Projection.follow(projection)).pipe(
         Effect.provideService(Source, {
           ...source,
           wire: {
@@ -93,11 +93,12 @@ layer(host)((it) => {
               ),
           },
         }),
+        Effect.forkScoped,
       );
 
       yield* Deferred.await(parked);
       yield* source.append(params, [1], { close: true });
-      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+      expect(Option.getOrThrow(yield* Fiber.join(fiber)).status).toBe("source-closed");
     }),
   );
 });

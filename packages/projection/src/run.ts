@@ -13,15 +13,35 @@ import { isPinned, setDetails, type Details } from "./commit/internal.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Executable } from "./executable.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
-import { offsetsOf, type Offsets } from "./snapshot.ts";
+import {
+  offsetsOf,
+  read as readSnapshot,
+  type Offsets,
+  type Readable,
+  type Snapshot,
+  type StateValue,
+} from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
-export interface Progress<Inputs extends InputMap = InputMap> {
-  readonly status: "progress" | "caught-up" | "source-closed" | "limit-reached";
+/** The result of one `pass`: one committed unit (`progress`), or no input to commit. */
+export interface PassResult<Inputs extends InputMap = InputMap> {
+  readonly status: "progress" | "caught-up" | "source-closed";
   readonly units: number;
   readonly items: number;
   readonly offsets: Offsets<Inputs>;
 }
+
+/** One runner cycle: the committed state and offsets, plus the work that the cycle did. */
+export interface Progress<S, Inputs extends InputMap = InputMap> extends Snapshot<S, Inputs> {
+  readonly status: "caught-up" | "limit-reached" | "source-closed";
+  /** Units that this cycle committed. */
+  readonly units: number;
+  /** Input items in those units. */
+  readonly items: number;
+}
+
+/** Internal: a cycle before its state is read. The offsets come from the last pass. */
+export type Cycle<Inputs extends InputMap = InputMap> = Omit<Progress<unknown, Inputs>, "state">;
 
 /** Restore and adapt one input unit; the Commit owns every write. */
 export const pass = Effect.fn("Projection.pass")(function* <
@@ -35,7 +55,7 @@ export const pass = Effect.fn("Projection.pass")(function* <
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
 ): Effect.fn.Return<
-  Progress<Inputs>,
+  PassResult<Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
@@ -155,8 +175,8 @@ export const pass = Effect.fn("Projection.pass")(function* <
   return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(next) };
 });
 
-/** Repeats pass until caught up, closed, or limited. Use one writer per key. */
-export const run = Effect.fn("Projection.run")(function* <
+/** Internal: repeats pass until caught up, closed, or limited. The caller validates options. */
+export const catchUp = Effect.fnUntraced(function* <
   Inputs extends InputMap,
   E,
   R,
@@ -166,25 +186,58 @@ export const run = Effect.fn("Projection.run")(function* <
   OR = never,
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+  options: RunOptions,
+): Effect.fn.Return<
+  Cycle<Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+> {
+  const cap = options.limit ?? Number.POSITIVE_INFINITY;
+  let units = 0;
+  let items = 0;
+  let offsets: Offsets<Inputs>;
+
+  do {
+    const result = yield* pass(projection);
+    units += result.units;
+    items += result.items;
+    offsets = result.offsets;
+
+    if (result.status !== "progress") return { status: result.status, units, items, offsets };
+  } while (units < cap);
+
+  return { status: "limit-reached", units, items, offsets };
+});
+
+/** Internal: a cycle with the state and offsets of one checkpoint read. */
+export const withState = <Inputs extends InputMap, S, Q>(
+  projection: Readable<Inputs, S, Q>,
+  cycle: Cycle<Inputs>,
+): Effect.Effect<Progress<StateValue<S>, Inputs>, ProjectionFault, Q> =>
+  Effect.map(readSnapshot(projection), (snapshot) => ({ ...cycle, ...snapshot }));
+
+/**
+ * Repeats pass until caught up, closed, or limited, then reads the state once.
+ * Use one writer per key.
+ */
+export const run = Effect.fn("Projection.run")(function* <
+  Inputs extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P,
+  S = never,
+  OR = never,
+>(
+  projection: Executable<Inputs, E, R, Q, Result, P, S, OR>,
   options: RunOptions = {},
 ): Effect.fn.Return<
-  Progress<Inputs>,
+  Progress<StateValue<S>, Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
   yield* validateOptions(options);
-  const cap = options.limit ?? Number.POSITIVE_INFINITY;
-  let units = 0;
-  let items = 0;
-  let result: Progress<Inputs>;
 
-  do {
-    result = yield* pass(projection);
-    units += result.units;
-    items += result.items;
-
-    if (result.status !== "progress") return { ...result, units, items };
-  } while (units < cap);
-
-  return { ...result, status: "limit-reached", units, items };
+  return yield* withState(projection, yield* catchUp(projection, options));
 });
