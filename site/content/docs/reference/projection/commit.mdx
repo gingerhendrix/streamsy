@@ -1,0 +1,481 @@
+---
+title: Commit
+description: Reference for the Commit namespace and the Transaction service in @streamsy/projection. A Commit decides how a projection writes each unit and its checkpoint, and which guarantee it gives.
+---
+
+```ts
+import {
+  Commit,
+  HandlerFailed,
+  Transaction,
+  type Accumulated,
+  type CheckpointRecord,
+  type CheckpointStore,
+  type Emitted,
+  type Folded,
+  type Loaded,
+  type OutputBatch,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Unit,
+} from "@streamsy/projection";
+import type { CommitBoundary, StreamAddress } from "@streamsy/core";
+import type { Cause, Data, Effect, Layer, Pipeable } from "effect";
+import type { SqlClient } from "effect/sql";
+```
+
+A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type picks the constructors that it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/define#commits) and [Custom Commits](/docs/projections/state#custom-commits).
+
+| Commit               | Result                   | Guarantee                           | Needs                            |
+| -------------------- | ------------------------ | ----------------------------------- | -------------------------------- |
+| `Commit.checkpoint`  | `Folded`                 | Exactly once for the saved value    | `CheckpointStore`                |
+| `Commit.transaction` | Any                      | Exactly once in the SQL transaction | `CheckpointStore`, `Transaction` |
+| `Commit.producer`    | `Emitted`, `Accumulated` | Effectively once for the outputs    | `CheckpointStore`                |
+| `Commit.atLeastOnce` | `void`                   | At least once                       | `CheckpointStore`                |
+
+## Commits
+
+### `Commit.checkpoint`
+
+```ts
+// ---cut-start---
+import { Commit, type CheckpointStore, type Folded } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const checkpoint: Commit.Commit<Folded<unknown>, never, CheckpointStore>;
+// ---cut-after---
+same<typeof checkpoint, typeof Commit.checkpoint>(true);
+```
+
+`checkpoint` runs the handler, then saves the encoded state and the input offsets in one compare-and-set write. It fits `fold`, and it is the default Commit of `fold`. When the write fails, the next pass runs the steps again, so keep the steps free of external effects.
+
+### `Commit.transaction`
+
+```ts
+// ---cut-start---
+import type { SqlClient } from "effect/sql";
+import {
+  Commit,
+  type Accumulated,
+  type CheckpointStore,
+  type Emitted,
+  type Folded,
+  type Transaction,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const transaction: Commit.Commit<
+  | void
+  | Folded<unknown>
+  | Emitted<Readonly<Record<string, never>>>
+  | Accumulated<unknown, Readonly<Record<string, never>>>,
+  SqlClient.SqlClient,
+  CheckpointStore | Transaction
+>;
+// ---cut-after---
+same<typeof transaction, typeof Commit.transaction>(true);
+```
+
+`transaction` runs the handler, the output appends, and the checkpoint write in one SQL transaction of the storage owner. It fits every constructor. The handler gets the `SqlClient` of the transaction, so its SQL commits or rolls back with the checkpoint.
+
+- Every declared output must be on the storage owner of the transaction. When one is not, the unit fails with phase `load` and reason `unsupported-composition`.
+- A stream append in the handler to a stream on another owner fails with phase `process` and reason `unsupported-composition`.
+- When the checkpoint changed after the runner read it, the unit fails with phase `checkpoint` and reason `token-conflict`.
+- When an output append fails, the unit fails with phase `process` and reason `invalid-output`.
+- Only `transaction`, alone or wrapped by `withCompensation`, accepts `prepare`. It runs `prepare` before it opens the transaction.
+- A retry reads the inputs again, so a longer tail can change `unit.key`. An external call in the handler happens at least once.
+
+[`Transaction`](#transaction) supplies the transaction. A memory host has no `SqlClient`, so `transaction` needs a SQL host.
+
+### `Commit.producer`
+
+```ts
+// ---cut-start---
+import { Commit, type Accumulated, type CheckpointStore, type Emitted } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const producer: Commit.Commit<
+  Accumulated<unknown, Readonly<Record<string, never>>> | Emitted<Readonly<Record<string, never>>>,
+  never,
+  CheckpointStore
+>;
+// ---cut-after---
+same<typeof producer, typeof Commit.producer>(true);
+```
+
+`producer` appends the items of each output with a producer position, so a retry does not write a unit twice. It fits `emit`, `mapAccum`, and `mapAccumBatch`. The handler must give the same items for the same unit.
+
+1. It runs the handler.
+2. When an output has items, it saves the input ranges and the next sequence of each such output in the checkpoint. This is the pin.
+3. It appends the items of each output with its own producer position. A retry sends the same positions, and the server drops the duplicates.
+4. It saves the state and the new offsets.
+
+| Producer field  | Value                                                                         |
+| --------------- | ----------------------------------------------------------------------------- |
+| `producerId`    | `id/v<version>`, then `/` and the canonical params JSON when there are params |
+| `producerEpoch` | The generation                                                                |
+| `producerSeq`   | The pinned sequence of that output                                            |
+
+- `producer` creates a missing output on the storage owner of the checkpoint. An output on another owner must exist before the first append.
+- A closed output fails the unit with phase `pin` and reason `invalid-output`.
+- When the stored epoch of an output is not the generation, or a newer generation has appended to the output, the unit fails with reason `stale-epoch`.
+- When a pinned unit runs again and an output that was pinned has no items, or an output that was not pinned has items, the unit fails with phase `process` and reason `invalid-output`.
+- The appends to several outputs do not commit together.
+
+### `Commit.atLeastOnce`
+
+```ts
+// ---cut-start---
+import { Commit, type CheckpointStore } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const atLeastOnce: Commit.Commit<void, never, CheckpointStore>;
+// ---cut-after---
+same<typeof atLeastOnce, typeof Commit.atLeastOnce>(true);
+```
+
+`atLeastOnce` saves the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last write fails, the next pass runs the same unit again, with the same `unit.key`. Use `unit.key` as the idempotency key of an external call, or deliver the effects through an [outbox](/docs/projections/actions).
+
+### `Commit.make`
+
+```ts
+// ---cut-start---
+import { Commit } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function make<Result, Provides = never, Requires = never>(
+  options: Omit<Commit.Commit<Result, Provides, Requires>, typeof Commit.TypeId | "pipe">,
+): Commit.Commit<Result, Provides, Requires>;
+// ---cut-after---
+same<typeof make, typeof Commit.make>(true);
+```
+
+`make` returns a custom Commit from its `name`, `guarantee`, `load`, `apply`, and optional `remove`. `make` infers the result and the required services from `apply` and `load`. When the Commit provides handler services, write the `Result`, `Provides`, and `Requires` type arguments.
+
+A custom Commit must follow these rules:
+
+1. Never store `next` when `run` fails.
+2. Make the write conditional on `loaded.token`. When the token moved, fail with phase `checkpoint` and reason `token-conflict`.
+3. Return the token `"0"` from `load` when no record exists.
+4. Return the stored `state` from `load`, so that `Projection.read` reads it.
+5. Declare the guarantee of the actual write. When `run` and the write are not atomic, declare `at-least-once`.
+
+A custom Commit reads the input range again on a retry, so a retry can see a longer tail. It does not accept `prepare`, and it must append the outputs of an `Emitted` or `Accumulated` result itself.
+
+### `Commit.withCompensation`
+
+```ts
+// ---cut-start---
+import type { Cause, Effect } from "effect";
+import { Commit, type HandlerFailed, type ProjectionFault, type Unit } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const withCompensation: {
+  <Result, R>(
+    f: (
+      result: Result,
+      cause: Cause.Cause<ProjectionFault | HandlerFailed>,
+      unit: Unit,
+    ) => Effect.Effect<void, never, R>,
+  ): <P, Q>(self: Commit.Commit<Result, P, Q>) => Commit.Commit<Result, P, Q | R>;
+  <Result, P, Q, R>(
+    self: Commit.Commit<Result, P, Q>,
+    f: (
+      result: Result,
+      cause: Cause.Cause<ProjectionFault | HandlerFailed>,
+      unit: Unit,
+    ) => Effect.Effect<void, never, R>,
+  ): Commit.Commit<Result, P, Q | R>;
+};
+// ---cut-after---
+same<typeof withCompensation, typeof Commit.withCompensation>(true);
+```
+
+`withCompensation` wraps a Commit. When the handler succeeded and the Commit then failed, the wrapped Commit calls `f` with the handler result, the failure, and the unit, and then fails with the same failure. Call it directly or through `.pipe`. The wrapped Commit keeps the pin and the `prepare` support of `self`.
+
+`f` cannot fail. Compensation does not make an external effect atomic.
+
+## The Commit type
+
+The names in these signatures are members of the `Commit` namespace.
+
+### `Commit.Commit`
+
+```ts
+// ---cut-start---
+import type { Effect, Pipeable } from "effect";
+import { Commit as Real } from "@streamsy/projection";
+import type {
+  CheckpointStore,
+  Folded,
+  HandlerFailed,
+  Loaded,
+  ProjectionFault,
+  ProjectionKey,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+declare const TypeId: typeof Real.TypeId;
+type Variance<R, P, Q> = Real.Variance<R, P, Q>;
+type Pending<R, P = never> = Real.Pending<R, P>;
+// ---cut-end---
+interface Commit<in Result, in Provides = never, out Requires = never> extends Pipeable.Pipeable {
+  readonly [TypeId]: Variance<Result, Provides, Requires>;
+  readonly name: string;
+  readonly guarantee: "exactly-once" | "effectively-once" | "at-least-once";
+  readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault, Requires>;
+  readonly apply: (
+    pending: Pending<Result, Provides>,
+  ) => Effect.Effect<void, ProjectionFault | HandlerFailed, Requires>;
+  readonly remove?: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, Requires>;
+}
+// ---cut-after---
+same<
+  Commit<Folded<number>, string, CheckpointStore>,
+  Real.Commit<Folded<number>, string, CheckpointStore>
+>(true);
+same<Commit<void>, Real.Commit<void>>(true);
+```
+
+A `Commit` writes the units of one projection. `Result` is the handler result that it takes, `Provides` holds the services that it gives the handler, and `Requires` holds the services that it needs.
+
+| Field       | Meaning                                                               |
+| ----------- | --------------------------------------------------------------------- |
+| `name`      | A name for messages                                                   |
+| `guarantee` | How often the effects of one unit happen                              |
+| `load`      | Loads the checkpoint record of a key, and its token                   |
+| `apply`     | Runs the handler of one unit and writes the result and the checkpoint |
+| `remove`    | Deletes the checkpoint record of a key. `Projection.forget` calls it  |
+
+A Commit with a result type that does not fit a constructor fails at the `commit:` field of the definition.
+
+### `Commit.Pending`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import { Commit as Real } from "@streamsy/projection";
+import type {
+  CheckpointRecord,
+  Folded,
+  HandlerFailed,
+  Loaded,
+  ProjectionKey,
+  Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Pending<Result, Provides = never> {
+  readonly key: ProjectionKey;
+  readonly unit: Unit;
+  readonly loaded: Loaded;
+  readonly next: CheckpointRecord;
+  readonly run: Effect.Effect<Result, HandlerFailed, Provides>;
+}
+// ---cut-after---
+same<Pending<Folded<number>, string>, Real.Pending<Folded<number>, string>>(true);
+same<Pending<void>, Real.Pending<void>>(true);
+```
+
+`apply` takes a `Pending`: one unit that is ready to commit.
+
+| Field    | Meaning                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------ |
+| `key`    | The checkpoint key                                                                         |
+| `unit`   | The unit, with the encoded params                                                          |
+| `loaded` | The record and the token that the runner loaded before it read the unit                    |
+| `next`   | The record to save after the unit: the new offsets, and the state from before the unit     |
+| `run`    | Runs the handler. It fails with `HandlerFailed`, and the runner restores the handler error |
+
+To save the state, put the `encoded` field of a `Folded` or `Accumulated` result into `next` as `state`.
+
+### `Commit.Variance`
+
+```ts
+// ---cut-start---
+import { Commit as Real } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Variance<in Result, in Provides, out Requires> {
+  readonly result: (_: Result) => void;
+  readonly provides: (_: Provides) => void;
+  readonly requires: () => Requires;
+}
+// ---cut-after---
+same<Variance<number, string, boolean>, Real.Variance<number, string, boolean>>(true);
+```
+
+`Variance` carries the type parameters of a `Commit` under [`TypeId`](#committypeid). It has no run-time use.
+
+### `Commit.TypeId`
+
+```ts
+// ---cut-start---
+import { Commit } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const TypeId: "~@streamsy/projection/Commit";
+// ---cut-after---
+same<typeof TypeId, typeof Commit.TypeId>(true);
+```
+
+`TypeId` is the key of the `Variance` field of every `Commit`. `make` adds it, so `make` does not take it.
+
+## Results
+
+The root entry point exports these types. The `Commit` namespace exports the same types under the same names, and also the constructors of `Folded`, `Emitted`, and `Accumulated`.
+
+### `HandlerFailed`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { Commit } from "@streamsy/projection";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface HandlerFailed {
+  readonly _tag: "HandlerFailed";
+  readonly error: unknown;
+}
+// ---cut-after---
+same<HandlerFailed, Fields<Real.HandlerFailed>>(true);
+same<typeof Real.HandlerFailed, typeof Commit.HandlerFailed>(true);
+```
+
+`HandlerFailed` wraps a handler failure inside a Commit. `error` holds the error of the handler. The runner unwraps it, so `pass`, `run`, and `follow` fail with the error of the handler itself. `HandlerFailed` is an `Error` with a `_tag` that you can `yield*`. `Commit.HandlerFailed` is the same class.
+
+### `Folded`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Real from "@streamsy/projection";
+import { Commit } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Folded<S> {
+  readonly _tag: "Folded";
+  readonly value: S;
+  readonly encoded: string;
+}
+
+declare const Folded: Data.TaggedEnum.ConstructorFrom<Folded<unknown>, "_tag">;
+// ---cut-after---
+same<Folded<number>, Real.Folded<number>>(true);
+same<Folded<number>, Commit.Folded<number>>(true);
+same<typeof Folded, typeof Commit.Folded>(true);
+```
+
+`Folded` is the result of a `fold` handler. `value` is the state after the unit, and `encoded` is the state as JSON. The value `Commit.Folded` builds one.
+
+### `Emitted`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Real from "@streamsy/projection";
+import { Commit, type OutputBatch } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Emitted<O> {
+  readonly _tag: "Emitted";
+  readonly outputs: OutputBatch<O>;
+}
+
+declare const Emitted: Data.TaggedEnum.ConstructorFrom<
+  Emitted<Readonly<Record<string, never>>>,
+  "_tag"
+>;
+// ---cut-after---
+type O = { readonly a: never; readonly b: never };
+same<Emitted<O>, Real.Emitted<O>>(true);
+same<Emitted<O>, Commit.Emitted<O>>(true);
+same<typeof Emitted, typeof Commit.Emitted>(true);
+```
+
+`Emitted` is the result of an `emit` handler. `outputs` holds the items of the unit for each output. The value `Commit.Emitted` builds one.
+
+### `Accumulated`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Real from "@streamsy/projection";
+import { Commit, type OutputBatch } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Accumulated<S, O> {
+  readonly _tag: "Accumulated";
+  readonly value: S;
+  readonly encoded: string;
+  readonly outputs: OutputBatch<O>;
+}
+
+declare const Accumulated: Data.TaggedEnum.ConstructorFrom<
+  Accumulated<unknown, Readonly<Record<string, never>>>,
+  "_tag"
+>;
+// ---cut-after---
+type O = { readonly a: never };
+same<Accumulated<number, O>, Real.Accumulated<number, O>>(true);
+same<Accumulated<number, O>, Commit.Accumulated<number, O>>(true);
+same<typeof Accumulated, typeof Commit.Accumulated>(true);
+```
+
+`Accumulated` is the result of a `mapAccum` or `mapAccumBatch` handler: the state after the unit, as in [`Folded`](#folded), and the output items, as in [`Emitted`](#emitted). The value `Commit.Accumulated` builds one.
+
+### `OutputBatch`
+
+```ts
+// ---cut-start---
+import type { StreamAddress } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import { Commit } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type OutputBatch<O> = {
+  readonly [K in keyof O]: {
+    readonly address: StreamAddress.StreamAddress<unknown>;
+    readonly items: ReadonlyArray<unknown>;
+  };
+};
+// ---cut-after---
+type O = { readonly a: never; readonly b: never };
+same<OutputBatch<O>, Real.OutputBatch<O>>(true);
+same<OutputBatch<O>, Commit.OutputBatch<O>>(true);
+```
+
+An `OutputBatch` holds the items of one unit for each output: the address after `at` bound the params, and the items in entry order. The items of a State output are State change messages. An output with no items has an empty array.
+
+## Services
+
+### `Transaction`
+
+```ts
+// ---cut-start---
+import { Context, type Effect, type Layer } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { CommitBoundary } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import type { ProjectionFault } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class Transaction extends Context.Service<
+  Transaction,
+  {
+    readonly owner: object;
+    readonly sql: SqlClient.SqlClient;
+    readonly withTransaction: <A, E, R>(
+      body: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ProjectionFault, R>;
+  }
+>()("@streamsy/projection/Transaction") {
+  static readonly layer: Layer.Layer<Transaction, never, CommitBoundary | SqlClient.SqlClient>;
+}
+// ---cut-after---
+same<typeof Transaction, typeof Real.Transaction>(true);
+same<Transaction, Real.Transaction>(true);
+```
+
+`Transaction` is the service of the SQL transaction that [`Commit.transaction`](#committransaction) uses. `owner` is the storage owner of the transaction, `sql` is the client that the handler gets, and `withTransaction` runs an Effect in the transaction.
+
+`Transaction.layer` builds the service from the `CommitBoundary` and the `SqlClient` of a SQL storage host. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).

@@ -1,0 +1,390 @@
+---
+title: Units and progress
+description: Reference for the unit, batch, and result types in @streamsy/projection. A unit is one slice of each input that a projection reads, handles, and commits together.
+---
+
+```ts
+import type {
+  AttachOptions,
+  Attachable,
+  Entry,
+  FollowOptions,
+  InputMap,
+  ItemOf,
+  Offsets,
+  PassResult,
+  Progress,
+  Range,
+  RunOptions,
+  Slice,
+  Slices,
+  Snapshot,
+  Unit,
+} from "@streamsy/projection";
+import type { Streamsy, StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Schedule } from "effect";
+```
+
+A runner reads one page of each input after its checkpoint offset. The pages make one unit: the handler sees them as `Slices`, and the Commit saves the unit with its `Range` values. See [Handler](/docs/projections/define#handler) and [Running](/docs/projections/define#running).
+
+## Batches
+
+### `InputMap`
+
+```ts
+// ---cut-start---
+import type { Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type InputMap = Record<string, Streamsy.Address<unknown, unknown>>;
+// ---cut-after---
+same<InputMap, Real.InputMap>(true);
+```
+
+`InputMap` is the bound inputs of a projection: one address for each input name. The order of the names is the read order of every pass, and the order of the entries in [`Projection.items`](/docs/reference/projection/runners#projectionitems).
+
+### `ItemOf`
+
+```ts
+// ---cut-start---
+import type { StreamAddress } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ItemOf<Address> = Address extends StreamAddress.StreamAddress<infer A> ? A : never;
+// ---cut-after---
+type Fixed = ReturnType<(typeof Notes)["at"]>;
+same<ItemOf<Fixed>, Real.ItemOf<Fixed>>(true);
+same<ItemOf<string>, Real.ItemOf<string>>(true);
+```
+
+`ItemOf` is the decoded item type of an address.
+
+### `Slice`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Slice<A> {
+  readonly from: string;
+  readonly items: ReadonlyArray<A>;
+  readonly nextOffset: string;
+  readonly upToDate: boolean;
+  readonly closed: boolean;
+  readonly gone?: boolean;
+}
+// ---cut-after---
+same<Slice<number>, Real.Slice<number>>(true);
+```
+
+A `Slice` holds the items of one input in one unit, and the read position around them.
+
+| Field        | Meaning                                                                                |
+| ------------ | -------------------------------------------------------------------------------------- |
+| `from`       | The offset that the read started after. It equals `nextOffset` when the slice is empty |
+| `items`      | The decoded items, in stream order                                                     |
+| `nextOffset` | The offset after the last item. The checkpoint moves the input to it                   |
+| `upToDate`   | `true` when the read reached the tail of the input                                     |
+| `closed`     | `true` when the input is closed                                                        |
+| `gone`       | `true` when the input was removed or expired. The runner then forgets the binding      |
+
+A closed input with no new items still makes one unit, with `closed` on its slice. The checkpoint records the close, so the next pass does not repeat the empty unit. A removed input with a checkpoint makes one final unit with `gone`. An input with no checkpoint that is missing fails with reason `history-unavailable`.
+
+### `Slices`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap, ItemOf, Slice } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Slices<Inputs extends InputMap> = {
+  readonly [K in keyof Inputs]: Slice<ItemOf<Inputs[K]>>;
+};
+// ---cut-after---
+type In = {
+  readonly a: ReturnType<(typeof Notes)["at"]>;
+  readonly b: ReturnType<(typeof Notes)["at"]>;
+};
+same<Slices<In>, Real.Slices<In>>(true);
+```
+
+`Slices` is the batch of one unit: one [`Slice`](#slice) for each input, by input name. A batch handler, such as `process` or `mapAccumBatch`, takes it. An input with no new items has an empty slice.
+
+### `Entry`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap, ItemOf } from "@streamsy/projection";
+import { Notes, Drafts } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Entry<Inputs extends InputMap> = {
+  readonly [K in keyof Inputs]: {
+    readonly input: K;
+    readonly item: ItemOf<Inputs[K]>;
+    readonly index: number;
+  };
+}[keyof Inputs];
+// ---cut-after---
+type In = {
+  readonly notes: ReturnType<(typeof Notes)["at"]>;
+  readonly drafts: ReturnType<(typeof Drafts)["at"]>;
+};
+same<Entry<In>, Real.Entry<In>>(true);
+```
+
+An `Entry` is one item of a unit, tagged with the name of its input. `index` is the position of the item in the whole unit, from `0`. Check `input` to narrow `item` to the item type of that input. An entry handler, such as `fold`, `emit`, or `mapAccum`, takes one entry at a time.
+
+## Units
+
+### `Unit`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { Range } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Unit<P = Record<string, string>> {
+  readonly projectionId: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: P;
+  readonly ranges: Record<string, Range>;
+  readonly key: string;
+}
+// ---cut-after---
+same<Unit<{ readonly user: string }>, Real.Unit<{ readonly user: string }>>(true);
+same<Unit, Real.Unit>(true);
+```
+
+A `Unit` describes the unit that a handler runs. A handler gets the decoded params as `params`.
+
+| Field          | Meaning                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `projectionId` | The `id` of the projection                                                                 |
+| `version`      | The declared version                                                                       |
+| `generation`   | The declared generation                                                                    |
+| `params`       | The params that the declaration was bound with                                             |
+| `ranges`       | The range of each input that gave items, a close, or a removal. Other inputs have no entry |
+| `key`          | A string made from the id, the generation, the encoded params, and `ranges`                |
+
+A Commit that pins the unit, such as `Commit.producer` or `Commit.atLeastOnce`, reads the same ranges on a retry, so `key` stays the same. A `Commit.transaction` retry reads the inputs again, and a longer tail changes `key`. In an entry handler, `ranges` describes the whole unit, not the entry.
+
+### `Range`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Range {
+  readonly from: string;
+  readonly nextOffset: string;
+  readonly closed?: boolean;
+  readonly gone?: true;
+}
+// ---cut-after---
+same<Range, Real.Range>(true);
+```
+
+A `Range` is the part of one input that a unit read: from after `from` up to `nextOffset`. `closed` and `gone` record a close or a removal of the input. The root entry point exports only the type.
+
+### `Offsets`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Offsets<Inputs extends InputMap> = { readonly [K in keyof Inputs]: string };
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<Offsets<In>, Real.Offsets<In>>(true);
+```
+
+`Offsets` holds the accepted offset of each input, by input name. The next pass reads after these offsets.
+
+### `Snapshot`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap, Offsets } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Snapshot<S, Inputs extends InputMap> {
+  readonly state: S;
+  readonly offsets: Offsets<Inputs>;
+}
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<Snapshot<number, In>, Real.Snapshot<number, In>>(true);
+```
+
+A `Snapshot` is a state value and the input offsets that it is at. [`Projection.read`](/docs/reference/projection/runners#projectionread) and [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) return one. `state` is `undefined` when the declaration has no `state:`.
+
+## Results
+
+### `PassResult`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap, Offsets } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface PassResult<Inputs extends InputMap = InputMap> {
+  readonly status: "progress" | "caught-up" | "source-closed";
+  readonly units: number;
+  readonly items: number;
+  readonly offsets: Offsets<Inputs>;
+}
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<PassResult<In>, Real.PassResult<In>>(true);
+same<PassResult, Real.PassResult>(true);
+```
+
+[`Projection.pass`](/docs/reference/projection/runners#projectionpass) returns a `PassResult`. `units` is `1` when the pass committed a unit, and `0` otherwise. `items` counts the input items of that unit. `offsets` holds the offsets after the pass.
+
+| Status          | Meaning                                                                           |
+| --------------- | --------------------------------------------------------------------------------- |
+| `progress`      | The pass committed a unit                                                         |
+| `caught-up`     | The pass found no new input                                                       |
+| `source-closed` | Every input is closed and read, or the pass committed the unit of a removed input |
+
+### `Progress`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap, Snapshot } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
+interface Progress<S, Inputs extends InputMap = InputMap> extends Snapshot<S, Inputs> {
+  readonly status: "caught-up" | "limit-reached" | "source-closed";
+  readonly units: number;
+  readonly items: number;
+}
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<Progress<number, In>, Real.Progress<number, In>>(true);
+same<Progress<number>, Real.Progress<number>>(true);
+```
+
+`Progress` is the result of one cycle of [`Projection.run`](/docs/reference/projection/runners#projectionrun), and one element of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow). `state` and `offsets` are the ones that the last pass of the cycle left. `units` counts the units that the cycle committed, and `items` counts their input items.
+
+| Status          | Meaning                                             |
+| --------------- | --------------------------------------------------- |
+| `caught-up`     | The last pass found no new input                    |
+| `limit-reached` | The cycle committed `limit` units                   |
+| `source-closed` | Every input is closed and read, or an input is gone |
+
+## Options
+
+### `RunOptions`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface RunOptions {
+  readonly limit?: number;
+}
+// ---cut-after---
+same<RunOptions, Real.RunOptions>(true);
+```
+
+`RunOptions` holds the options of [`Projection.run`](/docs/reference/projection/runners#projectionrun). `limit` is the most units that one call commits. It has no default: with no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with reason `invalid-options`.
+
+### `FollowOptions`
+
+```ts
+// ---cut-start---
+import type { Schedule } from "effect";
+import type * as Real from "@streamsy/projection";
+import type { RunOptions } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface FollowOptions extends RunOptions {
+  readonly repairIntervalMs?: number;
+  readonly retry?: Schedule.Schedule<unknown>;
+}
+// ---cut-after---
+same<FollowOptions, Real.FollowOptions>(true);
+```
+
+`FollowOptions` holds the options of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow). `limit` applies to each cycle.
+
+| Field              | Meaning                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `repairIntervalMs` | The longest wait for a change on an input, in milliseconds. The default is `30000`                                                      |
+| `retry`            | The schedule for a retry after a retryable fault. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry) |
+
+`repairIntervalMs` must be a positive safe integer.
+
+### `AttachOptions`
+
+```ts
+// ---cut-start---
+import type { Schedule } from "effect";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface AttachOptions {
+  readonly limit?: number;
+  readonly retry?: Schedule.Schedule<unknown>;
+}
+// ---cut-after---
+same<AttachOptions, Real.AttachOptions>(true);
+```
+
+`AttachOptions` holds the options of [`Projection.attach`](/docs/reference/projection/runners#projectionattach) and [`ProjectionWakeup.attach`](/docs/reference/projection/runners#projectionwakeup).
+
+| Field   | Meaning                                                                                                                            |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `limit` | The most units for each binding in one run. The default is `100`                                                                   |
+| `retry` | The schedule for a retry after a failed run. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry) |
+
+### `Attachable`
+
+```ts
+// ---cut-start---
+import type { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+// ---cut-end---
+interface Attachable<B> {
+  readonly id: string;
+  readonly params: StreamRoute.ParamCodecs;
+  readonly inputs: Inputs;
+  at(params: Readonly<Record<string, unknown>>): B;
+}
+
+// Inputs has no exported name. It is the record of input stream declarations and
+// fixed addresses, by name. See /docs/reference/projection/constructors.
+type Inputs = Readonly<Record<string, Input>>;
+// ---cut-after---
+same<Attachable<number>, Real.Attachable<number>>(true);
+```
+
+`Attachable` is the part of a declaration that `attach` reads. A [`Declaration`](/docs/reference/projection/declarations#declaration) from any constructor fits. `at` is a method, so a declaration with typed params fits too.

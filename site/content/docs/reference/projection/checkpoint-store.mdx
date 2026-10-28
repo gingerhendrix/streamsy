@@ -1,0 +1,308 @@
+---
+title: CheckpointStore
+description: Reference for the checkpoint store in @streamsy/projection and @streamsy/projection/checkpoint. The store keeps the offsets and the state of each projection key in one compare-and-set record.
+---
+
+```ts
+import {
+  CheckpointRecord,
+  CheckpointStore,
+  type CheckpointStoreApi,
+  type Identity,
+  type Loaded,
+  type ProjectionKey,
+} from "@streamsy/projection";
+import { fromStore, recordKey, type EncodedStore } from "@streamsy/projection/checkpoint";
+import type { CommitBoundary, Streamsy } from "@streamsy/core";
+import type { Effect, Layer, Option } from "effect";
+```
+
+`CheckpointStore` keeps one record for each projection key: the input offsets, the encoded state, and a pinned unit. The built-in Commits need it. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations) and [Projection storage](/docs/hosting/storage-adapter#projection-storage).
+
+`@streamsy/projection/checkpoint` is the entry point for the author of a checkpoint Layer or a custom Commit. Each export has one section on this page:
+
+| Export               | `@streamsy/projection` | `@streamsy/projection/checkpoint` |
+| -------------------- | ---------------------- | --------------------------------- |
+| `CheckpointStore`    | Yes                    | Yes                               |
+| `CheckpointStoreApi` | Yes                    | Yes                               |
+| `CheckpointRecord`   | Yes                    | Yes                               |
+| `Loaded`             | Yes                    | Yes                               |
+| `ProjectionKey`      | Yes                    | Yes                               |
+| `Identity`           | Yes                    |                                   |
+| `fromStore`          |                        | Yes                               |
+| `recordKey`          |                        | Yes                               |
+| `EncodedStore`       |                        | Yes                               |
+
+## The store
+
+### `CheckpointStore`
+
+```ts
+// ---cut-start---
+import { Context, type Effect, type Layer, type Option } from "effect";
+import type { CommitBoundary, StorageFault } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import type { CheckpointStoreApi } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreApi>()(
+  "@streamsy/projection/CheckpointStore",
+) {
+  static readonly layer: Layer.Layer<CheckpointStore, never, CommitBoundary | OwnerRecords>;
+  static readonly layerMemory: Layer.Layer<CheckpointStore>;
+}
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records on the storage owner. Every storage host provides it.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof CheckpointStore, typeof Real.CheckpointStore>(true);
+same<CheckpointStore, Real.CheckpointStore>(true);
+same<typeof Real.CheckpointStore, typeof Checkpoint.CheckpointStore>(true);
+```
+
+`CheckpointStore` is the service key of the checkpoint store, and its service is a [`CheckpointStoreApi`](#checkpointstoreapi).
+
+| Layer                         | Requires                                                  | Where the records live                   |
+| ----------------------------- | --------------------------------------------------------- | ---------------------------------------- |
+| `CheckpointStore.layer`       | The `CommitBoundary` and `OwnerRecords` of a storage host | On the storage owner, in its transaction |
+| `CheckpointStore.layerMemory` | Nothing                                                   | In the process, apart from any stream    |
+
+Every storage host provides `CommitBoundary` and `OwnerRecords`, including `MemoryStorage.layer`. With `CheckpointStore.layer`, the checkpoints and the streams on that owner commit in one transaction, and `Commit.producer` can create a missing output on that owner. A SQL host keeps the records in its `streamsy_owner_records` table.
+
+`CheckpointStore.layerMemory` shares no owner with the streams, so processing over it is at least once. Use it for rebuilt values, tests, and a remote host. Each build of the Layer starts with no records.
+
+### `CheckpointStoreApi`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type * as Real from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import type {
+  CheckpointRecord,
+  Loaded,
+  ProjectionFault,
+  ProjectionKey,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface CheckpointStoreApi {
+  readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
+  readonly compareAndSet: (
+    key: ProjectionKey,
+    ifToken: string,
+    record: CheckpointRecord,
+  ) => Effect.Effect<string, ProjectionFault>;
+  readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
+}
+// ---cut-after---
+same<CheckpointStoreApi, Real.CheckpointStoreApi>(true);
+same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
+```
+
+`CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
+
+- `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`.
+- `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key.
+- `remove` deletes the record of `key`. It ignores a key with no record.
+
+A storage failure fails each call with reason `storage-failure`.
+
+### `fromStore`
+
+```ts
+// ---cut-start---
+import { fromStore as real } from "@streamsy/projection/checkpoint";
+import type { CheckpointStoreApi, EncodedStore } from "@streamsy/projection/checkpoint";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function fromStore(store: EncodedStore): CheckpointStoreApi;
+// ---cut-after---
+same<typeof fromStore, typeof real>(true);
+```
+
+`fromStore` builds a [`CheckpointStoreApi`](#checkpointstoreapi) over an [`EncodedStore`](#encodedstore). Both shipped Layers use it. Exported from `@streamsy/projection/checkpoint` only.
+
+- It stores each record under [`recordKey(key)`](#recordkey), as a JSON object with the record and a version number. The token is the version as a string.
+- `compareAndSet` loads the record, compares the token, and writes the next version, all in one `withTransaction` call.
+
+### `EncodedStore`
+
+```ts
+// ---cut-start---
+import type { Effect, Option } from "effect";
+import type { ProjectionFault } from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface EncodedStore {
+  readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
+  readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
+  readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
+  readonly withTransaction: <A, E, R>(
+    body: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProjectionFault, R>;
+}
+// ---cut-after---
+same<EncodedStore, Checkpoint.EncodedStore>(true);
+```
+
+`EncodedStore` is a store of encoded strings by key, which [`fromStore`](#fromstore) turns into a checkpoint store. Exported from `@streamsy/projection/checkpoint` only.
+
+`read` returns `None` for a key with no value. `withTransaction` must run `body` so that no other write to the same key happens between its read and its write. `remove` ignores a key with no value.
+
+## Keys and records
+
+### `ProjectionKey`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ProjectionKey {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+}
+// ---cut-after---
+same<ProjectionKey, Real.ProjectionKey>(true);
+same<ProjectionKey, Checkpoint.ProjectionKey>(true);
+```
+
+A `ProjectionKey` names one checkpoint record: the `id`, `version`, and `generation` of a declaration, and the params that it was bound with, each encoded with its codec. [`Projection.key`](/docs/reference/projection/runners#projectionkey) returns the key of a bound projection.
+
+### `recordKey`
+
+```ts
+// ---cut-start---
+import { recordKey as real } from "@streamsy/projection/checkpoint";
+import type { ProjectionKey } from "@streamsy/projection/checkpoint";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function recordKey(key: ProjectionKey): string;
+// ---cut-after---
+same<typeof recordKey, typeof real>(true);
+```
+
+`recordKey` returns the storage key of a record: a JSON array of `"streamsy.projection.v1"`, the id, the version, the generation, and the params as JSON with sorted keys. Exported from `@streamsy/projection/checkpoint` only.
+
+```ts
+import { recordKey } from "@streamsy/projection/checkpoint";
+
+const key = recordKey({
+  id: "order-totals",
+  version: 1,
+  generation: 2,
+  params: { workspaceId: "ws-42" },
+});
+// ["streamsy.projection.v1","order-totals","1","2","{\"workspaceId\":\"ws-42\"}"]
+```
+
+### `Identity`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type { InputMap } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Identity {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+  readonly inputs: InputMap;
+}
+// ---cut-after---
+same<Identity, Real.Identity>(true);
+```
+
+An `Identity` is what a runner needs to find and check the record of a bound projection: the fields of a [`ProjectionKey`](#projectionkey) and the bound inputs. Every bound projection is an `Identity`. Exported from `@streamsy/projection` only.
+
+### `Loaded`
+
+```ts
+// ---cut-start---
+import type { Option } from "effect";
+import type * as Real from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import type { CheckpointRecord } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Loaded {
+  readonly record: Option.Option<CheckpointRecord>;
+  readonly token: string;
+}
+// ---cut-after---
+same<Loaded, Real.Loaded>(true);
+same<Loaded, Checkpoint.Loaded>(true);
+```
+
+`load` returns a `Loaded`: the stored record, or `None`, and its token. The token is `"0"` when no record exists.
+
+### `CheckpointRecord`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import type * as Checkpoint from "@streamsy/projection/checkpoint";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
+interface CheckpointRecord {
+  readonly identity: { readonly inputs: { readonly [x: string]: string } };
+  readonly inputs: { readonly [x: string]: string };
+  readonly pending?: {
+    readonly ranges: {
+      readonly [x: string]: {
+        readonly from: string;
+        readonly nextOffset: string;
+        readonly count: number;
+        readonly upToDate?: boolean;
+        readonly closed?: boolean;
+        readonly gone?: true;
+      };
+    };
+    readonly seqs?: { readonly [x: string]: number };
+  };
+  readonly closed?: { readonly [x: string]: boolean };
+  readonly ended?: true;
+  readonly state?: string;
+  readonly adapters: {
+    readonly outputs?: {
+      readonly [x: string]: { readonly epoch: number; readonly nextSeq: number };
+    };
+  };
+}
+// ---cut-after---
+same<Flat<CheckpointRecord>, Flat<Real.CheckpointRecord>>(true);
+same<Real.CheckpointRecord, Checkpoint.CheckpointRecord>(true);
+same<typeof Real.CheckpointRecord, typeof Checkpoint.CheckpointRecord>(true);
+same<Flat<typeof Real.CheckpointRecord.Type>, Flat<CheckpointRecord>>(true);
+same<Flat<typeof Real.CheckpointRecord.Encoded>, Flat<CheckpointRecord>>(true);
+```
+
+A `CheckpointRecord` is the stored progress of one projection key. `CheckpointRecord` is also the `Schema.Struct` of the record. Its encoded form is the same object, so `Schema.fromJsonString(CheckpointRecord)` gives its JSON codec.
+
+| Field      | Meaning                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| `identity` | The stream id and content type of each input. A change stops the projection with reason `identity-mismatch`  |
+| `inputs`   | The accepted offset of each input. The next pass reads after it                                              |
+| `pending`  | A pinned unit: the range and item count of each input, and the sequence of each output for `Commit.producer` |
+| `closed`   | The inputs whose close the projection has handled                                                            |
+| `ended`    | `true` when the final unit of a removed input committed. Only `forget` remains                               |
+| `state`    | The state as JSON                                                                                            |
+| `adapters` | The producer epoch and the next sequence of each output of `Commit.producer`                                 |
+
+A change to an input name, stream id, or content type fails the next load with phase `load` and reason `identity-mismatch`. A codec change with the same content type is not detected. Declare a new `generation` to start again.

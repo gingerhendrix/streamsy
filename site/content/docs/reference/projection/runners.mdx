@@ -1,0 +1,1211 @@
+---
+title: Projection runners
+description: Reference for the runners and reads of the Projection namespace in @streamsy/projection. A runner reads the inputs of a bound projection, runs its handler, and commits each unit.
+---
+
+```ts
+import {
+  Projection,
+  ProjectionWakeup,
+  type AttachOptions,
+  type Attachable,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type Unit,
+} from "@streamsy/projection";
+import type { AppendFailure, Decided, Storage } from "@streamsy/core";
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+```
+
+A runner takes the bound projection that [`declaration.at(params)`](/docs/reference/projection/declarations#declaration) returns. It reads each input after its checkpoint offset, runs the handler over the unit, and lets the Commit write the checkpoint. See [Running](/docs/projections/define#running) and [Read, decide, append](/docs/projections/state#read-decide-append).
+
+The signatures use types that have no exported name, such as `Executable`. [Types with no exported name](#types-with-no-exported-name) shows each one. Use one writer for each projection key: one `follow` stream, one attached runner, or one `run` at a time. A second writer fails with a `ProjectionFault` with reason `token-conflict`.
+
+## Runners
+
+### `Projection.pass`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function pass<Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+): Effect.Effect<
+  PassResult<Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+>;
+// ---cut-after---
+same<typeof pass, typeof Projection.pass>(true);
+```
+
+`pass` runs at most one unit and returns a [`PassResult`](/docs/reference/projection/units#passresult). It loads the checkpoint through the Commit, reads one page of each input in declaration order, runs the handler, and passes the unit to the Commit.
+
+- When no input has items and no input reached a new close or removal, `pass` commits nothing. Its status is `source-closed` when every input is closed, and `caught-up` otherwise.
+- When the checkpoint holds a pinned unit, `pass` reads the pinned ranges again and runs that unit first. A Commit that does not pin fails with reason `invalid-record`.
+- When an input is gone, `pass` runs one final unit with `gone` on its slice, then forgets the binding. Its status is `source-closed`.
+- A handler failure fails `pass` with the error of the handler. `pass` does not wrap it.
+- The requirements hold the handler services `R` without the services `P` that the Commit provides, the Commit services `Q`, the output services `OR`, and the input stream services.
+
+### `Projection.run`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function run<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, S, OR>,
+  options?: RunOptions,
+): Effect.Effect<
+  Progress<StateValue<S>, Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+>;
+// ---cut-after---
+same<typeof run, typeof Projection.run>(true);
+```
+
+`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state one time.
+
+- With no `limit`, `run` continues until the inputs are caught up or closed.
+- When `limit` is not a positive safe integer, `run` fails with a `ProjectionFault` with phase `load` and reason `invalid-options`.
+- `run` does not retry a fault.
+- After a gone input, the result holds the state that the final unit committed, although the runner then deletes the record.
+
+### `Projection.follow`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function follow<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, S, OR>,
+  options?: FollowOptions,
+): Stream.Stream<
+  Progress<StateValue<S>, Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+>;
+// ---cut-after---
+same<typeof follow, typeof Projection.follow>(true);
+```
+
+`follow` returns a pull stream of cycles. Each cycle runs [`run`](#projectionrun) to caught up, closed, or `limit`, and each element is the [`Progress`](/docs/reference/projection/units#progress) of one cycle. To run the stream is to be the writer of the key.
+
+- The stream emits after the first cycle, even when it commits nothing. Then it emits after each cycle that commits a unit or reaches `limit`, and after the last cycle when every input is closed or an input is gone. Then it ends.
+- After a caught-up cycle, `follow` waits for a change on any input, for at most `repairIntervalMs`. A wait that finds no input emits nothing.
+- The next cycle runs only when the consumer pulls. A slow consumer gets one element for all the input that arrived while it worked.
+- `follow` retries a `ProjectionFault` whose `retryable` is `true`, and logs a warning for each retry. It uses `options.retry`, then [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry). Other failures fail the stream.
+- `follow` checks `limit` and `repairIntervalMs` at the first pull. A bad value fails the stream with reason `invalid-options`.
+
+### `Projection.attach`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+  options?: AttachOptions,
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>>;
+// ---cut-after---
+same<typeof attach, typeof Projection.attach>(true);
+```
+
+`attach` returns a Layer that runs a projection whenever a local commit writes one of its inputs. It takes the declaration, not a bound projection. Use it on long-lived hosts, such as Bun and Node. On a Cloudflare object, use [`ProjectionWakeup`](#projectionwakeup).
+
+- The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
+- For each written stream id, the `parse` of an input gives the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
+- Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
+- `attach` throws a `RangeError` when `limit` is not a positive safe integer.
+- A failed run logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
+- The set lives in memory. After a crash between a commit and its run, the binding stays late until its source gets its next write.
+- An input on another storage owner never commits here, so it never triggers a run.
+- A binding whose source was removed before its first run is dropped, with a warning.
+
+Do not also run an attached binding under `follow`.
+
+### `ProjectionWakeup`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare const ProjectionWakeup: {
+  attach: <I extends InputMap, E, R, Q, Result, P, OR = never>(
+    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+    options?: AttachOptions,
+  ) => Effect.Effect<
+    {
+      name: string;
+      next: Effect.Effect<Option.Option<number>>;
+      run: Effect.Effect<
+        { more: boolean },
+        E | ProjectionFault,
+        Exclude<R, P> | Q | OR | InputServices<I>
+      >;
+      retry: Schedule.Schedule<unknown>;
+    },
+    never,
+    Scope.Scope | Storage
+  >;
+};
+// ---cut-after---
+same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
+```
+
+`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply. Acquire it in the scope of the object layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
+
+| Field   | Meaning                                                                                   |
+| ------- | ----------------------------------------------------------------------------------------- |
+| `name`  | `streamsy/projection/` and the URI-encoded projection id                                  |
+| `next`  | The current time while a binding has work, or `None` when no binding has work             |
+| `run`   | Runs each binding with work. `more` is `true` when a binding still has work after the run |
+| `retry` | `options.retry`, or the `ProjectionRetry` schedule                                        |
+
+## Reads
+
+### `Projection.read`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function read<Inputs extends InputMap, S = never, Q = never>(
+  projection: Readable<Inputs, S, Q>,
+): Effect.Effect<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Q>;
+// ---cut-after---
+same<typeof read, typeof Projection.read>(true);
+```
+
+`read` returns the state and the offsets of one checkpoint record, so the state always matches the offsets. It loads the record through the Commit and reads no input.
+
+- Before the first unit, the state is the declared initial value, and each offset is the start of its input.
+- For a projection with no `state:`, the state is `undefined`.
+- When the stored inputs differ from the declaration, `read` fails with reason `identity-mismatch`. When the stored state does not decode, it fails with reason `invalid-record`.
+
+### `Projection.current`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function current<Inputs extends InputMap, S, E, R, Q>(
+  projection: CurrentProjection<Inputs, S, E, R, Q>,
+): Effect.Effect<Snapshot<S, Inputs>, E | ProjectionFault, Q | R | InputServices<Inputs>>;
+// ---cut-after---
+same<typeof current, typeof Projection.current>(true);
+```
+
+`current` loads one checkpoint and folds the input tail in memory, so the result includes every entry appended before the call. It takes no lock and writes no checkpoint and no outputs. It needs a projection with `state:`. See [`CurrentProjection`](/docs/reference/projection/declarations#currentprojection).
+
+- `current` reads pages until a page has no items. A growing input can delay the result.
+- A `mapAccum` or `mapAccumBatch` handler computes the state, and `current` drops the emitted items.
+- A pinned unit is folded from the committed offsets.
+- With no checkpoint, `current` folds each input from the start. The handler must give the same result for any split of the input into pages.
+
+### `Projection.decide`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+import { Schema } from "effect";
+import type { CheckpointStore } from "@streamsy/projection";
+import { Drafts, Notes } from "./notes-streams.ts";
+// ---cut-end---
+declare function decide<
+  Inputs extends InputMap,
+  const K extends keyof Inputs & string,
+  B,
+  E,
+  R,
+  PE,
+  PR,
+  Q,
+  S,
+>(
+  projection: CurrentProjection<Inputs, S, PE, PR, Q>,
+  spec: DecideSpec<Inputs, K, S, B, E, R>,
+): Effect.Effect<
+  Decided<B>,
+  E | PE | ProjectionFault | AppendFailure<{ readonly expectedOffset: string }>,
+  R | PR | Q | InputServices<Inputs>
+>;
+// ---cut-after---
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class Bad extends Schema.TaggedError<Bad>()("Bad", {}) {}
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<
+  typeof decide<In, "notes", string, Oops, Drafts, Bad, Notes, CheckpointStore, number>,
+  typeof Projection.decide<In, "notes", string, Oops, Drafts, Bad, Notes, CheckpointStore, number>
+>(true);
+```
+
+`decide` calls [`current`](#projectioncurrent), passes the snapshot to `spec.decide`, and appends the items that it returns to the input that `spec.input` names. The append uses the offset of that input in the snapshot as `expectedOffset`. See [`DecideSpec`](/docs/reference/projection/declarations#decidespec).
+
+- When `spec.decide` returns no items, `decide` writes nothing and does not check the tail. `appended` is `false`, and `offset` is the offset that `current` read.
+- After a write, `appended` is `true`, and `offset` is the new tail.
+- When its own append fails with `OffsetMismatch`, `decide` folds and decides again, while `spec.retry` allows. The default is `Schedule.recurs(3)`, so one call makes at most four appends. When the schedule ends, `decide` fails with the last `OffsetMismatch`.
+- `decide` retries no other failure. An `OffsetMismatch` that `spec.decide` raises fails the call.
+
+The package declares the error type as a longer conditional type. That type also names `LostRace`, a private class that `decide` removes from its errors, so it reduces to the union above.
+
+### `Projection.forget`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function forget<R>(
+  projection: ProjectionKey & { readonly commit: Pick<Commit.Commit<never, never, R>, "remove"> },
+): Effect.Effect<void, ProjectionFault, R>;
+// ---cut-after---
+same<typeof forget, typeof Projection.forget>(true);
+```
+
+`forget` deletes the checkpoint record of a bound projection through the `remove` of its Commit. It deletes no stream.
+
+- When the Commit has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`. Every built-in Commit has `remove`.
+- Stop the follower of the key first, or use a new generation.
+- For a projection with outputs, delete the output streams first. The producer sequences of the outputs start again after `forget`.
+
+## Helpers
+
+### `Projection.items`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function items<Inputs extends InputMap>(
+  batch: Slices<Inputs>,
+): ReadonlyArray<Entry<Inputs>>;
+// ---cut-after---
+same<typeof items, typeof Projection.items>(true);
+```
+
+`items` flattens a batch into [`Entry`](/docs/reference/projection/units#entry) values: the items of each input in declaration order, then in stream order. `index` counts from `0` across the whole batch. The entry handlers of `fold`, `emit`, and `mapAccum` see the entries in this order.
+
+### `Projection.each`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function each<Inputs extends InputMap, E, R, P = Record<string, string>>(
+  handle: (entry: Entry<Inputs>, unit: Unit<P>) => Effect.Effect<unknown, E, R>,
+): (batch: Slices<Inputs>, unit: Unit<P>) => Effect.Effect<void, E, R>;
+// ---cut-after---
+same<typeof each, typeof Projection.each>(true);
+```
+
+`each` turns a handler for one entry into a `process` handler. The returned handler runs `handle` for each entry of [`items`](#projectionitems), one at a time and in order, and discards each result. The first failure stops the batch.
+
+### `Projection.key`
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-end---
+declare function key(projection: Identity): ProjectionKey;
+// ---cut-after---
+same<typeof key, typeof Projection.key>(true);
+```
+
+`key` returns the [`ProjectionKey`](/docs/reference/projection/checkpoint-store#projectionkey) of a bound projection: its `id`, `version`, `generation`, and encoded `params`. It drops `inputs`.
+
+## Types with no exported name
+
+The runner signatures use these types. The package does not export them.
+
+```ts
+// ---cut-start---
+import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import {
+  Projection,
+  type AttachOptions,
+  type Attachable,
+  type Commit,
+  type CurrentProjection,
+  type DecideSpec,
+  type Entry,
+  type FollowOptions,
+  type Identity,
+  type InputMap,
+  type PassResult,
+  type ProjectionFault,
+  type ProjectionKey,
+  type Progress,
+  type RunOptions,
+  type Slices,
+  type Snapshot,
+  type StateSchema,
+  type Unit,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+// The bound projection that `pass`, `run`, `follow`, and `attach` take.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+
+// The state of a bound projection. `initial` has the params bound.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The stream services of the inputs.
+type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
+
+// The state type of a result: `undefined` for a projection with no `state:`.
+type StateValue<S> = [S] extends [never] ? undefined : S;
+
+// What `read` needs from a bound projection.
+type Readable<Inputs extends InputMap, S, Q> = Identity & {
+  readonly inputs: Inputs;
+  readonly state?: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+};
+// ---cut-after---
+declare function run<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR = never>(
+  projection: Executable<Inputs, E, R, Q, Result, P, S, OR>,
+  options?: RunOptions,
+): Effect.Effect<
+  Progress<StateValue<S>, Inputs>,
+  E | ProjectionFault,
+  Exclude<R, P> | Q | OR | InputServices<Inputs>
+>;
+same<typeof run, typeof Projection.run>(true);
+declare function read<Inputs extends InputMap, S = never, Q = never>(
+  projection: Readable<Inputs, S, Q>,
+): Effect.Effect<Snapshot<StateValue<S>, Inputs>, ProjectionFault, Q>;
+same<typeof read, typeof Projection.read>(true);
+```
+
+A bound projection from any constructor is an `Executable`. `BoundState` is the state of a bound projection: `initial` already has the params bound, and it runs only when no state is stored.

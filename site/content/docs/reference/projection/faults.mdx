@@ -1,0 +1,90 @@
+---
+title: Faults and retry
+description: Reference for ProjectionFault and ProjectionRetry in @streamsy/projection. A projection fails with a ProjectionFault that names where the run stopped and why.
+---
+
+```ts
+import { ProjectionFault, ProjectionRetry } from "@streamsy/projection";
+import type { Context, Schedule } from "effect";
+```
+
+A runner fails with a `ProjectionFault`, or with the error of the handler itself. `follow` and the attached runners retry a retryable fault under `ProjectionRetry`. See [Faults](/docs/projections/state#faults).
+
+## `ProjectionFault`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same, type Fields, type Flat } from "./reference-check.ts";
+// ---cut-end---
+interface ProjectionFault {
+  readonly _tag: "ProjectionFault";
+  readonly phase: "load" | "read" | "pin" | "process" | "checkpoint";
+  readonly reason:
+    | "history-unavailable"
+    | "identity-mismatch"
+    | "invalid-record"
+    | "invalid-source"
+    | "invalid-options"
+    | "invalid-output"
+    | "token-conflict"
+    | "range-unreproducible"
+    | "stale-epoch"
+    | "storage-failure"
+    | "unsupported-composition";
+  readonly input?: string;
+  readonly retryable: boolean;
+}
+// ---cut-after---
+same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
+```
+
+`ProjectionFault` is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. `phase` says where the run stopped, and `reason` says why. `input` names the input when one input caused the fault. The fault also has a `message` string and an optional `cause` that holds the underlying failure, such as a `StorageFault`.
+
+| Phase        | Where the run stopped                                          |
+| ------------ | -------------------------------------------------------------- |
+| `load`       | The record, the input identity, or the options                 |
+| `read`       | An input read                                                  |
+| `pin`        | The pin write, the read of a pinned range, or an output append |
+| `process`    | The handler result, or a write while the handler ran           |
+| `checkpoint` | The checkpoint write after the handler. The handler has run    |
+
+| Reason                    | Meaning                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| `history-unavailable`     | An input does not have the history after its checkpoint offset                                |
+| `identity-mismatch`       | The stream id or content type of an input differs from the record. Use a new generation       |
+| `invalid-record`          | The stored record or state does not decode, or a pinned unit does not fit the Commit          |
+| `invalid-source`          | An input read is invalid, does not advance, or does not decode                                |
+| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                  |
+| `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append |
+| `token-conflict`          | Another writer changed the record first                                                       |
+| `range-unreproducible`    | A pinned range cannot be read again                                                           |
+| `stale-epoch`             | A newer generation has written to an output                                                   |
+| `storage-failure`         | Storage, transport, or SQL failed                                                             |
+| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                  |
+
+`retryable` is `true` when `reason` is `storage-failure` and the cause is not a Streams fault, or is a retryable one. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
+
+## `ProjectionRetry`
+
+```ts
+// ---cut-start---
+import type { Context, Schedule } from "effect";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const ProjectionRetry: Context.Reference<Schedule.Schedule<unknown>>;
+// ---cut-after---
+same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
+```
+
+`ProjectionRetry` is the reference of the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
+
+The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
+
+```ts
+import { Effect, Schedule } from "effect";
+import { ProjectionRetry } from "@streamsy/projection";
+
+const withRetry = Effect.provideService(ProjectionRetry, Schedule.spaced("1 second"));
+```

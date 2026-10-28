@@ -1,0 +1,1772 @@
+---
+title: Projection constructors
+description: Reference for the constructors of the Projection namespace in @streamsy/projection. A constructor declares a projection over input streams, and its at method binds the params.
+---
+
+```ts
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Slices,
+  type StateDefinition,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Effect } from "effect";
+```
+
+A constructor returns an inert [`Declaration`](/docs/reference/projection/declarations#declaration). Its `at(params)` binds the params, and a [runner](/docs/reference/projection/runners) runs the bound projection. See [Define and run](/docs/projections/define).
+
+The signatures use types that have no exported name, such as `Common`, `Addresses`, and `RunningDeclaration`. [Types with no exported name](#types-with-no-exported-name) shows each one.
+
+Every constructor takes the fields of `Common`:
+
+| Field        | Meaning                                                                          |
+| ------------ | -------------------------------------------------------------------------------- |
+| `id`         | The projection name. It is part of the checkpoint key                            |
+| `version`    | The declared version. The default is `1`                                         |
+| `generation` | The checkpoint generation. The default is `1`. A new generation starts from zero |
+| `params`     | The param codecs, by name. Use `{}` for a projection with no params              |
+| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both        |
+
+Each stream declaration in `inputs` and `outputs` must declare a subset of `params`, with the same types. When one does not, the compiler reports its field as `never`. A fixed address takes no params from the projection.
+
+## Constructors
+
+### `Projection.fold`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function fold<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  A,
+  SI,
+  E = never,
+  R = never,
+  P = never,
+  Q = CheckpointStore,
+>(
+  definition: Common<C, I> & {
+    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+    readonly commit?: Commit.Commit<Folded<NoInfer<A>>, P, Q>;
+    readonly fold: (
+      state: NoInfer<A>,
+      entry: Entry<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<A, E, R>;
+  },
+): RunningDeclaration<C, I, E, R, Folded<A>, P, Q, A>;
+// ---cut-after---
+same<
+  typeof fold<C0, I0, number, string, Oops, Notes, Drafts, CheckpointStore>,
+  typeof Projection.fold<C0, I0, number, string, Oops, Notes, Drafts, CheckpointStore>
+>(true);
+```
+
+`fold` declares a projection that folds each entry of a unit into one state value. The runner calls `fold` once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. `fold` returns the next value, or an Effect of it.
+
+- `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
+- `commit` is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also accepts a `Folded` result.
+- After each unit, the runner encodes the value with `state.schema`. When the value does not encode, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
+- A step with external effects runs again when a unit is retried. Keep the step free of external effects, or use `Commit.transaction`.
+
+### `Projection.process`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function process<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E = never,
+  R = never,
+  P = never,
+  Q = never,
+  Prepared = void,
+  PE = never,
+  PR = never,
+>(
+  definition: Common<C, I> & {
+    readonly commit: Commit.Commit<void, P, Q>;
+    readonly prepare?: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Effect.Effect<Prepared, PE, PR>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+      prepared: Prepared,
+    ) => Effect.Effect<void, E, R>;
+  },
+): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR>;
+// ---cut-after---
+type Shown = typeof process<C0, I0, Oops, Notes, Drafts, CheckpointStore, number, Error, Workspace>;
+type Real = typeof Projection.process<
+  C0,
+  I0,
+  Oops,
+  Notes,
+  Drafts,
+  CheckpointStore,
+  number,
+  Error,
+  Workspace
+>;
+same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
+same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+```
+
+`process` declares a projection that runs effects. The runner calls `process` once for each unit, with one slice for each input. `process` keeps no state and writes no outputs. [`Projection.each`](/docs/reference/projection/runners#projectioneach) adapts a handler for one entry.
+
+- `commit` is required. `Commit.transaction` runs `process` in the SQL transaction of the checkpoint, and `Commit.atLeastOnce` runs it at least once.
+- `prepare` is optional and needs `Commit.transaction`. With another Commit, `process` throws a `RangeError` when you call it.
+- `Commit.transaction` runs `prepare` before it opens the transaction, and passes its result to `process` as `prepared`. A retry of the unit runs `prepare` again.
+
+### `Projection.emit`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function emit<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const O extends RoutedMap,
+  X extends Emits<O>,
+  E = never,
+  R = never,
+  P = never,
+  Q = never,
+>(
+  definition: Common<C, I> & {
+    readonly commit: Commit.Commit<Emitted<NoInfer<O>>, P, Q>;
+    readonly outputs: O & OutputsWithin<C, O>;
+    readonly emit: ((
+      entry: Entry<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<X, E, R>) &
+      (Exclude<keyof X, keyof O> extends never
+        ? unknown
+        : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
+  },
+): OutputDeclaration<C, I, O, E, R, Emitted<O>, P, Q>;
+// ---cut-after---
+type Shown = typeof emit<C0, I0, O0, Emits<O0>, Oops, Notes, Drafts, CheckpointStore>;
+type Real = typeof Projection.emit<C0, I0, O0, Emits<O0>, Oops, Notes, Drafts, CheckpointStore>;
+same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
+same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+```
+
+`emit` declares a projection that maps each entry to output items. The runner calls `emit` once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order. `emit` returns an [`Emits`](/docs/reference/projection/declarations#emits) object, or an Effect of it, and keeps no state.
+
+- `outputs` names the output streams: stream declarations, fixed addresses, or both. Each output must be a JSON or State stream.
+- The `Emits` object holds an array of items for each output name. A missing name emits nothing. A name that `outputs` does not declare is a compile error on `undeclaredOutput`.
+- `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` appends in the SQL transaction of the checkpoint.
+- `at` throws a `RangeError` when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
+- When an item array is not an array, or a row change does not fit its collection, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
+
+The bound projection also has `streams`: the address of each output after `at` binds the params.
+
+### `Projection.mapAccum`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function mapAccum<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const O extends RoutedMap,
+  A,
+  SI,
+  X extends Emits<O>,
+  E = never,
+  R = never,
+  P = never,
+  Q = never,
+>(
+  definition: Common<C, I> & {
+    readonly commit: Commit.Commit<Accumulated<NoInfer<A>, NoInfer<O>>, P, Q>;
+    readonly outputs: O & OutputsWithin<C, O>;
+    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+  } & {
+    readonly mapAccum: ((
+      state: NoInfer<A>,
+      entry: Entry<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<readonly [A, X], E, R>) &
+      (Exclude<keyof X, keyof O> extends never
+        ? unknown
+        : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
+  },
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
+// ---cut-after---
+type Shown = typeof mapAccum<
+  C0,
+  I0,
+  O0,
+  number,
+  string,
+  Emits<O0>,
+  Oops,
+  Notes,
+  Drafts,
+  CheckpointStore
+>;
+type Real = typeof Projection.mapAccum<
+  C0,
+  I0,
+  O0,
+  number,
+  string,
+  Emits<O0>,
+  Oops,
+  Notes,
+  Drafts,
+  CheckpointStore
+>;
+same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
+same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+```
+
+`mapAccum` declares a projection that threads a state value through each entry and emits output items. The runner calls `mapAccum` once for each entry, with the value that the previous call returned. `mapAccum` returns `[state, emits]`, or an Effect of it.
+
+`state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required: `Commit.producer` or `Commit.transaction`.
+
+### `Projection.mapAccumBatch`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function mapAccumBatch<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const O extends RoutedMap,
+  A,
+  SI,
+  X extends Emits<O>,
+  E = never,
+  R = never,
+  P = never,
+  Q = never,
+>(
+  definition: Common<C, I> & {
+    readonly commit: Commit.Commit<Accumulated<NoInfer<A>, NoInfer<O>>, P, Q>;
+    readonly outputs: O & OutputsWithin<C, O>;
+    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+  } & {
+    readonly mapAccumBatch: ((
+      state: NoInfer<A>,
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<readonly [A, X], E, R>) &
+      (Exclude<keyof X, keyof O> extends never
+        ? unknown
+        : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
+  },
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
+// ---cut-after---
+type Shown = typeof mapAccumBatch<
+  C0,
+  I0,
+  O0,
+  number,
+  string,
+  Emits<O0>,
+  Oops,
+  Notes,
+  Drafts,
+  CheckpointStore
+>;
+type Real = typeof Projection.mapAccumBatch<
+  C0,
+  I0,
+  O0,
+  number,
+  string,
+  Emits<O0>,
+  Oops,
+  Notes,
+  Drafts,
+  CheckpointStore
+>;
+same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
+same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+```
+
+`mapAccumBatch` declares a projection that computes the next state value and the output items once for each unit. The runner calls `mapAccumBatch` with the whole batch. It returns `[state, emits]`, or an Effect of it.
+
+The rules of [`Projection.mapAccum`](#projectionmapaccum) apply. A unit can hold any number of entries, so the handler must give the same final rows for any split of the input into units. The emitted history can differ.
+
+### `Projection.wake`
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+// ---cut-end---
+declare function wake<
+  C extends StreamRoute.ParamCodecs,
+  const I extends Input,
+  const O extends WakeOutput,
+>(definition: WakeDefinition<C, I, O>): WakeDeclaration<C, I, O>;
+// ---cut-after---
+type Shown = typeof wake<C0, typeof Drafts, typeof UserWake>;
+type Real = typeof Projection.wake<C0, typeof Drafts, typeof UserWake>;
+same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
+same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+```
+
+`wake` declares a wake projection: each unit of one source stream writes one row to one wake stream. `input` is the source, and `output` is a stream class from [`Streamsy.wake`](/docs/reference/core/wake#streamsywake). Both must declare a subset of `params`.
+
+- Each unit appends one upsert `{ stream, offset, closed? }` with `Commit.producer`. Several source writes in one unit give one row, and a retry of the append answers `Duplicate`.
+- `offset` is the `nextOffset` of the source slice. `closed` is `true` when the source is closed.
+- When the source is removed or expires, the binding appends a delete of its row, and the runner then forgets the binding.
+- `Commit.producer` creates a missing wake stream on its own storage owner. A wake stream on another owner must exist before the first append.
+- The declaration needs `CheckpointStore`. It has no `commit` field and keeps the state `null`.
+
+```ts
+// @filename: streams.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+export class Files extends Streamsy.json<Files>()("Docs/Files", "users/:user/files", {
+  params: { user: Schema.String },
+  schema: Schema.String,
+}) {}
+export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { Schema } from "effect";
+import { Projection } from "@streamsy/projection";
+import { Files, UserWake } from "./streams.ts";
+
+const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: Schema.String },
+  input: Files,
+  output: UserWake,
+});
+```
+
+## Types with no exported name
+
+The constructor signatures use these types. The package does not export them, so you cannot import them. They are shown here so that you can read the signatures.
+
+```ts
+// ---cut-start---
+import { Schema, type Effect } from "effect";
+import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  Projection,
+  type Accumulated,
+  type CheckpointStore,
+  type Commit,
+  type Declaration,
+  type Emits,
+  type Emitted,
+  type Entry,
+  type Folded,
+  type Identity,
+  type InputMap,
+  type ProjectionFault,
+  type Slices,
+  type StateDefinition,
+  type StateSchema,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Drafts, Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
+// A stream declaration. `at` resolves it with the projection params.
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+
+// One input or output: a stream declaration, or a fixed address.
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+type Inputs = Readonly<Record<string, Input>>;
+type RoutedMap = Inputs;
+
+// The address of each input after `at` binds the params.
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+// The fields that every constructor takes. `Within` makes an input `never` when
+// its params are not projection params of the same type.
+interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly inputs: I & Within<C, I>;
+}
+type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
+  readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
+};
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
+type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
+  ? Invalid<C, DeclaredParams<X>>
+  : never;
+type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+type Invalid<C extends StreamRoute.ParamCodecs, P> = {
+  readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
+    ? P[Name] extends StreamRoute.Params<C>[Name]
+      ? StreamRoute.Params<C>[Name] extends P[Name]
+        ? never
+        : Name
+      : Name
+    : Name;
+}[keyof P];
+
+// The item type of one output, and the services of all outputs.
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type Services<O extends RoutedMap> = {
+  [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
+}[keyof O];
+
+// What a constructor returns. `at` gives the bound projection that runners take.
+type RunningDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  S = never,
+  OR = never,
+> = Declaration<
+  C,
+  Omit<
+    Executable<Addresses<I>, E | ProjectionFault, R, Q, Result, P, S, OR>,
+    "process" | "prepare" | "state"
+  > & {
+    readonly state: [S] extends [never] ? undefined : BoundState<S>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit,
+      encoded?: string,
+    ) => Effect.Effect<Result, E | ProjectionFault, R>;
+  }
+>;
+type OutputDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  E,
+  R,
+  Result,
+  P,
+  Q,
+  A = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  readonly at: (params: StreamRoute.Params<C>) => ReturnType<
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+  > & {
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+  };
+};
+type AccumulatingDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  O extends RoutedMap,
+  A,
+  E,
+  R,
+  P,
+  Q,
+> = OutputDeclaration<C, I, O, E, R, Accumulated<A, O>, P, Q, A>;
+
+// The bound projection that the runners take, and its bound state.
+interface Executable<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P = never,
+  S = unknown,
+  OR = never,
+> extends Identity {
+  readonly inputs: I;
+  readonly state?: BoundState<S>;
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly commit: Commit.Commit<Result, P, Q>;
+  readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
+  readonly process: (
+    batch: Slices<I>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+  ) => Effect.Effect<Result, E, R | P>;
+}
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+
+// The definition and result of `Projection.wake`.
+type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly input: I & OneWithin<C, I>;
+  readonly output: O & OneWithin<C, O>;
+}
+type WakeDeclaration<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O extends Input,
+> = AccumulatingDeclaration<
+  C,
+  { readonly source: I },
+  { readonly wake: O },
+  null,
+  never,
+  never,
+  never,
+  CheckpointStore
+>;
+// ---cut-after---
+// Concrete arguments for the checks: a declaration input with params, a fixed
+// address, a State output, and a JSON output.
+type C0 = { readonly draftId: typeof Schema.String; readonly workspaceId: typeof Schema.String };
+type I0 = { readonly drafts: typeof Drafts; readonly notes: ReturnType<(typeof Notes)["at"]> };
+type O0 = { readonly workspace: typeof Workspace; readonly copies: typeof Notes };
+class Oops extends Schema.TaggedError<Oops>()("Oops", {}) {}
+class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:workspaceId/wake", {
+  params: { workspaceId: Schema.String },
+}) {}
+same<
+  typeof fold<C0, I0, number, string, Oops, Notes, Drafts, CheckpointStore>,
+  typeof Projection.fold<C0, I0, number, string, Oops, Notes, Drafts, CheckpointStore>
+>(true);
+declare function fold<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  A,
+  SI,
+  E = never,
+  R = never,
+  P = never,
+  Q = CheckpointStore,
+>(
+  definition: Common<C, I> & {
+    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+    readonly commit?: Commit.Commit<Folded<NoInfer<A>>, P, Q>;
+    readonly fold: (
+      state: NoInfer<A>,
+      entry: Entry<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+    ) => Step<A, E, R>;
+  },
+): RunningDeclaration<C, I, E, R, Folded<A>, P, Q, A>;
+same<Flat<Item<typeof Workspace>>, Flat<NonNullable<Emits<O0>["workspace"]>[number]>>(true);
+same<Item<typeof Notes>, NonNullable<Emits<O0>["copies"]>[number]>(true);
+same<
+  Flat<ReturnType<typeof wake<C0, typeof Drafts, typeof UserWake>>>,
+  Flat<ReturnType<typeof Projection.wake<C0, typeof Drafts, typeof UserWake>>>
+>(true);
+declare function wake<
+  C extends StreamRoute.ParamCodecs,
+  const I extends Input,
+  const O extends WakeOutput,
+>(definition: WakeDefinition<C, I, O>): WakeDeclaration<C, I, O>;
+```
+
+| Type                                              | Meaning                                                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Input`, `Inputs`, `RoutedMap`                    | A stream declaration or a fixed address, and a record of them by name                        |
+| `AddressOf`, `Addresses`                          | The address of each input after `at` binds the params                                        |
+| `Common`                                          | The fields that every constructor takes                                                      |
+| `Within`, `OutputsWithin`, `OneWithin`            | The param check: a stream whose params are not projection params of the same type is `never` |
+| `Item`, `Services`                                | The item type of one output, and the stream services of all outputs                          |
+| `RunningDeclaration`                              | The declaration that `fold` and `process` return                                             |
+| `OutputDeclaration`, `AccumulatingDeclaration`    | The declarations with outputs. Their bound projection also has `streams`                     |
+| `Executable`, `BoundState`                        | The bound projection that the runners take, and its state with `initial` bound to the params |
+| `WakeOutput`, `WakeDefinition`, `WakeDeclaration` | The output, definition, and result of `Projection.wake`                                      |

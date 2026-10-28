@@ -1,0 +1,269 @@
+---
+title: Declarations and state
+description: Reference for the declaration and state types in @streamsy/projection. A declaration binds params into a projection, and a state definition sets the value that a projection keeps.
+---
+
+```ts
+import type {
+  CurrentProjection,
+  DecideSpec,
+  Declaration,
+  Emits,
+  Initial,
+  Snapshot,
+  StateDefinition,
+  StateSchema,
+  Step,
+} from "@streamsy/projection";
+import type { Decision, OffsetMismatch } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Effect, Option, Schedule, Schema } from "effect";
+```
+
+The [constructors](/docs/reference/projection/constructors) return a `Declaration`, and take these state and step types. See [Define and run](/docs/projections/define) and [State](/docs/projections/state#state).
+
+## Declarations
+
+### `Declaration`
+
+```ts
+// ---cut-start---
+import type { Option, Schema } from "effect";
+import type { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+type Input = StreamDeclaration | Streamsy.Address<any, any>;
+// ---cut-end---
+interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Codecs;
+  readonly inputs: Inputs;
+  readonly at: (params: StreamRoute.Params<Codecs>) => Bound;
+  readonly parse: (id: string) => Option.Option<Partial<StreamRoute.Params<Codecs>>>;
+}
+
+// Inputs has no exported name. It is the record of input stream declarations and
+// fixed addresses, by name. See /docs/reference/projection/constructors.
+type Inputs = Readonly<Record<string, Input>>;
+// ---cut-after---
+type C0 = { readonly user: typeof Schema.String };
+same<Declaration<C0, number>, Real.Declaration<C0, number>>(true);
+same<Declaration<{}, string>, Real.Declaration<{}, string>>(true);
+```
+
+A `Declaration` is the inert value that a constructor returns. It reads no stream and holds no resource. `Bound` is the bound projection that `at` returns, which the [runners](/docs/reference/projection/runners) take.
+
+| Field        | Meaning                                                        |
+| ------------ | -------------------------------------------------------------- |
+| `id`         | The projection name                                            |
+| `version`    | The declared version, `1` when the definition leaves it out    |
+| `generation` | The declared generation, `1` when the definition leaves it out |
+| `params`     | The param codecs, by name                                      |
+| `inputs`     | The declared inputs, before `at` binds them                    |
+| `at`         | Binds the params and returns the bound projection              |
+| `parse`      | Gives the params of a stream id that one of the inputs owns    |
+
+`at` encodes each param with its codec, and throws a `RangeError` when a param does not encode. For a declaration with outputs, `at` also checks the outputs. See [`Projection.emit`](/docs/reference/projection/constructors#projectionemit).
+
+`parse` tries the stream declarations in `inputs` in order, and returns the params from the first one whose route parses `id`. An input that declares fewer params than the projection gives only its own params. `parse` skips fixed addresses, and returns `None` when no input parses `id`.
+
+### `CurrentProjection`
+
+```ts
+// ---cut-start---
+import type { Effect, Schema } from "effect";
+import type * as Real from "@streamsy/projection";
+import type { Commit, Identity, InputMap, Slices, StateSchema, Unit } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface CurrentProjection<Inputs extends InputMap, S, E, R, Q> extends Identity {
+  readonly inputs: Inputs;
+  readonly state: BoundState<S>;
+  readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
+  readonly process: (
+    batch: Slices<Inputs>,
+    unit: Unit,
+    encoded?: string,
+  ) => Effect.Effect<{ readonly value: S; readonly encoded: string }, E, R>;
+}
+
+// BoundState has no exported name. It is the state of a bound projection, with the
+// params already passed to `initial`.
+interface BoundState<A> {
+  readonly schema: StateSchema<A>;
+  readonly initial: () => A;
+}
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<
+  CurrentProjection<In, number, Error, Notes, string>,
+  Real.CurrentProjection<In, number, Error, Notes, string>
+>(true);
+```
+
+A `CurrentProjection` is a bound projection with `state:`, as [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) and [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) take it. A projection from `fold`, `mapAccum`, or `mapAccumBatch` fits. A projection with no `state:` does not, and the compiler reports it. `current` drops the output items of the handler.
+
+### `DecideSpec`
+
+```ts
+// ---cut-start---
+import type { Effect, Schedule } from "effect";
+import type { Decision, OffsetMismatch } from "@streamsy/core";
+import type * as Real from "@streamsy/projection";
+import type { InputMap, ItemOf, Snapshot } from "@streamsy/projection";
+import { Notes } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface DecideSpec<Inputs extends InputMap, K extends keyof Inputs, S, B, E, R> {
+  readonly input: K;
+  readonly decide: (
+    snapshot: Snapshot<S, Inputs>,
+  ) => Effect.Effect<Decision<B, ItemOf<Inputs[K]>>, E, R>;
+  readonly retry?: Schedule.Schedule<unknown, OffsetMismatch>;
+}
+// ---cut-after---
+type In = { readonly notes: ReturnType<(typeof Notes)["at"]> };
+same<
+  DecideSpec<In, "notes", number, string, Error, Notes>,
+  Real.DecideSpec<In, "notes", number, string, Error, Notes>
+>(true);
+```
+
+[`Projection.decide`](/docs/reference/projection/runners#projectiondecide) takes a `DecideSpec`.
+
+| Field    | Meaning                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------- |
+| `input`  | The name of the input to append to. Its offset in the snapshot is the `expectedOffset` of the append       |
+| `decide` | Returns the answer and the items to append. It must not write                                              |
+| `retry`  | The schedule for a retry after the append fails with `OffsetMismatch`. The default is `Schedule.recurs(3)` |
+
+The items of the `Decision` have the item type of the input that `input` names.
+
+## State
+
+### `StateDefinition`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import type * as Real from "@streamsy/projection";
+import type { Initial, StateSchema } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StateDefinition<A, I = unknown, P = Record<string, string>> {
+  readonly schema: StateSchema<A, I>;
+  readonly initial: Initial<A, P>;
+}
+// ---cut-after---
+same<
+  StateDefinition<number, string, { readonly user: string }>,
+  Real.StateDefinition<number, string, { readonly user: string }>
+>(true);
+same<StateDefinition<number>, Real.StateDefinition<number>>(true);
+```
+
+A `StateDefinition` is the `state:` field of `fold`, `mapAccum`, and `mapAccumBatch`. The runner keeps one value for each projection key, in the checkpoint record with the input offsets. Each save replaces the value, and the record keeps no history.
+
+`schema` encodes the value to JSON for the record. A change to the encoded form needs a new `generation`. `initial` gives the value before the first unit, and the runner calls it only when no state is stored. `P` is the type of the decoded params.
+
+### `StateSchema`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateSchema<A, I = unknown> = Schema.Codec<A, I>;
+// ---cut-after---
+same<StateSchema<number, string>, Real.StateSchema<number, string>>(true);
+same<StateSchema<number>, Real.StateSchema<number>>(true);
+```
+
+`StateSchema` is the codec of a state value. It needs no services to decode or encode. The runner stores the value as `Schema.fromJsonString(schema)` encodes it. A stored value that does not decode fails the run with a `ProjectionFault` with phase `load` and reason `invalid-record`.
+
+### `Initial`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Initial<A, P = Record<string, string>> = A | ((params: P) => A);
+// ---cut-after---
+same<Initial<number, { readonly user: string }>, Real.Initial<number, { readonly user: string }>>(
+  true,
+);
+same<Initial<number>, Real.Initial<number>>(true);
+```
+
+`Initial` is the initial state value, or a function of the decoded params that returns it. When `initial` is a function, the runner calls it with the params, so a state value cannot be a function.
+
+## Steps
+
+### `Step`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type * as Real from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Step<X, E = never, R = never> = X | Effect.Effect<X, E, R>;
+// ---cut-after---
+same<Step<number, Error, string>, Real.Step<number, Error, string>>(true);
+same<Step<number>, Real.Step<number>>(true);
+```
+
+`Step` is the return type of the `fold`, `emit`, `mapAccum`, and `mapAccumBatch` handlers: the value, or an Effect of it. The runner runs an Effect, and uses a plain value as it is.
+
+### `Emits`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import type { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type * as Real from "@streamsy/projection";
+import { Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
+type Emits<O extends RoutedMap> = {
+  readonly [K in keyof O]?: ReadonlyArray<Item<O[K]>>;
+};
+
+// RoutedMap and Item have no exported name. RoutedMap is the record of output
+// stream declarations and fixed addresses, by name. Item is the item type of one
+// output: a DurableState.Entry for a State stream, or the decoded item of a JSON
+// stream. See /docs/reference/projection/constructors.
+// ---cut-after---
+type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
+  Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
+type RoutedMap = Readonly<Record<string, StreamDeclaration | Streamsy.Address<any, any>>>;
+type AddressOf<X> = X extends StreamDeclaration
+  ? ReturnType<X["at"]>
+  : X extends Streamsy.Address<any, any>
+    ? X
+    : never;
+type Item<T> =
+  AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
+    ? DurableState.Entry<C>
+    : AddressOf<T> extends { readonly codec: Schema.Codec<infer A, any, any, any> }
+      ? A
+      : never;
+type O0 = { readonly workspace: typeof Workspace; readonly notes: typeof Notes };
+same<
+  Flat<NonNullable<Emits<O0>["workspace"]>[number]>,
+  Flat<NonNullable<Real.Emits<O0>["workspace"]>[number]>
+>(true);
+same<NonNullable<Emits<O0>["notes"]>[number], NonNullable<Real.Emits<O0>["notes"]>[number]>(true);
+same<keyof Emits<O0>, keyof Real.Emits<O0>>(true);
+```
+
+`Emits` is the object that an output handler returns: an array of items for each output name. A missing name emits nothing, and an empty array uses no producer sequence. The items of a State output are [`DurableState.Entry`](/docs/reference/core/durable-state#durablestateentry) values: row changes, and State control messages such as `StreamAddress.reset()`. The items of a JSON output have its item type.

@@ -23,3 +23,10 @@ export declare const same: <A, B>(check: Same<A, B>) => void;
  * without the members that every Effect error has.
  */
 export type Fields<E> = Pick<E, Exclude<keyof E, keyof Cause.YieldableError>>;
+
+/**
+ * The properties of `T` in one object type. `Same` can report two intersections as
+ * different when their members are the same, so compare `Flat<A>` with `Flat<B>` when
+ * a type is an intersection.
+ */
+export type Flat<T> = { [K in keyof T]: T[K] };

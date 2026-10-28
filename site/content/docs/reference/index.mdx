@@ -37,4 +37,16 @@ The site build compares each signature on these pages with the real export. When
 | [StreamRoute](/docs/reference/core/stream-route)                | The route functions and types (`@streamsy/core/protocol`)                          |
 | [Testing](/docs/reference/core/testing)                         | `StorageContract`, `faultyStorage`, `layerTest` (`@streamsy/core/testing`)         |
 
-These pages cover the public entry points of `@streamsy/core`: the root, `/http`, `/remote`, `/protocol`, and `/testing`. The other packages have no reference pages yet.
+## `@streamsy/projection`
+
+| Page                                                               | Exports                                                                      |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [Projection constructors](/docs/reference/projection/constructors) | `Projection.fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch`, `wake`    |
+| [Projection runners](/docs/reference/projection/runners)           | `Projection.pass`, `run`, `follow`, `attach`, the reads, `ProjectionWakeup`  |
+| [Declarations and state](/docs/reference/projection/declarations)  | `Declaration`, `CurrentProjection`, `DecideSpec`, the state and step types   |
+| [Units and progress](/docs/reference/projection/units)             | `Slice`, `Entry`, `Unit`, `Range`, the results, and the runner options       |
+| [Commit](/docs/reference/projection/commit)                        | The `Commit` namespace, the handler results, `HandlerFailed`, `Transaction`  |
+| [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `CheckpointStore`, `CheckpointRecord`, and `@streamsy/projection/checkpoint` |
+| [Faults and retry](/docs/reference/projection/faults)              | `ProjectionFault`, `ProjectionRetry`                                         |
+
+These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`) and of `@streamsy/projection` (the root and `/checkpoint`). The other packages have no reference pages yet.

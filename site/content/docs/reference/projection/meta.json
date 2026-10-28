@@ -1,0 +1,12 @@
+{
+  "title": "@streamsy/projection",
+  "pages": [
+    "constructors",
+    "runners",
+    "declarations",
+    "units",
+    "commit",
+    "checkpoint-store",
+    "faults"
+  ]
+}
