@@ -1,0 +1,4 @@
+{
+  "title": "@streamsy/storage",
+  "pages": ["sql-storage", "bun-storage", "durable-object-storage"]
+}

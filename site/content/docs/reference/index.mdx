@@ -49,4 +49,12 @@ The site build compares each signature on these pages with the real export. When
 | [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `CheckpointStore`, `CheckpointRecord`, and `@streamsy/projection/checkpoint` |
 | [Faults and retry](/docs/reference/projection/faults)              | `ProjectionFault`, `ProjectionRetry`                                         |
 
-These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`) and of `@streamsy/projection` (the root and `/checkpoint`). The other packages have no reference pages yet.
+## `@streamsy/storage`
+
+| Page                                                                   | Exports                                                                                       |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [SqlStorage](/docs/reference/storage/sql-storage)                      | `SqlStorage.layer`, `layerProtocol`, `clientLayer`, `Options` and the defaults                |
+| [BunStorage](/docs/reference/storage/bun-storage)                      | `BunStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/bun`)                      |
+| [DurableObjectStorage](/docs/reference/storage/durable-object-storage) | `DurableObjectStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/durable-object`) |
+
+These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), and of `@streamsy/storage` (the root, `/bun`, and `/durable-object`). The other packages have no reference pages yet.

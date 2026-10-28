@@ -1,0 +1,146 @@
+---
+title: BunStorage
+description: Reference for the BunStorage namespace in @streamsy/storage/bun. It keeps streams in one SQLite file through bun:sqlite.
+---
+
+```ts
+import { BunStorage } from "@streamsy/storage/bun";
+import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { SqliteClient } from "@effect/sql-sqlite-bun";
+import type { Layer } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+```
+
+`BunStorage` keeps streams in one SQLite file on Bun. It builds the `bun:sqlite` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [SQLite storage](/docs/hosting/bun#sqlite-storage).
+
+## Layers
+
+### `BunStorage.layer`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { BunStorage } from "@streamsy/storage/bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  group: Streamsy.Group<Keys>,
+  options: BunStorage.Options,
+): Layer.Layer<
+  | CommitBoundary
+  | OwnerRecords
+  | Reactivity.Reactivity
+  | SqlClient.SqlClient
+  | Storage
+  | Streamsy.Host<Streamsy.Group<Keys>>,
+  StorageFault
+>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layer, typeof BunStorage.layer>(true);
+```
+
+`layer` returns a Layer that provides the stream services of `group` over one SQLite file, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), `OwnerRecords`, and the `SqlClient` with its `Reactivity`. Your own SQL can use that client and commit with a stream mutation. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { BunStorage } from "@streamsy/storage/bun";
+import { shop } from "./streams.ts";
+
+const storage = BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } });
+```
+
+Before the client opens a file, the build prepares it. A `filename` of `":memory:"` skips these steps.
+
+1. When the open may write and create, which is the default, the build creates the parent folder. A `readonly` open, or `create: false`, creates no folder and no file.
+2. When the file exists, the build reads its format. It fails with operation `migration.open` when the file holds an older Streamsy format or a newer schema version, and does not change the file.
+3. Unless the open is `readonly` or sets `disableWAL`, the build sets WAL mode and a busy timeout of 0 on the file.
+
+The client also has a busy timeout of 0 unless `client.busyTimeout` sets one. The store retries a busy transaction itself, as `transactionRetryAttempts` and `transactionRetryDelayMs` set, so a busy file does not block the event loop. A SQLite error while the file opens becomes a [`StorageFault`](/docs/reference/core/faults#storagefault) with operation `migration.open`. The fault is retryable when the file is busy or locked, and the preparation steps retry it in the same way.
+
+Several Bun processes can share one file. A commit in one process wakes the readers in another within `repairIntervalMs`. See [Several processes](/docs/hosting/bun#several-processes).
+
+The migration, the store, and the option checks follow the rules of [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer). The long-poll timeout is 30 s unless `longPollTimeoutMs` sets one.
+
+### `BunStorage.layerProtocol`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+import type { CommitBoundary, Storage, StorageFault } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { BunStorage } from "@streamsy/storage/bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layerProtocol(
+  options: BunStorage.Options,
+): Layer.Layer<
+  | CommitBoundary
+  | OwnerRecords
+  | Reactivity.Reactivity
+  | SqlClient.SqlClient
+  | Storage
+  | StreamsReader
+  | StreamsWriter,
+  StorageFault
+>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layerProtocol, typeof BunStorage.layerProtocol>(true);
+```
+
+`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite file, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. The file and the options follow the rules of [`layer`](#bunstoragelayer).
+
+## Options
+
+### `BunStorage.Options`
+
+```ts
+// ---cut-start---
+import type { SqliteClient } from "@effect/sql-sqlite-bun";
+import { BunStorage } from "@streamsy/storage/bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Options {
+  readonly client: SqliteClient.SqliteClientConfig;
+  readonly repairIntervalMs?: number;
+  readonly transactionRetryAttempts?: number;
+  readonly transactionRetryDelayMs?: number;
+  readonly readLimit?: number;
+  readonly longPollTimeoutMs?: number;
+}
+// ---cut-after---
+same<Options, BunStorage.Options>(true);
+```
+
+`Options` holds the options of `layer` and `layerProtocol`. `client` is required. It holds the options of `SqliteClient.make` in `@effect/sql-sqlite-bun`, such as `filename`, `readonly`, `create`, `disableWAL`, and `busyTimeout`. The other fields are those of [`SqlStorage.Options`](/docs/reference/storage/sql-storage#sqlstorageoptions).

@@ -1,0 +1,167 @@
+---
+title: DurableObjectStorage
+description: Reference for the DurableObjectStorage namespace in @streamsy/storage/durable-object. It keeps streams in the SQLite storage of a Cloudflare Durable Object.
+---
+
+```ts
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type * as Cloudflare from "@cloudflare/workers-types";
+import type { Layer } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+```
+
+`DurableObjectStorage` keeps streams in the SQLite storage of one Durable Object. It builds the `@effect/sql-sqlite-do` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [Storage](/docs/hosting/cloudflare#storage) in the Cloudflare guide.
+
+## Layers
+
+### `DurableObjectStorage.layer`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  group: Streamsy.Group<Keys>,
+  options: DurableObjectStorage.Options,
+): Layer.Layer<
+  | CommitBoundary
+  | OwnerRecords
+  | Reactivity.Reactivity
+  | SqlClient.SqlClient
+  | Storage
+  | Streamsy.Host<Streamsy.Group<Keys>>,
+  StorageFault
+>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layer, typeof DurableObjectStorage.layer>(true);
+```
+
+`layer` returns a Layer that provides the stream services of `group` over the SQLite storage of the object, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), `OwnerRecords`, and the `SqlClient` with its `Reactivity`.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+import type { DurableObjectState } from "@cloudflare/workers-types";
+declare const ctx: DurableObjectState;
+// ---cut---
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { shop } from "./streams.ts";
+
+const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storage } });
+```
+
+- Pass the full `ctx.storage` handle as `client.storage`. Each mutation runs in a transaction, and the client needs the transaction API of that handle
+- The long-poll timeout is [`DEFAULT_LONG_POLL_TIMEOUT_MS`](#durableobjectstoragedefault_long_poll_timeout_ms), 25 s, unless `longPollTimeoutMs` sets one
+- The migration, the store, and the option checks follow the rules of [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer)
+
+In a Worker, pass a function that returns this Layer as the `layer` option of `StreamsyObject.make` from `@streamsy/serve/cloudflare`. The object builds it on first access. See [Object lifecycle](/docs/hosting/cloudflare#object-lifecycle).
+
+### `DurableObjectStorage.layerProtocol`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import type { Reactivity } from "effect/reactivity";
+import type { SqlClient } from "effect/sql";
+import type { CommitBoundary, Storage, StorageFault } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layerProtocol(
+  options: DurableObjectStorage.Options,
+): Layer.Layer<
+  | CommitBoundary
+  | OwnerRecords
+  | Reactivity.Reactivity
+  | SqlClient.SqlClient
+  | Storage
+  | StreamsReader
+  | StreamsWriter,
+  StorageFault
+>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layerProtocol, typeof DurableObjectStorage.layerProtocol>(true);
+```
+
+`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite storage of the object, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. The options follow the rules of [`layer`](#durableobjectstoragelayer), including the 25 s long-poll default.
+
+## Options
+
+### `DurableObjectStorage.Options`
+
+```ts
+// ---cut-start---
+import type * as Cloudflare from "@cloudflare/workers-types";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
+interface Options {
+  readonly client: {
+    readonly storage: Cloudflare.DurableObjectStorage;
+    readonly db?: Cloudflare.SqlStorage | undefined;
+    readonly spanAttributes?: Record<string, unknown> | undefined;
+    readonly transformResultNames?: ((str: string) => string) | undefined;
+    readonly transformQueryNames?: ((str: string) => string) | undefined;
+  };
+  readonly repairIntervalMs?: number;
+  readonly transactionRetryAttempts?: number;
+  readonly transactionRetryDelayMs?: number;
+  readonly readLimit?: number;
+  readonly longPollTimeoutMs?: number;
+}
+// ---cut-after---
+same<Omit<Options, "client">, Omit<DurableObjectStorage.Options, "client">>(true);
+same<Options["client"], Flat<DurableObjectStorage.Options["client"]>>(true);
+```
+
+`Options` holds the options of `layer` and `layerProtocol`. `client` holds the options of `SqliteClient.make` in `@effect/sql-sqlite-do`, with `storage` required. The other fields are those of [`SqlStorage.Options`](/docs/reference/storage/sql-storage#sqlstorageoptions).
+
+## Constants
+
+### `DurableObjectStorage.DEFAULT_LONG_POLL_TIMEOUT_MS`
+
+```ts
+// ---cut-start---
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_LONG_POLL_TIMEOUT_MS: 25000;
+// ---cut-after---
+same<typeof DEFAULT_LONG_POLL_TIMEOUT_MS, typeof DurableObjectStorage.DEFAULT_LONG_POLL_TIMEOUT_MS>(
+  true,
+);
+```
+
+`DEFAULT_LONG_POLL_TIMEOUT_MS` is the long-poll timeout of `layer` and `layerProtocol` when `longPollTimeoutMs` is not set: 25 000 ms. The other hosts use the 30 s default of [`Protocol.ProtocolOptions`](/docs/reference/core/protocol#protocolprotocoloptions).
