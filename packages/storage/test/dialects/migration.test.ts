@@ -39,7 +39,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             yield* migrate(sql);
 
             const versions = yield* sql.unsafe<{ readonly version: unknown }>(
-              `SELECT version FROM ${STORAGE_VERSION_TABLE}`,
+              `SELECT version FROM ${STORAGE_VERSION_TABLE} ORDER BY version`,
             );
 
             const tables = yield* sql.unsafe<{ readonly name: string }>(dialect.tables);
@@ -53,11 +53,12 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       );
 
       expect(result).toEqual({
-        versions: [STORAGE_SCHEMA_VERSION],
+        versions: Array.range(1, STORAGE_SCHEMA_VERSION),
         tables: [
           "streamsy_messages",
           "streamsy_owner_records",
           "streamsy_producers",
+          "streamsy_projection_pending",
           "streamsy_schema",
           "streamsy_streams",
         ],

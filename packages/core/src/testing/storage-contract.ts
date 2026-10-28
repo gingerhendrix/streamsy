@@ -13,6 +13,7 @@ import {
   Layer,
   Match,
   Option,
+  Order,
   PubSub,
   Queue,
   Record,
@@ -29,14 +30,15 @@ import { MutationRejected, type MutationApplied, type Operation } from "../stora
 import { CommitBoundary, type CommitBoundaryApi } from "../storage/commit-boundary.ts";
 import { OwnerRecords, type OwnerRecordsApi } from "../internal/owner-records.ts";
 import { CommitHooks, type CommitHooksApi } from "../internal/commit-hooks.ts";
+import { ProjectionMarks, type ProjectionMarksApi } from "../internal/projection-marks.ts";
 
 export interface StorageContractOptions {
   readonly name: string;
   readonly layer: Layer.Layer<Storage>;
   readonly expected: StorageCapabilities;
   /**
-   * The Layer also provides `CommitBoundary`, and the internal owner records and
-   * commit hooks that projections need.
+   * The Layer also provides `CommitBoundary`, and the internal owner records,
+   * commit hooks and projection marks that projections need.
    */
   readonly ownerRecords?: boolean;
 }
@@ -198,6 +200,7 @@ export const StorageContract = {
           readonly boundary: CommitBoundaryApi;
           readonly records: OwnerRecordsApi;
           readonly hooks: CommitHooksApi;
+          readonly marks: ProjectionMarksApi;
         }) => Effect.Effect<
           unknown,
           MutationRejected | StorageFault | SqlError.SqlError,
@@ -217,7 +220,8 @@ export const StorageContract = {
               const boundary = Option.getOrThrow(Context.getOption(context, CommitBoundary));
               const records = Option.getOrThrow(Context.getOption(context, OwnerRecords));
               const hooks = Option.getOrThrow(Context.getOption(context, CommitHooks));
-              yield* body({ boundary, records, hooks }).pipe(Effect.provide(context));
+              const marks = Option.getOrThrow(Context.getOption(context, ProjectionMarks));
+              yield* body({ boundary, records, hooks, marks }).pipe(Effect.provide(context));
             }).pipe(Effect.scoped, Effect.runPromiseExit),
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
@@ -395,6 +399,95 @@ export const StorageContract = {
             expect(Exit.isFailure(yield* Effect.exit(mutate(append())))).toBe(true);
             expect((yield* current).currentOffset).toBe(ZERO_OFFSET);
             expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([]);
+          }),
+      );
+      recordsTest(
+        "R7 projection marks raise seq, clear by seq, defer, and list due marks in order",
+        ({ marks }) =>
+          Effect.gen(function* () {
+            expect(yield* marks.nextDue("p")).toEqual(Option.none());
+
+            yield* Effect.orDie(marks.mark("p", ["a", "b"]));
+            yield* Effect.orDie(marks.mark("p", ["a"]));
+            yield* Effect.orDie(marks.mark("q", ["a"]));
+            const read = yield* marks.read("p", ["a", "b", "absent"]);
+            expect(Array.sort([...read.keys()], Order.String)).toEqual(["a", "b"]);
+            expect(read.get("a")).toEqual({ params: "a", seq: 2, attempts: 0, dueAt: 0 });
+            expect(read.get("b")).toEqual({ params: "b", seq: 1, attempts: 0, dueAt: 0 });
+            expect(yield* marks.nextDue("p")).toEqual(Option.some(0));
+
+            // A clear with an old seq keeps the row. The current seq deletes it.
+            yield* marks.clear("p", "a", 1);
+            expect((yield* marks.read("p", ["a"])).get("a")?.seq).toBe(2);
+            yield* marks.clear("p", "a", 2);
+            expect((yield* marks.read("p", ["a"])).size).toBe(0);
+            // Another projection's mark with the same params is separate.
+            expect((yield* marks.read("q", ["a"])).get("a")?.seq).toBe(1);
+
+            // A defer sets attempts and due time. A later mark keeps both.
+            yield* marks.defer("p", "b", 1, 5_000);
+            yield* Effect.orDie(marks.mark("p", ["b"]));
+            expect((yield* marks.read("p", ["b"])).get("b")).toEqual({
+              params: "b",
+              seq: 2,
+              attempts: 1,
+              dueAt: 5_000,
+            });
+            expect(yield* marks.deferred("p")).toBe(1);
+            expect(yield* marks.nextDue("p")).toEqual(Option.some(5_000));
+            // A defer of an absent mark inserts it.
+            yield* marks.defer("p", "c", 2, 3_000);
+            expect(yield* marks.deferred("p")).toBe(2);
+
+            // Due marks come earliest first, then by params, up to the limit.
+            yield* Effect.orDie(marks.mark("p", ["e", "d"]));
+            expect(Array.map(yield* marks.due("p", 4_000, 10), (row) => row.params)).toEqual([
+              "d",
+              "e",
+              "c",
+            ]);
+            expect(Array.map(yield* marks.due("p", 10_000, 2), (row) => row.params)).toEqual([
+              "d",
+              "e",
+            ]);
+            expect(Array.map(yield* marks.due("p", 10_000, 10), (row) => row.params)).toEqual([
+              "d",
+              "e",
+              "c",
+              "b",
+            ]);
+
+            yield* marks.remove("p", "b");
+            yield* marks.remove("p", "absent");
+            expect(yield* marks.deferred("p")).toBe(1);
+
+            // Many bindings in one call: SQL hosts split the statements.
+            const many = Array.makeBy(150, (index) => `m${String(index).padStart(3, "0")}`);
+            yield* Effect.orDie(marks.mark("many", many));
+            yield* Effect.orDie(marks.mark("many", many));
+            const all = yield* marks.read("many", many);
+            expect(all.size).toBe(150);
+            expect(Array.every([...all.values()], (row) => row.seq === 2)).toBe(true);
+            expect(yield* marks.due("many", 0, 1_000)).toHaveLength(150);
+          }),
+      );
+      recordsTest(
+        "R8 marks written by a commit hook commit and roll back with the write",
+        ({ boundary, hooks, marks }) =>
+          Effect.gen(function* () {
+            yield* hooks.beforeCommit((ids) => marks.mark("p", [...ids]));
+
+            yield* mutate(create());
+            expect((yield* marks.read("p", [id])).get(id)?.seq).toBe(1);
+
+            const failed = yield* Effect.exit(
+              boundary.withTransaction(Effect.andThen(mutate(append()), Effect.fail("rollback"))),
+            );
+
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect((yield* marks.read("p", [id])).get(id)?.seq).toBe(1);
+            yield* mutate(append());
+            expect((yield* marks.read("p", [id])).get(id)?.seq).toBe(2);
           }),
       );
       test(

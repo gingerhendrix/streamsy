@@ -101,7 +101,7 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   inspected.close(false);
 });
 
-test("reopens a nonempty current-format v1 database", async () => {
+test("upgrades a nonempty v1 database to the current version", async () => {
   const path = filename("reopen-v1");
   const db = new Database(path, { create: true });
   db.run(
@@ -120,6 +120,18 @@ test("reopens a nonempty current-format v1 database", async () => {
     value: { at: 42, streamId: "kept" },
   });
   await Effect.runPromise(Scope.close(opened.scope, Exit.void));
+  const upgraded = new Database(path, { readonly: true });
+  expect(
+    upgraded
+      .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
+      .get()?.version,
+  ).toBe(STORAGE_SCHEMA_VERSION);
+  expect(
+    upgraded
+      .query("SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_pending'")
+      .get(),
+  ).toEqual({ name: "streamsy_projection_pending" });
+  upgraded.close(false);
 });
 
 test("an injected migration failure rolls back schema and version rows", async () => {

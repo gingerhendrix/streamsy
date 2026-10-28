@@ -17,5 +17,7 @@ export {
   type CommitHooksApi,
 } from "./commit-hooks.ts";
 
+export { ProjectionMarks, type PendingMark, type ProjectionMarksApi } from "./projection-marks.ts";
+
 /** The parameter names from the route grammar, shared with projection binding. */
 export { compileSegments } from "../toolkit/route-internal.ts";

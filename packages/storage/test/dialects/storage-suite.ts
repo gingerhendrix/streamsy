@@ -41,6 +41,7 @@ const STORAGE_TABLES = [
   "streamsy_messages",
   "streamsy_owner_records",
   "streamsy_producers",
+  "streamsy_projection_pending",
   "streamsy_streams",
 ] as const;
 
@@ -594,7 +595,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
               versions: Array.map(
                 yield* sql<{
                   readonly version: unknown;
-                }>`SELECT version FROM ${sql(STORAGE_VERSION_TABLE)}`,
+                }>`SELECT version FROM ${sql(STORAGE_VERSION_TABLE)} ORDER BY version`,
                 ({ version }) => Number(version),
               ),
             };
@@ -605,7 +606,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
       expect(result).toEqual({
         left: Option.none(),
         right: Option.none(),
-        versions: [STORAGE_SCHEMA_VERSION],
+        versions: Array.range(1, STORAGE_SCHEMA_VERSION),
       });
     });
   });

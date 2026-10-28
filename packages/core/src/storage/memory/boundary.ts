@@ -1,10 +1,12 @@
 import { Context, Effect, Option, Semaphore } from "effect";
 import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
+import { ProjectionMarks } from "../../internal/projection-marks.ts";
 import { attachOwner } from "../../internal/owner.ts";
 import { CommitBoundary } from "../commit-boundary.ts";
 import type { StreamId } from "../../schema/index.ts";
 import { copyState, type State } from "./state.ts";
+import * as Marks from "./marks.ts";
 
 /**
  * The memory owner's transaction. Nested calls join (no savepoints); failure must
@@ -19,6 +21,7 @@ interface Draft {
   readonly fiberId: number;
   readonly state: State;
   readonly records: Map<string, string>;
+  readonly marks: Marks.MarkTable;
   readonly ids: Set<StreamId>;
   active: boolean;
   changed: boolean;
@@ -36,6 +39,7 @@ export const makeBoundary = (
     const owner = {};
     const lock = yield* Semaphore.make(1);
     let committedRecords = new Map<string, string>();
+    let committedMarks: Marks.MarkTable = new Map();
     const hooks = commitHookRegistry();
 
     const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
@@ -61,6 +65,7 @@ export const makeBoundary = (
               fiberId: fiber.id,
               state: copyState(committed),
               records: new Map(committedRecords),
+              marks: Marks.copyMarks(committedMarks),
               ids: new Set(),
               active: true,
               changed: false,
@@ -79,6 +84,7 @@ export const makeBoundary = (
                   Effect.sync(() => {
                     Object.assign(committed, draft.state);
                     committedRecords = draft.records;
+                    committedMarks = draft.marks;
                   }).pipe(
                     Effect.andThen(
                       Effect.suspend(() => (draft.changed ? publish(draft.ids) : Effect.void)),
@@ -132,8 +138,35 @@ export const makeBoundary = (
         ),
     });
 
+    const readMarks = <A>(f: (marks: Marks.MarkTable) => A) =>
+      Effect.map(current, (draft) => f(Option.isSome(draft) ? draft.value.marks : committedMarks));
+
+    const writeMarks = (f: (marks: Marks.MarkTable) => void) =>
+      withTransaction(
+        Effect.map(current, (draft) => {
+          if (Option.isNone(draft)) throw new Error("Memory mark write requires an owner");
+          f(draft.value.marks);
+        }),
+      );
+
+    const marks = ProjectionMarks.of({
+      mark: (projection, params) => writeMarks((table) => Marks.mark(table, projection, params)),
+      nextDue: (projection) => readMarks((table) => Marks.nextDue(table, projection)),
+      due: (projection, now, limit) =>
+        readMarks((table) => Marks.due(table, projection, now, limit)),
+      read: (projection, params) => readMarks((table) => Marks.read(table, projection, params)),
+      clear: (projection, params, seq) =>
+        writeMarks((table) => Marks.clear(table, projection, params, seq)),
+      remove: (projection, params) =>
+        writeMarks((table) => Marks.remove(table, projection, params)),
+      defer: (projection, params, attempts, dueAt) =>
+        writeMarks((table) => Marks.defer(table, projection, params, attempts, dueAt)),
+      deferred: (projection) => readMarks((table) => Marks.deferred(table, projection)),
+    });
+
     return {
       boundary: attachOwner(boundary, owner),
+      marks: attachOwner(marks, owner),
       records: attachOwner(records, owner),
       hooks: attachOwner(CommitHooks.of({ beforeCommit: hooks.beforeCommit }), owner),
       withTransaction,

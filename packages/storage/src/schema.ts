@@ -1,6 +1,6 @@
 import type { DialectSql } from "./dialect.ts";
 
-export const STORAGE_SCHEMA_VERSION = 1;
+export const STORAGE_SCHEMA_VERSION = 2;
 
 export const STORAGE_VERSION_TABLE = "streamsy_schema";
 
@@ -15,6 +15,7 @@ export const STORAGE_TABLES = [
   "streamsy_messages",
   "streamsy_producers",
   "streamsy_owner_records",
+  "streamsy_projection_pending",
 ] as const;
 
 export const STORAGE_VERSION_TABLE_DDL: DialectSql<string> = {
@@ -38,6 +39,12 @@ export const MYSQL_OWNER_KEY_LENGTH = 512;
 
 // Owner record keys are encoded projection keys, bounded like stream ids and compared as bytes.
 const MYSQL_OWNER_KEY = `VARCHAR(${MYSQL_OWNER_KEY_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin`;
+
+// A pending mark key holds a projection id and canonical params. InnoDB limits a
+// key to 3072 bytes, so the projection id gets 255 characters and the params 512.
+const MYSQL_PROJECTION_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+
+const MYSQL_PROJECTION_PARAMS = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
 
 /**
  * Migration versions in order. Version `n` is entry `n - 1`. SQLite and
@@ -123,6 +130,33 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
 ) ENGINE=InnoDB`,
       `CREATE TABLE IF NOT EXISTS streamsy_owner_records (
  owner_key ${MYSQL_OWNER_KEY} PRIMARY KEY, owner_value LONGTEXT NOT NULL
+) ENGINE=InnoDB`,
+    ],
+  },
+  // 2: durable pending marks for attached projections. `due_at` is epoch ms, 0 means now.
+  {
+    sqlite: [
+      `CREATE TABLE streamsy_projection_pending (
+ projection TEXT NOT NULL, params TEXT NOT NULL, seq INTEGER NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0, due_at INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(projection, params)
+)`,
+      `CREATE INDEX idx_streamsy_projection_pending_due ON streamsy_projection_pending(projection, due_at)`,
+    ],
+    pg: [
+      `CREATE TABLE streamsy_projection_pending (
+ projection TEXT COLLATE "C" NOT NULL, params TEXT COLLATE "C" NOT NULL, seq BIGINT NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0, due_at BIGINT NOT NULL DEFAULT 0,
+ PRIMARY KEY(projection, params)
+)`,
+      `CREATE INDEX idx_streamsy_projection_pending_due ON streamsy_projection_pending(projection, due_at)`,
+    ],
+    mysql: [
+      `CREATE TABLE IF NOT EXISTS streamsy_projection_pending (
+ projection ${MYSQL_PROJECTION_ID} NOT NULL, params ${MYSQL_PROJECTION_PARAMS} NOT NULL,
+ seq BIGINT NOT NULL, attempts INT NOT NULL DEFAULT 0, due_at BIGINT NOT NULL DEFAULT 0,
+ PRIMARY KEY(projection, params),
+ INDEX idx_streamsy_projection_pending_due (projection, due_at)
 ) ENGINE=InnoDB`,
     ],
   },

@@ -2,6 +2,7 @@ import {
   CommitHooks,
   MAX_PRODUCER_ID_LENGTH,
   OwnerRecords,
+  ProjectionMarks,
   attachOwner,
   fitKey,
   ownerOf,
@@ -48,6 +49,7 @@ import {
   type BoundaryRuntime,
 } from "./boundary.ts";
 import { migrate } from "./migrations.ts";
+import { sqlProjectionMarks } from "./projection-marks.ts";
 import { MYSQL_OWNER_KEY_LENGTH } from "./schema.ts";
 import {
   DEFAULT_TRANSACTION_RETRY_ATTEMPTS,
@@ -935,6 +937,7 @@ const makeLayer = (
           CommitHooks,
           attachOwner(CommitHooks.of({ beforeCommit: boundary.beforeCommit }), owner),
         ),
+        Context.add(ProjectionMarks, attachOwner(sqlProjectionMarks(sql), owner)),
       );
     }),
   );
@@ -955,7 +958,7 @@ const makeLayer = (
 export const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
-  Storage | CommitBoundary | OwnerRecords | CommitHooks,
+  Storage | CommitBoundary | OwnerRecords | CommitHooks | ProjectionMarks,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
 > => makeLayer(options);
