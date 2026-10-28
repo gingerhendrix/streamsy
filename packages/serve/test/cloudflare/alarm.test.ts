@@ -1,9 +1,9 @@
 import { expect, layer } from "@effect/vitest";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Array, Effect, Layer, Option, Stream } from "effect";
 import { Storage, StreamId } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
 
-import { makeWakeups } from "../../src/cloudflare/wakeup.ts";
+import { makeWakeups, Wakeups } from "../../src/cloudflare/wakeup.ts";
 
 const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamId: string }>) =>
   Storage.of({
@@ -57,3 +57,38 @@ for (const [index, [next, current, expected]] of cases.entries()) {
     );
   });
 }
+
+layer(
+  Layer.mergeAll(
+    Layer.succeed(Storage, fakeStorage(Option.none())),
+    Layer.succeed(AlarmSlot, {
+      current: Effect.succeedNone,
+      arm: () => Effect.void,
+      clear: Effect.void,
+    }),
+  ),
+)((it) => {
+  it.effect("status reports each wakeup's deferred count, 0 when it has none", () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.context<Storage | AlarmSlot>();
+
+      const { context: object } = yield* makeWakeups(context, [
+        {
+          name: "with-deferred",
+          next: Effect.succeedNone,
+          run: Effect.void,
+          deferred: Effect.succeed(3),
+        },
+      ]);
+
+      const status = yield* Effect.flatMap(Wakeups, (wakeups) => wakeups.status).pipe(
+        Effect.provideContext(object),
+      );
+
+      expect(Array.map(status, ({ name, deferred }) => [name, deferred])).toEqual([
+        ["streamsy/expiry", 0],
+        ["with-deferred", 3],
+      ]);
+    }),
+  );
+});

@@ -196,7 +196,7 @@ test("a folder write reaches the user wake through the object stub", async () =>
   ).toBe(404);
 }, 60_000);
 
-test("after a restart the next source commit catches up an unarmed binding", async () => {
+test("after a restart a durable mark runs an unarmed binding with no new write", async () => {
   const { root, scriptPath } = await workspace();
   const before = await start(root, scriptPath);
   await setup(before.send);
@@ -206,7 +206,7 @@ test("after a restart the next source commit catches up an unarmed binding", asy
     async () => ((await before.send("/__folder/docs/alarm")).body === "none" ? true : undefined),
     "the create alarm to drain",
   );
-  // A GET write arms no alarm. The restart stands in for a crash after the commit.
+  // A GET write arms no alarm. The restart stands in for an eviction after the commit.
   const quiet = await before.send("/__quiet-append/ann/docs/b");
   expect(quiet.status).toBe(200);
   expect((await before.send("/__folder/docs/alarm")).body).toBe("none");
@@ -214,18 +214,10 @@ test("after a restart the next source commit catches up an unarmed binding", asy
   await before.dispose();
 
   const after = await start(root, scriptPath);
-  // The pending set is in memory. Acquisition alone cannot rediscover the binding.
-  expect((await after.send("/__folder/docs/alarm")).body).toBe("none");
-  expect((await rowsOf(after.url)).get(sourceId)).toBeUndefined();
-  // A close with no body is the next commit and must catch up the quiet append too.
-  expect(
-    (
-      await after.send("/streams/users/ann/folders/docs/files", {
-        method: "POST",
-        headers: { ...json, "stream-closed": "true" },
-      })
-    ).status,
-  ).toBe(204);
+  // The commit wrote a pending mark in its transaction. The first request
+  // acquires the object, its reconcile reads the mark and arms the alarm, and
+  // the alarm runs the binding.
+  expect((await after.send("/__folder/docs/alarm")).status).toBe(200);
 
   const row = await until(async () => {
     const found = (await rowsOf(after.url)).get(sourceId);
@@ -233,7 +225,11 @@ test("after a restart the next source commit catches up an unarmed binding", asy
     return found?.offset === quiet.body ? found : undefined;
   }, "the wake row after the restart");
 
-  expect(row).toEqual({ stream: sourceId, offset: quiet.body, closed: true });
+  expect(row).toMatchObject({ stream: sourceId, offset: quiet.body });
+  await until(
+    async () => ((await after.send("/__folder/docs/alarm")).body === "none" ? true : undefined),
+    "the alarm to clear after the mark is cleared",
+  );
 }, 60_000);
 
 test("an object whose storage group also holds a linked stream refuses to start", async () => {

@@ -166,7 +166,7 @@ export class FilesObject extends StreamsyObject.make({
 }) {}
 ```
 
-The set is lost when the object stops. A binding whose run did not happen before that is late until its source gets its next write. The next run catches up from the checkpoint while source history remains available. Removal uses a final gone unit instead.
+The set is lost when the object stops, so the wakeup is durable by default. Each commit also writes a pending mark for each binding it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and the alarm runs those bindings. A binding that catches up deletes its mark. A binding that fails waits alone, from 1 s doubling to 1 hour, while its neighbours run, and `Wakeups.status` counts it as `deferred`. Pass `durable: false` to keep only the in-memory set. Then a binding whose run did not happen before the object stopped is late until its source gets its next write.
 
 The object reconciles its wakeups after each write request, after each alarm pass and when it is acquired, so a source write arms the alarm at once. A `Projection.wake` binding can write a wake stream on another object through an [object link](#streams-on-other-objects).
 

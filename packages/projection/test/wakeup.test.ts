@@ -124,7 +124,8 @@ layer(host())((it) => {
 
         const scope = yield* Scope.fork(yield* Scope.Scope);
 
-        const first = yield* ProjectionWakeup.attach(filesWake).pipe(
+        // In-memory only: a durable mark would outlive the scope by design.
+        const first = yield* ProjectionWakeup.attach(filesWake, { durable: false }).pipe(
           Effect.provideService(Storage, observed),
           Scope.provide(scope),
         );
@@ -133,7 +134,7 @@ layer(host())((it) => {
         expect(Option.isSome(yield* first.next)).toBe(true);
         yield* Scope.close(scope, Exit.void);
         expect(releases).toBe(1);
-        const second = yield* ProjectionWakeup.attach(filesWake);
+        const second = yield* ProjectionWakeup.attach(filesWake, { durable: false });
         expect(Option.isNone(yield* second.next)).toBe(true);
         yield* (yield* Files).append(folder, ["after shutdown"]);
         expect(Option.isSome(yield* second.next)).toBe(true);

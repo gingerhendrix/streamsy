@@ -261,10 +261,11 @@ service's `create` at start.
 On Bun or Node, build `Projection.attach(filesWake)` beside the API and over
 the same storage and checkpoint layers, before writes begin. Each input id
 must supply every projection parameter. Its local `Storage.committed`
-subscription selects bindings; remote inputs do not trigger it. The pending set has no
-replay and lives in memory. A crash before processing waits for another source
-commit. Retry takes a `Schedule`; the default is capped, jittered exponential
-backoff. Use one writer per binding. Cloudflare uses scoped
+subscription selects bindings; remote inputs do not trigger it. By default the
+pending set lives in memory, so a crash before processing waits for another
+source commit. With `durable: true`, each commit also writes a pending mark in
+its transaction, and the layer runs marked bindings when it starts. Retry takes
+a `Schedule`; the default is capped, jittered exponential backoff. Use one writer per binding. Cloudflare uses scoped
 [`ProjectionWakeup.attach`](/docs/hosting/cloudflare#projections).
 
 ## Triggers

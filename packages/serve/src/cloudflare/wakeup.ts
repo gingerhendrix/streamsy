@@ -36,6 +36,11 @@ export interface Wakeup<R = never> {
   readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
   /** Alarm retries use this schedule's delays without sleeping in an alarm. */
   readonly retry?: Schedule.Schedule<unknown>;
+  /**
+   * Units of work that failed and wait on their own backoff, for `status`.
+   * A durable `ProjectionWakeup` counts its deferred bindings here.
+   */
+  readonly deferred?: Effect.Effect<number, StorageFault, R>;
 }
 
 /** The host acquires effectful wakeups in the same scope as its storage layer. */
@@ -92,6 +97,8 @@ export class Wakeups extends Context.Service<
         readonly failures: number;
         /** The backoff floor. The wakeup does not run before this instant. */
         readonly retryAt: Option.Option<number>;
+        /** Units that wait on their own backoff, such as failed projection bindings. */
+        readonly deferred: number;
       }>
     >;
   }
@@ -179,12 +186,16 @@ export const makeWakeups = <R>(
       });
 
     const status = Effect.forEach(states, (state) =>
-      state.wakeup.next.pipe(
-        Effect.map((next) => ({
+      Effect.all({
+        next: state.wakeup.next,
+        deferred: state.wakeup.deferred ?? Effect.succeed(0),
+      }).pipe(
+        Effect.map(({ next, deferred }) => ({
           name: state.wakeup.name,
           next,
           failures: state.failures,
           retryAt: state.floor > 0 ? Option.some(state.floor) : Option.none<number>(),
+          deferred,
         })),
       ),
     );

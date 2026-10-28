@@ -135,7 +135,9 @@ owner creates it first. `Serve.mount` accepts GET and HEAD.
 
 Object hosts acquire `ProjectionWakeup.attach(projection)` from
 `@streamsy/projection` in their scope through `wakeups: [...]`. Local
-`Storage.committed` events populate its in-memory pending set. Alarms drain
-bounded passes. Retry options take an Effect `Schedule`; finite schedules stop
-on exhaustion. A crash can leave work pending until the next source commit.
+`Storage.committed` events populate its in-memory pending set, and each commit
+writes a durable pending mark in the same transaction. Alarms drain bounded
+passes. After an eviction, acquisition reads the marks and arms the alarm.
+Retry options take an Effect `Schedule`; finite schedules stop on exhaustion.
+`Wakeups.status` reports each wakeup's deferred bindings.
 See the [projection host reference](https://streamsy.dev/docs/hosting/cloudflare#projections).

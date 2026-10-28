@@ -211,15 +211,28 @@ Each input must give every projection param, so that one id picks one binding.
 never commit here, so they never trigger. Do not also run an attached binding
 under `Projection.follow`.
 
-The set of bindings with work lives in memory. If the process stops after a
-commit and before the run, the binding is late until its source gets its next
-write. The next run catches up from the checkpoint while the source history remains
-available. Removal before that run uses the final gone unit instead. A commit
-by another process on the same SQL file does not show.
+By default `Projection.attach` keeps the set of bindings with work in memory.
+If the process stops after a commit and before the run, the binding is late
+until its source gets its next write. The next run catches up from the
+checkpoint while the source history remains available. Removal before that run
+uses the final gone unit instead. A commit by another process on the same SQL
+file does not show.
+
+Pass `durable: true` to close that gap. Each commit then also writes a pending
+mark for each binding it touches, in the same transaction, to
+`streamsy_projection_pending`. A binding that catches up deletes its mark,
+unless a write during the run marked it again. When the layer starts, it runs
+the bindings that still have marks, up to `batch` (default 25) per pass. A
+binding that fails waits alone, from 1 s doubling to 1 hour, and its
+neighbours keep running. Durable mode needs a local memory or SQL storage
+layer.
 
 On Cloudflare, acquire a wakeup in the object's layer scope. Local commits
 fill the same runner's pending set; `next` answers "now" while it has work,
 and each alarm drains one pass (100 units per binding by default).
+`ProjectionWakeup.attach` is durable by default, because Cloudflare evicts idle
+objects. After an eviction or a deploy, the object's acquire reads the marks
+and arms the alarm. Pass `durable: false` for the in-memory set only.
 
 ```ts
 StreamsyObject.make({

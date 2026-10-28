@@ -12,6 +12,18 @@ export interface AttachOptions {
   readonly limit?: number;
   /** Retry a failed drain pass. Defaults to capped, jittered exponential backoff. */
   readonly retry?: Schedule.Schedule<unknown>;
+  /**
+   * Keep a pending mark for each binding in the storage owner, written in the
+   * transaction of the commit that needs the run. After a restart or an
+   * eviction, the runner finds the marks and runs those bindings. A binding
+   * that fails waits alone, 1 s doubling to 1 hour, and its neighbours run.
+   * Needs a local memory or SQL storage layer.
+   *
+   * Default: false for `Projection.attach`, true for `ProjectionWakeup.attach`.
+   */
+  readonly durable?: boolean;
+  /** With `durable`, the due marks that one drain pass reads. Default 25. */
+  readonly batch?: number;
 }
 
 /**
@@ -23,8 +35,10 @@ export interface AttachOptions {
  * Use it on long-lived hosts (Bun, Node). On a Cloudflare object, use
  * `ProjectionWakeup.attach(projection)`.
  *
- * The set of bindings with work lives in memory. A crash after a commit and
- * before the run leaves that binding late until its source gets its next write.
+ * By default the set of bindings with work lives in memory. A crash after a
+ * commit and before the run leaves that binding late until its source gets its
+ * next write. With `durable: true`, a pending mark in storage covers that
+ * window, and the layer runs due marks when it starts.
  * Inputs on another owner never commit here, so they never trigger. Do not run
  * an attached binding under `Projection.follow` too: use one writer per key.
  *
@@ -38,21 +52,23 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
   options: AttachOptions = {},
 ): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>> => {
-  const runner = runnerOf(projection, options.limit);
+  const runner = runnerOf(projection, {
+    limit: options.limit,
+    durable: options.durable ?? false,
+    batch: options.batch,
+  });
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
       const { wait, drain } = yield* runner;
       const retry = options.retry ?? (yield* ProjectionRetry);
+      // A durable wait reads marks, so a failed read retries like a failed drain.
       yield* wait.pipe(
-        Effect.andThen(
-          drain.pipe(
-            Effect.tapError((error) =>
-              Effect.logError(`Projection.attach ${projection.id} failed`, error),
-            ),
-            Effect.retry(retry),
-          ),
+        Effect.andThen(drain),
+        Effect.tapError((error) =>
+          Effect.logError(`Projection.attach ${projection.id} failed`, error),
         ),
+        Effect.retry(retry),
         Effect.repeat(Schedule.forever),
         Effect.withSpan("Projection.attach"),
         Effect.forkScoped,
