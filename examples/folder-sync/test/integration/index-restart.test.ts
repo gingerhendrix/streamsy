@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Array, Effect, Layer, Schedule, Schema } from "effect";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { Files } from "../../server/streams.ts";
 import { search } from "../../server/search-index.ts";
 import { filesWake } from "../../server/wake.ts";
@@ -18,6 +18,16 @@ class Waiting extends Schema.TaggedError<Waiting, { readonly brand: unique symbo
   {},
 ) {}
 
+/** The layer drains due marks in its own fiber, after its build returns. */
+const until = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
+  read.pipe(
+    Effect.filterOrFail(ready, () => new Waiting()),
+    Effect.retry({
+      while: Schema.is(Waiting),
+      schedule: Schedule.spaced("10 millis").pipe(Schedule.upTo({ times: 200 })),
+    }),
+  );
+
 const graph = (filename: string) =>
   Layer.merge(FolderStoreLive, FileIndexLive).pipe(
     Layer.provideMerge(IndexLive),
@@ -26,7 +36,7 @@ const graph = (filename: string) =>
   );
 
 layer(BunServices.layer, { excludeTestServices: true })((it) => {
-  it.effect("startup indexes a durable dirty wake row without another source write", () =>
+  it.effect("startup indexes a folder from its pending mark without another source write", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("index-dirty-restart-");
       const storage = sqliteHost(`${directory}/index.sqlite`);
@@ -37,6 +47,9 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
           );
 
           yield* Effect.gen(function* () {
+            // A durable runner that never drains: the commits write search marks,
+            // and the stop comes before any search run.
+            yield* ProjectionWakeup.attach(search);
             const store = yield* FolderStore;
             yield* store.create("dirty", "Dirty", "create");
             yield* store.commit("dirty", "a", {
@@ -53,10 +66,10 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const context = yield* Layer.build(graph(`${directory}/index.sqlite`));
 
-          const rows = yield* FileIndex.pipe(
-            Effect.flatMap((index) => index.search("dirtyneedle")),
-            Effect.provideContext(context),
-          );
+          const rows = yield* until(
+            FileIndex.pipe(Effect.flatMap((index) => index.search("dirtyneedle"))),
+            (found) => found.length === 1,
+          ).pipe(Effect.provideContext(context));
 
           expect(rows).toHaveLength(1);
         }),
@@ -66,6 +79,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const context = yield* Layer.build(storage);
           yield* Effect.gen(function* () {
+            yield* ProjectionWakeup.attach(search);
             yield* (yield* Files).remove({ folderId: "dirty" });
             yield* Projection.run(filesWake.at({ folderId: "dirty" }));
           }).pipe(Effect.provideContext(context));
@@ -75,7 +89,12 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const context = yield* Layer.build(graph(`${directory}/index.sqlite`));
           yield* Effect.gen(function* () {
-            expect(yield* (yield* FileIndex).list()).toEqual([]);
+            expect(
+              yield* until(
+                FileIndex.pipe(Effect.flatMap((index) => index.list())),
+                (rows) => rows.length === 0,
+              ),
+            ).toEqual([]);
             expect(
               (yield* (yield* CheckpointStore).load(search.at({ folderId: "dirty" }))).token,
             ).toBe("0");

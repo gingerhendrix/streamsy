@@ -10,9 +10,11 @@ import type { Env } from "../../worker/env.ts";
 import { folderObject, indexObject } from "../../worker/placement.ts";
 
 /**
- * The production folder object plus two switches. While `createDelay` is set,
+ * The production folder object plus test switches. While `createDelay` is set,
  * the internal create waits that many milliseconds before it creates the stream.
  * Tests use it to widen the gap between the two steps of a Worker folder create.
+ * While `pauseWake` is set, alarms do nothing, so a write leaves its wake row
+ * unproduced until a restart.
  */
 export class FolderObject extends StreamsyObject.make<
   Env,
@@ -29,9 +31,14 @@ export class FolderObject extends StreamsyObject.make<
     const { pathname } = new URL(request.url);
 
     if (pathname === "/__test/folder" && request.method === "POST") {
-      const { createDelay } = await request.json<{ createDelay: number }>();
+      const { createDelay, pauseWake } = await request.json<{
+        createDelay?: number;
+        pauseWake?: boolean;
+      }>();
 
-      await this.ctx.storage.put("createDelay", createDelay);
+      if (createDelay !== undefined) await this.ctx.storage.put("createDelay", createDelay);
+
+      if (pauseWake !== undefined) await this.ctx.storage.put("pauseWake", pauseWake);
 
       return new Response("configured");
     }
@@ -43,6 +50,12 @@ export class FolderObject extends StreamsyObject.make<
     }
 
     return fileResponse(request, await super.fetch(request), (work) => this.ctx.waitUntil(work));
+  }
+
+  override async alarm(): Promise<void> {
+    if (await this.ctx.storage.get<boolean>("pauseWake")) return;
+
+    return super.alarm();
   }
 }
 
@@ -101,14 +114,15 @@ export default {
       );
     }
 
-    const { folderId, createDelay } = await request.json<{
+    const { folderId, createDelay, pauseWake } = await request.json<{
       folderId: string;
-      createDelay: number;
+      createDelay?: number;
+      pauseWake?: boolean;
     }>();
 
     return folderObject(env, folderId).fetch("https://internal/__test/folder", {
       method: "POST",
-      body: JSON.stringify({ createDelay }),
+      body: JSON.stringify({ createDelay, pauseWake }),
     });
   },
 };

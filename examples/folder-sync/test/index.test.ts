@@ -1,8 +1,8 @@
-import { DurableState, StreamAddress } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
-import { Array, Effect, Layer, Logger, Option, Result, Schedule, Schema, Stream } from "effect";
+import { Array, Effect, Layer, Logger, Result, Schedule, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { FolderStore, FolderStoreLive, Initialise } from "../server/folder-store.ts";
 import { FileIndex, FileIndexLive } from "../server/file-index.ts";
@@ -17,7 +17,7 @@ import {
 import type { FileMessage } from "../server/messages.ts";
 import { BlobStore } from "../server/blob-store.ts";
 import { prepareContent } from "../server/domain.ts";
-import { Files, Folders, FolderWake } from "../server/streams.ts";
+import { Files, FolderWake } from "../server/streams.ts";
 import { sqliteHost } from "../server/storage.ts";
 import { filesWake, WakeLive } from "../server/wake.ts";
 import { storedText } from "./content.ts";
@@ -48,46 +48,6 @@ const fileMessage = (path: string, version = 1): FileMessage => ({
 });
 
 const reset: FileMessage = { headers: { control: "reset" } };
-
-layer(Layer.fresh(graph), { excludeTestServices: true })((it) => {
-  it.effect("Bun discovery consumes a stored registry reset without replaying it", () =>
-    Effect.gen(function* () {
-      const store = yield* FolderStore;
-      const folders = yield* Folders;
-      const index = yield* FileIndex;
-      yield* store.create("discarded", "Discarded", "discarded");
-      yield* store.create("retained", "Retained", "retained");
-
-      for (const folderId of ["discarded", "retained"])
-        yield* store.commit(folderId, "a", {
-          ...(yield* storedText("needle")),
-          txid: folderId,
-          author: "test",
-          parent: null,
-        });
-
-      const retained = Option.getOrUndefined(
-        Array.findFirst(
-          (yield* folders.collect({})).items,
-          (change) => StreamAddress.isChange(change) && change.key === "retained",
-        ),
-      );
-
-      const data = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
-        reset,
-        retained,
-      ]);
-
-      yield* folders.wire.append(Folders.at({}).id, {
-        contentType: "application/json",
-        data: new TextEncoder().encode(data),
-      });
-      yield* Layer.build(IndexLive);
-      yield* until(index.list({ folder: "retained" }), (rows) => rows.length === 1);
-      expect(yield* index.list({ folder: "discarded" })).toEqual([]);
-    }),
-  );
-});
 
 layer(graph, { excludeTestServices: true })((it) => {
   it.effect("Bun indexes a stored reset and following changes once, keeping its cursor", () =>

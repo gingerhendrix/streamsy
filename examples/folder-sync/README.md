@@ -94,10 +94,11 @@ folder produces a wake delete, clears its index rows and forgets its binding.
 When the index object starts, it compares durable wake rows with search
 checkpoints and catches up dirty folders without another write. It also checks
 indexed folders whose wake row disappeared and resumes unacknowledged wake
-batches. The pending set in each folder object still lives in memory: a stop
-before a source commit produces its wake row can delay that row until the next
-folder write. Bun uses `Projection.attach` for both search and wake production;
-its startup pass also reads the registry to recover missed source commits.
+batches. Each folder object's wakeup is durable: a `Files` commit also writes a
+pending mark in its transaction, so an eviction or a deploy before the alarm
+still produces the wake row. The next acquire finds the mark and arms the
+alarm. Bun uses `Projection.attach(..., { durable: true })` for both search and
+wake production, so a restart runs the folders that a stop left behind.
 
 `build:worker` writes two bundles. `public/worker/index.js` is the deploy
 bundle. `public/worker/test-worker.js` adds test switches from
@@ -448,9 +449,9 @@ rows with its source checkpoint. Bun attaches it directly to local `Files`
 commits. The Worker attaches `wakeSearch` to the index object's local
 `FolderWake` commits, then reads affected `Files` streams through `filesLink`.
 At start, the Worker index replays the wake rows after the durable `wakeSearch`
-cursor. Bun runs the search binding of each registered or indexed folder once,
-because attach keeps its pending work in memory. An index restart needs no new
-folder write.
+cursor. Bun runs the search bindings that still have pending marks, in the
+attach layer's own fiber, so the server answers requests while it catches up.
+An index restart needs no new folder write.
 Search and listing are eventually consistent. A missing blob keeps file metadata
 without searchable text and does not stall later changes.
 
@@ -513,8 +514,10 @@ full replay and scans suit a small demo corpus. There is no phone cache.
 
 Worker creation spans the registry and folder objects. The folder object creates
 the stream before the registry lists the folder. A crash between them leaves an
-unlisted empty stream, and a retry of the create lists it. A folder object that stops before producing a wake row can leave search stale
-until its next write. Restart and dirty-row catch-up tests use local workerd. One deployed
+unlisted empty stream, and a retry of the create lists it. Pending marks cover
+commits made while the attach runs. A folder written by an older build, or
+while no attach ran, stays unindexed until its next write. Restart, pending-mark
+and dirty-row catch-up tests use local workerd. One deployed
 run on Cloudflare covered the HTTP smoke, seed, sync mirrors, the browser, the
 agent filesystem and a redeploy. The attached indexing and startup catch-up
 changes have local workerd coverage.

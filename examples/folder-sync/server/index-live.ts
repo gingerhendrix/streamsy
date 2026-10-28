@@ -1,9 +1,7 @@
 import { Projection } from "@streamsy/projection";
 import { Effect, Layer } from "effect";
-import { SqlClient } from "effect/sql";
-import { afterLastReset, isUpsert } from "./messages.ts";
 import { initialiseSearch, search } from "./search-index.ts";
-import { Files, Folders } from "./streams.ts";
+import { Files } from "./streams.ts";
 
 /**
  * Run one folder's search binding. A binding with no checkpoint whose source is
@@ -25,27 +23,10 @@ export const indexFolder = Effect.fn("Index.folder")(function* (folderId: string
 });
 
 /**
- * Bun keeps attach's pending work in memory, so a restart repairs it here. The
- * registry gives every registered folder, and the manifest gives every indexed
- * folder, which covers a removal that the stop interrupted. An up-to-date
- * folder costs one checkpoint read and one tail read.
+ * Local Files commits select their search binding. Each commit also writes a
+ * pending mark in its transaction, so a restart runs the folders that a stop
+ * left behind, removals included, without a scan of every folder.
  */
-export const catchUpIndex = Effect.fn("Index.catchUp")(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const folders = new Set<string>();
-
-  for (const row of yield* sql<{
-    folderId: string;
-  }>`SELECT DISTINCT folderId FROM folder_sync_manifest`)
-    folders.add(row.folderId);
-
-  for (const change of afterLastReset((yield* (yield* Folders).collect({})).items))
-    if (isUpsert(change)) folders.add(change.value.folderId);
-
-  for (const folderId of folders) yield* indexFolder(folderId);
-});
-
-/** Local Files commits select their search binding; startup repairs missed in-memory work. */
-export const IndexLive = Projection.attach(search).pipe(
-  Layer.provide(Layer.effectDiscard(initialiseSearch.pipe(Effect.andThen(catchUpIndex())))),
+export const IndexLive = Projection.attach(search, { durable: true }).pipe(
+  Layer.provide(Layer.effectDiscard(initialiseSearch)),
 );

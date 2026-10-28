@@ -64,6 +64,8 @@ export const folderConfiguration = {
   app: FolderApp,
   layer: folderLayer,
   links: (env: Env) => [wakeLink.client(env.INDEX)],
+  // Durable by default: each `Files` commit writes a pending mark, so an
+  // eviction or a deploy before the alarm still produces the wake row.
   wakeups: [ProjectionWakeup.attach(filesWake)],
 };
 

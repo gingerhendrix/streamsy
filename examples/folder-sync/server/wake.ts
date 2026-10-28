@@ -11,6 +11,7 @@ export const filesWake = Projection.wake({
 
 /**
  * Run `filesWake` after each local `Files` commit. Build it with the storage
- * layer, so that it subscribes before the first write.
+ * layer, so that it subscribes before the first write. The pending mark lets a
+ * restart produce a wake row that a stop left behind.
  */
-export const WakeLive = Projection.attach(filesWake);
+export const WakeLive = Projection.attach(filesWake, { durable: true });

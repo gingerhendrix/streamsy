@@ -240,6 +240,47 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
+      "a folder object stopped before its wake alarm produces the row after a restart, with no new write",
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* testDirectory("worker-wake-mark-");
+          const first = yield* launch(directory);
+          yield* create(first.url, "stalled");
+
+          const pause = yield* HttpClient.post(`${first.url}/api/admin/test-folder`, {
+            headers,
+            body: HttpBody.jsonUnsafe({ folderId: "stalled", pauseWake: true }),
+          });
+
+          expect(pause.status).toBe(200);
+          yield* pause.text;
+          const tail = yield* write(first.url, "stalled", "a.md");
+          const id = Files.at({ folderId: "stalled" }).id;
+          expect((yield* rows(first.url))[id]).not.toBe(tail);
+          yield* Effect.promise(first.stop);
+
+          // The restart drops the in-memory set. Only the pending mark records the write.
+          const host = yield* launch(directory);
+
+          const resume = yield* HttpClient.post(`${host.url}/api/admin/test-folder`, {
+            headers,
+            body: HttpBody.jsonUnsafe({ folderId: "stalled", pauseWake: false }),
+          });
+
+          expect(resume.status).toBe(200);
+          yield* resume.text;
+
+          // A read acquires the folder object, which finds the mark and arms its alarm.
+          const key = yield* Schema.encodeEffect(FolderKey)("stalled");
+          expect(yield* status(HttpClient.head(`${host.url}/streams/folders/${key}/files`))).toBe(
+            200,
+          );
+          yield* until(rows(host.url), (current) => current[id] === tail);
+        }),
+      { timeout: 30000 },
+    );
+
+    it.effect(
       "after a restart, a folder object's next write starts its rows with no saved id",
       () =>
         Effect.gen(function* () {

@@ -128,7 +128,7 @@ Shell globs use the session snapshot. List again after external edits. Empty dir
 
 `/api/ls` lists live metadata with optional folder, prefix and glob filters. `/api/search?q=<query>&folder=<id>` searches current text with FTS5, relevance ordering and a 100-hit limit. Bad queries get 400. Snippets are `{ text, match }` segments. Binary and deleted files have no search text. Blob text is capped at 1 MiB. Preparation reads one blob prefix at a time instead of holding every blob's text in memory.
 
-Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches its search driver to its own FolderWake commits and reads Files through a read-only `/__files` link. Index rows and consumed cursors commit together. At start, the Worker replays the wake rows after the durable `wakeSearch` cursor. Bun runs the search binding of each registered or indexed folder once, because attach keeps pending work in memory. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
+Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches its search driver to its own FolderWake commits and reads Files through a read-only `/__files` link. Index rows and consumed cursors commit together. At start, the Worker replays the wake rows after the durable `wakeSearch` cursor. Every attached projection is durable: each commit to its input also writes a pending mark in its transaction. After an eviction, a deploy or a Bun restart, the marks rerun the folders that the stop left behind, with no scan of every folder. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
 
 ## Measurements and limits
 
@@ -141,5 +141,6 @@ A 32 MiB binary upload and second-client pull took 0.719 s on Bun and 1.266 s on
 - Old mirror state has no migration. Use fresh directories. A writable stream import also needs its owner's durable counter and current heads.
 - A restored missing blob is not reindexed until another write or an index rebuild.
 - Sync scans hash selected files. An editor can still save during the final local read-to-rename window. A stopped delete during an interrupted first install can be restored on restart.
-- Worker creation spans two objects. A crash between registration and initialization needs a create retry. A crash after a Files commit but before its wake row is produced can leave the Worker index stale until the next source write.
+- Worker creation spans two objects. A crash between registration and initialization needs a create retry.
+- Pending marks cover commits made while the attach runs. A folder written by an older build, or while no attach ran, stays unindexed until its next write.
 - The browser has no phone cache. R2 verification and restart checks run on local workerd; there is no hosted deployment.
