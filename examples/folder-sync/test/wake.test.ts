@@ -73,4 +73,16 @@ layer(graph, { excludeTestServices: true })((it) => {
       expect(both).toEqual({ [a]: second, [b]: other });
     }),
   );
+
+  it.effect("a folder id at the 249-byte limit gets its wake row", () =>
+    Effect.gen(function* () {
+      // 83 code units and 249 UTF-8 bytes: the wake producer id has 527 characters.
+      const folderId = "雪".repeat(83);
+      yield* (yield* FolderStore).create(folderId, "Long", "create-long");
+      const tail = yield* write(folderId, "one.md");
+      const id = Files.at({ folderId }).id;
+
+      yield* until(rows, (current) => current[id] === tail);
+    }),
+  );
 });
