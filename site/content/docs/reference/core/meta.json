@@ -13,6 +13,12 @@
     "ids-and-offsets",
     "storage",
     "memory-storage",
-    "records"
+    "records",
+    "http",
+    "remote-streams",
+    "protocol",
+    "streams",
+    "stream-route",
+    "testing"
   ]
 }

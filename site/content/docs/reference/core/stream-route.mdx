@@ -1,0 +1,302 @@
+---
+title: StreamRoute
+description: Reference for the StreamRoute namespace in @streamsy/core/protocol. A route owns the id grammar of a stream class and builds the address of each id.
+---
+
+```ts
+import { StreamRoute } from "@streamsy/core/protocol";
+import type { StreamAddress } from "@streamsy/core";
+import type { Option, Schema } from "effect";
+```
+
+A route owns one id grammar and builds the address of each id that it owns. Each stream class extends a route, so the class has `template`, `match`, `parse`, and `address`. Building a route acquires no service and no resource. The stream class factories on the [Streamsy](/docs/reference/core/streamsy) page call these functions. See [Declare streams](/docs/streams/declare).
+
+## Functions
+
+The template functions share these rules:
+
+- A `template` is a relative path. Each segment is a literal or a `:name` param.
+- `params` has one codec for each `:name` in the template, and no other codec. The compiler checks this through [`ExactTemplateParams`](#streamrouteexacttemplateparams) when `template` is a string literal.
+- The call throws a `RangeError` when `template` is empty, starts with `/`, or has an empty segment. It also throws for `?`, `#`, or `*` in the template, a param with no name, a repeated param, or a literal segment that is not a canonical id segment.
+- The call also throws a `RangeError` when the params and the codecs differ, which covers a `template` typed as a plain `string`.
+
+A canonical id segment is not empty, is not `.` or `..`, and has no `%`, `?`, `#`, `/`, or `\`.
+
+### `StreamRoute.json`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function json<
+  const Template extends string,
+  Codecs extends StreamRoute.ParamCodecs,
+  A,
+  I,
+  RD,
+  RE,
+>(
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly schema: Schema.Codec<A, I, RD, RE>;
+  },
+): StreamRoute.StreamRoute<StreamRoute.Params<Codecs>, A, RD, RE, Template> &
+  WithPathSchema<StreamRoute.Params<Codecs>>;
+
+// WithPathSchema has no exported name. It makes paramSchema required.
+type WithPathSchema<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
+// ---cut-after---
+same<typeof json, typeof StreamRoute.json>(true);
+```
+
+`json` returns a route whose addresses are [JSON addresses](/docs/reference/core/stream-address#streamaddressjson) with the codec `schema`.
+
+### `StreamRoute.state`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function state<
+  const Template extends string,
+  Codecs extends StreamRoute.ParamCodecs,
+  const C extends StreamAddress.Collections,
+>(
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly collections: C & StreamAddress.ValidCollections<C>;
+  },
+): StreamRoute.StateRoute<StreamRoute.Params<Codecs>, C, Template> &
+  WithPathSchema<StreamRoute.Params<Codecs>>;
+
+// WithPathSchema has no exported name. It makes paramSchema required.
+type WithPathSchema<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
+// ---cut-after---
+same<typeof state, typeof StreamRoute.state>(true);
+```
+
+`state` returns a route whose addresses are [State addresses](/docs/reference/core/stream-address#streamaddressstate) with the collections `collections`.
+
+### `StreamRoute.bytes`
+
+```ts
+// ---cut-start---
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function bytes<const Template extends string, Codecs extends StreamRoute.ParamCodecs>(
+  template: Template,
+  options: {
+    readonly params: Codecs & StreamRoute.ExactTemplateParams<Template, Codecs>;
+    readonly contentType?: string;
+  },
+): StreamRoute.StreamRoute<StreamRoute.Params<Codecs>, Uint8Array, never, never, Template> &
+  WithPathSchema<StreamRoute.Params<Codecs>>;
+
+// WithPathSchema has no exported name. It makes paramSchema required.
+type WithPathSchema<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
+// ---cut-after---
+same<typeof bytes, typeof StreamRoute.bytes>(true);
+```
+
+`bytes` returns a route whose addresses are [bytes addresses](/docs/reference/core/stream-address#streamaddressbytes) with the content type `contentType`. The default content type is `application/octet-stream`.
+
+### `StreamRoute.custom`
+
+```ts
+// ---cut-start---
+import type { Option } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function custom<RouteParams, A, RD, RE>(options: {
+  readonly parse: (id: string) => Option.Option<RouteParams>;
+  readonly address: (params: RouteParams) => StreamAddress.StreamAddress<A, RD, RE>;
+}): StreamRoute.StreamRoute<RouteParams, A, RD, RE>;
+// ---cut-after---
+same<typeof custom, typeof StreamRoute.custom>(true);
+```
+
+`custom` returns a route for an id grammar that a template cannot express. The route owns an id when `parse` returns `Some`. Its `template` is the empty string, and it has no `paramSchema`. A group does not check a custom route for overlap with other routes.
+
+`address(params).id` must parse back to `params`. `custom` does not check this.
+
+## Types
+
+### `StreamRoute.StreamRoute`
+
+```ts
+// ---cut-start---
+import type { Option } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StreamRoute<RouteParams, A, RD = never, RE = never, Template extends string = string> {
+  readonly _tag: "StreamRoute";
+  readonly template: Template;
+  readonly paramSchema?: StreamRoute.PathSchema<RouteParams>;
+  readonly match: (id: string) => boolean;
+  readonly parse: (id: string) => Option.Option<RouteParams>;
+  readonly address: (params: RouteParams) => StreamAddress.StreamAddress<A, RD, RE>;
+}
+// ---cut-after---
+type P = { readonly noteId: string };
+interface Decoding {
+  readonly decoding: unique symbol;
+}
+same<StreamRoute<P, string>, StreamRoute.StreamRoute<P, string>>(true);
+same<
+  StreamRoute<P, string, Decoding, never, "notes/:noteId">,
+  StreamRoute.StreamRoute<P, string, Decoding, never, "notes/:noteId">
+>(true);
+```
+
+A `StreamRoute` is the id grammar of one stream class, with the params type `RouteParams` and the item type `A`.
+
+| Member        | Meaning                                                                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| `template`    | The relative template, for example `notes/:noteId`. It is the empty string for a custom route             |
+| `paramSchema` | The codec from the raw path params to `RouteParams`. A template route has it, and a custom route does not |
+| `match`       | Returns `true` when the route owns `id`                                                                   |
+| `parse`       | Returns the params of `id`, or `None` when the id does not match or a param fails to decode               |
+| `address`     | Returns the address of the stream with the params `params`                                                |
+
+A template route matches an id when the id has the same number of segments, each literal segment is equal, each param segment is a canonical id segment, and each param decodes with its codec.
+
+The `address` of a template route encodes each param with its codec. It throws a `RangeError` when a param cannot encode, or encodes to a segment that is not canonical.
+
+### `StreamRoute.StateRoute`
+
+```ts
+// ---cut-start---
+import type { StreamAddress } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type StateRoute<P, C extends StreamAddress.Collections, Template extends string = string> = Omit<
+  StreamRoute.StreamRoute<
+    P,
+    StreamAddress.CollectionsEvent<C>,
+    StreamAddress.CollectionsDecodingServices<C>,
+    StreamAddress.CollectionsEncodingServices<C>,
+    Template
+  >,
+  "address"
+> & {
+  readonly collections: C;
+  readonly address: (params: P) => StreamAddress.StateAddress<C>;
+};
+// ---cut-after---
+type P = { readonly boardId: string };
+type C = StreamAddress.Collections;
+same<StateRoute<P, C>, StreamRoute.StateRoute<P, C>>(true);
+same<StateRoute<P, C, "boards/:boardId">, StreamRoute.StateRoute<P, C, "boards/:boardId">>(true);
+```
+
+A `StateRoute` is a route of State events that keeps its collections. Its `address` returns a [`StateAddress`](/docs/reference/core/stream-address#streamaddressstateaddress), so `DurableState.changes` can read the key field of each collection.
+
+### `StreamRoute.PathSchema`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type PathSchema<P> = Schema.Codec<P, Readonly<Record<string, string | undefined>>>;
+// ---cut-after---
+same<PathSchema<{ readonly id: string }>, StreamRoute.PathSchema<{ readonly id: string }>>(true);
+```
+
+A `PathSchema<P>` decodes the raw path params of an HTTP route into the params `P`. A template route builds it as a `Schema.Struct` of its param codecs. `@streamsy/serve` decodes the params of its routes with it.
+
+### `StreamRoute.Matcher`
+
+```ts
+// ---cut-start---
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Matcher {
+  readonly match: (id: string) => boolean;
+}
+// ---cut-after---
+same<Matcher, StreamRoute.Matcher>(true);
+```
+
+A `Matcher` is the part of a route that the group checks and HTTP dispatch need: `match`. Every route is a `Matcher`.
+
+### `StreamRoute.ParamCodecs`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ParamCodecs = Readonly<Record<string, Schema.Codec<unknown, string>>>;
+// ---cut-after---
+same<ParamCodecs, StreamRoute.ParamCodecs>(true);
+```
+
+`ParamCodecs` is the record of param codecs, with one codec for each `:name` in the template. Each codec decodes from a `string` and needs no service.
+
+### `StreamRoute.Params`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Params<Codecs extends StreamRoute.ParamCodecs> = {
+  readonly [Name in keyof Codecs]: Codecs[Name]["Type"];
+};
+// ---cut-after---
+type Codecs = {
+  readonly seat: typeof Schema.String;
+  readonly round: typeof Schema.FiniteFromString;
+};
+same<Params<Codecs>, StreamRoute.Params<Codecs>>(true);
+same<StreamRoute.Params<Codecs>, { readonly seat: string; readonly round: number }>(true);
+```
+
+`Params<Codecs>` is the record of decoded params. It has one field for each codec, with the decoded type of that codec.
+
+### `StreamRoute.ExactTemplateParams`
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Seat = { readonly seat: typeof Schema.String };
+
+type Exact = StreamRoute.ExactTemplateParams<"games/:seat", Seat>;
+// unknown
+
+type MissingCodec = StreamRoute.ExactTemplateParams<"games/:seat/:round", Seat>;
+// never
+
+type ExtraCodec = StreamRoute.ExactTemplateParams<"games", Seat>;
+// never
+
+type WideTemplate = StreamRoute.ExactTemplateParams<string, Seat>;
+// unknown
+// ---cut-after---
+same<Exact, unknown>(true);
+same<MissingCodec, never>(true);
+same<ExtraCodec, never>(true);
+same<WideTemplate, unknown>(true);
+```
+
+`ExactTemplateParams<Template, Codecs>` is `unknown` when the `:name` params of `Template` and the keys of `Codecs` are the same set, and `never` when they differ. The template functions intersect `params` with it, so a mismatch makes `params` a `never` and the compiler reports it. When `Template` is a plain `string`, the type is `unknown` and the run-time check applies.

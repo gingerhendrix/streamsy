@@ -1,0 +1,195 @@
+---
+title: Testing
+description: Reference for the @streamsy/core/testing entry point. It has the storage contract tests, fault injection, and a protocol Layer for tests.
+---
+
+```ts
+import {
+  StorageContract,
+  StreamsTest,
+  expectFailureTag,
+  faultyStorage,
+  layerTest,
+  type StorageContractOptions,
+} from "@streamsy/core/testing";
+import type { ChangeSnapshot, Storage, StorageCapabilities, StreamId } from "@streamsy/core";
+import type { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { Context, Effect, Layer } from "effect";
+```
+
+These tools test storage adapters and protocol code. `StorageContract` and `expectFailureTag` call Vitest, so import this entry point only in test files that Vitest runs. Application tests provide `MemoryStorage.layer(group)` instead. See [Testing](/docs/hosting#testing).
+
+## Storage contract
+
+### `StorageContract`
+
+```ts
+// ---cut-start---
+import type { StorageCapabilities } from "@streamsy/core";
+import * as T from "@streamsy/core/testing";
+import type { StorageContractOptions } from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const StorageContract: {
+  run(options: StorageContractOptions): void;
+  assertModes(configurations: ReadonlyArray<StorageCapabilities>): void;
+};
+// ---cut-after---
+same<typeof StorageContract, typeof T.StorageContract>(true);
+```
+
+`StorageContract` holds the contract tests that every storage adapter must pass. See [Contract tests](/docs/hosting/storage-adapter#contract-tests).
+
+`run` registers a Vitest `describe` block named `options.name`, with one test for each rule of the contract.
+
+- Each test builds a new `options.layer`, with a `TestClock`.
+- Each test first checks that `capabilities` of the store equals `options.expected`.
+- A test of a capability that `options.expected` rules out is skipped, for example the fork tests when `fork` is `none`.
+- The tests of `CommitBoundary` and the owner records run only when `options.ownerRecords` is `true`. They check that the records and the stream writes commit and roll back together.
+
+`assertModes` registers one test. It checks that `configurations` holds both values of each capability that the shipped stores have: `chain` and `copy`, `store` and `stream`, `push` and `poll`, and `indexed` and `lazy`. Call it with the `expected` capabilities of each `run` of a configurable store, to check that the runs cover both modes.
+
+### `StorageContractOptions`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { Storage, StorageCapabilities } from "@streamsy/core";
+import type * as T from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StorageContractOptions {
+  readonly name: string;
+  readonly layer: Layer.Layer<Storage>;
+  readonly expected: StorageCapabilities;
+  readonly ownerRecords?: boolean;
+}
+// ---cut-after---
+same<StorageContractOptions, T.StorageContractOptions>(true);
+```
+
+`StorageContractOptions` holds the options of `StorageContract.run`.
+
+| Option         | Meaning                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `name`         | The name of the `describe` block                                                                           |
+| `layer`        | The Layer of the adapter under test                                                                        |
+| `expected`     | The [`StorageCapabilities`](/docs/reference/core/storage#storagecapabilities) that the adapter must report |
+| `ownerRecords` | `true` when `layer` also provides `CommitBoundary` and the owner records that projections need             |
+
+### `faultyStorage`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { Storage } from "@streamsy/core";
+import * as T from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function faultyStorage(
+  source: Layer.Layer<Storage>,
+  options: {
+    readonly failOn: number;
+    readonly when: "before" | "after";
+  },
+): Layer.Layer<Storage>;
+// ---cut-after---
+same<typeof faultyStorage, typeof T.faultyStorage>(true);
+```
+
+`faultyStorage` wraps the store of `source` so that one `mutate` call fails with a retryable `StorageFault`. The call that fails is the `failOn`th call, counted from 1, after each build of the Layer.
+
+- With `when: "before"`, the call fails and the store does not apply the mutation.
+- With `when: "after"`, the store applies the mutation, and then the call fails. Use it to test a write whose reply is lost.
+
+Every other call passes to the store unchanged. Building the Layer dies with a `RangeError` when `failOn` is not a positive integer.
+
+## Protocol tests
+
+### `layerTest`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import * as T from "@streamsy/core/testing";
+import { StreamsTest } from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const layerTest: (
+  options?: MemoryOptions & Protocol.ProtocolOptions,
+) => Layer.Layer<StreamsReader | StreamsTest | StreamsWriter>;
+
+// MemoryOptions has no exported name. It holds the memory options of MemoryStorage.Options.
+type MemoryOptions = {
+  readonly constrained?: boolean;
+  readonly pollIntervalMs?: number;
+};
+// ---cut-after---
+same<typeof layerTest, typeof T.layerTest>(true);
+```
+
+`layerTest` returns a Layer with the real protocol reader and writer over a new memory store, and a `StreamsTest` service that watches the store. The options mean the same as in [`MemoryStorage.Options`](/docs/reference/core/memory-storage#memorystorageoptions). To test stream classes, bind them to it:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Protocol } from "@streamsy/core/protocol";
+import { layerTest } from "@streamsy/core/testing";
+import { shop } from "./streams.ts";
+
+const streams = Protocol.bind(layerTest(), shop);
+```
+
+### `StreamsTest`
+
+```ts
+// ---cut-start---
+import { Context, type Effect } from "effect";
+import type { ChangeSnapshot, Storage, StreamId } from "@streamsy/core";
+import * as T from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class StreamsTest extends Context.Service<
+  StreamsTest,
+  {
+    readonly storage: typeof Storage.Service;
+    readonly subscribers: Effect.Effect<number>;
+    readonly snapshot: Effect.Effect<{
+      readonly id: StreamId;
+      readonly value: ChangeSnapshot;
+    }>;
+  }
+>()("@streamsy/core/StreamsTest") {}
+// ---cut-after---
+same<typeof StreamsTest, typeof T.StreamsTest>(true);
+same<StreamsTest, T.StreamsTest>(true);
+```
+
+`StreamsTest` is the service that `layerTest` provides. It lets a test see the `changes` subscriptions of the store, so the test can wait for a live read without a sleep.
+
+| Member        | Does                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage`     | The store under the protocol Layer                                                                                                                |
+| `subscribers` | Returns the number of `changes` subscriptions that are open now                                                                                   |
+| `snapshot`    | Waits for the next [`ChangeSnapshot`](/docs/reference/core/records#changesnapshot) that any subscription emits, and returns it with its stream id |
+
+### `expectFailureTag`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import * as T from "@streamsy/core/testing";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const expectFailureTag: <A, E extends { readonly _tag: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+  tag: E["_tag"],
+) => Effect.Effect<E, A, R>;
+// ---cut-after---
+same<typeof expectFailureTag, typeof T.expectFailureTag>(true);
+```
+
+`expectFailureTag` swaps the success and the failure of `effect`, and checks with the Vitest `expect` that the error has the `_tag` `tag`. It succeeds with the error. When `effect` succeeds, the result fails with the success value, so the test cannot pass.

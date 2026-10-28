@@ -1,0 +1,128 @@
+---
+title: RemoteStreams
+description: Reference for the RemoteStreams namespace in @streamsy/core/remote. It provides stream services from a remote Durable Streams host over HTTP.
+---
+
+```ts
+import { RemoteStreams } from "@streamsy/core/remote";
+import type { Streamsy } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { Layer } from "effect";
+import type { HttpClient } from "effect/http";
+```
+
+`RemoteStreams` runs the stream operations against a remote host over HTTP, so a program runs over a remote host with no change. The Layers need an Effect `HttpClient`. See [Remote client](/docs/http/remote).
+
+## `RemoteStreams.layer`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { HttpClient } from "effect/http";
+import type { Streamsy } from "@streamsy/core";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  group: Streamsy.Group<Keys>,
+  options: RemoteStreams.Options,
+): Layer.Layer<
+  Streamsy.Host<Streamsy.Group<Keys>>,
+  RemoteStreams.TransportFault,
+  HttpClient.HttpClient
+>;
+// ---cut-after---
+same<typeof layer, typeof RemoteStreams.layer>(true);
+```
+
+`layer` returns a Layer with the service of each stream class in `group`, over `layerProtocol(options)`. It provides no `Storage` and no local change feed. The limits are in [Limits](/docs/http/remote#limits).
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { shop } from "./streams.ts";
+
+const remote = RemoteStreams.layer(shop, {
+  baseUrl: "https://streams.example.com/streams",
+}).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+`layer` throws a `RangeError` for the same groups as [`Streamsy.group`](/docs/reference/core/streamsy#streamsygroup).
+
+## `RemoteStreams.layerProtocol`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { HttpClient } from "effect/http";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layerProtocol(
+  options: RemoteStreams.Options,
+): Layer.Layer<StreamsReader | StreamsWriter, RemoteStreams.TransportFault, HttpClient.HttpClient>;
+// ---cut-after---
+same<typeof layerProtocol, typeof RemoteStreams.layerProtocol>(true);
+```
+
+`layerProtocol` returns a Layer with the generic protocol reader and writer over HTTP, and no stream classes. Each operation sends its request to `baseUrl` followed by the stream id. Protocol tools use it.
+
+- Building the Layer fails with a `TransportFault` whose `reason` is `configuration` when `baseUrl` is not an HTTP or HTTPS URL, or has a query, a fragment, or credentials.
+- An operation fails with a `TransportFault` whose `reason` is `configuration` when the stream id is not a canonical relative path, for example when it has an empty segment, `..`, `%`, `?`, `#`, or `\`.
+- An operation fails with a `TransportFault` whose `reason` is `request` when the HTTP request fails.
+- An append with `expectedOffset` fails with `NotSupported` unless `capabilities.expectedOffset` is `true`. An append with `producer` fails with `NotSupported` unless `capabilities.producer` is `true`. The writer sends no request in these cases.
+
+Each request has the headers of `options.headers` and `cache-control: no-cache`. The `HttpClient` and the calling fiber own the lifetime of each request, so an interrupted call cancels its request.
+
+## `RemoteStreams.Options`
+
+```ts
+// ---cut-start---
+import { RemoteStreams } from "@streamsy/core/remote";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Options {
+  readonly baseUrl: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly capabilities?: {
+    readonly expectedOffset?: boolean;
+    readonly producer?: boolean;
+  };
+}
+// ---cut-after---
+same<Options, RemoteStreams.Options>(true);
+```
+
+`Options` holds the options of `layer` and `layerProtocol`.
+
+| Option                        | Meaning                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `baseUrl`                     | The protocol prefix of the host, for example `https://host/streams` |
+| `headers`                     | The headers to send with each request, for example `authorization`  |
+| `capabilities.expectedOffset` | `true` when the host supports `Stream-Expected-Offset`              |
+| `capabilities.producer`       | `true` when the host supports the producer headers                  |
+
+The capabilities state what the host supports. The Layer does not discover them, and it does not infer them from a successful append.
+
+## `RemoteStreams.TransportFault`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type TransportFault = Core.TransportFault;
+declare const TransportFault: typeof Core.TransportFault;
+// ---cut-after---
+same<TransportFault, RemoteStreams.TransportFault>(true);
+same<typeof TransportFault, typeof RemoteStreams.TransportFault>(true);
+```
+
+`RemoteStreams.TransportFault` is the root [`TransportFault`](/docs/reference/core/faults#transportfault) class.

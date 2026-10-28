@@ -1,0 +1,484 @@
+---
+title: Streams
+description: Reference for the Streams namespace in @streamsy/core/protocol. Its functions run the stream operations on a StreamAddress over the generic protocol reader and writer.
+---
+
+```ts
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type * as Core from "@streamsy/core";
+import type {
+  AppendCallOptions,
+  AppendResult,
+  CreateOptions,
+  CreateResult,
+  HeadResult,
+  ReadNextError,
+  ReadNextOptions,
+  ReadNextResult,
+  ReadOptions,
+  StreamAddress,
+  StreamsFault,
+} from "@streamsy/core";
+import type { Array, Effect, Function, Schedule, Stream } from "effect";
+```
+
+Each `Streams` function runs one stream operation on a [`StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress), and it needs `StreamsReader`, `StreamsWriter`, or both. The methods of a stream class run the same operations on the params of one stream. Protocol tools and tests use `Streams` on raw addresses. An application uses [stream classes](/docs/reference/core/streamsy#streamsyapi).
+
+Most of the types of this namespace are also exported from the root of `@streamsy/core`. Their sections link to the [Toolkit types](/docs/reference/core/toolkit) page, which describes them.
+
+## Functions
+
+### `Streams.create`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { CreateOptions, CreateResult, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const create: <A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  options?: Omit<CreateOptions, "contentType">,
+) => Effect.Effect<CreateResult, Streams.CreateFailure, StreamsWriter>;
+// ---cut-after---
+same<typeof create, typeof Streams.create>(true);
+```
+
+`create` creates the stream of `address`, with the content type of the address. See [`CreateOptions`](/docs/reference/core/options-and-results#createoptions).
+
+### `Streams.append`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { AppendCallOptions, AppendResult, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const append: <A, RD, RE, const O extends AppendCallOptions = {}>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  items: Streams.AppendItems<A, O>,
+  options?: O,
+) => Effect.Effect<AppendResult, Streams.AppendFailure<O>, RE | StreamsWriter>;
+// ---cut-after---
+same<typeof append, typeof Streams.append>(true);
+```
+
+`append` encodes each item with the codec of `address` and writes the items as one append. For a JSON address, it writes the items as one JSON array. For a bytes address, it concatenates the items into one request body.
+
+- `append` fails with `EncodeFault` when the codec cannot encode an item.
+- `append` dies with a `RangeError` when a bytes item encodes to zero bytes.
+- An append with no items and `close: true` sends an empty body, which closes the stream.
+- The error type lists only the rejections that `options` make possible. When the host answers with another rejection, `append` dies. See [`AppendFailure`](/docs/reference/core/toolkit#appendfailure).
+
+### `Streams.read`
+
+```ts
+// ---cut-start---
+import type { Stream } from "effect";
+import type { ReadOptions, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function read<A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  options?: ReadOptions,
+): Stream.Stream<Streams.Batch<A>, Streams.ReadFailure, StreamsReader | RD>;
+// ---cut-after---
+same<typeof read, typeof Streams.read>(true);
+```
+
+`read` returns a stream of decoded batches from `options.offset` to the tail. It reads one page at a time, and it ends after the first batch whose `upToDate` is `true`. `read` fails with `DecodeFault` when the codec cannot decode a message. See [Read](/docs/streams/read#read).
+
+### `Streams.follow`
+
+```ts
+// ---cut-start---
+import type { Stream } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function follow<A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  options?: Streams.FollowOptions,
+): Stream.Stream<Streams.Batch<A>, Streams.FollowFailure, StreamsReader | RD>;
+// ---cut-after---
+same<typeof follow, typeof Streams.follow>(true);
+```
+
+`follow` reads to the tail, then makes one long-poll wait at a time with `readNext`. It sends the `cursor` of each wait in the next one. It emits no empty batch, except the last batch of a closed stream, and it ends after a batch whose `closed` is `true`.
+
+When a read fails with a retryable `TransportFault` or `StorageFault`, `follow` retries it from the same offset on the `retry` schedule, so it emits each item once. Any other failure ends the stream. See [Follow](/docs/streams/read#follow).
+
+### `Streams.items`
+
+```ts
+// ---cut-start---
+import type { Stream } from "effect";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const items: <A, E, R>(
+  batches: Stream.Stream<Streams.Batch<A>, E, R>,
+) => Stream.Stream<A, E, R>;
+// ---cut-after---
+same<typeof items, typeof Streams.items>(true);
+```
+
+`items` flattens a stream of batches into a stream of their items, in order. Use it on the result of `read` or `follow`.
+
+### `Streams.fold`
+
+```ts
+// ---cut-start---
+import type { Effect, Function } from "effect";
+import type { ReadOptions, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const fold: <A, RD, RE, S>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  initial: Function.LazyArg<S>,
+  f: (state: S, item: A) => S,
+  options?: ReadOptions,
+) => Effect.Effect<Streams.Folded<S>, Streams.ReadFailure, RD | StreamsReader>;
+// ---cut-after---
+same<typeof fold, typeof Streams.fold>(true);
+```
+
+`fold` reads to the tail and folds every item into one value, starting from `initial()`. It returns the value and the tail that it read up to. To fold on from an earlier result, pass its `offset` as `options.offset`. See [Fold](/docs/streams/read#fold).
+
+### `Streams.collect`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { ReadOptions, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const collect: <A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  options?: ReadOptions,
+) => Effect.Effect<Streams.Collected<A>, Streams.ReadFailure, RD | StreamsReader>;
+// ---cut-after---
+same<typeof collect, typeof Streams.collect>(true);
+```
+
+`collect` reads to the tail and returns every item, and the tail that it read up to.
+
+### `Streams.decide`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const decide: <A, RD, RE, S, B, E, R>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  spec: Streams.DecideSpec<A, S, B, E, R>,
+) => Effect.Effect<
+  Streams.Decided<B>,
+  Streams.ReadFailure | Streams.AppendFailure<{ expectedOffset: string }> | E,
+  R | RD | RE | StreamsReader | StreamsWriter
+>;
+// ---cut-after---
+same<typeof decide, typeof Streams.decide>(true);
+```
+
+`decide` folds the stream to its tail, calls `spec.decide` with the state, and appends the items of the decision with `expectedOffset` set to the tail that it read. When the decision has no items, `decide` writes nothing.
+
+After an `OffsetMismatch` on its own append, `decide` folds on from the tail it had and decides again, while `spec.retry` allows. Then it fails with the last `OffsetMismatch`. It retries no other failure. The rules of `spec` are under [`DecideSpec`](/docs/reference/core/toolkit#decidespec). See [Read, fold, append](/docs/streams/write#read-fold-append).
+
+### `Streams.session`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type {
+  ReadNextError,
+  ReadNextOptions,
+  ReadNextResult,
+  StreamAddress,
+  StreamsFault,
+} from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const session: <A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+  options: ReadNextOptions,
+) => Effect.Effect<ReadNextResult, StreamsFault | ReadNextError, StreamsReader>;
+// ---cut-after---
+same<typeof session, typeof Streams.session>(true);
+```
+
+`session` makes one long-poll wait with `readNext`, and returns the raw result. It does not decode the messages. See [Session](/docs/streams/read#session).
+
+### `Streams.head`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { HeadResult, StreamAddress } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const head: <A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+) => Effect.Effect<HeadResult, Streams.HeadFailure, StreamsReader>;
+// ---cut-after---
+same<typeof head, typeof Streams.head>(true);
+```
+
+`head` returns the tail and the configuration of the stream, without messages.
+
+### `Streams.remove`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const remove: <A, RD, RE>(
+  address: StreamAddress.StreamAddress<A, RD, RE>,
+) => Effect.Effect<void, Streams.RemoveFailure, StreamsWriter>;
+// ---cut-after---
+same<typeof remove, typeof Streams.remove>(true);
+```
+
+`remove` deletes the stream of `address`.
+
+## Options
+
+### `Streams.AppendItems`
+
+```ts
+// ---cut-start---
+import type { Array } from "effect";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendItems<A, O> = O extends { readonly close: true }
+  ? ReadonlyArray<A>
+  : Array.NonEmptyReadonlyArray<A>;
+// ---cut-after---
+same<AppendItems<string, {}>, Streams.AppendItems<string, {}>>(true);
+same<AppendItems<string, { close: true }>, Streams.AppendItems<string, { close: true }>>(true);
+```
+
+`AppendItems<A, O>` is the list of items that one append takes. The list must have at least one item, unless the options `O` have `close: true`.
+
+### `Streams.FollowOptions`
+
+```ts
+// ---cut-start---
+import type { Schedule } from "effect";
+import type { ReadOptions } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface FollowOptions extends ReadOptions {
+  readonly retry?: Schedule.Schedule<unknown>;
+}
+// ---cut-after---
+same<FollowOptions, Streams.FollowOptions>(true);
+```
+
+`FollowOptions` holds the options of `follow`: the [`ReadOptions`](/docs/reference/core/options-and-results#readoptions), and `retry`. `retry` is the schedule for a read that fails with a retryable fault. The default schedule is exponential from 200 ms, with jitter, with each wait capped at 30 s, and it never stops.
+
+## Results
+
+### `Streams.Batch`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Batch<A> = Core.Batch<A>;
+// ---cut-after---
+same<Batch<string>, Streams.Batch<string>>(true);
+```
+
+`Streams.Batch` is the root [`Batch`](/docs/reference/core/toolkit#batch).
+
+### `Streams.Collected`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Collected<A> = Core.Collected<A>;
+// ---cut-after---
+same<Collected<string>, Streams.Collected<string>>(true);
+```
+
+`Streams.Collected` is the root [`Collected`](/docs/reference/core/toolkit#collected).
+
+### `Streams.Folded`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Folded<S> = Core.Folded<S>;
+// ---cut-after---
+same<Folded<number>, Streams.Folded<number>>(true);
+```
+
+`Streams.Folded` is the root [`Folded`](/docs/reference/core/toolkit#folded).
+
+### `Streams.DecideSpec`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type DecideSpec<A, S, B, E, R> = Core.DecideSpec<A, S, B, E, R>;
+// ---cut-after---
+same<
+  DecideSpec<string, number, boolean, Error, never>,
+  Streams.DecideSpec<string, number, boolean, Error, never>
+>(true);
+```
+
+`Streams.DecideSpec` is the root [`DecideSpec`](/docs/reference/core/toolkit#decidespec).
+
+### `Streams.Decision`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Decision<B, A> = Core.Decision<B, A>;
+// ---cut-after---
+same<Decision<boolean, string>, Streams.Decision<boolean, string>>(true);
+```
+
+`Streams.Decision` is the root [`Decision`](/docs/reference/core/toolkit#decision).
+
+### `Streams.Decided`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Decided<B> = Core.Decided<B>;
+// ---cut-after---
+same<Decided<boolean>, Streams.Decided<boolean>>(true);
+```
+
+`Streams.Decided` is the root [`Decided`](/docs/reference/core/toolkit#decided).
+
+## Failures
+
+### `Streams.ReadFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ReadFailure = Core.ReadFailure;
+// ---cut-after---
+same<ReadFailure, Streams.ReadFailure>(true);
+```
+
+`Streams.ReadFailure` is the root [`ReadFailure`](/docs/reference/core/toolkit#readfailure).
+
+### `Streams.FollowFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type FollowFailure = Core.FollowFailure;
+// ---cut-after---
+same<FollowFailure, Streams.FollowFailure>(true);
+```
+
+`Streams.FollowFailure` is the root [`FollowFailure`](/docs/reference/core/toolkit#followfailure).
+
+### `Streams.AppendFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type AppendFailure<O = Core.AppendCallOptions> = Core.AppendFailure<O>;
+// ---cut-after---
+same<AppendFailure, Streams.AppendFailure>(true);
+same<AppendFailure<{ expectedOffset: string }>, Streams.AppendFailure<{ expectedOffset: string }>>(
+  true,
+);
+```
+
+`Streams.AppendFailure` is the root [`AppendFailure`](/docs/reference/core/toolkit#appendfailure).
+
+### `Streams.CreateFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CreateFailure = Core.CreateFailure;
+// ---cut-after---
+same<CreateFailure, Streams.CreateFailure>(true);
+```
+
+`Streams.CreateFailure` is the root [`CreateFailure`](/docs/reference/core/toolkit#createfailure).
+
+### `Streams.HeadFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type HeadFailure = Core.HeadFailure;
+// ---cut-after---
+same<HeadFailure, Streams.HeadFailure>(true);
+```
+
+`Streams.HeadFailure` is the root [`HeadFailure`](/docs/reference/core/toolkit#headfailure).
+
+### `Streams.RemoveFailure`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type RemoveFailure = Core.RemoveFailure;
+// ---cut-after---
+same<RemoveFailure, Streams.RemoveFailure>(true);
+```
+
+`Streams.RemoveFailure` is the root [`RemoveFailure`](/docs/reference/core/toolkit#removefailure).

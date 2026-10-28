@@ -90,7 +90,7 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
 same<typeof layerProtocol, typeof MemoryStorage.layerProtocol>(true);
 ```
 
-`layerProtocol` returns a Layer with the generic protocol reader and writer over a memory store, and no stream classes. `StreamsReader` and `StreamsWriter` reach any stream id. Protocol tools and tests use it, for example to write raw messages that a typed service does not write.
+`layerProtocol` returns a Layer with the generic protocol reader and writer over a memory store, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. Protocol tools and tests use it, for example to write raw messages that a typed service does not write.
 
 ## `MemoryStorage.Options`
 

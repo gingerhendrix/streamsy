@@ -1,0 +1,284 @@
+---
+title: Protocol
+description: Reference for the @streamsy/core/protocol entry point. It gives the generic protocol reader and writer, the Layer that builds them over Storage, and the raw HTTP route.
+---
+
+```ts
+import {
+  Protocol,
+  StreamsReader,
+  StreamsWriter,
+  routes,
+  type Reader,
+  type Writer,
+} from "@streamsy/core/protocol";
+import type { Storage, StorageFault, StreamId, StreamsFault, Streamsy } from "@streamsy/core";
+import type { Effect, Layer } from "effect";
+import type { HttpRouter } from "effect/http";
+```
+
+The protocol tier reads and writes any stream id, with no codec and no stream class. Storage adapters, protocol tests, and HTTP internals use it. See [Protocol tier](/docs/hosting#protocol-tier).
+
+This entry point also exports the `Streams` and `StreamRoute` namespaces. They are on the [Streams](/docs/reference/core/streams) and [StreamRoute](/docs/reference/core/stream-route) pages.
+
+## Layers
+
+### `Protocol.layer`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { Storage } from "@streamsy/core";
+import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layer(
+  options?: Protocol.ProtocolOptions,
+): Layer.Layer<StreamsReader | StreamsWriter, never, Storage>;
+// ---cut-after---
+same<typeof layer, typeof Protocol.layer>(true);
+```
+
+`layer` builds the protocol reader and writer over the `Storage` service. It implements the Durable Streams rules on top of the store: offsets, expiry, closed streams, forks, and producer fencing. Provide a [`Storage`](/docs/reference/core/storage#storage) Layer to it.
+
+Building the Layer dies with a `RangeError` when `longPollTimeoutMs` is not a positive number, or when `readLimit` is not a positive safe integer.
+
+### `Protocol.ProtocolOptions`
+
+```ts
+// ---cut-start---
+import { Protocol } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ProtocolOptions {
+  readonly readLimit?: number;
+  readonly longPollTimeoutMs?: number;
+}
+// ---cut-after---
+same<ProtocolOptions, Protocol.ProtocolOptions>(true);
+```
+
+`ProtocolOptions` holds the options of `Protocol.layer`.
+
+| Option              | Meaning                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `readLimit`         | The largest number of messages in one catch-up page. A live read returns the whole tail. The default is 1000 |
+| `longPollTimeoutMs` | The longest wait of a long-poll read. The default is 30 s                                                    |
+
+### `Protocol.bind`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { Streamsy } from "@streamsy/core";
+import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function bind<A, E, R, const Keys extends ReadonlyArray<Streamsy.Any>>(
+  graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
+  streams: Streamsy.Group<Keys>,
+): Layer.Layer<Streamsy.Host<Streamsy.Group<Keys>>, E, R>;
+// ---cut-after---
+same<typeof bind, typeof Protocol.bind>(true);
+```
+
+`bind` returns a Layer with the service of each stream class in `streams`, over the reader and writer that `graph` provides. Each storage host builds its `layer` this way. See [Bind streams](/docs/hosting/storage-adapter#bind-streams).
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
+import { shop } from "./streams.ts";
+
+const storage = Protocol.bind(MemoryStorage.layerProtocol(), shop);
+```
+
+`bind` throws a `RangeError` for the same groups as [`Streamsy.group`](/docs/reference/core/streamsy#streamsygroup), for example when two classes have the same name. When `graph` also provides `Storage`, that store must be the one under the reader and writer. Otherwise building the Layer dies with a `RangeError`.
+
+### `Protocol.expireDue`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { Storage, StorageFault } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const expireDue: () => Effect.Effect<void, StorageFault, Storage>;
+// ---cut-after---
+same<typeof expireDue, typeof Protocol.expireDue>(true);
+```
+
+`expireDue` runs one expiry sweep. It reads `nextExpiry` from the store and deletes that stream, and repeats until the next deadline is later than the clock. The host decides when to run a sweep, and it can interrupt one.
+
+When a concurrent renewal or delete changes a stream first, the sweep skips that stream.
+
+## HTTP
+
+### `routes`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { HttpRouter } from "effect/http";
+import { Http } from "@streamsy/core";
+import * as P from "@streamsy/core/protocol";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function routes(
+  options?: Omit<Http.RoutesOptions, "access">,
+): Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request<"Requires", StreamsReader>
+  | HttpRouter.Request<"Requires", StreamsWriter>
+>;
+// ---cut-after---
+same<typeof routes, typeof P.routes>(true);
+```
+
+`routes` returns an `HttpRouter` route Layer that serves the whole protocol for every id under `prefix`, over `StreamsReader` and `StreamsWriter`. It has no stream classes and no access rules, so every method is allowed. Adapters and the upstream conformance tests use it. An application uses [`Http.routes`](/docs/reference/core/http#httproutes).
+
+`options` takes the options of [`Http.RoutesOptions`](/docs/reference/core/http#httproutesoptions) except `access`. `routes` removes one trailing `/` from `prefix`. It throws a `RangeError` when `prefix` does not start with `/`, or contains `?`, `:`, `#`, `*`, or `//`.
+
+## Services
+
+### `StreamsReader`
+
+```ts
+// ---cut-start---
+import { Context } from "effect";
+import type { StreamsFault } from "@streamsy/core";
+import * as P from "@streamsy/core/protocol";
+import type { Reader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class StreamsReader extends Context.Service<StreamsReader, Reader<StreamsFault>>()(
+  "@streamsy/core/StreamsReader",
+) {}
+// ---cut-after---
+same<typeof StreamsReader, typeof P.StreamsReader>(true);
+same<StreamsReader, P.StreamsReader>(true);
+```
+
+`StreamsReader` is the service key of the generic protocol reader, and its service is a [`Reader`](#reader) that fails with a [`StreamsFault`](/docs/reference/core/faults#streamsfault). `Protocol.layer`, `MemoryStorage.layerProtocol`, and `RemoteStreams.layerProtocol` provide it.
+
+### `StreamsWriter`
+
+```ts
+// ---cut-start---
+import { Context } from "effect";
+import type { StreamsFault } from "@streamsy/core";
+import * as P from "@streamsy/core/protocol";
+import type { Writer } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class StreamsWriter extends Context.Service<StreamsWriter, Writer<StreamsFault>>()(
+  "@streamsy/core/StreamsWriter",
+) {}
+// ---cut-after---
+same<typeof StreamsWriter, typeof P.StreamsWriter>(true);
+same<StreamsWriter, P.StreamsWriter>(true);
+```
+
+`StreamsWriter` is the service key of the generic protocol writer, and its service is a [`Writer`](#writer) that fails with a `StreamsFault`. The Layers that provide `StreamsReader` also provide `StreamsWriter`.
+
+### `Reader`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type {
+  HeadError,
+  HeadResult,
+  ReadError,
+  ReadNextError,
+  ReadNextOptions,
+  ReadNextResult,
+  ReadOptions,
+  ReadResult,
+  StorageFault,
+  StreamId,
+} from "@streamsy/core";
+import type * as P from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Reader<E = StorageFault> {
+  readonly head: (id: StreamId) => Effect.Effect<HeadResult, HeadError | E>;
+  readonly read: (id: StreamId, options?: ReadOptions) => Effect.Effect<ReadResult, ReadError | E>;
+  readonly readNext: (
+    id: StreamId,
+    options: ReadNextOptions,
+  ) => Effect.Effect<ReadNextResult, ReadNextError | E>;
+}
+// ---cut-after---
+same<Reader, P.Reader>(true);
+same<Reader<never>, P.Reader<never>>(true);
+```
+
+`Reader` is the read side of the protocol, with the fault type `E`.
+
+| Member     | Does                                                                                                        |
+| ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `head`     | Returns the metadata of the stream as a [`HeadResult`](/docs/reference/core/options-and-results#headresult) |
+| `read`     | Returns one catch-up page after `options.offset`                                                            |
+| `readNext` | Returns the messages after `options.offset`, and waits for new messages when there are none (long poll)     |
+
+The options and results are on [Options and results](/docs/reference/core/options-and-results#read), and the errors are on [Errors](/docs/reference/core/errors#errors-by-operation).
+
+### `Writer`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type {
+  AppendError,
+  AppendOptions,
+  AppendResult,
+  CreateError,
+  CreateOptions,
+  CreateResult,
+  RemoveError,
+  StorageFault,
+  StreamId,
+} from "@streamsy/core";
+import type * as P from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Writer<E = StorageFault> {
+  readonly create: (
+    id: StreamId,
+    options?: CreateOptions,
+  ) => Effect.Effect<CreateResult, CreateError | E>;
+  readonly fork: (
+    id: StreamId,
+    source: StreamId,
+    options?: Omit<CreateOptions, "forkedFrom">,
+  ) => Effect.Effect<CreateResult, CreateError | E>;
+  readonly append: (
+    id: StreamId,
+    options: AppendOptions,
+  ) => Effect.Effect<AppendResult, AppendError | E>;
+  readonly remove: (id: StreamId) => Effect.Effect<void, RemoveError | E>;
+}
+// ---cut-after---
+same<Writer, P.Writer>(true);
+same<Writer<never>, P.Writer<never>>(true);
+```
+
+`Writer` is the write side of the protocol, with the fault type `E`.
+
+| Member   | Does                                                                                            |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| `create` | Creates the stream `id`, or forks it when `options.forkedFrom` is set                           |
+| `fork`   | Creates the stream `id` as a fork of `source`. It is `create` with `forkedFrom` set to `source` |
+| `append` | Appends the encoded body in `options.data` as one request                                       |
+| `remove` | Deletes the stream `id`                                                                         |
+
+`append` takes the protocol [`AppendOptions`](/docs/reference/core/options-and-results#appendoptions), which carry the encoded body and its content type. A stream class builds them from its items.

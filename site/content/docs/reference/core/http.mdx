@@ -1,0 +1,324 @@
+---
+title: Http
+description: Reference for the Http namespace in @streamsy/core. It serves the Durable Streams protocol over HTTP for a group of stream classes.
+---
+
+```ts
+import { Http, Streamsy, type StreamId } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { Duration, Effect, Layer, Stream } from "effect";
+import type { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+```
+
+`Http` serves the Durable Streams protocol over HTTP. An application mounts [`Http.routes`](#httproutes) for a group. Protocol tools and hosts use the other exports. See [Protocol routes](/docs/http/routes).
+
+The entry point `@streamsy/core/http` exports the same module, with each name at the top level. `Http.routes` and `routes` from `@streamsy/core/http` are the same function. This page uses the `Http.` form.
+
+```ts
+import { routes, ShutdownSignal } from "@streamsy/core/http";
+```
+
+## Routes
+
+### `Http.routes`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import type { HttpRouter } from "effect/http";
+import { Http, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function routes<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  group: Streamsy.Group<Keys>,
+  options: Http.RoutesOptions,
+): Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<
+      "Requires",
+      Exclude<Streamsy.Host<Streamsy.Group<Keys>>, HttpRouter.Provided>
+    >
+>;
+// ---cut-after---
+same<typeof routes, typeof Http.routes>(true);
+```
+
+`routes` returns an `HttpRouter` route Layer that serves the protocol for each stream class in `group`, under `options.prefix`. The Layer needs the service of each class in the group, so provide a storage Layer for the group.
+
+- A request for an id that no class owns answers 404.
+- A method that the access of the class does not allow answers 405, with an `allow` header.
+- A request for the bare prefix answers 400.
+- `routes` removes one trailing `/` from `prefix`, so `/streams/` is the same as `/streams`.
+
+`routes` throws a `RangeError` when `prefix` does not start with `/`, or contains `?`, `:`, `#`, `*`, or `//`. It also throws for the same groups as [`Streamsy.group`](/docs/reference/core/streamsy#streamsygroup), and when `sseDeadlineMs` is not a positive number.
+
+### `Http.RoutesOptions`
+
+```ts
+// ---cut-start---
+import { Http, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface RoutesOptions extends Omit<Http.HttpOptions, "pathPrefix"> {
+  readonly prefix?: `/${string}`;
+  readonly access: Http.Access["access"] | ((stream: Streamsy.Any) => Http.Access["access"]);
+}
+// ---cut-after---
+same<RoutesOptions, Http.RoutesOptions>(true);
+```
+
+`RoutesOptions` holds the options of `routes`: the [`HttpOptions`](#httphttpoptions) except `pathPrefix`, and these two.
+
+| Option   | Meaning                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------- |
+| `prefix` | The path under which the stream ids are served. The default is `/`                          |
+| `access` | One access level for every class, or a function that returns the access level of each class |
+
+### `Http.Access`
+
+```ts
+// ---cut-start---
+import { Http, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Access<S extends Streamsy.Any = Streamsy.Any> {
+  readonly stream: S;
+  readonly access: "read" | "append" | "full";
+}
+// ---cut-after---
+same<Access, Http.Access>(true);
+same<Access<typeof Streamsy.Wildcard>, Http.Access<typeof Streamsy.Wildcard>>(true);
+```
+
+`Access` pairs a stream class with its access level. `RoutesOptions.access` uses its `access` field.
+
+| Access   | Methods                               |
+| -------- | ------------------------------------- |
+| `read`   | GET, HEAD, OPTIONS                    |
+| `append` | GET, HEAD, POST, OPTIONS              |
+| `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
+
+For a class with `read` or `append` access, the answer to OPTIONS lists only the allowed methods in `access-control-allow-methods`.
+
+## Programs
+
+### `Http.app`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Http } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function app(
+  options?: Http.HttpOptions,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  never,
+  HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter
+>;
+// ---cut-after---
+same<typeof app, typeof Http.app>(true);
+```
+
+`app` returns the HTTP program of the whole protocol, over the generic `StreamsReader` and `StreamsWriter`. It serves every id under `pathPrefix`, with no access rules. `routes` runs it for each request that a class owns, and `routes` from `@streamsy/core/protocol` mounts it as it is.
+
+`app` answers every request and never fails. It maps each protocol error to its HTTP status, for example `StreamNotFound` to 404 and `OffsetMismatch` to 409. A `StorageFault` or a `TransportFault` answers 500. A body larger than `maxMessageSize` answers 413. Every response has the [`securityHeaders`](#httpsecurityheaders).
+
+`app` throws a `RangeError` when `sseDeadlineMs` is not a positive number.
+
+### `Http.HttpOptions`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface HttpOptions {
+  readonly pathPrefix?: string;
+  readonly sseDeadlineMs?: number;
+  readonly maxMessageSize?: number;
+  readonly cacheVisibility?: "private" | "public";
+}
+// ---cut-after---
+same<HttpOptions, Http.HttpOptions>(true);
+```
+
+`HttpOptions` holds the options of `app`.
+
+| Option            | Meaning                                                                                 |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `pathPrefix`      | The path before each stream id. The default is `/`                                      |
+| `sseDeadlineMs`   | The lifetime of one SSE response. The default is 60 s                                   |
+| `maxMessageSize`  | The largest request body, in bytes. The default is 1 MiB                                |
+| `cacheVisibility` | `private` or `public` in the `cache-control` header of a read. The default is `private` |
+
+### `Http.read`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Http, type ReadNextError, type StreamId, type StreamsFault } from "@streamsy/core";
+import type { StreamsReader } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function read(
+  id: StreamId,
+  options?: Http.ReadOptions,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  ReadNextError | StreamsFault,
+  HttpServerRequest.HttpServerRequest | StreamsReader
+>;
+// ---cut-after---
+same<typeof read, typeof Http.read>(true);
+```
+
+`read` answers a GET or HEAD request for the stream `id`, which the caller has already resolved. It handles catch-up reads, long polls, and SSE, as `app` does. A HEAD request answers the metadata of the stream in headers.
+
+Unlike `app`, `read` does not map errors to responses. It fails with the protocol error or the fault, and the caller answers it. `read` throws a `RangeError` when `sseDeadlineMs` is not a positive number.
+
+### `Http.ReadOptions`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadOptions {
+  readonly sseDeadlineMs?: number;
+  readonly cacheVisibility?: "private" | "public";
+}
+// ---cut-after---
+same<ReadOptions, Http.ReadOptions>(true);
+```
+
+`ReadOptions` holds the options of `read`. They mean the same as in [`HttpOptions`](#httphttpoptions). This type is not the root [`ReadOptions`](/docs/reference/core/options-and-results#readoptions), which holds the options of a protocol read.
+
+### `Http.checkReadOptions`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function checkReadOptions(options: Http.ReadOptions): void;
+// ---cut-after---
+same<typeof checkReadOptions, typeof Http.checkReadOptions>(true);
+```
+
+`checkReadOptions` throws a `RangeError` when `options.sseDeadlineMs` is set and is not a positive number. `app`, `routes`, and `read` call it when they are built, so a host that builds its own read route can fail at the same time.
+
+### `Http.streamPath`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function streamPath(pathPrefix?: string): {
+  requiredPathPattern: () => string;
+  strip: (pathname: string) => string;
+  canonicalizeForkSource: (source: string) => string;
+};
+// ---cut-after---
+same<typeof streamPath, typeof Http.streamPath>(true);
+```
+
+`streamPath` returns the path helpers of one prefix. It adds a trailing `/` to `pathPrefix` when it has none. The default prefix is `/`.
+
+| Member                   | Returns                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `requiredPathPattern`    | The pattern of a stream path, for example `/streams/{path}`, for error messages                                    |
+| `strip`                  | `pathname` without the prefix. A path without the prefix comes back unchanged                                      |
+| `canonicalizeForkSource` | The stream id of a fork source. It strips the prefix when the source has it, and otherwise removes one leading `/` |
+
+### `Http.securityHeaders`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const securityHeaders: Readonly<{
+  "x-content-type-options": "nosniff";
+  "cross-origin-resource-policy": "cross-origin";
+}>;
+// ---cut-after---
+same<typeof securityHeaders, typeof Http.securityHeaders>(true);
+```
+
+`securityHeaders` is the frozen record of the headers that `app`, `routes`, and `read` add to every response.
+
+## Shutdown
+
+`ShutdownSignal` lets a host stop live reads before it closes. When the host starts to drain, a parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The client then reconnects as after a timeout. `Serve.layer` from `@streamsy/serve` provides the signal and drains it. See [Long-running hosts](/docs/http/serve#long-running-hosts).
+
+### `Http.ShutdownSignal`
+
+```ts
+// ---cut-start---
+import { Context } from "effect";
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class ShutdownSignal extends Context.Service<ShutdownSignal, Http.ShutdownSignalService>()(
+  "@streamsy/core/ShutdownSignal",
+) {}
+// ---cut-after---
+same<typeof ShutdownSignal, typeof Http.ShutdownSignal>(true);
+same<ShutdownSignal, Http.ShutdownSignal>(true);
+```
+
+`ShutdownSignal` is the service key of the shutdown signal, and its service is a [`ShutdownSignalService`](#httpshutdownsignalservice). The service is optional. A live read looks it up with `Effect.serviceOption`, so a host without it, such as the Durable Object host, serves live reads with no drain.
+
+### `Http.layerShutdownSignal`
+
+```ts
+// ---cut-start---
+import type { Layer } from "effect";
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const layerShutdownSignal: Layer.Layer<Http.ShutdownSignal>;
+// ---cut-after---
+same<typeof layerShutdownSignal, typeof Http.layerShutdownSignal>(true);
+```
+
+`layerShutdownSignal` provides a new signal with no live reads. Provide it to the routes, and call `drain` before the routes close.
+
+### `Http.ShutdownSignalService`
+
+```ts
+// ---cut-start---
+import type { Duration, Effect, Stream } from "effect";
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ShutdownSignalService {
+  readonly draining: Effect.Effect<void>;
+  readonly track: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  readonly trackStream: <A, E, R>(stream: Stream.Stream<A, E, R>) => Stream.Stream<A, E, R>;
+  readonly drain: (timeout: Duration.Input) => Effect.Effect<void>;
+  readonly active: Effect.Effect<number>;
+}
+// ---cut-after---
+same<ShutdownSignalService, Http.ShutdownSignalService>(true);
+```
+
+`ShutdownSignalService` is the service of `ShutdownSignal`.
+
+| Member        | Does                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `draining`    | Completes when the drain starts. It never fails                                                 |
+| `track`       | Counts a live read while `effect` runs                                                          |
+| `trackStream` | Counts a live read while `stream` runs                                                          |
+| `drain`       | Starts the drain, then waits until no live read runs or `timeout` passes. A second call is safe |
+| `active`      | Returns the number of live reads that run now                                                   |
+
+A long poll that starts after the drain started answers 204 at once.
