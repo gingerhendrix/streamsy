@@ -582,6 +582,15 @@ Each row from a query keeps the `$synced` flag of its source row. It is `false` 
 
 The stream reader uses a wrapped `fetch` that records whether the server answers. The client retries a failed read without limit, so the "Offline" badge in the header goes away when the server is back.
 
+## Variants
+
+Each variant keeps the product and the wire contract, and changes one side.
+
+| Variant                                                  | What changes                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [Event sourced](/docs/demos/issue-tracker/event-sourced) | The server appends domain events, and a projection writes the rows       |
+| [Foldkit](/docs/demos/issue-tracker/foldkit)             | The browser code is a Foldkit program, and each stream read is a Message |
+
 ## Limits
 
 - Every write reads and folds the whole workspace. This is fine for a demo workspace. It does not suit a long history.

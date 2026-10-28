@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "foldkit-devtools": {
+      "command": "bunx",
+      "args": ["@foldkit/devtools-mcp"]
+    }
+  }
+}
