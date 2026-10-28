@@ -1,3 +1,30 @@
+## @streamsy/serve@0.7.0
+
+### Durable pending marks for attached projections
+
+`Projection.attach` and `ProjectionWakeup.attach` take `durable` and `batch` options. In durable mode, the commit that writes an input also writes a pending mark for each binding it touches, in the same transaction. A binding that catches up deletes its mark by a `seq` compare, so a write during the run keeps it. After a restart, an eviction or a deploy, the runner finds the marks and runs those bindings. A failed binding defers its own mark (1 s doubling to 1 hour) and no longer puts its neighbours on backoff.
+
+`ProjectionWakeup.attach` is durable by default. `Projection.attach` stays in memory unless you pass `durable: true`. Durable mode needs a local memory or SQL storage layer and fails at acquisition over remote storage.
+
+Storage migration 2 adds the `streamsy_projection_pending` table. A database opened by this release cannot be opened by an older one. `Wakeups.status` reports a `deferred` count for each wakeup.
+
+### Long checkpoint keys save on MySQL
+
+`CheckpointStore.layer` keeps each checkpoint under a key that holds the projection id, version, generation and params JSON. MySQL stores that key in a `VARCHAR(512)` column. Before this release, a projection whose params made the key longer than 512 characters failed every checkpoint save on MySQL with `ER_DATA_TOO_LONG`, so it never advanced.
+
+- On MySQL, SQL storage now hashes an owner record key over 512 characters to the first 447 characters, `#` and the SHA-256 hex of the full key. Two long keys that share their first 512 characters stay apart.
+- A key of at most 512 characters does not change, so stored checkpoints stay readable.
+- SQLite, Durable Object storage and Postgres store the key as `TEXT` and keep every key as it is, so checkpoints they already hold under long keys stay readable.
+- `recordKey` from `@streamsy/projection/checkpoint` is unchanged. A custom Commit that stores records elsewhere still sees the full key and must fit it into its own store's key limit.
+
+### Long projection producer ids are hashed
+
+A `Commit.producer` projection, such as `Projection.wake`, appends under the producer id `<id>/v<version>/<params JSON>`. Storage refuses a producer id over 255 code points. Before this release, a binding with long params, such as a hex folder id over 113 UTF-8 bytes, failed every append with a `mutate.producer-id` storage fault and never wrote its output.
+
+- A producer id of at most 255 code points does not change. Deployed outputs keep their producer state under it.
+- A longer producer id becomes `<id>/v<version>/#<sha256>`, where the SHA-256 is the hex digest of the full id. When the projection id itself is long, the part before `#` is cut so the whole id is 255 code points. The digest uses WebCrypto (`crypto.subtle`), which Bun, Node, workerd and browsers in a secure context provide.
+- A retry of a pinned unit sends the same hashed id, so the output still answers `Duplicate`.
+
 ## @streamsy/serve@0.6.0
 
 ### Projection.follow returns a Stream
