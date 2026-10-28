@@ -81,6 +81,63 @@ A control entry, such as `StreamAddress.reset()`, passes through unchanged, exce
 
 A change to a collection that the address does not declare does not compile. At run time, `changes` throws a `TypeError` when a key is `null`, `undefined`, or empty.
 
+## `DurableState.materialized`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function materialized<C extends StreamAddress.Collections>(address: {
+  readonly collections: C;
+}): DurableState.Materialized<C>;
+// ---cut-after---
+same<typeof materialized, typeof DurableState.materialized>(true);
+```
+
+`materialized` returns the empty state for the collections of `address`: one empty map for each collection, and no open snapshot. Pass a State address or a State stream class, because both have `collections`. Start a `materialize` fold from this value.
+
+## `DurableState.materialize`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function materialize<C extends StreamAddress.Collections>(
+  state: DurableState.Materialized<C>,
+  events: Iterable<StreamAddress.CollectionsEvent<C>>,
+): DurableState.Materialized<C>;
+// ---cut-after---
+same<typeof materialize, typeof DurableState.materialize>(true);
+```
+
+`materialize` folds `events` into `state` and returns the new state. It applies the rules of the [Durable State protocol](https://durablestreams.com/durable-state):
+
+- An upsert sets the row of its key, and a delete removes it.
+- A `reset` control clears every collection and closes an open snapshot.
+- A `snapshot-start` control opens a snapshot. The `snapshot-end` control that closes it removes each row that no upsert named since `snapshot-start`.
+
+A snapshot can span several calls, because the returned `snapshot` carries it to the next call. A `snapshot-end` with no open snapshot changes nothing. A change to a collection that `state.rows` does not hold is dropped.
+
+`materialize` does not change `state`. It copies only the maps of the collections that `events` change, and the returned state shares every other map with `state`.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { DurableState } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
+
+const issues = Effect.gen(function* () {
+  const workspace = yield* Workspace;
+  const { items } = yield* workspace.collect({ workspaceId: "w1" });
+  return DurableState.materialize(DurableState.materialized(Workspace), items).rows.issue;
+});
+```
+
 ## `DurableState.ChangeHeaders`
 
 ```ts
@@ -181,3 +238,48 @@ same<Entry<Tracker>, DurableState.Entry<Tracker>>(true);
 ```
 
 `Entry<C>` is one item of the `entries` list of `changes`: a change, or a State control message.
+
+## `DurableState.Materialized`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Materialized<C extends StreamAddress.Collections> {
+  readonly rows: DurableState.Rows<C>;
+  readonly snapshot: ReadonlySet<string> | undefined;
+}
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+type Project = { readonly id: number; readonly name: string };
+type Tracker = {
+  issue: StreamAddress.Collection<Issue, Issue, never, never, "id">;
+  project: StreamAddress.Collection<Project, Project, never, never, "id">;
+};
+same<Materialized<Tracker>, DurableState.Materialized<Tracker>>(true);
+```
+
+`Materialized<C>` is the state that `materialized` returns and `materialize` folds: the latest row for each key of each collection of `C`. `snapshot` holds the rows that upserts named since an open `snapshot-start`, and is `undefined` when no snapshot is open. Treat `snapshot` as opaque, and pass it on unchanged.
+
+## `DurableState.Rows`
+
+```ts
+// ---cut-start---
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Rows<C extends StreamAddress.Collections> = {
+  readonly [K in keyof C & string]: ReadonlyMap<string, C[K]["schema"]["Type"]>;
+};
+// ---cut-after---
+type Issue = { readonly id: string; readonly title: string };
+type Project = { readonly id: number; readonly name: string };
+type Tracker = {
+  issue: StreamAddress.Collection<Issue, Issue, never, never, "id">;
+  project: StreamAddress.Collection<Project, Project, never, never, "id">;
+};
+same<Rows<Tracker>, DurableState.Rows<Tracker>>(true);
+```
+
+`Rows<C>` holds one map for each collection of `C`, from the State key to the value of the row. A State key is a `string`, so a row with the number key `7` is under `"7"`.

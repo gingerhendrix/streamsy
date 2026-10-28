@@ -1,0 +1,123 @@
+---
+title: MemoryStorage
+description: Reference for the MemoryStorage namespace in @streamsy/core. It keeps streams in the process, for development and tests.
+---
+
+```ts
+import { MemoryStorage, Streamsy, type CommitBoundary, type Storage } from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { Layer } from "effect";
+```
+
+`MemoryStorage` keeps streams in the process. The data is lost when the Layer is disposed. Each mutation copies the whole store, so an append takes linear time. Use it for development and tests. See [Memory](/docs/hosting#memory).
+
+## `MemoryStorage.layer`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import {
+  MemoryStorage,
+  Streamsy,
+  type CommitBoundary,
+  type Storage,
+  type StorageFault,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
+  group: Streamsy.Group<Keys>,
+  options?: MemoryStorage.Options,
+): Layer.Layer<Storage | CommitBoundary | OwnerRecords | Streamsy.Host<Streamsy.Group<Keys>>>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layer, typeof MemoryStorage.layer>(true);
+```
+
+`layer` returns a Layer that provides the stream services of `group`, over one memory store. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), and `OwnerRecords`, so the projection checkpoint store runs on the same store. Each build of the Layer starts with an empty store.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { ManagedRuntime } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { shop } from "./streams.ts";
+
+const runtime = ManagedRuntime.make(MemoryStorage.layer(shop));
+```
+
+## `MemoryStorage.layerProtocol`
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Layer, Option } from "effect";
+import {
+  MemoryStorage,
+  type CommitBoundary,
+  type Storage,
+  type StorageFault,
+} from "@streamsy/core";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function layerProtocol(
+  options?: MemoryStorage.Options,
+): Layer.Layer<CommitBoundary | OwnerRecords | Storage | StreamsReader | StreamsWriter>;
+
+// OwnerRecords has no exported name in a public entry point. It is the service
+// of the encoded records that the projection checkpoint store keeps.
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+// ---cut-after---
+same<typeof layerProtocol, typeof MemoryStorage.layerProtocol>(true);
+```
+
+`layerProtocol` returns a Layer with the generic protocol reader and writer over a memory store, and no stream classes. `StreamsReader` and `StreamsWriter` reach any stream id. Protocol tools and tests use it, for example to write raw messages that a typed service does not write.
+
+## `MemoryStorage.Options`
+
+```ts
+// ---cut-start---
+import { MemoryStorage } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Options {
+  readonly constrained?: boolean;
+  readonly pollIntervalMs?: number;
+  readonly readLimit?: number;
+  readonly longPollTimeoutMs?: number;
+}
+// ---cut-after---
+same<Options, MemoryStorage.Options>(true);
+```
+
+`Options` holds the options of `layer` and `layerProtocol`.
+
+| Option              | Meaning                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `constrained`       | When `true`, the store has the smallest capabilities: `copy` forks, `stream` atomic scope, `poll` wakes, and a `lazy` expiry index |
+| `pollIntervalMs`    | The poll interval of `changes` in constrained mode. The default is 25 ms                                                           |
+| `readLimit`         | The largest number of messages in one catch-up page. The default is 1000                                                           |
+| `longPollTimeoutMs` | The longest wait of a long-poll read. The default is 30 s                                                                          |
+
+Without `constrained`, the store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. Use `constrained: true` in tests to check that a program does not depend on these capabilities.
+
+Building the Layer dies with a `RangeError` when `pollIntervalMs` or `longPollTimeoutMs` is not a positive number, or when `readLimit` is not a positive safe integer.

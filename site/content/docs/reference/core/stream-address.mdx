@@ -339,6 +339,22 @@ same<typeof isChange, typeof StreamAddress.isChange>(true);
 
 `isChange` returns `true` for an upsert or a delete, and narrows `event` to a change. Call it before you read the `type` or the `key` of a State item, because a control message has neither.
 
+### `StreamAddress.isUpsert`
+
+```ts
+// ---cut-start---
+import { StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isUpsert<E extends StreamAddress.StateEvent<unknown>>(
+  event: E,
+): event is Extract<E, StreamAddress.StateUpsert<unknown>>;
+// ---cut-after---
+same<typeof isUpsert, typeof StreamAddress.isUpsert>(true);
+```
+
+`isUpsert` returns `true` for an upsert, and narrows `event` to a `StateUpsert` so that you can read its `value`. It returns `false` for a delete and for a control message. The State codec decodes the wire operations `insert` and `update` to `upsert`, so `isUpsert` returns `true` for them too.
+
 ### `StreamAddress.isControl`
 
 ```ts

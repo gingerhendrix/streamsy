@@ -1,0 +1,332 @@
+---
+title: Wake streams
+description: Reference for the wake stream members of the Streamsy namespace in @streamsy/core. A wake stream tells a client which source streams moved.
+---
+
+```ts
+import { Streamsy, StreamAddress, type FollowFailure, type StreamId } from "@streamsy/core";
+import type { StreamRoute, Streams } from "@streamsy/core/protocol";
+import type { Context, Data, Schema, Stream } from "effect";
+```
+
+A wake stream is a Durable State stream with one row for each source stream in a family. Each row holds the tail of its source after the last write, so a client follows one wake stream and reads only the sources that moved past its saved cursors. These members belong to the [`Streamsy`](/docs/reference/core/streamsy) namespace.
+
+A wake declaration names no sources. `Projection.wake` from `@streamsy/projection` writes the rows: it links one source stream to one wake stream. For a host that runs `Projection.wake`, see [Cloudflare](/docs/hosting/cloudflare).
+
+## Functions
+
+### `Streamsy.wake`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function wake<Self>(): <
+  const Name extends string,
+  const Template extends string,
+  C extends StreamRoute.ParamCodecs,
+>(
+  name: Name,
+  template: Template,
+  options: { readonly params: C & StreamRoute.ExactTemplateParams<Template, C> },
+) => Streamsy.StateClass<Self, Name, Template, C, Streamsy.WakeCollections>;
+// ---cut-after---
+same<typeof wake, typeof Streamsy.wake>(true);
+```
+
+`wake` declares a wake stream class. It calls [`Streamsy.state`](/docs/reference/core/streamsy#streamsystate) with `wakeCollections` as the collections, so the class has the normal State service, including `create`, `append`, `remove`, `read`, `follow`, and `collect`.
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+class UserWake extends Streamsy.wake<UserWake>()("App/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+```
+
+The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](/docs/reference/core/streamsy#streamsyjson). A wake stream on another storage owner must exist before a projection appends to it, so its owner creates it at start.
+
+A wake row relies on append-only source streams. Do not create a stream again under the id of a removed or expired stream. The new stream starts at a lower offset, and a client with a saved cursor for the old stream skips its items.
+
+### `Streamsy.followWake`
+
+```ts
+// ---cut-start---
+import type { Context, Stream } from "effect";
+import { Streamsy, type FollowFailure } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function followWake<Self, P>(
+  declaration: Context.Key<Self, Streamsy.Api<P, Streamsy.WakeEvent>>,
+  params: P,
+  options: Streamsy.FollowWakeOptions,
+): Stream.Stream<Streamsy.WakeBatch, FollowFailure, Self>;
+// ---cut-after---
+same<typeof followWake, typeof Streamsy.followWake>(true);
+```
+
+`followWake` follows the wake stream `params` of `declaration` from `options.from`, and emits one `WakeBatch` for each batch that it reads. It calls [`wakeActions`](#streamsywakeactions) on each batch and carries an open snapshot from one batch to the next. It reads no source stream.
+
+`followWake` reads `options.cursors` again for each batch, so you can update the map as you read the sources. Save each source cursor first and the wake cursor `offset` last. When the process stops between the two, the next run reads the same rows again, and `wakeActions` skips each source whose saved cursor already reaches the row offset.
+
+```ts
+// @filename: wake.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+export class UserWake extends Streamsy.wake<UserWake>()("App/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { Streamsy, type StreamId } from "@streamsy/core";
+import { UserWake } from "./wake.ts";
+
+const cursors = new Map<StreamId, string>();
+const batches = Streamsy.followWake(UserWake, { user: "ann" }, { from: "-1", cursors });
+```
+
+### `Streamsy.wakeActions`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function wakeActions(
+  events: ReadonlyArray<Streamsy.WakeEvent>,
+  options: Streamsy.WakeActionsOptions,
+): Streamsy.WakeActions;
+// ---cut-after---
+same<typeof wakeActions, typeof Streamsy.wakeActions>(true);
+```
+
+`wakeActions` returns the actions for one batch of wake events. It reads no stream and changes none of its inputs. A client with its own HTTP reader decodes each page with [`WakeMessage`](#streamsywakemessage) and calls `wakeActions` directly. Pass the returned `snapshot` to the call for the next page.
+
+`wakeActions` applies these rules, in event order:
+
+- It collapses the rows of one stream in the batch to one item, at the position of the last row for that stream. The one exception is a delete and then an upsert, below.
+- An upsert gives `Dirty` when the row `offset` sorts after the saved cursor of the stream, or when the row has `closed`. The saved cursor is the entry in `cursors`, or `-1` when the map has none.
+- A delete gives `Removed`. A delete and then an upsert of one stream give `Removed`, then `Dirty` from `-1`.
+- A `reset` control drops the items before it in the batch, closes an open snapshot, and gives `Reset`. Each later upsert in the batch gives `Dirty` from `-1`.
+- A `snapshot-start` control opens a snapshot. The `snapshot-end` control that closes it gives the items of the rows before it, then `Snapshot`. `Snapshot` holds each stream that an upsert named since `snapshot-start` and that no later delete removed.
+
+A `snapshot-end` with no open snapshot gives no item.
+
+## Rows and messages
+
+### `Streamsy.WakeRow`
+
+```ts
+// ---cut-start---
+import { Streamsy, type Offset, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeRow = {
+  readonly stream: StreamId;
+  readonly offset: Offset;
+  readonly closed?: true;
+};
+// ---cut-after---
+same<WakeRow, Streamsy.WakeRow>(true);
+```
+
+`WakeRow` is one row of a wake stream: the latest known state of one source stream. `Streamsy.WakeRow` is also the `Schema` of a row.
+
+| Field    | Meaning                                                                         |
+| -------- | ------------------------------------------------------------------------------- |
+| `stream` | The id of the source stream. It is also the State key of the row                |
+| `offset` | The tail of the source after the write, in the form of a saved read cursor      |
+| `closed` | `true` when the source stream is closed. A row for an open stream leaves it out |
+
+A row lags its source by one projection pass, because only the projection writes the row. A write to the source alone writes no row.
+
+### `Streamsy.wakeCollections`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const wakeCollections: {
+  readonly stream: { readonly schema: typeof Streamsy.WakeRow; readonly key: "stream" };
+};
+// ---cut-after---
+same<typeof wakeCollections, typeof Streamsy.wakeCollections>(true);
+```
+
+`wakeCollections` holds the one collection of every wake stream. Its State `type` is `stream`, and its key is the `stream` field of the row. A class from [`Streamsy.wake`](#streamsywake) has `wakeCollections` as its `collections`.
+
+### `Streamsy.WakeCollections`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeCollections = typeof Streamsy.wakeCollections;
+// ---cut-after---
+same<WakeCollections, Streamsy.WakeCollections>(true);
+```
+
+`WakeCollections` is the type of [`wakeCollections`](#streamsywakecollections).
+
+### `Streamsy.WakeEvent`
+
+```ts
+// ---cut-start---
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeEvent = StreamAddress.CollectionsEvent<Streamsy.WakeCollections>;
+// ---cut-after---
+same<WakeEvent, Streamsy.WakeEvent>(true);
+```
+
+`WakeEvent` is one item of a wake stream: a change to a `WakeRow`, or a State control message. See [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent).
+
+### `Streamsy.WakeMessage`
+
+```ts
+// ---cut-start---
+import type { Schema } from "effect";
+import { Streamsy, StreamAddress } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const WakeMessage: Schema.Codec<
+  Streamsy.WakeEvent,
+  StreamAddress.CollectionsEncodedEvent<Streamsy.WakeCollections>
+>;
+// ---cut-after---
+same<typeof WakeMessage, typeof Streamsy.WakeMessage>(true);
+```
+
+`WakeMessage` is the codec of one wake stream message: a `stream` change or a State control message. A client that reads raw JSON pages decodes each message with it, in place of a typed service.
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+const decodePage = Schema.decodeUnknownEffect(Schema.Array(Streamsy.WakeMessage));
+```
+
+## Actions
+
+### `Streamsy.WakeItem`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import { Streamsy, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeItem = Data.TaggedEnum<{
+  Dirty: {
+    readonly stream: StreamId;
+    readonly from: string;
+    readonly offset: string;
+    readonly closed: boolean;
+  };
+  Removed: { readonly stream: StreamId };
+  Reset: {};
+  Snapshot: { readonly streams: ReadonlySet<StreamId> };
+}>;
+
+declare const WakeItem: Data.TaggedEnum.Constructor<Streamsy.WakeItem>;
+// ---cut-after---
+same<WakeItem, Streamsy.WakeItem>(true);
+same<typeof WakeItem, typeof Streamsy.WakeItem>(true);
+```
+
+`WakeItem` is one action for the consumer of a wake stream. `Streamsy.WakeItem` is also the value that holds a constructor for each tag, and `$is` and `$match`.
+
+| Tag        | Action                                                                   |
+| ---------- | ------------------------------------------------------------------------ |
+| `Dirty`    | Read `stream` from `from` up to at least `offset`, then save its cursor  |
+| `Removed`  | Drop the cursor and the local data of `stream`                           |
+| `Reset`    | Drop every cursor. The items after this one start each stream from `-1`  |
+| `Snapshot` | A complete snapshot ended. Drop each stream that `streams` does not hold |
+
+`closed` on `Dirty` is `true` when the row says that the source stream is closed.
+
+### `Streamsy.WakeBatch`
+
+```ts
+// ---cut-start---
+import { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeBatch {
+  readonly items: ReadonlyArray<Streamsy.WakeItem>;
+  readonly offset: string;
+  readonly upToDate: boolean;
+}
+// ---cut-after---
+same<WakeBatch, Streamsy.WakeBatch>(true);
+```
+
+[`followWake`](#streamsyfollowwake) emits a `WakeBatch` for each batch of the wake stream. `offset` is the `nextOffset` of that batch: save it as the wake cursor after you handle every item. `upToDate` is `true` when the batch reached the tail of the wake stream.
+
+### `Streamsy.FollowWakeOptions`
+
+```ts
+// ---cut-start---
+import { Streamsy, type StreamId } from "@streamsy/core";
+import type { Streams } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface FollowWakeOptions extends Omit<Streams.FollowOptions, "offset"> {
+  readonly from?: string;
+  readonly cursors: ReadonlyMap<StreamId, string>;
+}
+// ---cut-after---
+same<FollowWakeOptions, Streamsy.FollowWakeOptions>(true);
+```
+
+`FollowWakeOptions` holds the options of [`followWake`](#streamsyfollowwake). It takes the follow options of a stream, such as `retry`, with `from` in place of `offset`.
+
+| Field     | Meaning                                                                                 |
+| --------- | --------------------------------------------------------------------------------------- |
+| `from`    | The saved wake cursor. The default is `-1`, which reads the wake stream from the start  |
+| `cursors` | The saved source cursors, by stream id. `followWake` reads the map again for each batch |
+
+### `Streamsy.WakeActionsOptions`
+
+```ts
+// ---cut-start---
+import { Streamsy, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeActionsOptions {
+  readonly cursors: ReadonlyMap<StreamId, string>;
+  readonly snapshot?: ReadonlySet<StreamId> | undefined;
+}
+// ---cut-after---
+same<WakeActionsOptions, Streamsy.WakeActionsOptions>(true);
+```
+
+`WakeActionsOptions` holds the options of [`wakeActions`](#streamsywakeactions).
+
+| Field      | Meaning                                                                                      |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| `cursors`  | The saved source cursors, by stream id. A stream with no entry starts from `-1`              |
+| `snapshot` | The `snapshot` that the call for the previous page returned. Leave it out for the first page |
+
+### `Streamsy.WakeActions`
+
+```ts
+// ---cut-start---
+import { Streamsy, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeActions {
+  readonly items: ReadonlyArray<Streamsy.WakeItem>;
+  readonly snapshot: ReadonlySet<StreamId> | undefined;
+}
+// ---cut-after---
+same<WakeActions, Streamsy.WakeActions>(true);
+```
+
+[`wakeActions`](#streamsywakeactions) returns a `WakeActions`. `items` holds the actions of the batch, in order. `snapshot` holds the streams of a snapshot that is still open at the end of the batch, or `undefined` when no snapshot is open. Pass it to the call for the next batch.

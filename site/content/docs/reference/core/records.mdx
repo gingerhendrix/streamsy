@@ -1,0 +1,212 @@
+---
+title: Stream records
+description: Reference for the stream record types in @streamsy/core. A storage adapter stores and returns these records.
+---
+
+```ts
+import {
+  ChangeSnapshot,
+  MessageWindow,
+  ProducerState,
+  RecordPatch,
+  StoredMessage,
+  StreamConfig,
+  StreamLifecycle,
+  StreamRecord,
+  type Offset,
+  type StreamId,
+} from "@streamsy/core";
+```
+
+These types are the values that the [storage contract](/docs/reference/core/storage) reads and writes. An application does not use them. Each name exports an interface and an Effect `Schema` with the same name, and an adapter decodes stored values with the schema. `StreamId` and `Offset` are on the [Ids and offsets](/docs/reference/core/ids-and-offsets) page.
+
+## Records
+
+### `StreamRecord`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset, StreamConfig, StreamId, StreamLifecycle } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StreamRecord {
+  readonly id: StreamId;
+  readonly config: StreamConfig;
+  readonly lifecycle: StreamLifecycle;
+  readonly currentOffset: Offset;
+}
+// ---cut-after---
+same<StreamRecord, Core.StreamRecord>(true);
+```
+
+`StreamRecord` is the stored state of one stream, without its messages. `currentOffset` is the tail of the stream. `StorageShape.record` returns it, and a `Create` operation stores it.
+
+### `StreamConfig`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StreamConfig {
+  readonly contentType: string;
+  readonly ttlSeconds?: number;
+  readonly expiresAt?: string;
+  readonly createdAt: number;
+}
+// ---cut-after---
+same<StreamConfig, Core.StreamConfig>(true);
+```
+
+`StreamConfig` holds the configuration that `create` set.
+
+| Field         | Meaning                                                      |
+| ------------- | ------------------------------------------------------------ |
+| `contentType` | The content type of the stream                               |
+| `ttlSeconds`  | The `ttlSeconds` option of `create`, when it was set         |
+| `expiresAt`   | The `expiresAt` option of `create`, when it was set          |
+| `createdAt`   | The time of the create, in milliseconds since the Unix epoch |
+
+### `StreamLifecycle`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset, StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StreamLifecycle {
+  readonly lastSeq?: string;
+  readonly closed: boolean;
+  readonly closedAt?: number;
+  readonly forkedFrom?: StreamId;
+  readonly forkOffset?: Offset;
+  readonly forkSubOffset?: number;
+  readonly softDeleted: boolean;
+  readonly expiresAtMs?: number;
+}
+// ---cut-after---
+same<StreamLifecycle, Core.StreamLifecycle>(true);
+```
+
+`StreamLifecycle` holds the state of a stream that its writes change.
+
+| Field           | Meaning                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `lastSeq`       | The last `Stream-Seq` that an append sent. The next `Stream-Seq` must sort after it                        |
+| `closed`        | `true` when the stream is closed and takes no more appends                                                 |
+| `closedAt`      | The time of the close, in milliseconds since the Unix epoch                                                |
+| `forkedFrom`    | The id of the source stream of a fork                                                                      |
+| `forkOffset`    | The offset in the source at which the fork starts                                                          |
+| `forkSubOffset` | The `forkSubOffset` option of the fork, when it was set                                                    |
+| `softDeleted`   | `true` when the stream was deleted and the store keeps it for its forks                                    |
+| `expiresAtMs`   | The expiry deadline, in milliseconds since the Unix epoch. An indexed adapter answers `nextExpiry` from it |
+
+### `StoredMessage`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StoredMessage {
+  readonly offset: Offset;
+  readonly timestamp: number;
+  readonly data: Uint8Array;
+}
+// ---cut-after---
+same<StoredMessage, Core.StoredMessage>(true);
+```
+
+`StoredMessage` is one stored message. `offset` is its position in the stream, `timestamp` is the time of its append in milliseconds since the Unix epoch, and `data` holds its bytes.
+
+### `ProducerState`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ProducerState {
+  readonly epoch: number;
+  readonly lastSeq: number;
+}
+// ---cut-after---
+same<ProducerState, Core.ProducerState>(true);
+```
+
+`ProducerState` is the last producer position that a stream accepted for one `producerId`. `epoch` is the producer epoch, and `lastSeq` is the last `producerSeq` in that epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
+
+## Reads and changes
+
+### `MessageWindow`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface MessageWindow {
+  readonly after?: Offset;
+  readonly until?: Offset;
+  readonly limit?: number;
+}
+// ---cut-after---
+same<MessageWindow, Core.MessageWindow>(true);
+```
+
+`MessageWindow` selects the messages that `StorageShape.messages` returns. It returns the messages after `after`, up to and including `until`, in offset order, and at most `limit` of them. A field that you leave out sets no bound.
+
+### `ChangeSnapshot`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ChangeSnapshot {
+  readonly present: boolean;
+  readonly currentOffset: Offset;
+  readonly closed: boolean;
+  readonly softDeleted: boolean;
+}
+// ---cut-after---
+same<ChangeSnapshot, Core.ChangeSnapshot>(true);
+```
+
+`StorageShape.changes` emits a `ChangeSnapshot` of one stream. `present` is `false` when no record has the id. `currentOffset`, `closed`, and `softDeleted` copy the fields of the record. A reader compares a snapshot with the state it saw before, because a snapshot with no change is valid.
+
+## Writes
+
+### `RecordPatch`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Offset, StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface RecordPatch {
+  readonly currentOffset?: Offset;
+  readonly config?: { readonly ttlSeconds?: number; readonly expiresAt?: string };
+  readonly lifecycle?: {
+    readonly lastSeq?: string;
+    readonly closed?: boolean;
+    readonly closedAt?: number;
+    readonly forkedFrom?: StreamId;
+    readonly forkOffset?: Offset;
+    readonly forkSubOffset?: number;
+    readonly softDeleted?: boolean;
+    readonly expiresAtMs?: number;
+  };
+  readonly clear?: ReadonlyArray<"ttlSeconds" | "expiresAt" | "expiresAtMs" | "lastSeq">;
+}
+// ---cut-after---
+same<RecordPatch, Core.RecordPatch>(true);
+```
+
+`RecordPatch` is the change that an `Append` operation makes to the record of its stream. Each field that the patch sets replaces the field of the record, and each field that it leaves out keeps its value. `clear` removes each optional field that it names. Without `currentOffset`, the tail does not move.

@@ -1,0 +1,408 @@
+---
+title: Storage contract
+description: Reference for the storage contract in @streamsy/core. A storage adapter implements the Storage service, and the protocol runs on top of it.
+---
+
+```ts
+import {
+  CommitBoundary,
+  Mutation,
+  MutationApplied,
+  MutationRejected,
+  Mutations,
+  Operation,
+  OperationResult,
+  OperationResults,
+  Operations,
+  ProducerPrecondition,
+  Storage,
+  StorageCapabilities,
+  type CommitBoundaryApi,
+  type StorageShape,
+} from "@streamsy/core";
+import type { Data, Effect, Option, PubSub, Scope, Stream } from "effect";
+import type { SqlError } from "effect/sql";
+```
+
+`Storage` is the one service that a storage adapter implements. The protocol, HTTP, forks, expiry, and producer fencing run on top of it, so an application does not call it. For a worked adapter and its contract tests, see [Write a storage adapter](/docs/hosting/storage-adapter).
+
+The stream records that these types carry, such as `StreamRecord` and `StoredMessage`, are on the [Stream records](/docs/reference/core/records) page. `ProducerPrecondition`, `Operation`, `Mutation`, `OperationResult`, and `MutationApplied` each export a type and an Effect `Schema` with the same name.
+
+## Services
+
+### `Storage`
+
+```ts
+// ---cut-start---
+import { Context } from "effect";
+import type * as Core from "@streamsy/core";
+import type { StorageShape } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class Storage extends Context.Service<Storage, StorageShape>()("@streamsy/core/Storage") {}
+// ---cut-after---
+same<typeof Storage, typeof Core.Storage>(true);
+same<Storage, Core.Storage>(true);
+```
+
+`Storage` is the service key of a storage adapter, and its service is a [`StorageShape`](#storageshape). The protocol Layer needs `Storage`, and every storage host Layer provides it.
+
+### `StorageShape`
+
+```ts
+// ---cut-start---
+import type { Effect, Option, PubSub, Scope, Stream } from "effect";
+import type * as Core from "@streamsy/core";
+import type {
+  ChangeSnapshot,
+  MessageWindow,
+  Mutation,
+  MutationApplied,
+  MutationRejected,
+  ProducerId,
+  ProducerState,
+  StorageCapabilities,
+  StorageFault,
+  StoredMessage,
+  StreamId,
+  StreamRecord,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StorageShape {
+  readonly capabilities: StorageCapabilities;
+  readonly record: (id: StreamId) => Effect.Effect<Option.Option<StreamRecord>, StorageFault>;
+  readonly messages: (
+    id: StreamId,
+    window: MessageWindow,
+  ) => Effect.Effect<ReadonlyArray<StoredMessage>, StorageFault>;
+  readonly producer: (
+    id: StreamId,
+    producerId: ProducerId,
+  ) => Effect.Effect<Option.Option<ProducerState>, StorageFault>;
+  readonly mutate: (
+    mutation: Mutation,
+  ) => Effect.Effect<MutationApplied, MutationRejected | StorageFault>;
+  readonly changes: (id: StreamId) => Stream.Stream<ChangeSnapshot, StorageFault>;
+  readonly committed: Effect.Effect<
+    PubSub.Subscription<ReadonlyArray<StreamId>>,
+    never,
+    Scope.Scope
+  >;
+  readonly nextExpiry: Effect.Effect<
+    Option.Option<{ readonly at: number; readonly streamId: StreamId }>,
+    StorageFault
+  >;
+}
+// ---cut-after---
+same<StorageShape, Core.StorageShape>(true);
+```
+
+`StorageShape` is the service of `Storage`. A read returns new values, so a caller cannot change the store through a returned object.
+
+| Member                     | Does                                                                                                  |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `capabilities`             | Says what the adapter can do. See [`StorageCapabilities`](#storagecapabilities)                       |
+| `record(id)`               | Returns the record of the stream, or `None` when no stream has the id                                 |
+| `messages(id, window)`     | Returns the messages of the stream in `window`, in offset order                                       |
+| `producer(id, producerId)` | Returns the last producer state that the stream accepted for `producerId`, or `None`                  |
+| `mutate(mutation)`         | Applies every operation of `mutation` in one transaction, or none of them                             |
+| `changes(id)`              | Emits a `ChangeSnapshot` of the stream when it changes. A snapshot with no change is valid            |
+| `committed`                | Subscribes to the stream ids of each later local commit                                               |
+| `nextExpiry`               | Returns the earliest expiry deadline, with its stream, or `None` when the adapter has no expiry index |
+
+`mutate` fails with `MutationRejected` when a precondition of an operation does not hold, and it then writes nothing. Two operations on the same stream in one mutation are a defect. When `capabilities.atomicScope` is `stream`, a mutation with more than one stream is a defect too.
+
+`committed` creates the subscription before it returns, so each commit after that point lands in it. Each item holds the ids that one commit created, appended to, or deleted, and it arrives after that commit. A rolled-back mutation publishes nothing. The subscription has no replay and shows only commits in this process, not commits by another process on the same database. Its scope releases it.
+
+### `StorageCapabilities`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface StorageCapabilities {
+  readonly fork: "none" | "copy" | "chain";
+  readonly atomicScope: "stream" | "store";
+  readonly wake: "poll" | "push";
+  readonly expiryIndex: "lazy" | "indexed";
+}
+// ---cut-after---
+same<StorageCapabilities, Core.StorageCapabilities>(true);
+```
+
+`StorageCapabilities` says what an adapter can do. `StorageCapabilities` is also the `Schema` of the value.
+
+| Field         | Values                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `fork`        | `none` refuses forks with `NotSupported`. `copy` copies the prefix of the source into the fork. `chain` shares the prefix |
+| `atomicScope` | `stream` limits a mutation to one stream. `store` allows one mutation across several streams                              |
+| `wake`        | `push` makes `changes` emit on each commit. `poll` makes `changes` check the record on an interval                        |
+| `expiryIndex` | `indexed` answers `nextExpiry`, so a host can sweep expired streams. `lazy` expires a stream when an operation reads it   |
+
+### `CommitBoundary`
+
+```ts
+// ---cut-start---
+import { Context } from "effect";
+import type * as Core from "@streamsy/core";
+import type { CommitBoundaryApi } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class CommitBoundary extends Context.Service<CommitBoundary, CommitBoundaryApi>()(
+  "@streamsy/core/CommitBoundary",
+) {}
+// ---cut-after---
+same<typeof CommitBoundary, typeof Core.CommitBoundary>(true);
+same<CommitBoundary, Core.CommitBoundary>(true);
+```
+
+`CommitBoundary` is the service key of the transaction of the storage owner, and its service is a [`CommitBoundaryApi`](#commitboundaryapi). Every Streamsy storage host Layer provides it, including `MemoryStorage.layer`. The projection checkpoint store needs it.
+
+### `CommitBoundaryApi`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { SqlError } from "effect/sql";
+import type * as Core from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface CommitBoundaryApi {
+  readonly withTransaction: <A, E, R>(
+    body: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | SqlError.SqlError, R>;
+}
+// ---cut-after---
+same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
+```
+
+`withTransaction` runs `body` in the transaction of the storage owner. The stream writes in `body` commit together, and on a SQL host the application SQL in `body` commits with them. When `body` fails, nothing in it commits.
+
+- A nested `withTransaction` joins the outer transaction and has no savepoint. To roll back, a failure must escape the outer `body`.
+- Keep `body` on the calling fiber. The memory host dies when another fiber writes in the transaction.
+- Do not wait in `body` for a wake that only its own commit publishes. The wake comes after the commit, so the wait never ends.
+
+Only a SQL host fails with `SqlError`.
+
+## Mutations
+
+### `Mutation`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { Operation } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Mutation = { readonly operations: readonly [Operation, ...Operation[]] };
+// ---cut-after---
+same<Mutation, Core.Mutation>(true);
+```
+
+`Mutation` is the argument of `StorageShape.mutate`: a non-empty, ordered list of operations that commit together. The adapter checks the preconditions of every operation before it writes. On the first failed check, it writes nothing and fails with `MutationRejected`, where `index` is the position of that operation.
+
+### `Operation`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type {
+  Offset,
+  ProducerPrecondition,
+  RecordPatch,
+  StoredMessage,
+  StreamId,
+  StreamRecord,
+} from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Operation =
+  | {
+      readonly _tag: "Create";
+      readonly record: StreamRecord;
+      readonly initialMessages: ReadonlyArray<StoredMessage>;
+      readonly forkSource?: { readonly id: StreamId; readonly liveAtOffset: Offset };
+    }
+  | {
+      readonly _tag: "Append";
+      readonly streamId: StreamId;
+      readonly messages: ReadonlyArray<StoredMessage>;
+      readonly patch: RecordPatch;
+      readonly expectedOffset?: Offset;
+      readonly expectedClosed?: boolean;
+      readonly producer?: ProducerPrecondition;
+    }
+  | {
+      readonly _tag: "Delete";
+      readonly streamId: StreamId;
+      readonly reason: "delete" | "expiry";
+      readonly expectedExpiresAtMs?: number;
+    };
+// ---cut-after---
+same<Operation, Core.Operation>(true);
+```
+
+`Operation` is one step of a `Mutation`. Build one with [`Operations`](#operations).
+
+- `Create` stores `record` and `initialMessages`. It fails with `exists` when the stream exists. With `forkSource`, it fails with `fork-source-gone` when the source is missing, deleted, or has a tail before `liveAtOffset`.
+- `Append` stores `messages` and applies `patch` to the record. It checks each precondition that it carries. `expectedOffset` must equal the tail, `expectedClosed` must equal `closed`, and `producer.expected` must equal the stored producer state.
+- `Delete` removes the stream. On a `chain` adapter, a stream with live forks becomes soft-deleted instead. With the `reason` `expiry`, it fails with `expiry-mismatch` unless `expectedExpiresAtMs` equals the stored deadline.
+
+An `Append` or a `Delete` fails with `not-found` when no stream has the id, and with `gone` when the stream is soft-deleted.
+
+### `ProducerPrecondition`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { ProducerId, ProducerState } from "@streamsy/core";
+import type { Option } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ProducerPrecondition = {
+  readonly producerId: ProducerId;
+  readonly expected: Option.Option<ProducerState>;
+  readonly next: ProducerState;
+};
+// ---cut-after---
+same<ProducerPrecondition, Core.ProducerPrecondition>(true);
+```
+
+`ProducerPrecondition` fences an `Append` on the state of one producer. The append fails with `producer` unless the stored state for `producerId` equals `expected`. `None` means that the stream has no state for `producerId`. When the append commits, the adapter stores `next` as the state of `producerId`.
+
+### `OperationResult`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamRecord } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type OperationResult =
+  | { readonly _tag: "Created"; readonly record: StreamRecord }
+  | { readonly _tag: "Appended"; readonly record: StreamRecord }
+  | { readonly _tag: "Purged"; readonly record: StreamRecord }
+  | { readonly _tag: "SoftDeleted"; readonly record: StreamRecord };
+// ---cut-after---
+same<OperationResult, Core.OperationResult>(true);
+```
+
+`OperationResult` is the result of one applied operation. `record` is the record after the operation. A `Delete` gives `Purged` when the adapter removed the stream, and `SoftDeleted` when the stream stays for its forks.
+
+### `MutationApplied`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { OperationResult } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type MutationApplied = {
+  readonly _tag: "Applied";
+  readonly results: readonly [OperationResult, ...OperationResult[]];
+};
+// ---cut-after---
+same<MutationApplied, Core.MutationApplied>(true);
+```
+
+`mutate` succeeds with `MutationApplied`. `results` holds one result for each operation, in the order of the operations.
+
+### `MutationRejected`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamRecord } from "@streamsy/core";
+import type { Option } from "effect";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface MutationRejected {
+  readonly _tag: "MutationRejected";
+  readonly index: number;
+  readonly reason:
+    | "offset"
+    | "closed"
+    | "producer"
+    | "exists"
+    | "not-found"
+    | "gone"
+    | "fork-source-gone"
+    | "expiry-mismatch";
+  readonly record: Option.Option<StreamRecord>;
+}
+// ---cut-after---
+same<MutationRejected, Fields<Core.MutationRejected>>(true);
+```
+
+`mutate` fails with `MutationRejected` when a precondition does not hold. `MutationRejected` is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. `index` is the position of the failed operation, and `record` is the stored record of its stream, or `None` when the stream does not exist.
+
+| Reason             | When                                                  |
+| ------------------ | ----------------------------------------------------- |
+| `offset`           | The tail is not `expectedOffset`                      |
+| `closed`           | `closed` on the stream is not `expectedClosed`        |
+| `producer`         | The stored producer state is not `producer.expected`  |
+| `exists`           | A `Create` found a stream with the id                 |
+| `not-found`        | An `Append` or a `Delete` named a missing stream      |
+| `gone`             | An `Append` or a `Delete` named a soft-deleted stream |
+| `fork-source-gone` | A `Create` named a fork source that it cannot use     |
+| `expiry-mismatch`  | An expiry `Delete` found another deadline             |
+
+A protocol append that meets `MutationRejected` reads the record again and plans its write again. It fails with `StreamBusy` after 64 attempts. A `create` that meets `exists` answers from the stored record.
+
+## Constructors
+
+### `Operations`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Core from "@streamsy/core";
+import type { Operation } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const Operations: Data.TaggedEnum.Constructor<Operation>;
+// ---cut-after---
+same<typeof Operations, typeof Core.Operations>(true);
+```
+
+`Operations` holds a constructor for each tag of `Operation`, and `$is` and `$match`. A constructor builds a plain object and does not validate it. The adapter decodes at its own boundary.
+
+```ts
+import { Operations, StreamId } from "@streamsy/core";
+
+const remove = Operations.Delete({ streamId: StreamId.make("drafts/main"), reason: "delete" });
+```
+
+### `OperationResults`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Core from "@streamsy/core";
+import type { OperationResult } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const OperationResults: Data.TaggedEnum.Constructor<OperationResult>;
+// ---cut-after---
+same<typeof OperationResults, typeof Core.OperationResults>(true);
+```
+
+`OperationResults` holds a constructor for each tag of `OperationResult`, and `$is` and `$match`. It does not validate.
+
+### `Mutations`
+
+```ts
+// ---cut-start---
+import type { Data } from "effect";
+import type * as Core from "@streamsy/core";
+import type { MutationApplied } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const Mutations: Data.TaggedEnum.Constructor<MutationApplied>;
+// ---cut-after---
+same<typeof Mutations, typeof Core.Mutations>(true);
+```
+
+`Mutations` holds the `Applied` constructor of `MutationApplied`, and `$is` and `$match`. It does not validate.

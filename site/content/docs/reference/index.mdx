@@ -15,16 +15,20 @@ The site build compares each signature on these pages with the real export. When
 
 ## `@streamsy/core`
 
-| Page                                                            | Exports                                                             |
-| --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [Streamsy](/docs/reference/core/streamsy)                       | The stream class factories, `group`, `Wildcard` and the class types |
-| [StreamAddress](/docs/reference/core/stream-address)            | Addresses, collections, and the State changes and controls          |
-| [Producer](/docs/reference/core/producer)                       | `Producer.Position`, `Producer.next`                                |
-| [DurableState](/docs/reference/core/durable-state)              | `upsert`, `remove`, `changes` and their types                       |
-| [Options and results](/docs/reference/core/options-and-results) | The options of create, append and read, and their results           |
-| [Toolkit types](/docs/reference/core/toolkit)                   | `Batch`, the fold and decide types, and the failure unions          |
-| [Errors](/docs/reference/core/errors)                           | The protocol errors, the error unions, `isProtocolError`            |
-| [Faults](/docs/reference/core/faults)                           | The storage, transport and codec faults, and their guards           |
-| [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, `compare`        |
+| Page                                                            | Exports                                                                    |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [Streamsy](/docs/reference/core/streamsy)                       | The stream class factories, `group`, `Wildcard` and the class types        |
+| [StreamAddress](/docs/reference/core/stream-address)            | Addresses, collections, and the State changes and controls                 |
+| [Producer](/docs/reference/core/producer)                       | `Producer.Position`, `Producer.next`                                       |
+| [DurableState](/docs/reference/core/durable-state)              | `upsert`, `remove`, `changes`, `materialize` and their types               |
+| [Options and results](/docs/reference/core/options-and-results) | The options of create, append and read, and their results                  |
+| [Toolkit types](/docs/reference/core/toolkit)                   | `Batch`, the fold and decide types, and the failure unions                 |
+| [Errors](/docs/reference/core/errors)                           | The protocol errors, the error unions, `isProtocolError`                   |
+| [Faults](/docs/reference/core/faults)                           | The storage, transport and codec faults, and their guards                  |
+| [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, `compare`               |
+| [Wake streams](/docs/reference/core/wake)                       | `Streamsy.wake`, `followWake`, `wakeActions` and the wake types            |
+| [Storage contract](/docs/reference/core/storage)                | `Storage`, `CommitBoundary`, the mutations and their results               |
+| [MemoryStorage](/docs/reference/core/memory-storage)            | `MemoryStorage.layer`, `layerProtocol`, `Options`                          |
+| [Stream records](/docs/reference/core/records)                  | `StreamRecord`, `StoredMessage`, `RecordPatch` and the other stored values |
 
-These pages cover the exports of the `@streamsy/core` root that an application uses. The storage contract, the `Http` namespace, the `/remote`, `/protocol`, and `/testing` entry points, and the other packages have no reference pages yet.
+These pages cover the exports of the `@streamsy/core` root, except the `Http` namespace. `Http`, the `/remote`, `/protocol`, and `/testing` entry points, and the other packages have no reference pages yet.

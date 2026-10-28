@@ -2,6 +2,7 @@
   "title": "@streamsy/core",
   "pages": [
     "streamsy",
+    "wake",
     "stream-address",
     "producer",
     "durable-state",
@@ -9,6 +10,9 @@
     "toolkit",
     "errors",
     "faults",
-    "ids-and-offsets"
+    "ids-and-offsets",
+    "storage",
+    "memory-storage",
+    "records"
   ]
 }
