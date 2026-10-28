@@ -1,6 +1,6 @@
 ---
 title: Toolkit types
-description: Reference for the toolkit types in @streamsy/core. The methods of a stream class return these batches, folds and failures.
+description: Reference for the toolkit types in @streamsy/core. The methods of a stream class succeed with these batches and fold results, and fail with these failure unions.
 ---
 
 ```ts
@@ -22,7 +22,7 @@ import type {
 import type { Effect, Function, Schedule } from "effect";
 ```
 
-The methods of a stream class decode items, fold them, and name their failures with these types. The method list is on the [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) section. The protocol options and results are on [Options and results](/docs/reference/core/options-and-results).
+The methods of a stream class return decoded items and fold results in these types, and they fail with the failure unions at the end of this page. The [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) section lists the methods. The protocol options and results are on [Options and results](/docs/reference/core/options-and-results).
 
 ## Results
 
@@ -43,9 +43,9 @@ interface Batch<A> {
 same<Batch<string>, Core.Batch<string>>(true);
 ```
 
-One batch of decoded items. `read` and `follow` give a stream of batches. `nextOffset`, `upToDate` and `closed` have the same meaning as in [`ReadResult`](/docs/reference/core/options-and-results#readresult). Keep `nextOffset` to read on later.
+A `Batch` holds decoded items and the read position after them. `read` and `follow` return a stream of batches. `nextOffset`, `upToDate`, and `closed` mean the same as in [`ReadResult`](/docs/reference/core/options-and-results#readresult). To continue reading later, pass `nextOffset` as the `offset` of the next read.
 
-`follow` does not give an empty batch, except the last batch of a closed stream.
+`follow` emits no empty batches, with one exception: the last batch of a closed stream can be empty.
 
 ### `Collected`
 
@@ -62,7 +62,7 @@ interface Collected<A> {
 same<Collected<string>, Core.Collected<string>>(true);
 ```
 
-What `collect` returns: every item up to the tail, and the tail that the read reached. Pass `offset` as `expectedOffset` for a [conditional write](/docs/streams/write#conditional-writes), or as `offset` to read on.
+`collect` returns a `Collected`: every item up to the tail, and the tail that the read reached as `offset`. Pass `offset` as `expectedOffset` to make a [conditional write](/docs/streams/write#conditional-writes), or as the `offset` of a later read.
 
 ### `Folded`
 
@@ -79,7 +79,7 @@ interface Folded<S> {
 same<Folded<number>, Core.Folded<number>>(true);
 ```
 
-What `fold` returns: the folded value, and the tail that the read reached. To fold on later, pass the same value as `initial` and `offset` in the options. See [Fold](/docs/streams/read#fold).
+`fold` returns a `Folded`: the folded value as `state`, and the tail that the read reached as `offset`. To continue the fold later, pass `state` as `initial` and `offset` as `offset` in the options of the next `fold`. See [Fold](/docs/streams/read#fold).
 
 ### `DecideSpec`
 
@@ -112,18 +112,20 @@ same<
 >(true);
 ```
 
-The input of `decide`, which reads, decides and then appends.
+A `DecideSpec` is the input of the `decide` method. The method folds the stream into a state, calls your `decide` function on that state, and appends the items that it returns.
 
-| Field     | Meaning                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| `initial` | Makes the start value of the fold. Each call makes a new one                          |
-| `fold`    | Adds one item to the state                                                            |
-| `decide`  | Returns a value and the items to append. `at.offset` is the tail that the state is at |
-| `retry`   | The retries after a lost race. Default: `Schedule.recurs(3)`                          |
+| Field     | Meaning                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------ |
+| `initial` | Returns the start value of the fold. Each call of the method calls `initial` once                |
+| `fold`    | Returns the state after one more item                                                            |
+| `decide`  | Returns a value and the items to append. `at.offset` is the tail that `state` includes           |
+| `retry`   | The schedule for retries after another writer appends first. The default is `Schedule.recurs(3)` |
 
-`decide` must not write, and it must not change `state`. After a lost race, the call folds on from the same state.
+Your `decide` function must not write to the stream, and it must not mutate `state`. After a lost race, the method passes the state that it already has to `fold` together with the new items.
 
-The append sets `expectedOffset` to the tail that was read. When it fails with `OffsetMismatch`, the call reads the new items, folds them, and decides again while `retry` allows. Then it fails with the last `OffsetMismatch`. With the default, a call makes at most four appends. A fault is not retried, because a lost reply can hide an append that landed. See [Read, fold, append](/docs/streams/write#read-fold-append).
+The append sets `expectedOffset` to the tail that the fold reached. When another writer appended first, the append fails with `OffsetMismatch`. The method then reads the new items, folds them, and calls `decide` again, for as long as `retry` allows. When `retry` stops, the method fails with the last `OffsetMismatch`. With the default schedule, one call makes at most four appends.
+
+The method does not retry a fault, because a lost reply can hide an append that was written. See [Read, fold, append](/docs/streams/write#read-fold-append).
 
 ### `Decision`
 
@@ -140,7 +142,7 @@ interface Decision<B, A> {
 same<Decision<number, string>, Core.Decision<number, string>>(true);
 ```
 
-What one `decide` step returns. `value` goes back to the caller. An empty `items` means "no write": the call returns with no append and no tail check.
+Your `decide` function returns a `Decision`. The method returns `value` to its caller and appends `items`. When `items` is empty, the method returns without an append and without a check of the tail.
 
 ### `Decided`
 
@@ -158,11 +160,11 @@ interface Decided<B> {
 same<Decided<number>, Core.Decided<number>>(true);
 ```
 
-What `decide` returns. `offset` is the new tail after a write, or the tail that was read when there was no write. `appended` tells you which.
+The `decide` method returns a `Decided`. `appended` is `true` when the method wrote items. `offset` is then the new tail. When the method wrote nothing, `offset` is the tail that the fold reached.
 
 ## Failures
 
-Each failure type is the union of the protocol errors and the faults that one method can get. The protocol errors are on [Errors](/docs/reference/core/errors), and the faults are on [Faults](/docs/reference/core/faults).
+Each failure type is the union of the protocol errors and the faults that one method can fail with. The protocol errors are on [Errors](/docs/reference/core/errors), and the faults are on [Faults](/docs/reference/core/faults).
 
 ### `ReadFailure`
 
@@ -183,7 +185,7 @@ type ReadFailure = StreamNotFound | StreamGone | InvalidReadRequest | StreamsFau
 same<ReadFailure, Core.ReadFailure>(true);
 ```
 
-The failures of `read`, `collect` and `fold`.
+`read`, `collect`, and `fold` fail with `ReadFailure`.
 
 ### `FollowFailure`
 
@@ -198,7 +200,7 @@ type FollowFailure = ReadFailure | NotSupported;
 same<FollowFailure, Core.FollowFailure>(true);
 ```
 
-The failures of `follow`. A remote host can refuse a live read with `NotSupported`. `session` has this union without `DecodeFault`, because it does not decode.
+`follow` fails with `FollowFailure`. It adds `NotSupported` to `ReadFailure`, because a remote host can refuse a live read. `session` fails with the same union minus `DecodeFault`, because `session` does not decode items.
 
 ### `AppendFailure`
 
@@ -217,7 +219,7 @@ same<AppendFailure<{ expectedOffset: string }>, Core.AppendFailure<{ expectedOff
 );
 ```
 
-The failures of `append` with the options `O`. [`AppendErrorFor`](/docs/reference/core/errors#appenderrorfor) adds `OffsetMismatch` only when `O` has `expectedOffset`, and `StaleEpoch` and `ProducerGap` only when `O` has `producer`.
+An `append` with options of type `O` fails with `AppendFailure<O>`. The union depends on the options through [`AppendErrorFor`](/docs/reference/core/errors#appenderrorfor). It includes `OffsetMismatch` only when `O` has `expectedOffset`, and it includes `StaleEpoch` and `ProducerGap` only when `O` has `producer`.
 
 ```ts
 // ---cut-start---
@@ -234,7 +236,7 @@ same<Plain, never>(true);
 same<Conditional, OffsetMismatch>(true);
 ```
 
-A host that answers with a rejection that the options rule out is a bug. The append then dies.
+If a host answers with a rejection that the options rule out, the host has a bug, and the append dies with a defect.
 
 ### `CreateFailure`
 
@@ -249,7 +251,7 @@ type CreateFailure = CreateError | StreamsFault;
 same<CreateFailure, Core.CreateFailure>(true);
 ```
 
-The failures of `create` and `fork`.
+`create` and `fork` fail with `CreateFailure`.
 
 ### `HeadFailure`
 
@@ -264,7 +266,7 @@ type HeadFailure = HeadError | StreamsFault;
 same<HeadFailure, Core.HeadFailure>(true);
 ```
 
-The failures of `head`.
+`head` fails with `HeadFailure`.
 
 ### `RemoveFailure`
 
@@ -279,4 +281,4 @@ type RemoveFailure = RemoveError | StreamsFault;
 same<RemoveFailure, Core.RemoveFailure>(true);
 ```
 
-The failures of `remove`.
+`remove` fails with `RemoveFailure`.

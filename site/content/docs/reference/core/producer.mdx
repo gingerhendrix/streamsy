@@ -7,7 +7,7 @@ description: Reference for the Producer namespace in @streamsy/core. A producer 
 import { Producer } from "@streamsy/core";
 ```
 
-A producer position names one writer and counts its appends. Send it with an append, and the server accepts each position one time. For the retry flow, see [Producer retries](/docs/streams/write#producer-retries).
+A producer position names one writer and counts the appends that it has sent. When you send a position with an append, the server accepts that position once and answers `Duplicate` to any repeat, so a retry cannot write the items twice. For the retry flow, see [Producer retries](/docs/streams/write#producer-retries).
 
 ## `Producer.Position`
 
@@ -25,13 +25,13 @@ type Position = {
 same<Position, Producer.Position>(true);
 ```
 
-| Field           | Meaning                                                                   |
-| --------------- | ------------------------------------------------------------------------- |
-| `producerId`    | Names the writer                                                          |
-| `producerEpoch` | A higher epoch fences out writers with a lower one. You choose the epochs |
-| `producerSeq`   | Counts the appends in one epoch. It starts at 0 for each new epoch        |
+| Field           | Meaning                                                                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `producerId`    | The name of the writer. The stream keeps the producer state for each `producerId` separately                                                  |
+| `producerEpoch` | The generation of the writer, which you choose. An append with an epoch lower than the last one for this `producerId` fails with `StaleEpoch` |
+| `producerSeq`   | The number of the append in its epoch. Each new epoch starts at 0, and each append adds 1. A skipped number fails with `ProducerGap`          |
 
-The append option `producer` takes this type. `ProducerOptions` is the same type under another name.
+The `producer` option of `append` takes this type. [`ProducerOptions`](/docs/reference/core/options-and-results#produceroptions) is the same type under another name.
 
 ## `Producer.next`
 
@@ -45,9 +45,11 @@ declare function next(position: Producer.Position): Producer.Position;
 same<typeof next, typeof Producer.next>(true);
 ```
 
-Returns the position with `producerSeq` one higher. The other fields stay the same.
+`next` returns a copy of `position` with `producerSeq` increased by one. It does not change `producerId` or `producerEpoch`.
 
-Call it only after the append returns `Appended` or `Duplicate`. If a writer cannot make the same payload again after a restart, store the payload with its position before the append. After the restart, send both again. `Duplicate` then tells you that the first send landed.
+Call `next` only after the append returns `Appended` or `Duplicate`. If you advance the position and the server never stored the earlier append, the next append fails with `ProducerGap`.
+
+A writer that restarts must send the same items with the same position. If the writer cannot rebuild the items after a restart, store the items with their position before you append them. After the restart, send both again. A `Duplicate` result then tells you that the first append was written.
 
 ```ts
 import { Producer } from "@streamsy/core";
@@ -56,4 +58,4 @@ const first: Producer.Position = { producerId: "importer", producerEpoch: 0, pro
 const second = Producer.next(first);
 ```
 
-`second.producerSeq` is `1`.
+`second` is `{ producerId: "importer", producerEpoch: 0, producerSeq: 1 }`.

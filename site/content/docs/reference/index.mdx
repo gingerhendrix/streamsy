@@ -3,15 +3,15 @@ title: How the reference works
 description: One page for each group of exports in the @streamsy packages. Every signature on these pages is checked against the package at build.
 ---
 
-The guides show how to use Streamsy. These pages list what each package exports.
+The guides show how to use Streamsy. The reference pages list what each package exports and the rules for each export.
 
-Each page starts with the import that it uses. Then each export has a section with:
+Each page starts with the import that its signatures use. Each export then has a section with three parts:
 
-- its signature, as you would write it after that import;
-- what it does, and the rules that the signature does not show;
-- a link to the guide that uses it, when one exists.
+- the signature, written as you would write it after that import
+- what the export does, and the rules that the signature does not show
+- a link to the guide that uses the export, when one exists
 
-The site build compares each signature with the real export. A signature that no longer matches the package stops the build.
+The site build compares each signature on these pages with the real export. When a package changes and a page does not, the build fails and names the page.
 
 ## `@streamsy/core`
 
@@ -27,4 +27,4 @@ The site build compares each signature with the real export. A signature that no
 | [Faults](/docs/reference/core/faults)                           | The storage, transport and codec faults, and their guards           |
 | [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, `compare`        |
 
-These pages cover the application exports of the `@streamsy/core` root. The storage contract exports, the `Http` namespace, the `/remote`, `/protocol` and `/testing` entry points, and the other packages do not have reference pages yet.
+These pages cover the exports of the `@streamsy/core` root that an application uses. The storage contract, the `Http` namespace, the `/remote`, `/protocol`, and `/testing` entry points, and the other packages have no reference pages yet.

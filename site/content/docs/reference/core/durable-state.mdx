@@ -8,7 +8,7 @@ import { DurableState, StreamAddress } from "@streamsy/core";
 import type { Array } from "effect";
 ```
 
-`DurableState` builds the items that you append to a `Streamsy.state` stream. `upsert` and `remove` describe one change. `changes` adds the key and the headers, and checks each change against the collections of the address. For a worked example, see [Durable State changes](/docs/streams/write#durable-state-changes).
+`DurableState` builds the items that you append to a `Streamsy.state` stream. `upsert` and `remove` each describe one change. `changes` turns a list of changes into change events: it adds the key and the headers, and the compiler checks each change against the collections of the address. For a worked example, see [Durable State changes](/docs/streams/write#durable-state-changes).
 
 ## `DurableState.upsert`
 
@@ -26,7 +26,7 @@ declare function upsert<const Type extends string, A>(
 same<typeof upsert, typeof DurableState.upsert>(true);
 ```
 
-Describes an insert or an update of `value` in the collection `type`. You do not give a key. `changes` reads it from the key field of the value.
+`upsert` describes an insert or an update of `value` in the collection `type`. It takes no key, because `changes` reads the key from the key field of `value`.
 
 ## `DurableState.remove`
 
@@ -44,7 +44,7 @@ declare function remove<const Type extends string, A = never>(
 same<typeof remove, typeof DurableState.remove>(true);
 ```
 
-Describes a delete by key from the collection `type`. Give `oldValue` to also write the deleted value as `old_value`.
+`remove` describes the delete of the row `key` from the collection `type`. To also write the deleted row to the event as `old_value`, pass it as `oldValue`.
 
 ## `DurableState.changes`
 
@@ -68,18 +68,18 @@ declare function changes<C extends StreamAddress.Collections, RD, RE>(
 same<typeof changes, typeof DurableState.changes>(true);
 ```
 
-Turns entries into the events that you append to `address`. A non-empty array in gives a non-empty array out.
+`changes` turns `entries` into the events that you append to `address`, in the same order. When `entries` is a non-empty array, the result type is a non-empty array too.
 
-For each change, `changes`:
+For each change, `changes` does four things:
 
-- reads the key from the key field of an upserted value, or takes the key given to `remove`;
-- sets `headers.offset` to `options.offset`, when you give one;
-- sets `headers.txid` to `${offset}:${index}`, unless the change sets its own `txid`;
-- copies `timestamp` and `from` from the change headers.
+- It sets `key` from the key field of an upserted value, or from the key passed to `remove`.
+- It sets `headers.offset` to `options.offset`, when you pass one.
+- It sets `headers.txid` to `${offset}:${index}`, unless the change sets its own `txid`. Without `options.offset`, the event has no default `txid`.
+- It copies `timestamp` and `from` from the headers of the change.
 
-A control entry, such as `StreamAddress.reset()`, passes through. It gets `options.offset` only when it has no offset of its own.
+A control entry, such as `StreamAddress.reset()`, passes through unchanged, except that it gets `options.offset` when it has no offset of its own.
 
-A change to a collection that the address does not declare does not compile. At run time, a key that is `null`, `undefined` or empty throws a `TypeError`.
+A change to a collection that the address does not declare does not compile. At run time, `changes` throws a `TypeError` when a key is `null`, `undefined`, or empty.
 
 ## `DurableState.ChangeHeaders`
 
@@ -97,7 +97,7 @@ interface ChangeHeaders {
 same<ChangeHeaders, DurableState.ChangeHeaders>(true);
 ```
 
-The headers that one change can set. `changes` sets `operation` and `offset` itself.
+`ChangeHeaders` holds the headers that a change can set for itself. `changes` sets `operation` and `offset`, and a change cannot override them.
 
 ## `DurableState.Upsert`
 
@@ -118,7 +118,7 @@ same<Upsert<Issue, "issue">, DurableState.Upsert<Issue, "issue">>(true);
 same<Upsert<Issue>, DurableState.Upsert<Issue>>(true);
 ```
 
-What `upsert` returns.
+`upsert` returns an `Upsert`. Pass it to `changes`, which adds the key and the headers.
 
 ## `DurableState.Delete`
 
@@ -140,7 +140,7 @@ same<Delete<Issue, "issue">, DurableState.Delete<Issue, "issue">>(true);
 same<Delete<Issue>, DurableState.Delete<Issue>>(true);
 ```
 
-What `remove` returns.
+`remove` returns a `Delete`. Pass it to `changes`, which checks the key and adds the headers.
 
 ## `DurableState.Change`
 
@@ -163,7 +163,7 @@ type Tracker = {
 same<Change<Tracker>, DurableState.Change<Tracker>>(true);
 ```
 
-A pending change to any collection of `C`. For each collection, the `type` and the value type match.
+`Change<C>` is an `Upsert` or a `Delete` for any collection of `C`. The union pairs each collection type with the value type of its schema, so an upsert must carry a value of the collection that it names.
 
 ## `DurableState.Entry`
 
@@ -180,4 +180,4 @@ type Tracker = { issue: StreamAddress.Collection<Issue, Issue, never, never, "id
 same<Entry<Tracker>, DurableState.Entry<Tracker>>(true);
 ```
 
-One item for `changes`: a change, or a State control.
+`Entry<C>` is one item of the `entries` list of `changes`: a change, or a State control message.

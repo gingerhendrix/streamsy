@@ -20,7 +20,7 @@ import {
 } from "@streamsy/core";
 ```
 
-The methods of a stream class take these options and succeed with these results. A result type that has a `_tag` is also a value, with constructors and matchers. For the failures, see [Toolkit types](/docs/reference/core/toolkit) and [Errors](/docs/reference/core/errors).
+The methods of a stream class take these options and succeed with these results. `CreateResult` and `AppendResult` are also values, with a constructor and a matcher for each case. For the failures, see [Toolkit types](/docs/reference/core/toolkit) and [Errors](/docs/reference/core/errors).
 
 ## Create
 
@@ -45,20 +45,20 @@ interface CreateOptions {
 same<CreateOptions, Core.CreateOptions>(true);
 ```
 
-| Option          | Meaning                                                                                 |
-| --------------- | --------------------------------------------------------------------------------------- |
-| `contentType`   | The content type of the stream. A stream class sets it from the address                 |
-| `ttlSeconds`    | Time to live. Each append and each read starts it again                                 |
-| `expiresAt`     | A fixed expiry time                                                                     |
-| `closed`        | Makes the stream closed                                                                 |
-| `forkedFrom`    | The id of the source stream of a fork. `fork` sets it from `source`                     |
-| `forkOffset`    | The child gets every source message up to and including this offset                     |
-| `forkSubOffset` | Takes part of the next source message too. For JSON it counts messages, otherwise bytes |
-| `initialData`   | The first messages, written in the same operation                                       |
+| Option          | Meaning                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `contentType`   | The content type of the stream. A stream class sets it from the address                                          |
+| `ttlSeconds`    | The time to live, in seconds. Each append and each read restarts it                                              |
+| `expiresAt`     | A fixed expiry time                                                                                              |
+| `closed`        | Creates the stream already closed                                                                                |
+| `forkedFrom`    | The id of the source stream of a fork. `fork` sets it from `source`                                              |
+| `forkOffset`    | The fork copies every source message up to and including this offset                                             |
+| `forkSubOffset` | The fork also copies the start of the next source message. For a JSON stream it counts messages, otherwise bytes |
+| `initialData`   | The first messages, written in the same operation as the create                                                  |
 
-Set `ttlSeconds` or `expiresAt`, not both. A fork with neither one keeps the expiry of its source.
+Set `ttlSeconds` or `expiresAt`, not both. A fork that sets neither keeps the expiry of its source.
 
-A `create` on an id that exists succeeds with `Exists` when the options match the stream. Otherwise it fails with `CreateConflict`. See [Create and fork](/docs/streams/create).
+When a stream with the id already exists, `create` succeeds with `Exists` if the options match that stream. If they do not match, `create` fails with `CreateConflict`. See [Create and fork](/docs/streams/create).
 
 ### `CreateResult`
 
@@ -84,9 +84,9 @@ type CreateResult =
 same<CreateResult, Core.CreateResult>(true);
 ```
 
-`Created` when the stream is new. `Exists` when a stream with this id and the same options was there. `nextOffset` is the tail of the stream.
+`create` returns `Created` when it made a new stream, and `Exists` when a stream with the same id and options was already there. In both cases `nextOffset` is the tail of the stream.
 
-`CreateResult` is also an Effect `Data.taggedEnum`. Use its matcher to handle both cases:
+The value `CreateResult` is an Effect `Data.taggedEnum`. To handle both cases, call its matcher:
 
 ```ts
 import { CreateResult } from "@streamsy/core";
@@ -114,7 +114,7 @@ type AppendCallOptions = Omit<AppendOptions, "data" | "contentType">;
 same<AppendCallOptions, Core.AppendCallOptions>(true);
 ```
 
-The options of `append` on a stream class: `seq`, `producer`, `close` and `expectedOffset`. The address gives the body and the content type.
+`AppendCallOptions` is the `options` argument of `append` on a stream class. It has `seq`, `producer`, `close`, and `expectedOffset`. The stream class encodes the body and takes the content type from the address, so it omits `data` and `contentType`.
 
 ### `AppendOptions`
 
@@ -136,18 +136,18 @@ interface AppendOptions {
 same<AppendOptions, Core.AppendOptions>(true);
 ```
 
-The options of one append on the protocol writer.
+`AppendOptions` holds the options of one append on the protocol writer.
 
-| Option           | Meaning                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| `data`           | The encoded body                                                                     |
-| `contentType`    | Must match the content type of the stream                                            |
-| `seq`            | The `Stream-Seq` of the writer. Each `seq` must sort after the last one, as a string |
-| `producer`       | The producer position. The server accepts each position one time                     |
-| `close`          | Closes the stream after this append. With an empty body, it only closes              |
-| `expectedOffset` | Appends only when the tail is this offset                                            |
+| Option           | Meaning                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `data`           | The encoded body                                                                                 |
+| `contentType`    | The content type of the body. It must match the content type of the stream                       |
+| `seq`            | The `Stream-Seq` of the writer. Each `seq` must sort after the previous one, compared as strings |
+| `producer`       | The producer position. The server accepts each position once                                     |
+| `close`          | Closes the stream after this append. With an empty body, the append only closes the stream       |
+| `expectedOffset` | The append succeeds only when the tail is this offset                                            |
 
-A different content type, or a `seq` that does not sort after the last one, fails with `AppendConflict`. With `expectedOffset`, a different tail fails with `OffsetMismatch`, and nothing changes: no messages, no close, no producer state. `expectedOffset` is a Streamsy extension to the Durable Streams protocol. See [Conditional writes](/docs/streams/write#conditional-writes).
+The append fails with `AppendConflict` when the content type differs from the stream, or when `seq` does not sort after the previous one. When `expectedOffset` differs from the tail, the append fails with `OffsetMismatch` and changes nothing: it writes no messages, does not close the stream, and does not update the producer state. `expectedOffset` is a Streamsy extension to the Durable Streams protocol. See [Conditional writes](/docs/streams/write#conditional-writes).
 
 ### `ProducerOptions`
 
@@ -165,7 +165,7 @@ interface ProducerOptions {
 same<ProducerOptions, Core.ProducerOptions>(true);
 ```
 
-The same fields as [`Producer.Position`](/docs/reference/core/producer#producerposition). The field rules are on that page.
+`ProducerOptions` has the same fields as [`Producer.Position`](/docs/reference/core/producer#producerposition), and that page gives the rules for each field.
 
 ### `AppendResult`
 
@@ -193,14 +193,14 @@ type AppendResult =
 same<AppendResult, Core.AppendResult>(true);
 ```
 
-| Case        | When                                              | `offset`                                  |
-| ----------- | ------------------------------------------------- | ----------------------------------------- |
-| `Appended`  | The append wrote its items                        | The tail after this append                |
-| `Duplicate` | The server accepted this producer position before | The tail now, at or after the first write |
+| Case        | When                                                   | `offset`                                      |
+| ----------- | ------------------------------------------------------ | --------------------------------------------- |
+| `Appended`  | The append wrote its items                             | The tail after this append                    |
+| `Duplicate` | The server had already accepted this producer position | The current tail, at or after the first write |
 
-`Appended` has `producerEpoch` and `producerSeq` when the append had a `producer`. `Duplicate` gives the epoch and the last accepted sequence of the producer. `closed` is `true` when the stream is closed after the call.
+`Appended` has `producerEpoch` and `producerSeq` when the append sent a `producer`. `Duplicate` has the current epoch of the producer and the last sequence number that the server accepted. In both cases `closed` is `true` when the stream is closed after the call.
 
-Like `CreateResult`, `AppendResult` is also a `Data.taggedEnum` value with `$is` and `$match`.
+Like `CreateResult`, the value `AppendResult` is a `Data.taggedEnum` with `$is` and `$match`.
 
 ## Read
 
@@ -218,7 +218,7 @@ interface ReadOptions {
 same<ReadOptions, Core.ReadOptions>(true);
 ```
 
-A read starts after `offset`. It does not include the message at `offset`.
+A read starts after `offset`, so the first message it returns is the one after `offset`.
 
 | `offset`         | Reads from                    |
 | ---------------- | ----------------------------- |
@@ -226,7 +226,7 @@ A read starts after `offset`. It does not include the message at `offset`.
 | `now`            | The current tail              |
 | An offset        | The message after this offset |
 
-Any other value fails with `InvalidReadRequest`.
+A read with any other value fails with `InvalidReadRequest`.
 
 ### `ReadNextOptions`
 
@@ -243,7 +243,7 @@ interface ReadNextOptions {
 same<ReadNextOptions, Core.ReadNextOptions>(true);
 ```
 
-The options of one long-poll wait, which `session` does. `offset` takes the same values as in `ReadOptions`. `cursor` is the `cursor` of the last `ReadNextResult`. Send it back, so that a CDN can join the waits of many readers. See [Session](/docs/streams/read#session).
+`ReadNextOptions` holds the options of one long-poll wait, which `session` makes. `offset` takes the same values as in `ReadOptions`. Set `cursor` to the `cursor` of the previous `ReadNextResult`. The cursor lets a CDN collapse the waits of many readers into one request to the origin. See [Session](/docs/streams/read#session).
 
 ### `ReadResult`
 
@@ -264,16 +264,16 @@ interface ReadResult {
 same<ReadResult, Core.ReadResult>(true);
 ```
 
-One batch from the protocol reader, before the codec decodes it.
+`ReadResult` is one batch from the protocol reader, before the codec decodes it.
 
-| Field        | Meaning                                                                                             |
-| ------------ | --------------------------------------------------------------------------------------------------- |
-| `messages`   | The stored messages after the read offset                                                           |
-| `nextOffset` | The offset of the last message in the batch, or the tail when the batch is empty. Read on from here |
-| `upToDate`   | `true` when `nextOffset` is the tail of the stream                                                  |
-| `closed`     | `true` when the stream is closed and this batch reached the tail                                    |
+| Field        | Meaning                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `messages`   | The stored messages after the read offset                                                                               |
+| `nextOffset` | The offset of the last message in the batch, or the tail when the batch is empty. The next read starts from this offset |
+| `upToDate`   | `true` when `nextOffset` is the tail of the stream                                                                      |
+| `closed`     | `true` when the stream is closed and this batch reached the tail                                                        |
 
-A stream class decodes this into a [`Batch`](/docs/reference/core/toolkit#batch).
+A stream class decodes each `ReadResult` into a [`Batch`](/docs/reference/core/toolkit#batch).
 
 ### `ReadNextResult`
 
@@ -291,7 +291,7 @@ interface ReadNextResult extends ReadResult {
 same<ReadNextResult, Core.ReadNextResult>(true);
 ```
 
-The result of one long-poll wait. `timedOut` is `true` when the wait ended with no new messages. `cursor` goes in the next `ReadNextOptions`.
+`ReadNextResult` is the result of one long-poll wait. `timedOut` is `true` when the wait ended without new messages. Pass `cursor` in the next `ReadNextOptions`.
 
 ### `ReadMessage`
 
@@ -307,7 +307,7 @@ interface ReadMessage {
 same<ReadMessage, Core.ReadMessage>(true);
 ```
 
-One stored message, as bytes. Storage keeps the offset and the time of each message. A read does not give them.
+`ReadMessage` is one stored message, as bytes. Storage also keeps the offset and the write time of each message, but a read does not return them.
 
 ### `HeadResult`
 
@@ -327,4 +327,4 @@ interface HeadResult {
 same<HeadResult, Core.HeadResult>(true);
 ```
 
-The tail and the configuration of a stream, with no messages. `nextOffset` is the tail. A `head` does not start the time to live again.
+`head` returns a `HeadResult`: the tail of the stream as `nextOffset`, and its configuration, without any messages. Unlike a read, a `head` does not restart the time to live.

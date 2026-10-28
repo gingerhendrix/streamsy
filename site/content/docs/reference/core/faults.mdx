@@ -1,6 +1,6 @@
 ---
 title: Faults
-description: Reference for the faults in @streamsy/core. A fault is a storage, transport or codec failure, as opposed to a protocol rejection.
+description: Reference for the faults in @streamsy/core. A fault reports a failure of the store, the network, or the codec, and a protocol error reports a rejected request.
 ---
 
 ```ts
@@ -15,16 +15,16 @@ import {
 } from "@streamsy/core";
 ```
 
-A fault tells you that the call could not run. The store, the network or the codec failed. A protocol rejection is different: the request ran, and the protocol said no. Rejections are on the [Errors](/docs/reference/core/errors) page.
+A fault means that a call could not complete because the store, the network, or the codec failed. A protocol error means that the request ran and the server rejected it. The protocol errors are on the [Errors](/docs/reference/core/errors) page.
 
-Each fault is a `Schema.TaggedError`, like the protocol errors. It is an `Error`, it has a `_tag`, and you can `yield*` it in `Effect.gen`. Each block shows the `_tag` and the other fields. Every fault also has a `message` string and an optional `cause`, which holds the failure underneath.
+Each fault is a `Schema.TaggedError`, like the protocol errors, so it is an `Error` with a `_tag` that you can `yield*` in `Effect.gen`. Each block below shows the `_tag` and the fields that the fault adds. Every fault also has a `message` string and an optional `cause` that holds the underlying failure.
 
-| Fault            | Source                |
-| ---------------- | --------------------- |
-| `StorageFault`   | A local store         |
-| `TransportFault` | The remote Layer      |
-| `EncodeFault`    | The codec, on a write |
-| `DecodeFault`    | The codec, on a read  |
+| Fault            | Comes from                  |
+| ---------------- | --------------------------- |
+| `StorageFault`   | A local storage adapter     |
+| `TransportFault` | The remote Layer            |
+| `EncodeFault`    | The codec, before an append |
+| `DecodeFault`    | The codec, during a read    |
 
 ## Fault classes
 
@@ -44,7 +44,7 @@ interface StorageFault {
 same<StorageFault, Fields<Core.StorageFault>>(true);
 ```
 
-A local store failed. `operation` names the storage call. The storage adapter sets `retryable` to `true` when the same call can succeed later.
+A storage adapter fails with `StorageFault` when its store fails. `operation` names the storage call that failed. The adapter sets `retryable` to `true` when the same call can succeed later.
 
 ### `TransportFault`
 
@@ -64,16 +64,16 @@ interface TransportFault {
 same<TransportFault, Fields<Core.TransportFault>>(true);
 ```
 
-The remote Layer could not complete a call. A protocol rejection from the host is not a `TransportFault`. It has its own error.
+The remote Layer fails with `TransportFault` when it cannot complete a call. When the host answers with a protocol rejection, the remote Layer fails with that protocol error instead.
 
-| `reason`        | Meaning                                                                           |
-| --------------- | --------------------------------------------------------------------------------- |
-| `request`       | The HTTP request failed, for example on a network drop                            |
-| `response`      | The response does not follow the protocol, for example a header is missing or bad |
-| `decode`        | The client cannot read or decode the response body                                |
-| `configuration` | The remote configuration is not valid, or the client cannot make the request      |
+| `reason`        | Meaning                                                                             |
+| --------------- | ----------------------------------------------------------------------------------- |
+| `request`       | The HTTP request failed, for example when the network dropped                       |
+| `response`      | The response does not follow the protocol, for example a header is missing or wrong |
+| `decode`        | The client cannot read or decode the response body                                  |
+| `configuration` | The remote configuration is not valid, or the client cannot build the request       |
 
-`status` is the HTTP status, when a response came. `retryable` is computed from the other fields. It is `true` for a failed request, a `429`, and a `5xx`.
+`status` is the HTTP status of the response, when a response arrived. `retryable` is a getter. It returns `true` when `reason` is `request`, or when `status` is `429` or `500` and above.
 
 ### `EncodeFault`
 
@@ -89,7 +89,7 @@ interface EncodeFault {
 same<EncodeFault, Fields<Core.EncodeFault>>(true);
 ```
 
-An item of an append does not encode with the codec of the address. Nothing was written. `cause` holds the schema error.
+An append fails with `EncodeFault` when one of its items does not encode with the codec of the address. The append fails before it sends anything, so the stream does not change. `cause` holds the schema error.
 
 ### `DecodeFault`
 
@@ -105,7 +105,7 @@ interface DecodeFault {
 same<DecodeFault, Fields<Core.DecodeFault>>(true);
 ```
 
-A stored message does not decode with the codec of the address. The read stops. `message` names the stream and the message index in the batch, and `cause` holds the schema error. The application chooses the offset to continue from. See [Read › Errors](/docs/streams/read#errors).
+A read fails with `DecodeFault` at the first stored message that does not decode with the codec of the address. `message` names the stream and the index of the message in its batch, and `cause` holds the schema error. The read does not skip the message, so the application chooses the offset to continue from. See [Read › Errors](/docs/streams/read#errors).
 
 ## Unions and guards
 
@@ -122,7 +122,7 @@ type StreamsFault = StorageFault | TransportFault;
 same<StreamsFault, Core.StreamsFault>(true);
 ```
 
-A storage or a transport fault. Every stream call can fail with one. `StreamsFault` is also the `Schema` of this union, so you can decode or check a value with it.
+`StreamsFault` is a storage fault or a transport fault. The failure type of every stream method includes it. The value `StreamsFault` is the `Schema` of the same union, so you can decode or check a value with it.
 
 ### `isStreamsFault`
 
@@ -137,7 +137,7 @@ declare function isStreamsFault<I>(input: I): input is I & (StorageFault | Trans
 same<typeof isStreamsFault, typeof Core.isStreamsFault>(true);
 ```
 
-`true` for a `StorageFault` or a `TransportFault`, and `false` for a protocol rejection or a codec fault.
+`isStreamsFault` returns `true` for a `StorageFault` or a `TransportFault`. It returns `false` for a protocol error, an `EncodeFault`, or a `DecodeFault`.
 
 ### `isRetryableFault`
 
@@ -152,9 +152,9 @@ declare function isRetryableFault(error: unknown): error is StreamsFault;
 same<typeof isRetryableFault, typeof Core.isRetryableFault>(true);
 ```
 
-`true` for a `StreamsFault` with `retryable` set to `true`. `follow` uses this check, and it retries only these faults, from the same offset.
+`isRetryableFault` returns `true` for a `StreamsFault` whose `retryable` is `true`. `follow` retries only the faults that pass this check, and it resumes from the offset it had reached.
 
-Retry a write with care. After a lost reply, the append can be in the stream already. Send a [producer position](/docs/reference/core/producer) with the append, so that a retry is safe.
+A retried append can write its items twice. When the reply to an append is lost, the items can already be in the stream. To make a retry safe, send a [producer position](/docs/reference/core/producer) with the append. The example below retries a read:
 
 ```ts
 // @filename: streams.ts

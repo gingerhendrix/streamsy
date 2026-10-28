@@ -8,9 +8,9 @@ import { StreamAddress, type StreamId } from "@streamsy/core";
 import type { Schema } from "effect";
 ```
 
-An address names one stream and gives the codec of its items. Making an address gets no service and no resource. A stream class makes its addresses with `at(params)`, so most code does not call these functions. See [Templates and addresses](/docs/streams/declare#templates-and-addresses).
+An address names one stream and holds the codec of its items. An address is a plain value: building one needs no service and opens no resource. A stream class builds its addresses with `at(params)`, so most code does not call these functions. See [Templates and addresses](/docs/streams/declare#templates-and-addresses).
 
-The State types follow the [Durable State protocol](https://durablestreams.com/durable-state). For the change helpers that most writers use, see [`DurableState`](/docs/reference/core/durable-state).
+The State types follow the [Durable State protocol](https://durablestreams.com/durable-state). Most writers build State changes with [`DurableState`](/docs/reference/core/durable-state) instead of these types.
 
 ## Addresses
 
@@ -30,7 +30,7 @@ declare function json<A, I, RD, RE>(
 same<typeof json, typeof StreamAddress.json>(true);
 ```
 
-The address of a JSON stream. The content type is `application/json`. The codec encodes each item to a JSON string with `schema`.
+`json` returns the address of a JSON stream, with the content type `application/json`. Its codec encodes each item with `schema` and then serializes it to a JSON string.
 
 ### `StreamAddress.bytes`
 
@@ -47,7 +47,7 @@ declare function bytes(
 same<typeof bytes, typeof StreamAddress.bytes>(true);
 ```
 
-The address of a byte stream. The default content type is `application/octet-stream`. The items of one append become one stored message.
+`bytes` returns the address of a byte stream. The default content type is `application/octet-stream`. An append concatenates its `Uint8Array` items into one request body, and the server stores that body as one message.
 
 ### `StreamAddress.state`
 
@@ -64,7 +64,7 @@ declare function state<const C extends StreamAddress.Collections>(
 same<typeof state, typeof StreamAddress.state>(true);
 ```
 
-The address of a Durable State stream. It is a JSON address. Each key of `collections` is the `type` of one collection on the wire. The codec reads and writes the changes of every collection and the three State controls.
+`state` returns the address of a Durable State stream, which is a JSON address that also keeps `collections`. Each key of `collections` is the `type` of one collection on the wire. The codec encodes and decodes the changes of every collection and the three State control messages.
 
 ### `StreamAddress.StreamAddress`
 
@@ -88,14 +88,14 @@ same<StreamAddress<string>, StreamAddress.StreamAddress<string>>(true);
 same<StreamAddress<string, Decoding>, StreamAddress.StreamAddress<string, Decoding>>(true);
 ```
 
-| Field         | Meaning                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| `_tag`        | `Json` when each item is one message, `Bytes` when the items of one append join into one message |
-| `id`          | The stream id                                                                                    |
-| `contentType` | The content type that `create` sends                                                             |
-| `codec`       | Encodes an item to the wire form, and decodes it back                                            |
+| Field         | Meaning                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `_tag`        | `Json` when the server stores each item as one message. `Bytes` when an append concatenates its items into one message |
+| `id`          | The stream id                                                                                                          |
+| `contentType` | The content type that `create` sends                                                                                   |
+| `codec`       | Encodes an item to its wire form, and decodes the wire form back to an item                                            |
 
-`RD` holds the services that the codec needs to decode, and `RE` the services that it needs to encode.
+`RD` is the set of services that the codec needs to decode, and `RE` is the set of services that it needs to encode.
 
 ### `StreamAddress.StateAddress`
 
@@ -116,7 +116,7 @@ type C = StreamAddress.Collections;
 same<StateAddress<C>, StreamAddress.StateAddress<C>>(true);
 ```
 
-A JSON address that also keeps its collections. `DurableState.changes` reads the key field of each collection from `collections`.
+A `StateAddress` is a JSON address that also keeps its collections. `DurableState.changes` reads the key field of each collection from `collections`.
 
 ## Collections
 
@@ -149,7 +149,7 @@ same<
 >(true);
 ```
 
-One collection of a State stream: its value schema and the value field that gives the change `key`.
+A `Collection` describes one collection of a State stream. `schema` is the codec of its values, and `key` names the value field that gives each change its `key`.
 
 ### `StreamAddress.Collections`
 
@@ -163,7 +163,7 @@ type Collections = Record<string, StreamAddress.Collection<any, any, any, any, a
 same<Collections, StreamAddress.Collections>(true);
 ```
 
-The collections of a State stream, keyed by the `type` that names each one on the wire.
+`Collections` is the record of the collections of a State stream. Each key is the `type` that names the collection on the wire.
 
 ### `StreamAddress.ValidCollections`
 
@@ -186,7 +186,7 @@ same<ValidCollections<Good>, StreamAddress.ValidCollections<Good>>(true);
 same<ValidCollections<Bad>, StreamAddress.ValidCollections<Bad>>(true);
 ```
 
-Checks that each `key` names a `string` or `number` field of its own collection. A wrong key keeps the other collections as they are. The compiler then reports the error on the `key` of the wrong collection.
+`ValidCollections` checks at compile time that each `key` names a `string` or `number` field of its own collection. It maps a valid collection to itself, and it maps a collection with a wrong key to a type that allows only valid keys. The compiler then reports the error on the `key` of that collection, and not on the whole record.
 
 ### `StreamAddress.StateKey`
 
@@ -204,7 +204,7 @@ same<StateKey<Issue>, StreamAddress.StateKey<Issue>>(true);
 same<StreamAddress.StateKey<Issue>, "id">(true);
 ```
 
-The value fields that can be a State key: the fields of type `string` or `number`. An optional field cannot be a key.
+`StateKey<A>` is the union of the fields of `A` that can be a State key. A field qualifies when its type is `string` or `number`. An optional field does not qualify.
 
 ### `StreamAddress.CollectionsEvent`
 
@@ -220,7 +220,7 @@ type C = StreamAddress.Collections;
 same<CollectionsEvent<C>, StreamAddress.CollectionsEvent<C>>(true);
 ```
 
-The items of a State stream: the changes of every collection, and the State controls.
+`CollectionsEvent<C>` is the item type of a State stream: a change to any collection of `C`, or a State control message.
 
 ### `StreamAddress.CollectionsChange`
 
@@ -243,7 +243,7 @@ type C = {
 same<CollectionsChange<C>, StreamAddress.CollectionsChange<C>>(true);
 ```
 
-The union of the changes of every collection. The `type` field tells them apart, so a check of `type` narrows `value`.
+`CollectionsChange<C>` is the union of the changes to every collection of `C`. `type` discriminates the union, so a check of `type` narrows `value` to the value type of that collection.
 
 ### `StreamAddress.CollectionsEncodedEvent`
 
@@ -259,7 +259,7 @@ type C = StreamAddress.Collections;
 same<CollectionsEncodedEvent<C>, StreamAddress.CollectionsEncodedEvent<C>>(true);
 ```
 
-The wire form of [`CollectionsEvent`](#streamaddresscollectionsevent).
+`CollectionsEncodedEvent<C>` is the wire form of [`CollectionsEvent`](#streamaddresscollectionsevent).
 
 ### `StreamAddress.CollectionsEncodedChange`
 
@@ -287,7 +287,7 @@ type C = { readonly issue: { readonly schema: typeof Issue; readonly key: "id" }
 same<CollectionsEncodedChange<C>, StreamAddress.CollectionsEncodedChange<C>>(true);
 ```
 
-The wire form of the changes of every collection. An upsert on the wire can have the operation `insert`, `update` or `upsert`. A read decodes all three as `upsert`.
+`CollectionsEncodedChange<C>` is the wire form of [`CollectionsChange`](#streamaddresscollectionschange). On the wire, an upsert can have the operation `insert`, `update`, or `upsert`. A read decodes all three as `upsert`.
 
 ### `StreamAddress.CollectionsDecodingServices`
 
@@ -303,7 +303,7 @@ type C = StreamAddress.Collections;
 same<CollectionsDecodingServices<C>, StreamAddress.CollectionsDecodingServices<C>>(true);
 ```
 
-The services that the collection schemas need to decode.
+`CollectionsDecodingServices<C>` is the union of the services that the collection schemas of `C` need to decode.
 
 ### `StreamAddress.CollectionsEncodingServices`
 
@@ -319,7 +319,7 @@ type C = StreamAddress.Collections;
 same<CollectionsEncodingServices<C>, StreamAddress.CollectionsEncodingServices<C>>(true);
 ```
 
-The services that the collection schemas need to encode.
+`CollectionsEncodingServices<C>` is the union of the services that the collection schemas of `C` need to encode.
 
 ## Changes and controls
 
@@ -337,7 +337,7 @@ declare function isChange<E extends StreamAddress.StateEvent<unknown>>(
 same<typeof isChange, typeof StreamAddress.isChange>(true);
 ```
 
-`true` for an upsert or a delete. Use it before you read the `type` or the `key` of a State item.
+`isChange` returns `true` for an upsert or a delete, and narrows `event` to a change. Call it before you read the `type` or the `key` of a State item, because a control message has neither.
 
 ### `StreamAddress.isControl`
 
@@ -353,7 +353,7 @@ declare function isControl<E extends StreamAddress.StateEvent<unknown>>(
 same<typeof isControl, typeof StreamAddress.isControl>(true);
 ```
 
-`true` for a control message. A control has `headers.control`, and a change has `headers.operation`.
+`isControl` returns `true` for a control message, and narrows `event` to a `StateControl`. A control message has `headers.control`, and a change has `headers.operation`.
 
 ### `StreamAddress.reset`
 
@@ -367,7 +367,7 @@ declare function reset(options?: { readonly offset?: string }): StreamAddress.St
 same<typeof reset, typeof StreamAddress.reset>(true);
 ```
 
-A `reset` control. A reader clears its materialized state, then applies the items after the control. See [Control messages](/docs/streams/write#control-messages).
+`reset` returns a `reset` control message. A reader that receives it clears its materialized state, then applies the items that follow. See [Control messages](/docs/streams/write#control-messages).
 
 ### `StreamAddress.snapshotStart`
 
@@ -381,7 +381,7 @@ declare function snapshotStart(options?: { readonly offset?: string }): StreamAd
 same<typeof snapshotStart, typeof StreamAddress.snapshotStart>(true);
 ```
 
-A `snapshot-start` control. The changes from here to the next `snapshot-end` are a complete snapshot.
+`snapshotStart` returns a `snapshot-start` control message. The changes between it and the next `snapshot-end` form a complete snapshot.
 
 ### `StreamAddress.snapshotEnd`
 
@@ -395,9 +395,9 @@ declare function snapshotEnd(options?: { readonly offset?: string }): StreamAddr
 same<typeof snapshotEnd, typeof StreamAddress.snapshotEnd>(true);
 ```
 
-A `snapshot-end` control. It closes the snapshot that `snapshot-start` opened.
+`snapshotEnd` returns a `snapshot-end` control message, which closes the snapshot that `snapshot-start` opened.
 
-The three control functions leave out `headers.offset` when you do not give `offset`.
+When you call one of the three control functions without `offset`, the control message has no `headers.offset` key:
 
 ```ts
 import { StreamAddress } from "@streamsy/core";
@@ -405,7 +405,7 @@ import { StreamAddress } from "@streamsy/core";
 const controls = [StreamAddress.snapshotStart(), StreamAddress.snapshotEnd({ offset: "42" })];
 ```
 
-`controls[0].headers` is `{ control: "snapshot-start" }`.
+`controls[0].headers` is `{ control: "snapshot-start" }`, and `controls[1].headers` is `{ control: "snapshot-end", offset: "42" }`.
 
 ### `StreamAddress.stateChange`
 
@@ -432,7 +432,7 @@ type StateEncodedChange<A, Type extends string = string> =
 same<typeof stateChange, typeof StreamAddress.stateChange>(true);
 ```
 
-The codec for the upserts and the deletes of one collection. `state` makes one of these for each collection. Leave out an optional header. Do not set it to `undefined`.
+`stateChange` returns the codec for the upserts and deletes of one collection. `state` builds one of these codecs for each collection. When an optional header has no value, leave its key out. The codec rejects a header that is set to `undefined`.
 
 ### `StreamAddress.stateControl`
 
@@ -447,7 +447,7 @@ declare const stateControl: Schema.Codec<StreamAddress.StateControl>;
 same<typeof stateControl, typeof StreamAddress.stateControl>(true);
 ```
 
-The codec for the State controls. It needs no services.
+`stateControl` is the codec for the State control messages. It needs no services to encode or decode.
 
 ### `StreamAddress.StateEvent`
 
@@ -463,7 +463,7 @@ same<StateEvent<number>, StreamAddress.StateEvent<number>>(true);
 same<StateEvent<number, "n">, StreamAddress.StateEvent<number, "n">>(true);
 ```
 
-One item of a State stream: a change of one collection, or a control.
+`StateEvent<A, Type>` is a change to the collection `Type` with values of type `A`, or a control message.
 
 ### `StreamAddress.StateChange`
 
@@ -479,7 +479,7 @@ same<StateChange<number>, StreamAddress.StateChange<number>>(true);
 same<StateChange<number, "n">, StreamAddress.StateChange<number, "n">>(true);
 ```
 
-A change of one collection. `headers.operation` tells an upsert from a delete.
+`StateChange` is an upsert or a delete in one collection. `headers.operation` discriminates the two.
 
 ### `StreamAddress.StateUpsert`
 
@@ -499,7 +499,7 @@ same<StateUpsert<number>, StreamAddress.StateUpsert<number>>(true);
 same<StateUpsert<number, "n">, StreamAddress.StateUpsert<number, "n">>(true);
 ```
 
-An insert or an update of the row `key` in the collection `type`.
+`StateUpsert` inserts or updates the row `key` in the collection `type`, and `value` is the new row.
 
 ### `StreamAddress.StateDelete`
 
@@ -519,7 +519,7 @@ same<StateDelete<number>, StreamAddress.StateDelete<number>>(true);
 same<StateDelete<number, "n">, StreamAddress.StateDelete<number, "n">>(true);
 ```
 
-A delete of the row `key` in the collection `type`. `old_value` is the row before the delete, when the writer sent it.
+`StateDelete` deletes the row `key` from the collection `type`. When the writer sent the deleted row, `old_value` holds it.
 
 ### `StreamAddress.StateHeaders`
 
@@ -539,7 +539,7 @@ interface StateHeaders {
 same<StateHeaders, StreamAddress.StateHeaders>(true);
 ```
 
-The headers of a change. Leave out `offset` and `txid` when they have no value. Do not set them to `undefined`.
+`StateHeaders` holds the headers of a change. When `offset` or `txid` has no value, leave its key out instead of setting it to `undefined`.
 
 ### `StreamAddress.StateControl`
 
@@ -558,7 +558,7 @@ interface StateControl {
 same<StateControl, StreamAddress.StateControl>(true);
 ```
 
-A control message. It has no `type` and no `key`.
+`StateControl` is a control message. It has no `type` and no `key`.
 
 ### `StreamAddress.StateControlName`
 
@@ -572,4 +572,4 @@ type StateControlName = "snapshot-start" | "snapshot-end" | "reset";
 same<StateControlName, StreamAddress.StateControlName>(true);
 ```
 
-The three State controls, from section 4.2 of the Durable State protocol.
+`StateControlName` is the name of a State control message. Section 4.2 of the Durable State protocol defines the three names.

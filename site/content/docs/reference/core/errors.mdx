@@ -1,13 +1,13 @@
 ---
 title: Errors
-description: Reference for the protocol errors in @streamsy/core. Each error is a tagged class that you can catch by its tag.
+description: Reference for the protocol errors in @streamsy/core. Each error is a tagged class, and you catch it by its tag.
 ---
 
 ```ts
 import { OffsetMismatch, StaleEpoch, isProtocolError, type AppendErrorFor } from "@streamsy/core";
 ```
 
-The stream operations fail with these errors when the protocol rejects a request. Each one is a `Schema.TaggedError`. It is an `Error`, it has a `_tag`, and you can `yield*` it in `Effect.gen`. Catch one by its tag:
+The stream operations fail with these errors when the protocol rejects a request. Each error is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*` in `Effect.gen`. To handle one error, catch it by its tag:
 
 ```ts
 // @filename: streams.ts
@@ -22,9 +22,9 @@ const write = Effect.flatMap(Notes, (notes) =>
 ).pipe(Effect.catchTag("StreamClosed", (error) => Effect.succeed(error.offset)));
 ```
 
-Each block below shows the `_tag` and the fields of one error. Every error also has `message`, `name` and `stack`. `StreamId` is a branded `string`.
+Each block below shows the `_tag` and the fields of one error. Every error also has `message`, `name`, and `stack`. The `id` field is a [`StreamId`](/docs/reference/core/ids-and-offsets#streamid), which is a branded `string`.
 
-For the faults that are not protocol rejections, such as `StorageFault` and `EncodeFault`, see [Faults](/docs/reference/core/faults).
+Failures of the store, the network, or the codec are faults, such as `StorageFault` and `EncodeFault`. They are on the [Faults](/docs/reference/core/faults) page.
 
 ## Error classes
 
@@ -44,7 +44,7 @@ interface StreamNotFound {
 same<StreamNotFound, Fields<Core.StreamNotFound>>(true);
 ```
 
-No stream has this id.
+An operation fails with `StreamNotFound` when no stream has the id `id`.
 
 ### `StreamGone`
 
@@ -62,7 +62,7 @@ interface StreamGone {
 same<StreamGone, Fields<Core.StreamGone>>(true);
 ```
 
-The stream was deleted.
+An operation fails with `StreamGone` when the stream `id` existed and was deleted.
 
 ### `StreamClosed`
 
@@ -81,7 +81,7 @@ interface StreamClosed {
 same<StreamClosed, Fields<Core.StreamClosed>>(true);
 ```
 
-An append went to a closed stream. `offset` is the tail where the stream closed.
+An append fails with `StreamClosed` when the stream is closed. `offset` is the tail at which the stream was closed.
 
 ### `OffsetMismatch`
 
@@ -101,7 +101,7 @@ interface OffsetMismatch {
 same<OffsetMismatch, Fields<Core.OffsetMismatch>>(true);
 ```
 
-The tail is not the `expectedOffset` of the append. `actual` is the tail now. Nothing was written. See [Conditional writes](/docs/streams/write#conditional-writes).
+An append fails with `OffsetMismatch` when the tail of the stream is not its `expectedOffset`. `expected` is the offset that the append sent, and `actual` is the current tail. The append writes nothing. See [Conditional writes](/docs/streams/write#conditional-writes).
 
 ### `AppendConflict`
 
@@ -119,7 +119,7 @@ interface AppendConflict {
 same<AppendConflict, Fields<Core.AppendConflict>>(true);
 ```
 
-The append does not fit the stream. The content type is different, or `Stream-Seq` did not advance. `message` says which.
+An append fails with `AppendConflict` in two cases: its content type differs from the content type of the stream, or its `Stream-Seq` does not sort after the previous one. `message` says which case applies.
 
 ### `StreamBusy`
 
@@ -137,7 +137,7 @@ interface StreamBusy {
 same<StreamBusy, Fields<Core.StreamBusy>>(true);
 ```
 
-Storage rejected the write each time that the append tried it. Try again. Over HTTP, this is a `503`.
+An append fails with `StreamBusy` when other writers keep committing to the stream first. The append plans its write again after each lost commit, and it gives up after 64 attempts. The request is safe to send again. Over HTTP, the server answers `StreamBusy` with a `503`.
 
 ### `StaleEpoch`
 
@@ -156,7 +156,7 @@ interface StaleEpoch {
 same<StaleEpoch, Fields<Core.StaleEpoch>>(true);
 ```
 
-A writer with a higher producer epoch exists. `currentEpoch` is that epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
+An append fails with `StaleEpoch` when its producer epoch is lower than the last epoch that the stream accepted for the same `producerId`. `currentEpoch` is that last epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
 
 ### `ProducerGap`
 
@@ -176,7 +176,7 @@ interface ProducerGap {
 same<ProducerGap, Fields<Core.ProducerGap>>(true);
 ```
 
-The producer skipped a sequence number. `expectedSeq` is the next number that the server accepts.
+An append fails with `ProducerGap` when its `producerSeq` skips a number. `expectedSeq` is the next number that the server accepts, and `receivedSeq` is the number that the append sent.
 
 ### `InvalidEpochSeq`
 
@@ -194,7 +194,7 @@ interface InvalidEpochSeq {
 same<InvalidEpochSeq, Fields<Core.InvalidEpochSeq>>(true);
 ```
 
-The producer epoch or sequence is not valid. The typed `append` treats this as a defect, because its options rule it out.
+The protocol append fails with `InvalidEpochSeq` when the producer epoch or sequence is not valid, for example a new epoch that does not start at `producerSeq` 0. The `append` method of a stream class does not list this error in its type. When a host returns it, the append dies with a defect.
 
 ### `InvalidAppendRequest`
 
@@ -212,7 +212,7 @@ interface InvalidAppendRequest {
 same<InvalidAppendRequest, Fields<Core.InvalidAppendRequest>>(true);
 ```
 
-The append request is not valid, for example an append with no items and no `close`. `message` says why. The typed `append` treats this as a defect.
+The protocol append fails with `InvalidAppendRequest` when the request is not valid, for example an append with no items and no `close`. `message` says why. The `append` method of a stream class does not list this error in its type. When a host returns it, the append dies with a defect.
 
 ### `CreateConflict`
 
@@ -232,7 +232,7 @@ interface CreateConflict {
 same<CreateConflict, Fields<Core.CreateConflict>>(true);
 ```
 
-A create or fork does not match the stream that has this id. `reason` says why. A response over HTTP does not carry the reason, so the remote client leaves it out. `message` describes the conflict.
+A `create` or a `fork` fails with `CreateConflict` when its options do not match the stream that already has the id. `reason` says why, and `message` describes the conflict. An HTTP response does not carry the reason, so the remote client leaves `reason` out.
 
 ### `ForkSourceNotFound`
 
@@ -251,7 +251,7 @@ interface ForkSourceNotFound {
 same<ForkSourceNotFound, Fields<Core.ForkSourceNotFound>>(true);
 ```
 
-A fork named a source stream that does not exist. `id` is the new stream and `source` is the missing one.
+A `fork` fails with `ForkSourceNotFound` when its source stream does not exist. `id` is the stream that the fork would create, and `source` is the missing source.
 
 ### `InvalidForkRequest`
 
@@ -269,7 +269,7 @@ interface InvalidForkRequest {
 same<InvalidForkRequest, Fields<Core.InvalidForkRequest>>(true);
 ```
 
-The fork offset is not valid, or it is past the tail of the source. `message` says which.
+A `fork` fails with `InvalidForkRequest` when its fork offset is not a valid offset, or when the offset is past the tail of the source. `message` says which case applies.
 
 ### `NotSupported`
 
@@ -288,7 +288,7 @@ interface NotSupported {
 same<NotSupported, Fields<Core.NotSupported>>(true);
 ```
 
-The host or the remote client does not support `feature`, for example `fork`, `producer` or `expected-offset`. The memory and storage hosts do not fail with this error on an append.
+An operation fails with `NotSupported` when the host or the remote client does not support `feature`, for example `fork`, `producer`, or `expected-offset`. An append on the memory host or a storage host never fails with `NotSupported`.
 
 ### `InvalidReadRequest`
 
@@ -306,7 +306,7 @@ interface InvalidReadRequest {
 same<InvalidReadRequest, Fields<Core.InvalidReadRequest>>(true);
 ```
 
-The read request is not valid, for example an offset in the wrong format. `message` says why.
+A read fails with `InvalidReadRequest` when the request is not valid, for example when the offset has the wrong format. `message` says why.
 
 ### `CreateConflictReason`
 
@@ -321,16 +321,18 @@ type CreateConflictReason =
 same<CreateConflictReason, Core.CreateConflictReason>(true);
 ```
 
-| Reason                     | Meaning                                                   |
-| -------------------------- | --------------------------------------------------------- |
-| `config-mismatch`          | A stream with this id exists with another configuration   |
-| `soft-deleted`             | The id belongs to a deleted stream                        |
-| `fork-content-type`        | The fork asked for a content type other than the source's |
-| `fork-source-soft-deleted` | The fork source was deleted                               |
+`CreateConflictReason` is the type of `CreateConflict.reason`.
+
+| Reason                     | Meaning                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `config-mismatch`          | A stream with this id exists with another configuration        |
+| `soft-deleted`             | The id belongs to a deleted stream                             |
+| `fork-content-type`        | The fork asked for a content type that differs from the source |
+| `fork-source-soft-deleted` | The source of the fork was deleted                             |
 
 ## Errors by operation
 
-Each operation fails with one of these unions.
+Each protocol operation fails with one of these unions. The methods of a stream class add faults to them, as listed under [Failures](/docs/reference/core/toolkit#failures).
 
 ### `HeadError`
 
@@ -345,7 +347,7 @@ type HeadError = StreamNotFound | StreamGone;
 same<HeadError, Core.HeadError>(true);
 ```
 
-The errors of `head`.
+`head` fails with `HeadError`.
 
 ### `ReadError`
 
@@ -360,7 +362,7 @@ type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
 same<ReadError, Core.ReadError>(true);
 ```
 
-The errors of `read`.
+`read` fails with `ReadError`.
 
 ### `ReadNextError`
 
@@ -375,7 +377,7 @@ type ReadNextError = StreamNotFound | StreamGone | InvalidReadRequest | NotSuppo
 same<ReadNextError, Core.ReadNextError>(true);
 ```
 
-The errors of one `readNext` call, the read that can wait for new data.
+`readNext` fails with `ReadNextError`. `readNext` is the protocol read that can wait for new data, and it adds `NotSupported` to `ReadError`.
 
 ### `CreateError`
 
@@ -395,7 +397,7 @@ type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | No
 same<CreateError, Core.CreateError>(true);
 ```
 
-The errors of `create` and `fork`.
+`create` and `fork` fail with `CreateError`.
 
 ### `AppendBaseError`
 
@@ -418,7 +420,7 @@ type AppendBaseError =
 same<AppendBaseError, Core.AppendBaseError>(true);
 ```
 
-The errors that any append can get, whatever its options.
+An append can fail with any `AppendBaseError`, whatever its options.
 
 ### `AppendError`
 
@@ -446,7 +448,7 @@ type AppendError =
 same<AppendError, Core.AppendError>(true);
 ```
 
-Every error of the protocol append.
+`AppendError` lists every error that the protocol append can fail with.
 
 ### `AppendErrorFor`
 
@@ -477,7 +479,7 @@ same<Conditional, AppendBaseError | OffsetMismatch>(true);
 same<WithProducer, AppendBaseError | StaleEpoch | ProducerGap>(true);
 ```
 
-The errors that an append with options `O` can get. `OffsetMismatch` needs `expectedOffset`. `StaleEpoch` and `ProducerGap` need `producer`. An option that the type of `O` allows counts as set.
+`AppendErrorFor<O>` lists the errors that an append with options of type `O` can fail with. It includes `OffsetMismatch` only when `O` has `expectedOffset`, and it includes `StaleEpoch` and `ProducerGap` only when `O` has `producer`. An optional property counts as set, so `AppendErrorFor<AppendCallOptions>` includes all three.
 
 ### `RemoveError`
 
@@ -492,7 +494,7 @@ type RemoveError = StreamNotFound | StreamGone | StreamBusy;
 same<RemoveError, Core.RemoveError>(true);
 ```
 
-The errors of `remove`.
+`remove` fails with `RemoveError`.
 
 ### `ProtocolError`
 
@@ -513,7 +515,7 @@ type ProtocolError = HeadError | ReadNextError | CreateError | AppendError | Rem
 same<ProtocolError, Core.ProtocolError>(true);
 ```
 
-Every protocol rejection.
+`ProtocolError` is the union of every protocol error.
 
 ## Guards
 
@@ -530,4 +532,4 @@ declare function isProtocolError(error: { readonly _tag: string }): error is Pro
 same<typeof isProtocolError, typeof real>(true);
 ```
 
-`true` when the `_tag` of `error` is the tag of a protocol error. The HTTP edge uses it to send every protocol rejection through one mapper.
+`isProtocolError` returns `true` when the `_tag` of `error` is the tag of a protocol error. The HTTP handlers use it to map every protocol error to its HTTP response in one place.

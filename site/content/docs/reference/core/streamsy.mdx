@@ -21,11 +21,11 @@ import type { Reader, StreamRoute, Streams, Writer } from "@streamsy/core/protoc
 import type { Context, Effect, Function, Option, Schema, Stream } from "effect";
 ```
 
-A stream class declares a set of streams with one id template and one codec. A group lists the stream classes that one host keeps. For a worked example, see [Declare streams](/docs/streams/declare).
+A stream class declares a set of streams with a service name, an id template, and a codec. A group lists the stream classes that one host stores and serves. For a worked example, see [Declare streams](/docs/streams/declare).
 
-The root of `@streamsy/core` also exports each member of `Streamsy` under its own name, for example `json` and `group`. The two names are the same export.
+The root of `@streamsy/core` also exports each member of `Streamsy` under its own name, for example `json` and `group`. `json` and `Streamsy.json` are the same function.
 
-`StreamRoute` comes from `@streamsy/core/protocol`. Its `ParamCodecs` type is a record with one `Schema.Codec<unknown, string>` for each template parameter. `Params<C>` is the decoded record, and `ExactTemplateParams` makes the compiler check that the template and the record name the same parameters.
+The signatures use `StreamRoute` from `@streamsy/core/protocol`. `StreamRoute.ParamCodecs` is a record with one `Schema.Codec<unknown, string>` for each template param. `StreamRoute.Params<C>` is the record of decoded params. `StreamRoute.ExactTemplateParams` makes the compiler check that the template and the record name the same params.
 
 ## `Streamsy.json`
 
@@ -56,9 +56,9 @@ declare function json<Self>(): <
 same<typeof json, typeof Streamsy.json>(true);
 ```
 
-Declares a stream class whose items are JSON values of `schema`. Each item of an append is one stored message. The content type is `application/json`.
+`json` declares a stream class whose items are values of `schema`, stored as JSON with the content type `application/json`. The server stores each item of an append as a separate message.
 
-Call it in two steps, then extend the result:
+`json` takes the class type first and the arguments second. Call it twice and extend the result:
 
 ```ts
 import { Schema } from "effect";
@@ -72,11 +72,11 @@ class Drafts extends Streamsy.json<Drafts>()("Notes/Drafts", "drafts/:draftId", 
 }) {}
 ```
 
-The rules for each argument:
+Each argument has its own rules:
 
-- `name` is the global name of the service. Its key is `@streamsy/core/Stream/<name>`. Two classes with the same name are the same service, so give each name an application namespace, such as `Notes/Drafts`. `Wildcard` is reserved.
-- `template` has one path segment for each `:name` parameter, for example `drafts/:draftId`.
-- `params` has one codec for each `:name` in the template, and no other codec. The compiler checks this. When the template type is a plain `string`, the call throws a `RangeError` instead.
+- `name` is the global name of the service, and the service key is `@streamsy/core/Stream/<name>`. Two classes with the same name are the same service, so prefix each name with an application namespace, as in `Notes/Drafts`. The name `Wildcard` is reserved.
+- `template` is a relative path in which a `:name` segment is a param, for example `drafts/:draftId`.
+- `params` has one codec for each `:name` in the template, and no other codec. The compiler checks this when `template` is a string literal. The call also checks it at run time and throws a `RangeError` on a mismatch, which catches a `template` typed as a plain `string`.
 
 ## `Streamsy.bytes`
 
@@ -102,9 +102,9 @@ declare function bytes<Self>(): <
 same<typeof bytes, typeof Streamsy.bytes>(true);
 ```
 
-Declares a stream class whose items are `Uint8Array` values. All items of one append become one stored message. The default content type is `application/octet-stream`.
+`bytes` declares a stream class whose items are `Uint8Array` values. An append concatenates its items into one request body, and the server stores that body as one message. The default content type is `application/octet-stream`.
 
-The `name`, `template` and `params` rules are the same as for [`Streamsy.json`](#streamsyjson). An append of an empty `Uint8Array` item dies with a `RangeError`.
+The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](#streamsyjson). An append with an empty `Uint8Array` item dies with a `RangeError`.
 
 ## `Streamsy.state`
 
@@ -131,9 +131,9 @@ declare function state<Self>(): <
 same<typeof state, typeof Streamsy.state>(true);
 ```
 
-Declares a Durable State stream class. Each key of `collections` is the `type` of one collection on the wire. Each entry gives the value schema and the value field that becomes the change `key`. The items are [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent) values: the changes of every collection, and the State controls.
+`state` declares a Durable State stream class. Each key of `collections` is the `type` of one collection on the wire. Each entry gives the value schema of the collection and the value field that becomes the `key` of each change. The items are [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent) values, which are changes to any collection and State control messages.
 
-The `name`, `template` and `params` rules are the same as for [`Streamsy.json`](#streamsyjson). Each `key` must name a `string` or `number` field of its own collection. The compiler reports a wrong `key` on that collection. To make changes, see [`DurableState`](/docs/reference/core/durable-state).
+The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](#streamsyjson). Each `key` must name a `string` or `number` field of its own collection, and the compiler reports a wrong `key` on that collection. To build changes, see [`DurableState`](/docs/reference/core/durable-state).
 
 ## `Streamsy.custom`
 
@@ -154,9 +154,9 @@ declare function custom<Self>(): <const Name extends string, P, A, RD, RE>(
 same<typeof custom, typeof Streamsy.custom>(true);
 ```
 
-Declares a stream class for an id grammar that a template cannot express. `parse` returns the parameters of an id that the class owns, or `None`. `address` builds the address for the parameters. `parse(address(params).id)` must give `params` back.
+`custom` declares a stream class for an id grammar that a template cannot express. `parse` returns the params of an id that the class owns, or `None` for any other id. `address` builds the address for a set of params. `parse(address(params).id)` must return `Some(params)`, and Streamsy does not check this.
 
-A custom class has an empty `template`. A group does not check it for overlap with other classes. The first class in the group that matches an id owns it.
+A custom class has an empty `template`, so a group cannot check it for overlap with other classes. When two classes match an id, the first of them in the group owns the id.
 
 ## `Streamsy.group`
 
@@ -172,14 +172,14 @@ declare function group<const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof group, typeof Streamsy.group>(true);
 ```
 
-Lists the stream classes that one host keeps and serves. Storage Layers, `Http.routes` and `RemoteStreams.layer` take a group. The group and its list are frozen.
+`group` lists the stream classes that one host stores and serves. The storage Layers, `Http.routes`, and `RemoteStreams.layer` take a group. `group` freezes the group object and its list.
 
-`group` throws a `RangeError` when:
+`group` throws a `RangeError` in each of these cases:
 
-- two classes have the same name;
-- two classes have the same template;
-- two templates can match the same id;
-- `Streamsy.Wildcard` is not the last class.
+- two classes have the same name
+- two classes have the same template
+- two templates can match the same id
+- `Streamsy.Wildcard` is not the last class
 
 See [Groups](/docs/streams/declare#groups).
 
@@ -200,7 +200,7 @@ same<typeof Wildcard, typeof Streamsy.Wildcard>(true);
 same<Wildcard, Streamsy.Wildcard>(true);
 ```
 
-A custom stream class that owns every id. Its items are bytes with the content type `application/octet-stream`. Put it last in a group, to keep and serve the ids that no other class owns.
+`Wildcard` is a custom stream class that owns every id. Its items are bytes with the content type `application/octet-stream`. To store and serve the ids that no other class owns, put `Wildcard` last in a group.
 
 ## `Streamsy.Class`
 
@@ -246,17 +246,17 @@ same<
 >(true);
 ```
 
-The type of every stream class. A class is three things at once:
+`Class` is the type of every stream class. A stream class has three parts:
 
-| Part              | Gives                                                                       |
-| ----------------- | --------------------------------------------------------------------------- |
-| An Effect service | `yield* Notes` gives the [`Streamsy.Api`](#streamsyapi) of the stream class |
-| The route `R`     | `template`, `match(id)` and `parse(id)`                                     |
-| `at(params)`      | The address of one stream, with the `stream` key of the class               |
+| Part              | Gives                                                                          |
+| ----------------- | ------------------------------------------------------------------------------ |
+| An Effect service | `yield* Notes` returns the [`Streamsy.Api`](#streamsyapi) of the class `Notes` |
+| The route `R`     | `template`, `match(id)`, and `parse(id)`                                       |
+| `at(params)`      | The address of one stream, with the `stream` key of the class                  |
 
-`at` throws a `RangeError` when a parameter does not encode to a valid id segment. See [Templates and addresses](/docs/streams/declare#templates-and-addresses) for the id rules.
+`at` throws a `RangeError` when a param does not encode to a valid id segment. [Templates and addresses](/docs/streams/declare#templates-and-addresses) lists the id rules.
 
-`RD` holds the services that the codec needs to decode, and `RE` the services that it needs to encode. Both are `never` for most schemas.
+`RD` is the set of services that the codec needs to decode, and `RE` is the set of services that it needs to encode. Both are `never` for most schemas.
 
 ## `Streamsy.Api`
 
@@ -345,27 +345,27 @@ same<Api<P, Item>, Streamsy.Api<P, Item>>(true);
 same<Api<P, Item, Decoding, Encoding>, Streamsy.Api<P, Item, Decoding, Encoding>>(true);
 ```
 
-The service of a stream class. Each method takes the parameters of one stream first, and reaches only the ids of its own class. An id outside the class dies with a `RangeError`.
+`Api` is the service of a stream class. Each method takes the params of one stream as its first argument, and it can reach only the ids of its own class. A call with an id outside the class dies with a `RangeError`.
 
-| Method    | Does                                                          | Guide                                                      |
-| --------- | ------------------------------------------------------------- | ---------------------------------------------------------- |
-| `create`  | Makes the stream. The address gives the content type          | [Create](/docs/streams/create#create)                      |
-| `fork`    | Makes a child stream from a `source` of the same class        | [Fork](/docs/streams/create#fork)                          |
-| `remove`  | Deletes the stream                                            | [Remove](/docs/streams/create#remove)                      |
-| `append`  | Encodes the items and writes them as one atomic append        | [Append](/docs/streams/write#append)                       |
-| `read`    | Reads stored batches after `offset`, up to the current tail   | [Read](/docs/streams/read#read)                            |
-| `collect` | Reads to the current tail and returns every item              | [Read](/docs/streams/read#read)                            |
-| `fold`    | Reads to the current tail and folds every item into one value | [Fold](/docs/streams/read#fold)                            |
-| `decide`  | Folds, decides, then appends with `expectedOffset`            | [Read, fold, append](/docs/streams/write#read-fold-append) |
-| `follow`  | Reads, then waits for new batches until the stream closes     | [Follow](/docs/streams/read#follow)                        |
-| `session` | Does one raw long-poll wait                                   | [Session](/docs/streams/read#session)                      |
-| `head`    | Returns the tail and the configuration, with no messages      | [Read](/docs/streams/read)                                 |
+| Method    | Does                                                                               | Guide                                                      |
+| --------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `create`  | Creates the stream, with the content type of the address                           | [Create](/docs/streams/create#create)                      |
+| `fork`    | Creates a child stream from a `source` of the same class                           | [Fork](/docs/streams/create#fork)                          |
+| `remove`  | Deletes the stream                                                                 | [Remove](/docs/streams/create#remove)                      |
+| `append`  | Encodes the items and writes them as one atomic append                             | [Append](/docs/streams/write#append)                       |
+| `read`    | Reads the stored batches after `offset`, up to the current tail                    | [Read](/docs/streams/read#read)                            |
+| `collect` | Reads to the current tail and returns every item                                   | [Read](/docs/streams/read#read)                            |
+| `fold`    | Reads to the current tail and folds every item into one value                      | [Fold](/docs/streams/read#fold)                            |
+| `decide`  | Folds the stream, calls your `decide` function, then appends with `expectedOffset` | [Read, fold, append](/docs/streams/write#read-fold-append) |
+| `follow`  | Reads to the tail, then waits for new batches until the stream closes              | [Follow](/docs/streams/read#follow)                        |
+| `session` | Makes one raw long-poll wait                                                       | [Session](/docs/streams/read#session)                      |
+| `head`    | Returns the tail and the configuration, without messages                           | [Read](/docs/streams/read)                                 |
 
 `append` takes a non-empty list of items, unless `options` has `close: true`. Its error type lists only the rejections that `options` make possible. See [`AppendErrorFor`](/docs/reference/core/errors#appenderrorfor).
 
-`fork` fails with `ForkSourceNotFound` when `source` is outside the class. `session`, `head` and `remove` do not decode items, so their errors have no `DecodeFault`.
+`fork` fails with `ForkSourceNotFound` when `source` is outside the class. `session`, `head`, and `remove` do not decode items, so their error types have no `DecodeFault`.
 
-`owner`, `route` and `wire` are for Projection, Serve and the storage hosts. An application uses the methods.
+Projection, Serve, and the storage hosts use `owner`, `route`, and `wire`. An application uses only the methods.
 
 ## `Streamsy.Address`
 
@@ -393,7 +393,7 @@ same<Address<string, Self>, Streamsy.Address<string, Self>>(true);
 same<Address<string, Self, Decoding>, Streamsy.Address<string, Self, Decoding>>(true);
 ```
 
-What `at(params)` returns: a [`StreamAddress.StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress) and the service key of its class. An address names one stream. It holds no data, and it is not an Effect `Ref`. Projection inputs, `DurableState.changes` and Serve routes take addresses.
+`at(params)` returns an `Address`: a [`StreamAddress.StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress) with the service key of its class as `stream`. An address names one stream. It holds no stream data, and it is not an Effect `Ref`. Projection inputs, `DurableState.changes`, and Serve routes take addresses.
 
 ## `Streamsy.JsonClass`
 
@@ -435,7 +435,7 @@ same<
 >(true);
 ```
 
-What [`Streamsy.json`](#streamsyjson) returns. `I` is the encoded form of an item.
+[`Streamsy.json`](#streamsyjson) returns a `JsonClass`. `A` is the item type, and `I` is the encoded form of an item.
 
 ## `Streamsy.BytesClass`
 
@@ -471,7 +471,7 @@ same<
 >(true);
 ```
 
-What [`Streamsy.bytes`](#streamsybytes) returns.
+[`Streamsy.bytes`](#streamsybytes) returns a `BytesClass`. Its item type is `Uint8Array`, and its codec needs no services.
 
 ## `Streamsy.StateClass`
 
@@ -510,7 +510,7 @@ same<
 >(true);
 ```
 
-What [`Streamsy.state`](#streamsystate) returns. The decoding and encoding services are those of every collection schema.
+[`Streamsy.state`](#streamsystate) returns a `StateClass`. Its decoding and encoding services are the union of the services of every collection schema.
 
 ## `Streamsy.CustomClass`
 
@@ -540,7 +540,7 @@ same<
 >(true);
 ```
 
-What [`Streamsy.custom`](#streamsycustom) returns.
+[`Streamsy.custom`](#streamsycustom) returns a `CustomClass`. `P` is the params type that `parse` returns and `address` takes.
 
 ## `Streamsy.Group`
 
@@ -560,7 +560,7 @@ same<
 >(true);
 ```
 
-What [`Streamsy.group`](#streamsygroup) returns. `streams` keeps the classes in the order that you gave them.
+[`Streamsy.group`](#streamsygroup) returns a `Group`. `streams` holds the classes in the order that you passed them.
 
 ## `Streamsy.Any`
 
@@ -582,7 +582,7 @@ interface Any extends Context.Key<
 same<Any, Streamsy.Any>(true);
 ```
 
-Any stream class, with only the parts that a host needs: the service key, the template and `match`. A group and a storage Layer take a list of `Any`.
+`Any` matches any stream class. It keeps only the parts that a host needs: the service key, `template`, and `match`. A group and a storage Layer take a list of `Any`.
 
 ## `Streamsy.Services`
 
@@ -598,7 +598,7 @@ same<Services<G>, Streamsy.Services<G>>(true);
 same<Services<G>, Streamsy.Wildcard>(true);
 ```
 
-The union of the service types of the classes in a group.
+`Services<G>` is the union of the service types of the classes in the group `G`.
 
 ## `Streamsy.Host`
 
@@ -613,4 +613,4 @@ type G = Streamsy.Group<readonly [typeof Streamsy.Wildcard]>;
 same<Host<G>, Streamsy.Host<G>>(true);
 ```
 
-What every host Layer gives for a group: the services of its stream classes. `MemoryStorage.layer(group)` and the other storage Layers give `Host<typeof group>`.
+`Host<G>` is what a host Layer provides for the group `G`: the services of its stream classes. `MemoryStorage.layer(group)` and the other storage Layers provide `Host<typeof group>`.

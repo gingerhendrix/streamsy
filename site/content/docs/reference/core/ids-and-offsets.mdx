@@ -8,7 +8,7 @@ import { Offset, ProducerId, StreamId, ZERO_OFFSET, compare } from "@streamsy/co
 import type { Brand } from "effect";
 ```
 
-A stream id names one stream. An offset is a position in one stream. Each export with a capital letter is two things with one name: a branded `string` type, and an Effect `Schema` that checks a value and brands it. See [Offsets](/docs/streams/declare#offsets).
+A stream id names one stream, and an offset is a position in one stream. `StreamId`, `Offset`, and `ProducerId` each export a type and a value with the same name. The type is a branded `string`. The value is an Effect `Schema` that checks a string and brands it. See [Offsets](/docs/streams/declare#offsets).
 
 ## `ZERO_OFFSET`
 
@@ -23,10 +23,7 @@ declare const ZERO_OFFSET: Offset;
 same<typeof ZERO_OFFSET, typeof Core.ZERO_OFFSET>(true);
 ```
 
-The position before the first message: `0000000000000000_0000000000000000`.
-
-- A new stream has this tail.
-- As an `expectedOffset`, it means "append only when the stream is empty". See [Conditional writes](/docs/streams/write#conditional-writes).
+`ZERO_OFFSET` is the position before the first message, `0000000000000000_0000000000000000`. A new stream has this offset as its tail. When you pass it as `expectedOffset`, the append succeeds only on an empty stream. See [Conditional writes](/docs/streams/write#conditional-writes).
 
 ## `compare`
 
@@ -40,9 +37,7 @@ declare function compare(a: string, b: string): number;
 same<typeof compare, typeof Core.compare>(true);
 ```
 
-Returns `-1` when `a` is before `b`, `0` when they are equal, and `1` when `a` is after `b`. It compares the strings in code unit order. Offsets of one stream have a fixed width, so this order is the stream order.
-
-Compare only offsets of the same stream.
+`compare` returns `-1` when `a` is before `b`, `0` when they are equal, and `1` when `a` is after `b`. It compares the two strings by UTF-16 code unit. All offsets of one stream have the same width, so this order is the order of the messages in the stream. Offsets of two different streams have no defined order, so compare only offsets of the same stream.
 
 ## `StreamId`
 
@@ -57,7 +52,7 @@ type StreamId = string & Brand.Brand<"StreamId">;
 same<StreamId, Core.StreamId>(true);
 ```
 
-The id of a stream, such as `drafts/main`. Results and errors carry it, for example `StreamNotFound.id`. A stream class makes ids for you with `at(params)`. To brand a string yourself, call the schema:
+`StreamId` is the id of a stream, such as `drafts/main`. Results and errors carry it, for example `StreamNotFound.id`. A stream class makes ids for you with `at(params)`. To brand a string yourself, call `StreamId.make`:
 
 ```ts
 import { StreamId } from "@streamsy/core";
@@ -65,7 +60,7 @@ import { StreamId } from "@streamsy/core";
 const id: StreamId = StreamId.make("drafts/main");
 ```
 
-The `StreamId` schema accepts any string. For the id rules that a stream class applies, see [Templates and addresses](/docs/streams/declare#templates-and-addresses).
+The `StreamId` schema accepts any string. A stream class applies stricter id rules, which [Templates and addresses](/docs/streams/declare#templates-and-addresses) lists.
 
 ## `Offset`
 
@@ -80,9 +75,9 @@ type Offset = string & Brand.Brand<"Offset">;
 same<Offset, Core.Offset>(true);
 ```
 
-A position in one stream. The `Offset` schema accepts 16 digits, an underscore, and 16 digits. `Offset.make` throws for any other value.
+`Offset` is a position in one stream. The `Offset` schema accepts 16 digits, an underscore, and 16 more digits. `Offset.make` throws for any other value.
 
-Most results and options type an offset as a plain `string`, for example `Batch.nextOffset` and `expectedOffset`. Keep each offset as the opaque value that a result gave you. Do not build one from parts.
+Most results and options type an offset as a plain `string`, for example `Batch.nextOffset` and `expectedOffset`. Treat an offset as an opaque value. Pass on the offset that a result gave you, and do not build one from parts.
 
 ## `ProducerId`
 
@@ -97,4 +92,4 @@ type ProducerId = string & Brand.Brand<"ProducerId">;
 same<ProducerId, Core.ProducerId>(true);
 ```
 
-The id of a producer in storage. The `Storage` contract keys producer state by it. An application uses the plain `producerId` string of [`Producer.Position`](/docs/reference/core/producer#producerposition).
+`ProducerId` is the branded id of a producer in storage, and the `Storage` contract keys producer state by it. An application does not need it. It sends the plain `producerId` string of [`Producer.Position`](/docs/reference/core/producer#producerposition).
