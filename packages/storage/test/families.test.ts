@@ -2,7 +2,7 @@ import { expect, layer } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { type CommitBoundary, Storage, type StorageFault, Streamsy } from "@streamsy/core";
-import type { OwnerRecords } from "@streamsy/core/internal";
+import type { CommitHooks, OwnerRecords } from "@streamsy/core/internal";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
@@ -56,7 +56,7 @@ type Assignability<To> = <From>(value: From) => From extends To ? 1 : 2;
 
 type Equal<A, B> = Assignability<A> extends Assignability<B> ? true : false;
 
-type SqlOutputs = Storage | CommitBoundary | OwnerRecords;
+type SqlOutputs = Storage | CommitBoundary | OwnerRecords | CommitHooks;
 
 type ClientServices = SqlClient.SqlClient | Reactivity.Reactivity;
 

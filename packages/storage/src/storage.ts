@@ -1,4 +1,5 @@
 import {
+  CommitHooks,
   MAX_PRODUCER_ID_LENGTH,
   OwnerRecords,
   attachOwner,
@@ -930,6 +931,10 @@ const makeLayer = (
         Context.add(Storage, attachOwner(makeStorage(sql, boundary), owner)),
         Context.add(CommitBoundary, CommitBoundary.of(boundary)),
         Context.add(OwnerRecords, attachOwner(makeOwnerRecords(sql), owner)),
+        Context.add(
+          CommitHooks,
+          attachOwner(CommitHooks.of({ beforeCommit: boundary.beforeCommit }), owner),
+        ),
       );
     }),
   );
@@ -950,7 +955,7 @@ const makeLayer = (
 export const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
-  Storage | CommitBoundary | OwnerRecords,
+  Storage | CommitBoundary | OwnerRecords | CommitHooks,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
 > => makeLayer(options);

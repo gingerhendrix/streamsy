@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpRouter } from "effect/http";
 import { type CommitBoundary, Http, MemoryStorage, Storage, Streamsy } from "../../src/index.ts";
 import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
-import type { OwnerRecords } from "../../src/internal/index.ts";
+import type { CommitHooks, OwnerRecords } from "../../src/internal/index.ts";
 import { RemoteStreams } from "../../src/remote/index.ts";
 
 class A extends Streamsy.json<A>()("GroupTypes/A", "a", {
@@ -53,7 +53,7 @@ void routeRequirements;
 
 const memoryExact: Equal<
   Layer.Success<typeof memory>,
-  Storage | CommitBoundary | OwnerRecords | A | B
+  Storage | CommitBoundary | OwnerRecords | CommitHooks | A | B
 > = true;
 
 const memoryRequirements: Equal<Layer.Services<typeof memory>, never> = true;
@@ -79,7 +79,7 @@ const emptyGroup = MemoryStorage.layer(Streamsy.group());
 
 const emptyExact: Equal<
   Layer.Success<typeof emptyGroup>,
-  Storage | CommitBoundary | OwnerRecords
+  Storage | CommitBoundary | OwnerRecords | CommitHooks
 > = true;
 
 void [memoryExact, memoryRequirements, memoryErrors, protocolRemote, pointFreeRemote, emptyExact];

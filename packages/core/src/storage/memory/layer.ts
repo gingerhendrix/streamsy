@@ -16,6 +16,7 @@ import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from
 import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
 import { createNotifier } from "./notifier.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
+import { CommitHooks } from "../../internal/commit-hooks.ts";
 import { CommitBoundary } from "../commit-boundary.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Layer owns the boundary and its exact stream state.
 import { makeBoundary } from "./boundary.ts";
@@ -97,7 +98,7 @@ function reject(state: State, operation: Operation, index: number): MutationReje
 
 export const layer = (
   options: MemoryOptions = {},
-): Layer.Layer<Storage | CommitBoundary | OwnerRecords> =>
+): Layer.Layer<Storage | CommitBoundary | OwnerRecords | CommitHooks> =>
   Layer.effectContext(
     Effect.gen(function* () {
       const chain = !options.constrained;
@@ -253,6 +254,7 @@ export const layer = (
       return Context.make(Storage, attachOwner(storage, ownerOf(owner.boundary))).pipe(
         Context.add(CommitBoundary, owner.boundary),
         Context.add(OwnerRecords, owner.records),
+        Context.add(CommitHooks, owner.hooks),
       );
     }),
   );

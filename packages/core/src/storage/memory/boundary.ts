@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Semaphore } from "effect";
+import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { attachOwner } from "../../internal/owner.ts";
 import { CommitBoundary } from "../commit-boundary.ts";
@@ -35,6 +36,7 @@ export const makeBoundary = (
     const owner = {};
     const lock = yield* Semaphore.make(1);
     let committedRecords = new Map<string, string>();
+    const hooks = commitHookRegistry();
 
     const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
       Effect.withFiber((fiber) => {
@@ -64,8 +66,15 @@ export const makeBoundary = (
               changed: false,
             };
 
+            // Hooks run in the draft, so their writes commit or roll back with the body.
+            // Memory hooks only write the draft, so a hook failure is a defect.
+            const withHooks = body.pipe(
+              Effect.tap(() => Effect.orDie(hooks.run(draft.ids))),
+              Effect.provideService(ActiveDraft, draft),
+            );
+
             return Effect.uninterruptibleMask((restore) =>
-              restore(body.pipe(Effect.provideService(ActiveDraft, draft))).pipe(
+              restore(withHooks).pipe(
                 Effect.tap(() =>
                   Effect.sync(() => {
                     Object.assign(committed, draft.state);
@@ -126,6 +135,7 @@ export const makeBoundary = (
     return {
       boundary: attachOwner(boundary, owner),
       records: attachOwner(records, owner),
+      hooks: attachOwner(CommitHooks.of({ beforeCommit: hooks.beforeCommit }), owner),
       withTransaction,
       access,
       changed,

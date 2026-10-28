@@ -1,5 +1,5 @@
 /** Executable Bun edge: a fresh scoped Layer and virtual clock for every case. */
-import type { SqlError } from "effect/sql";
+import { SqlError } from "effect/sql";
 import { describe, expect, it } from "vitest";
 import {
   Array,
@@ -28,12 +28,16 @@ import type { StorageCapabilities } from "../storage/capabilities.ts";
 import { MutationRejected, type MutationApplied, type Operation } from "../storage/mutation.ts";
 import { CommitBoundary, type CommitBoundaryApi } from "../storage/commit-boundary.ts";
 import { OwnerRecords, type OwnerRecordsApi } from "../internal/owner-records.ts";
+import { CommitHooks, type CommitHooksApi } from "../internal/commit-hooks.ts";
 
 export interface StorageContractOptions {
   readonly name: string;
   readonly layer: Layer.Layer<Storage>;
   readonly expected: StorageCapabilities;
-  /** The Layer also provides `CommitBoundary` and the internal owner records that projections need. */
+  /**
+   * The Layer also provides `CommitBoundary`, and the internal owner records and
+   * commit hooks that projections need.
+   */
   readonly ownerRecords?: boolean;
 }
 
@@ -193,6 +197,7 @@ export const StorageContract = {
         body: (owner: {
           readonly boundary: CommitBoundaryApi;
           readonly records: OwnerRecordsApi;
+          readonly hooks: CommitHooksApi;
         }) => Effect.Effect<
           unknown,
           MutationRejected | StorageFault | SqlError.SqlError,
@@ -211,7 +216,8 @@ export const StorageContract = {
               const context = yield* Layer.build(options.layer);
               const boundary = Option.getOrThrow(Context.getOption(context, CommitBoundary));
               const records = Option.getOrThrow(Context.getOption(context, OwnerRecords));
-              yield* body({ boundary, records }).pipe(Effect.provide(context));
+              const hooks = Option.getOrThrow(Context.getOption(context, CommitHooks));
+              yield* body({ boundary, records, hooks }).pipe(Effect.provide(context));
             }).pipe(Effect.scoped, Effect.runPromiseExit),
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
@@ -305,6 +311,90 @@ export const StorageContract = {
             yield* records.remove(first);
             expect(yield* records.read(first)).toEqual(Option.none());
             expect(yield* records.read(second)).toEqual(Option.some("2"));
+          }),
+      );
+      recordsTest(
+        "R5 commit hooks see the ids of create, append, delete and expiry before the commit",
+        ({ boundary, hooks, records }) =>
+          Effect.gen(function* () {
+            const storage = yield* Storage;
+            const committed = yield* storage.committed;
+            const seen: Array<ReadonlyArray<StreamId>> = [];
+            const published: Array<ReadonlyArray<StreamId>> = [];
+            const expiring = StreamId.make("expiring");
+            const scope = yield* Scope.fork(yield* Scope.Scope);
+
+            yield* hooks
+              .beforeCommit((ids) =>
+                Effect.gen(function* () {
+                  // Every earlier commit has published, and this one has not.
+                  published.push(...(yield* PubSub.takeUpTo(committed, Infinity)));
+                  expect(published).toHaveLength(seen.length);
+                  seen.push([...ids]);
+                }),
+              )
+              .pipe(Scope.provide(scope));
+
+            yield* mutate(create());
+            yield* mutate(append());
+            // A rejected mutation runs no hook.
+            expect(Exit.isFailure(yield* Effect.exit(mutate(create())))).toBe(true);
+            yield* mutate(remove());
+            yield* mutate(
+              create({
+                ...record(expiring),
+                lifecycle: { closed: false, softDeleted: false, expiresAtMs: 100 },
+              }),
+            );
+            yield* mutate({
+              _tag: "Delete",
+              streamId: expiring,
+              reason: "expiry",
+              expectedExpiresAtMs: 100,
+            });
+            // A transaction with no stream writes runs no hook.
+            yield* boundary.withTransaction(records.write("only-records", "1"));
+            expect(seen).toEqual([[id], [id], [id], [expiring], [expiring]]);
+
+            // One hook call for each outer transaction, with all of its ids.
+            const other = StreamId.make("other");
+            yield* boundary.withTransaction(
+              Effect.andThen(mutate(create(record(other))), mutate(create(record(child)))),
+            );
+            expect(seen[5]).toEqual([other, child]);
+
+            // The scope removes the hook.
+            yield* Scope.close(scope, Exit.void);
+            yield* mutate(remove(other));
+            expect(seen).toHaveLength(6);
+          }),
+      );
+      recordsTest(
+        "R6 a hook's writes join the transaction and a hook failure rolls the write back",
+        ({ hooks, records }) =>
+          Effect.gen(function* () {
+            const storage = yield* Storage;
+            let fail = false;
+
+            yield* hooks.beforeCommit((ids) =>
+              fail
+                ? Effect.fail(
+                    new SqlError.SqlError({
+                      reason: new SqlError.UnknownError({ cause: "hook", message: "hook failed" }),
+                    }),
+                  )
+                : Effect.orDie(records.write("hooked", Array.join([...ids], ","))),
+            );
+
+            yield* mutate(create());
+            expect(yield* records.read("hooked")).toEqual(Option.some(id));
+
+            fail = true;
+            const committed = yield* storage.committed;
+            // SQL hosts fail the write. The memory host turns the failure into a defect.
+            expect(Exit.isFailure(yield* Effect.exit(mutate(append())))).toBe(true);
+            expect((yield* current).currentOffset).toBe(ZERO_OFFSET);
+            expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([]);
           }),
       );
       test(

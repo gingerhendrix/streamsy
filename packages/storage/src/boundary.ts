@@ -15,6 +15,7 @@ import {
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, SqlError } from "effect/sql";
 import type { CommitBoundaryApi, StreamId } from "@streamsy/core";
+import { commitHookRegistry, type CommitHooksApi } from "@streamsy/core/internal";
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 interface Pending {
@@ -62,7 +63,7 @@ export const makeBoundaryTestProbe = (): BoundaryTestProbe => ({
 
 const noop = () => {};
 
-export interface BoundaryRuntime extends CommitBoundaryApi {
+export interface BoundaryRuntime extends CommitBoundaryApi, CommitHooksApi {
   readonly mutation: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
     readonly ids: ReadonlyArray<StreamId>;
@@ -143,6 +144,7 @@ const makeBoundary = (
     );
 
     let closed = false;
+    const hooks = commitHookRegistry();
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -164,7 +166,9 @@ const makeBoundary = (
         const pending: Pending = { keys: new Set(), ids: new Set() };
         let bodyCompleted = false;
 
+        // Hooks run last in the body, so a hook's SqlError is retryable like a body error.
         const transactionBody = body.pipe(
+          Effect.tap(() => hooks.run(pending.ids)),
           Effect.provideService(PendingInvalidations, pending),
           Effect.tap(() =>
             Effect.sync(() => {
@@ -339,7 +343,13 @@ const makeBoundary = (
         }),
       );
 
-    return { withTransaction, mutation, changes, committed: PubSub.subscribe(feed) };
+    return {
+      withTransaction,
+      mutation,
+      changes,
+      committed: PubSub.subscribe(feed),
+      beforeCommit: hooks.beforeCommit,
+    };
   });
 
 export const boundaryLayer = (
