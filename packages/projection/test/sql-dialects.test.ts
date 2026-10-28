@@ -35,6 +35,17 @@ const SAVES = 8;
 
 const key = (id: string) => ({ id, version: 1, generation: 1, params: { tenant: "ä/1" } });
 
+/**
+ * A wake key with a 482-digit hex folder id, like the longest artifacts-fs ids. Its
+ * checkpoint key has 551 characters, and two suffixes share the first 545.
+ */
+const folder = (suffix: string) => ({
+  id: "files-wake",
+  version: 1,
+  generation: 1,
+  params: { folderId: `${"6461696c792f".repeat(40)}${suffix}` },
+});
+
 const record = (state: string): CheckpointRecord => ({
   identity: { inputs: {} },
   inputs: {},
@@ -147,6 +158,40 @@ for (const dialect of dialects) {
           removed: "0",
           other: Option.some("other"),
         });
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "checkpoints with long params save, load and stay apart when the params share a prefix",
+      async () => {
+        if (url === undefined) return;
+
+        const result = await onFreshDatabase(dialect, url, (fresh) =>
+          Effect.gen(function* () {
+            const store = Context.get(
+              yield* Layer.build(checkpoints(dialect, fresh)),
+              CheckpointStore,
+            );
+
+            const first = yield* store.compareAndSet(folder("01"), "0", record("one"));
+            yield* store.compareAndSet(folder("01"), first, record("two"));
+            yield* store.compareAndSet(folder("02"), "0", record("other"));
+
+            const saved = (suffix: string) =>
+              Effect.map(store.load(folder(suffix)), (loaded) => [
+                loaded.token,
+                Option.map(loaded.record, (found) => found.state),
+              ]);
+
+            return [yield* saved("01"), yield* saved("02")];
+          }),
+        );
+
+        expect(result).toEqual([
+          ["2", Option.some("two")],
+          ["1", Option.some("other")],
+        ]);
       },
       TIMEOUT_MS,
     );

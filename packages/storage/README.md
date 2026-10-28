@@ -122,6 +122,10 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
   rejected without being changed. Use a fresh database path.
 - Stream ids are limited to 512 characters, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
+- Projection checkpoint keys have no length limit. MySQL stores 512 key
+  characters, so on MySQL a longer key is stored as its first 447 characters,
+  `#` and the SHA-256 hex of the full key. The other dialects store every key
+  as it is.
 - Bun defaults the client `busyTimeout` to zero and retries storage-owned
   transactions with a bounded yielding policy. Tune `client.busyTimeout`,
   `transactionRetryAttempts`, and `transactionRetryDelayMs` if you need to.

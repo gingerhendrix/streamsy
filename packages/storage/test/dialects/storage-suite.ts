@@ -1,4 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures and hooks. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- a second SHA-256 checks the WebCrypto digest
+import { createHash } from "node:crypto";
 /**
  * The storage checks every server dialect runs: the core storage contract,
  * plus the SQL edge and migration cases that do not depend on SQLite files.
@@ -27,6 +29,7 @@ import {
   ZERO_OFFSET,
   type StreamRecord,
 } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
 import { StorageContract } from "@streamsy/core/testing";
 import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
@@ -198,6 +201,29 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
       );
 
       expect(result).toEqual({ included: [one], zero: [], fullDefected: true });
+    });
+
+    test("a long owner key is hashed to 512 characters on MySQL and kept as it is elsewhere", async () => {
+      const key = `["streamsy.projection.v1","files-wake","1","1","${"6461".repeat(150)}"]`;
+
+      const stored = await Effect.runPromise(
+        Effect.gen(function* () {
+          const context = yield* Layer.build(storeLayer);
+          const records = Context.get(context, OwnerRecords);
+          const sql = Context.get(context, SqlClient.SqlClient);
+          yield* records.write(key, "1");
+
+          return yield* sql<{
+            readonly owner_key: string;
+          }>`SELECT owner_key FROM streamsy_owner_records`;
+        }).pipe(Effect.scoped),
+      );
+
+      const digest = createHash("sha256").update(key).digest("hex");
+
+      expect(Array.map(stored, ({ owner_key }) => owner_key)).toEqual([
+        dialect.name === "mysql" ? `${key.slice(0, 512 - 65)}#${digest}` : key,
+      ]);
     });
 
     test("SQL failures map to StorageFault while concurrent producer CAS has one winner", async () => {

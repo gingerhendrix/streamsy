@@ -2,6 +2,7 @@ import {
   MAX_PRODUCER_ID_LENGTH,
   OwnerRecords,
   attachOwner,
+  fitKey,
   ownerOf,
 } from "@streamsy/core/internal";
 import {
@@ -46,6 +47,7 @@ import {
   type BoundaryRuntime,
 } from "./boundary.ts";
 import { migrate } from "./migrations.ts";
+import { MYSQL_OWNER_KEY_LENGTH } from "./schema.ts";
 import {
   DEFAULT_TRANSACTION_RETRY_ATTEMPTS,
   DEFAULT_TRANSACTION_RETRY_DELAY_MS,
@@ -806,6 +808,16 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
   // Each transaction or savepoint has its own connection tuple in Effect SQL.
   const absentKeys = new WeakMap<object, Set<string>>();
 
+  // A MySQL owner key holds 512 characters. A longer key, such as the checkpoint key of a
+  // projection with long params, is hashed to fit, so its write does not fail with
+  // ER_DATA_TOO_LONG. The other dialects store keys as TEXT and keep every key as it
+  // is, so the records they already hold under long keys stay readable.
+  const storedKey = (key: string) =>
+    sql.onDialectOrElse({
+      mysql: () => fitKey(key, MYSQL_OWNER_KEY_LENGTH),
+      orElse: () => Effect.succeed(key),
+    });
+
   const select = (key: string, forUpdate: boolean) =>
     attempt(
       "records.read",
@@ -855,7 +867,8 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
     );
 
   return OwnerRecords.of({
-    read: Effect.fn("SqlStorage.records.read")(function* (key: string) {
+    read: Effect.fn("SqlStorage.records.read")(function* (requested: string) {
+      const key = yield* storedKey(requested);
       const transaction = yield* Effect.serviceOption(sql.transactionService);
 
       if (Option.isNone(transaction)) return yield* select(key, false);
@@ -868,7 +881,8 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
 
       return found;
     }),
-    write: Effect.fn("SqlStorage.records.write")(function* (key: string, encoded: string) {
+    write: Effect.fn("SqlStorage.records.write")(function* (requested: string, encoded: string) {
+      const key = yield* storedKey(requested);
       const transaction = yield* Effect.serviceOption(sql.transactionService);
       const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
 
@@ -877,9 +891,13 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
         absent.delete(key);
       } else yield* upsert(key, encoded);
     }),
-    remove: Effect.fn("SqlStorage.records.remove")((key: string) =>
-      execute("records.remove", sql`DELETE FROM streamsy_owner_records WHERE owner_key = ${key}`),
-    ),
+    remove: Effect.fn("SqlStorage.records.remove")(function* (requested: string) {
+      const key = yield* storedKey(requested);
+      yield* execute(
+        "records.remove",
+        sql`DELETE FROM streamsy_owner_records WHERE owner_key = ${key}`,
+      );
+    }),
   });
 };
 

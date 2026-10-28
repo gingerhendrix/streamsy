@@ -284,6 +284,29 @@ export const StorageContract = {
             expect(yield* PubSub.takeUpTo(committed, Infinity)).toEqual([[id, other]]);
           }),
       );
+      recordsTest(
+        "R4 owner record keys of any length stay distinct, inside and outside a transaction",
+        ({ boundary, records }) =>
+          Effect.gen(function* () {
+            // MySQL keeps 512 characters of a key, so the two keys share every kept character.
+            const shared = "k".repeat(600);
+            const first = `${shared}-first`;
+            const second = `${shared}-second`;
+
+            yield* records.write(first, "1");
+            yield* boundary.withTransaction(
+              Effect.gen(function* () {
+                expect(yield* records.read(second)).toEqual(Option.none());
+                yield* records.write(second, "2");
+              }),
+            );
+            expect(yield* records.read(first)).toEqual(Option.some("1"));
+            expect(yield* records.read(second)).toEqual(Option.some("2"));
+            yield* records.remove(first);
+            expect(yield* records.read(first)).toEqual(Option.none());
+            expect(yield* records.read(second)).toEqual(Option.some("2"));
+          }),
+      );
       test(
         "01 Append advances tail and folds close atomically",
         Effect.gen(function* () {

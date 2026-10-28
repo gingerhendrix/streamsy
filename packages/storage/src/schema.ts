@@ -33,8 +33,11 @@ const MYSQL_PRODUCER_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_09
 
 const MYSQL_OFFSET = "VARCHAR(33) CHARACTER SET ascii COLLATE ascii_bin";
 
+/** MySQL holds at most this many owner key characters. Storage hashes a longer key to fit. */
+export const MYSQL_OWNER_KEY_LENGTH = 512;
+
 // Owner record keys are encoded projection keys, bounded like stream ids and compared as bytes.
-const MYSQL_OWNER_KEY = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+const MYSQL_OWNER_KEY = `VARCHAR(${MYSQL_OWNER_KEY_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin`;
 
 /**
  * Migration versions in order. Version `n` is entry `n - 1`. SQLite and
