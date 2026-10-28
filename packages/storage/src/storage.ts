@@ -1,4 +1,9 @@
-import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
+import {
+  MAX_PRODUCER_ID_LENGTH,
+  OwnerRecords,
+  attachOwner,
+  ownerOf,
+} from "@streamsy/core/internal";
 import {
   Array,
   Context,
@@ -227,7 +232,7 @@ const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.S
 export const MAX_STREAM_ID_LENGTH = 512;
 
 /** The MySQL producer key holds a stream id and at most this many producer id characters. */
-export const MAX_PRODUCER_ID_LENGTH = 255;
+export { MAX_PRODUCER_ID_LENGTH };
 
 const tooLong = (
   operation: string,
