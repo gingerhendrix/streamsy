@@ -172,7 +172,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "startup indexes a durable dirty wake row without a new write, and folder deletion clears search",
+      "a durable wake-search mark indexes a dirty wake row after restart without a new write, and folder deletion clears search",
       () =>
         Effect.gen(function* () {
           const directory = yield* testDirectory("worker-dirty-restart-");
@@ -193,15 +193,19 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           yield* Effect.promise(first.stop);
 
           const host = yield* launch(directory);
-          // The persisted alarm switch still suppresses alarms: object acquisition alone catches up.
-          expect(yield* listed(host.url)).toEqual([{ folderId: "dirty" }]);
 
+          // Unpause before any index request. The paused test alarm returns without
+          // re-arming, so an acquire while paused would swallow the mark's alarm.
           const unpause = yield* HttpClient.post(`${host.url}/api/admin/test-index`, {
             headers,
             body: HttpBody.jsonUnsafe({ pauseIndex: false }),
           });
 
           yield* unpause.text;
+          // Acquire finds the durable `wakeSearch` mark from before the stop and arms the
+          // alarm, which indexes the folder with no new write.
+          yield* until(listed(host.url), (current) => current.length === 1);
+          expect(yield* listed(host.url)).toEqual([{ folderId: "dirty" }]);
 
           const removed = yield* HttpClient.post(`${host.url}/api/admin/test-remove-folder`, {
             headers,

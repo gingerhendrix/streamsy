@@ -1,6 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { StorageFault, Streamsy } from "@streamsy/core";
-import { Projection, ProjectionWakeup } from "@streamsy/projection";
+import { ProjectionWakeup } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { Cause, ConfigProvider, Context, Effect, Layer, Schema } from "effect";
@@ -86,15 +86,9 @@ const indexInitialise = Layer.effectDiscard(
   }),
 );
 
-// Acquisition replays the wake rows after the durable `wakeSearch` cursor before
-// the host admits requests or arms its scoped wakeup.
-const indexBootstrap = Layer.effectDiscard(Projection.run(wakeSearch.at({}))).pipe(
-  Layer.provide(indexInitialise),
-);
-
 const indexLayer = (state: DurableObjectState, env: Env) =>
   Layer.mergeAll(FileIndexLive, folderStreams(env), WriterTokenLive).pipe(
-    Layer.provideMerge(indexBootstrap),
+    Layer.provideMerge(indexInitialise),
     Layer.provideMerge(objectStorage(state, env, Streamsy.group(Folders, FolderWake))),
     Layer.provideMerge(
       ConfigProvider.layer(

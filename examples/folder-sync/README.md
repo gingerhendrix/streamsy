@@ -91,13 +91,16 @@ Search rows and each folder's source checkpoint commit together; the wake
 checkpoint advances only after every affected folder has caught up. A removed
 folder produces a wake delete, clears its index rows and forgets its binding.
 
-When the index object starts, it compares durable wake rows with search
-checkpoints and catches up dirty folders without another write. It also checks
-indexed folders whose wake row disappeared and resumes unacknowledged wake
-batches. Each folder object's wakeup is durable: a `Files` commit also writes a
-pending mark in its transaction, so an eviction or a deploy before the alarm
-still produces the wake row. The next acquire finds the mark and arms the
-alarm. Bun uses `Projection.attach(..., { durable: true })` for both search and
+Both wakeups are durable: each commit to a projection's input also writes a
+pending mark in its transaction. A `Files` commit marks the folder object's
+wake production, so an eviction or a deploy before the alarm still produces the
+wake row. A `FolderWake` commit marks `wakeSearch`. When the index object
+starts, it finds that mark and arms the alarm. The `wakeSearch` run compares
+durable wake rows with search checkpoints and catches up dirty folders without
+another write. It also checks indexed folders whose wake row disappeared and
+resumes unacknowledged wake batches. Wake rows committed by a build older than
+the marks have no mark. They wait for the next write to any folder, which
+catches them all up. Bun uses `Projection.attach(..., { durable: true })` for both search and
 wake production, so a restart runs the folders that a stop left behind.
 
 `build:worker` writes two bundles. `public/worker/index.js` is the deploy
@@ -448,9 +451,10 @@ Both hosts use the search projection in `server/search-index.ts`, committing SQL
 rows with its source checkpoint. Bun attaches it directly to local `Files`
 commits. The Worker attaches `wakeSearch` to the index object's local
 `FolderWake` commits, then reads affected `Files` streams through `filesLink`.
-At start, the Worker index replays the wake rows after the durable `wakeSearch`
-cursor. Bun runs the search bindings that still have pending marks, in the
-attach layer's own fiber, so the server answers requests while it catches up.
+At start, the Worker index arms its alarm for the pending `wakeSearch` mark and
+answers requests while the alarm catches up. Bun runs the search bindings that
+still have pending marks, in the attach layer's own fiber, so the server answers
+requests while it catches up.
 An index restart needs no new folder write.
 Search and listing are eventually consistent. A missing blob keeps file metadata
 without searchable text and does not stall later changes.
