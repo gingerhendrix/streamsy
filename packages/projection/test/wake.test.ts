@@ -1,12 +1,24 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Array, Duration, Effect, Fiber, Layer, Option, Record, Schema, Stream } from "effect";
+import {
+  Array,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Record,
+  Result,
+  Schema,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { DurableState, StorageFault, StreamAddress, Streamsy } from "@streamsy/core";
 import { Protocol, Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
 import { memoryHost } from "./support/memory-host.ts";
+import { producerId } from "../src/commit/producer.ts";
 
 class Files extends Streamsy.json<Files>()("WakeProjection/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -431,5 +443,47 @@ layer(sqliteSameOwner(), { excludeTestServices: true })((it) => {
         expect(yield* rows).toEqual({});
       }),
     ),
+  );
+});
+
+/** A hex folder id like artifacts-fs's: 480 characters, so the producer id has 509. */
+const longFolder = { folderId: "6461696c792f".repeat(40) };
+
+const longParams = { user: "ann", ...longFolder };
+
+layer(sqliteSameOwner())((it) => {
+  it.effect(
+    "SQLite: a long param appends its row, and a retry of the pinned tuple is Duplicate",
+    () =>
+      Effect.gen(function* () {
+        const files = yield* Files;
+        yield* files.create(longFolder);
+        const tail = yield* files.append(longFolder, [{ path: "a" }]);
+        const bound = filesWake.at(longParams);
+        const id = Files.at(longFolder).id;
+
+        const failed = yield* failSettle(Projection.run(bound)).pipe(Effect.result);
+        expect(Result.isFailure(failed)).toBe(true);
+        expect(yield* rows).toEqual({ [id]: { stream: id, offset: tail.offset } });
+
+        // The retry sends the pinned tuple again, and storage answers Duplicate.
+        expect((yield* Projection.run(bound)).status).toBe("caught-up");
+        expect(yield* changes).toHaveLength(1);
+        const loaded = yield* (yield* CheckpointStore).load(bound);
+        expect(Option.getOrThrow(loaded.record).pending).toBeUndefined();
+
+        const { items } = yield* (yield* UserWake).collect({ user: "ann" });
+        const row = Option.getOrThrow(Array.head(items));
+
+        const again = yield* Streams.append(UserWake.at({ user: "ann" }), [row], {
+          producer: {
+            producerId: yield* producerId("files-wake", 1, longParams),
+            producerEpoch: 1,
+            producerSeq: 0,
+          },
+        });
+
+        expect(again._tag).toBe("Duplicate");
+      }),
   );
 });

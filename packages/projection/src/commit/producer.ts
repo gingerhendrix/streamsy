@@ -2,7 +2,7 @@ import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
 import { Array, Effect, Option, Record } from "effect";
 import { isStreamsFault } from "@streamsy/core";
-import { ownerOf } from "@streamsy/core/internal";
+import { MAX_PRODUCER_ID_LENGTH, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
@@ -22,9 +22,50 @@ import {
   type ResolvedOutput,
 } from "./internal.ts";
 
-/** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
-export const producerId = (id: string, version: number, params: Record<string, string>): string =>
-  `${id}/v${version}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
+/** `#` and the 64 hex digits of a SHA-256 end a hashed producer id. */
+const DIGEST_LENGTH = 65;
+
+// Storage counts code points, which is what the spread yields.
+// oxlint-disable-next-line typescript/no-misused-spread -- code points are the intended unit
+const codePoints = (value: string): ReadonlyArray<string> => [...value];
+
+/** WebCrypto is the SHA-256 that Bun, workerd and browsers all provide. */
+const sha256Hex = (value: string): Effect.Effect<string> =>
+  Effect.promise(() =>
+    globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+  ).pipe(
+    Effect.map((digest) =>
+      Array.join(
+        Array.map(Array.fromIterable(new Uint8Array(digest)), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ),
+        "",
+      ),
+    ),
+  );
+
+/**
+ * The pinned tuple identity: the params join the id so two parameterisations never share a sequence.
+ * An id within the storage limit is used as it is, because outputs already hold producer state under it.
+ * A longer id becomes `<id>/v<version>/#<sha256 of the full id>`. A long projection id is cut by
+ * code point so the result is at most the limit.
+ */
+export const producerId = (
+  id: string,
+  version: number,
+  params: Record<string, string>,
+): Effect.Effect<string> => {
+  const full = `${id}/v${version}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
+
+  if (codePoints(full).length <= MAX_PRODUCER_ID_LENGTH) return Effect.succeed(full);
+
+  const prefix = Array.join(
+    Array.take(codePoints(`${id}/v${version}/`), MAX_PRODUCER_ID_LENGTH - DIGEST_LENGTH),
+    "",
+  );
+
+  return Effect.map(sha256Hex(full), (digest) => `${prefix}#${digest}`);
+};
 
 /** The head of one output. A missing output on the checkpoint's owner is created here. */
 export const prepareOutput = (output: ResolvedOutput, store: CheckpointStoreApi) => {
@@ -188,6 +229,8 @@ export const producer = pin(
             .pipe(Effect.mapError(asPin));
         }
 
+        const appendAs = yield* producerId(projection.id, projection.version, projection.params);
+
         for (const [name, output] of Record.toEntries(streams)) {
           const seq = seqs[name];
           const items = processed.items[name] ?? [];
@@ -195,7 +238,7 @@ export const producer = pin(
           // Every pinned output has items: the check above fails the unit otherwise.
           if (seq === undefined || !Array.isReadonlyArrayNonEmpty(items)) continue;
           yield* appendPinned(output.address, output.service.wire, items, {
-            producerId: producerId(projection.id, projection.version, projection.params),
+            producerId: appendAs,
             producerEpoch: projection.generation,
             producerSeq: seq,
           });

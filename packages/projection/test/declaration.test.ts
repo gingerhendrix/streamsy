@@ -83,15 +83,17 @@ test("record keys and producer ids match the values before declarations", () => 
   expect(recordKey(Projection.key(fixed))).toBe(
     '["streamsy.projection.v1","hex-board","1","1","{}"]',
   );
-  expect(producerId(fixed.id, fixed.version, fixed.params)).toBe("hex-board/v1");
+  expect(Effect.runSync(producerId(fixed.id, fixed.version, fixed.params))).toBe("hex-board/v1");
   expect(recordKey(Projection.key(coded))).toBe(
     '["streamsy.projection.v1","hex-board","1","1","{\\"gameId\\":\\"game\\"}"]',
   );
-  expect(producerId(coded.id, coded.version, coded.params)).toBe('hex-board/v1/{"gameId":"game"}');
+  expect(Effect.runSync(producerId(coded.id, coded.version, coded.params))).toBe(
+    'hex-board/v1/{"gameId":"game"}',
+  );
   expect(recordKey(Projection.key(versioned))).toBe(
     '["streamsy.projection.v1","issue-tracker","2","3","{\\"b\\":\\"x\\",\\"workspaceId\\":\\"ws-42\\"}"]',
   );
-  expect(producerId(versioned.id, versioned.version, versioned.params)).toBe(
+  expect(Effect.runSync(producerId(versioned.id, versioned.version, versioned.params))).toBe(
     'issue-tracker/v2/{"b":"x","workspaceId":"ws-42"}',
   );
 });
