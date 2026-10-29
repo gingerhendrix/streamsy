@@ -1,4 +1,13 @@
 {
   "title": "@streamsy/serve",
-  "pages": ["serve", "serve-errors", "contract"]
+  "pages": [
+    "serve",
+    "serve-errors",
+    "contract",
+    "action",
+    "action-errors",
+    "action-outbox",
+    "action-runtime",
+    "action-sql"
+  ]
 }

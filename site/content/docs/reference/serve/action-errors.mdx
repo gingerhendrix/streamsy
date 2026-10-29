@@ -1,0 +1,142 @@
+---
+title: Action errors
+description: Reference for the error exports in @streamsy/serve/action/errors. They distinguish storage failures from handler refusals.
+---
+
+```ts
+import {
+  OutboxUnavailable,
+  ActionSinkDeliveryFailure,
+  ACTION_SINK_ERROR_TAGS,
+  DEAD_LETTER_REASONS,
+  type ActionSinkErrorTag,
+  type DeadLetterReason,
+  type ActionSinkDeliveryFailure as Failure,
+} from "@streamsy/serve/action/errors";
+```
+
+The action runtime reports outbox failures to the host and records handler refusals for retry or dead-lettering. See [Deliver](/docs/projections/actions#deliver).
+
+Each error class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. The interfaces below show the schema fields.
+
+## `OutboxUnavailable`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxUnavailable {
+  readonly _tag: "OutboxUnavailable";
+  readonly operation: string;
+  readonly detail: string;
+}
+// ---cut-after---
+same<OutboxUnavailable, Fields<Real.OutboxUnavailable>>(true);
+```
+
+`OutboxUnavailable` reports a failed outbox read or write. `operation` names the storage operation, and `detail` describes the failure. This error leaves `drain` through its error channel. It is not a handler outcome.
+
+## `ActionSinkDeliveryFailure`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import type { ActionSinkDeliveryFailure as Failure } from "@streamsy/serve/action/errors";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ActionSinkDeliveryFailure {
+  readonly _tag: "ActionSinkDeliveryFailure";
+  readonly handler: string;
+  readonly idempotencyKey: string;
+  readonly detail: string;
+  readonly retryable: boolean;
+}
+
+declare namespace ActionSinkDeliveryFailure {
+  function retryable(handler: string, idempotencyKey: string, detail: string): Failure;
+  function permanent(handler: string, idempotencyKey: string, detail: string): Failure;
+}
+// ---cut-after---
+same<ActionSinkDeliveryFailure, Fields<Real.ActionSinkDeliveryFailure>>(true);
+same<typeof ActionSinkDeliveryFailure.retryable, typeof Real.ActionSinkDeliveryFailure.retryable>(
+  true,
+);
+same<typeof ActionSinkDeliveryFailure.permanent, typeof Real.ActionSinkDeliveryFailure.permanent>(
+  true,
+);
+```
+
+`ActionSinkDeliveryFailure` records a handler's refusal of one delivery. `handler` names the handler, `idempotencyKey` identifies the delivery, and `detail` describes the refusal.
+
+`ActionSinkDeliveryFailure.retryable` sets `retryable` to `true`. `ActionSinkDeliveryFailure.permanent` sets it to `false`. `Failure` in the factory signatures is an alias for the exported error class.
+
+When `retryable` is `false`, `drain` dead-letters the entry as `permanent`. Otherwise, `drain` retries until the attempt budget runs out. `drain` records these outcomes in the outbox instead of failing with this error.
+
+## `ACTION_SINK_ERROR_TAGS`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const ACTION_SINK_ERROR_TAGS: readonly ["ActionSinkDeliveryFailure", "OutboxUnavailable"];
+// ---cut-after---
+same<typeof ACTION_SINK_ERROR_TAGS, typeof Real.ACTION_SINK_ERROR_TAGS>(true);
+```
+
+`ACTION_SINK_ERROR_TAGS` lists the tags of the two action error classes.
+
+## `ActionSinkErrorTag`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import { ACTION_SINK_ERROR_TAGS } from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ActionSinkErrorTag = (typeof ACTION_SINK_ERROR_TAGS)[number];
+// ---cut-after---
+same<ActionSinkErrorTag, Real.ActionSinkErrorTag>(true);
+```
+
+`ActionSinkErrorTag` is the union of the two tags in `ACTION_SINK_ERROR_TAGS`.
+
+## `DEAD_LETTER_REASONS`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEAD_LETTER_REASONS: readonly ["attempts-exhausted", "permanent", "payload-poison"];
+// ---cut-after---
+same<typeof DEAD_LETTER_REASONS, typeof Real.DEAD_LETTER_REASONS>(true);
+```
+
+`DEAD_LETTER_REASONS` lists the reasons that stop retries.
+
+| Reason               | Meaning                                                  |
+| -------------------- | -------------------------------------------------------- |
+| `attempts-exhausted` | A retryable failure used the last allowed attempt        |
+| `permanent`          | The handler refused the delivery with `retryable: false` |
+| `payload-poison`     | The stored JSON or the sink's payload decoder threw      |
+
+A permanent refusal takes precedence over an exhausted budget. A payload failure dead-letters immediately.
+
+## `DeadLetterReason`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/errors";
+import { DEAD_LETTER_REASONS } from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type DeadLetterReason = (typeof DEAD_LETTER_REASONS)[number];
+// ---cut-after---
+same<DeadLetterReason, Real.DeadLetterReason>(true);
+```
+
+`DeadLetterReason` is the union of the values in `DEAD_LETTER_REASONS`.

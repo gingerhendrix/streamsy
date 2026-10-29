@@ -59,10 +59,15 @@ The site build compares each signature on these pages with the real export. When
 
 ## `@streamsy/serve`
 
-| Page                                               | Exports                                                                                   |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| [Serve](/docs/reference/serve/serve)               | The route and response functions, `layer`, `teardown`, and their options                  |
-| [Serve errors](/docs/reference/serve/serve-errors) | The Serve error classes, `ServeError`, and `PublicErrorSchema`                            |
-| [Contract](/docs/reference/serve/contract)         | Canonical JSON, validators, headers, and public error bodies (`@streamsy/serve/contract`) |
+| Page                                                   | Exports                                                                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| [Serve](/docs/reference/serve/serve)                   | The route and response functions, `layer`, `teardown`, and their options                                   |
+| [Serve errors](/docs/reference/serve/serve-errors)     | The Serve error classes, `ServeError`, and `PublicErrorSchema`                                             |
+| [Contract](/docs/reference/serve/contract)             | Canonical JSON, validators, headers, and public error bodies (`@streamsy/serve/contract`)                  |
+| [Action sinks](/docs/reference/serve/action)           | Sink declarations, payload codecs, identity, and retry policy (`@streamsy/serve/action`)                   |
+| [Action errors](/docs/reference/serve/action-errors)   | Storage failures, handler refusals, and dead-letter reasons (`@streamsy/serve/action/errors`)              |
+| [Action outbox](/docs/reference/serve/action-outbox)   | The store service, backing contract, drafts, entries, and memory backing (`@streamsy/serve/action/outbox`) |
+| [Action runtime](/docs/reference/serve/action-runtime) | Draft construction, handlers, drain passes, and `OutboxWakeup` (`@streamsy/serve/action/runtime`)          |
+| [SQL action outbox](/docs/reference/serve/action-sql)  | Migration and SQL backing (`@streamsy/serve/action/sql`)                                                   |
 
-These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), of `@streamsy/storage` (the root, `/bun`, and `/durable-object`), and of `@streamsy/serve` (the root and `/contract`). The other serve entry points have no reference pages yet.
+These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), of `@streamsy/storage` (the root, `/bun`, and `/durable-object`), and of `@streamsy/serve` (the root, `/contract`, `/action`, `/action/errors`, `/action/outbox`, `/action/runtime`, and `/action/sql`). The serve host entry points have no reference pages yet.

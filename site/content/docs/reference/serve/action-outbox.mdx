@@ -1,0 +1,280 @@
+---
+title: Action outbox
+description: Reference for the outbox exports in @streamsy/serve/action/outbox. They store delivery decisions and retry state.
+---
+
+```ts
+import {
+  makeMemoryOutboxBacking,
+  outboxStore,
+  outboxStoreLayer,
+  OutboxStore,
+  type OutboxBacking,
+  type OutboxStoreService,
+  type OutboxDraft,
+  type OutboxEnqueueReport,
+  type OutboxEntry,
+  type OutboxEntryState,
+} from "@streamsy/serve/action/outbox";
+import type { OutboxUnavailable, DeadLetterReason } from "@streamsy/serve/action/errors";
+import { Context, type Effect, type Layer, type Option } from "effect";
+```
+
+The outbox stores each decision before a separate pass attempts delivery. See [Enqueue](/docs/projections/actions#enqueue).
+
+## `makeMemoryOutboxBacking`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxBacking } from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function makeMemoryOutboxBacking(): OutboxBacking;
+// ---cut-after---
+same<typeof makeMemoryOutboxBacking, typeof Real.makeMemoryOutboxBacking>(true);
+```
+
+`makeMemoryOutboxBacking` creates an empty outbox held in the process. Each call owns a separate set of entries and idempotency keys. The backing loses its entries when the process ends.
+
+The backing enforces sink-and-key uniqueness and enqueue ordering. A settlement or reschedule for an unknown entry id throws an `Error` as an Effect defect.
+
+## `outboxStore`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxBacking, OutboxStoreService } from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function outboxStore(backing: OutboxBacking): OutboxStoreService;
+// ---cut-after---
+same<typeof outboxStore, typeof Real.outboxStore>(true);
+```
+
+`outboxStore` returns `backing` as the `OutboxStore` service. It does not acquire resources or migrate storage.
+
+## `outboxStoreLayer`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxBacking } from "@streamsy/serve/action/outbox";
+import type { Layer } from "effect";
+import { OutboxStore } from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const outboxStoreLayer: (backing: OutboxBacking) => Layer.Layer<OutboxStore, never, never>;
+// ---cut-after---
+same<typeof outboxStoreLayer, typeof Real.outboxStoreLayer>(true);
+```
+
+`outboxStoreLayer` provides the given backing as `OutboxStore`. It constructs the service synchronously.
+
+## `OutboxStore`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxStoreService } from "@streamsy/serve/action/outbox";
+import { Context } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class OutboxStore extends Context.Service<OutboxStore, OutboxStoreService>()(
+  "streamsy/action-sink/OutboxStore",
+) {}
+// ---cut-after---
+same<typeof OutboxStore, typeof Real.OutboxStore>(true);
+same<OutboxStore, Real.OutboxStore>(true);
+```
+
+`OutboxStore` is the service key that `drain` and `OutboxWakeup` require. Its service implements `OutboxStoreService`.
+
+## `OutboxBacking`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxEntry, OutboxDraft, OutboxEnqueueReport } from "@streamsy/serve/action/outbox";
+import type { OutboxUnavailable, DeadLetterReason } from "@streamsy/serve/action/errors";
+import type { Effect, Option } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxBacking {
+  readonly enqueue: (
+    drafts: readonly OutboxDraft[],
+  ) => Effect.Effect<OutboxEnqueueReport, OutboxUnavailable, never>;
+  readonly nextDue: (
+    sink: string,
+    partitionId: string | undefined,
+    ordered?: boolean,
+  ) => Effect.Effect<Option.Option<number>, OutboxUnavailable, never>;
+  readonly claimDue: (
+    sink: string,
+    partitionId: string | undefined,
+    nowMs: number,
+    limit: number,
+    ordered?: boolean,
+  ) => Effect.Effect<readonly OutboxEntry[], OutboxUnavailable, never>;
+  readonly markDelivered: (
+    id: number,
+    attempts: number,
+    atMs: number,
+  ) => Effect.Effect<void, OutboxUnavailable, never>;
+  readonly reschedule: (
+    id: number,
+    attempts: number,
+    nextAttemptAtMs: number,
+    detail: string,
+  ) => Effect.Effect<void, OutboxUnavailable, never>;
+  readonly deadLetter: (
+    id: number,
+    attempts: number,
+    reason: DeadLetterReason,
+    detail: string,
+    atMs: number,
+  ) => Effect.Effect<void, OutboxUnavailable, never>;
+  readonly list: (
+    sink: string,
+    partitionId: string | undefined,
+  ) => Effect.Effect<readonly OutboxEntry[], OutboxUnavailable, never>;
+}
+// ---cut-after---
+same<OutboxBacking, Real.OutboxBacking>(true);
+```
+
+`OutboxBacking` defines the outbox's storage operations. Every operation can fail with `OutboxUnavailable`.
+
+| Method          | Rule                                                                                                                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enqueue`       | Absorbs a draft when its sink and idempotency key already exist, including settled entries. New entries start pending with zero attempts and are due at `enqueuedAtMs`                                     |
+| `nextDue`       | Excludes settled entries. Returns the earliest pending deadline by default, or the oldest pending entry's deadline when `ordered` is `true`. Returns `Option.none()` when no entry is pending              |
+| `claimDue`      | Returns pending entries in enqueue order, up to `limit`. By default, excludes entries due after `nowMs`. With `ordered: true`, includes future entries so the caller can stop at the first future deadline |
+| `markDelivered` | Records success, the supplied attempt count, and the settlement time. Clears `lastError`                                                                                                                   |
+| `reschedule`    | Keeps the entry pending and records the supplied attempt count, retry time, and error detail                                                                                                               |
+| `deadLetter`    | Records the dead state, supplied attempt count, reason, error detail, and settlement time                                                                                                                  |
+| `list`          | Returns all entries of the sink in enqueue order, including settled entries                                                                                                                                |
+
+For `nextDue`, `claimDue`, and `list`, an undefined `partitionId` selects every lane of the sink. `claimDue` reads entries without changing their state or taking a durable lease. The runtime's permit serializes drains that share one service object and sink. It does not coordinate separate processes or service objects.
+
+## `OutboxStoreService`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxBacking } from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxStoreService extends OutboxBacking {}
+// ---cut-after---
+same<OutboxStoreService, Real.OutboxStoreService>(true);
+```
+
+`OutboxStoreService` is the service shape for `OutboxStore`. It adds no methods to `OutboxBacking`.
+
+## `OutboxDraft`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxDraft {
+  readonly sink: string;
+  readonly partitionId: string;
+  readonly idempotencyKey: string;
+  readonly payload: string;
+  readonly enqueuedAtMs: number;
+}
+// ---cut-after---
+same<OutboxDraft, Real.OutboxDraft>(true);
+```
+
+`OutboxDraft` holds a delivery decision before the outbox assigns an entry id.
+
+| Field            | Meaning                                                  |
+| ---------------- | -------------------------------------------------------- |
+| `sink`           | Sink name                                                |
+| `partitionId`    | Lane selected by the sink                                |
+| `idempotencyKey` | Durable identity within the sink, shared across lanes    |
+| `payload`        | Encoded JSON text                                        |
+| `enqueuedAtMs`   | Enqueue time and initial retry deadline, in milliseconds |
+
+[`draftsFor`](/docs/reference/serve/action-runtime#draftsfor) constructs drafts from a sink and its payloads. Enqueue the drafts in the same transaction as the fact that causes the action.
+
+## `OutboxEnqueueReport`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxEnqueueReport {
+  readonly enqueued: number;
+  readonly absorbed: number;
+}
+// ---cut-after---
+same<OutboxEnqueueReport, Real.OutboxEnqueueReport>(true);
+```
+
+`OutboxEnqueueReport` counts newly stored drafts in `enqueued` and repeated sink-and-key pairs in `absorbed`. An absorbed draft does not replace the stored payload or partition.
+
+## `OutboxEntry`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import type { OutboxEntryState } from "@streamsy/serve/action/outbox";
+import type { DeadLetterReason } from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxEntry {
+  readonly id: number;
+  readonly sink: string;
+  readonly partitionId: string;
+  readonly idempotencyKey: string;
+  readonly payload: string;
+  readonly state: OutboxEntryState;
+  readonly attempts: number;
+  readonly nextAttemptAtMs: number;
+  readonly lastError: string | undefined;
+  readonly deadLetterReason: DeadLetterReason | undefined;
+  readonly enqueuedAtMs: number;
+  readonly settledAtMs: number | undefined;
+}
+// ---cut-after---
+same<OutboxEntry, Real.OutboxEntry>(true);
+```
+
+`OutboxEntry` holds a stored delivery and its current retry or settlement state.
+
+| Field              | Meaning                                                      |
+| ------------------ | ------------------------------------------------------------ |
+| `id`               | Monotonic enqueue order                                      |
+| `sink`             | Sink name                                                    |
+| `partitionId`      | Delivery lane                                                |
+| `idempotencyKey`   | Durable identity within the sink                             |
+| `payload`          | Stored JSON text                                             |
+| `state`            | Pending, delivered, or dead                                  |
+| `attempts`         | Attempts already spent. Zero before the first attempt        |
+| `nextAttemptAtMs`  | Earliest next attempt time, in milliseconds                  |
+| `lastError`        | Most recent failure detail, or `undefined`                   |
+| `deadLetterReason` | Reason retries stopped, or `undefined`                       |
+| `enqueuedAtMs`     | Original enqueue time, in milliseconds                       |
+| `settledAtMs`      | Delivery or dead-letter time, or `undefined` while unsettled |
+
+The store retains delivered and dead entries. Their sink-and-key identities continue to absorb repeated enqueues.
+
+## `OutboxEntryState`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type OutboxEntryState = "pending" | "delivered" | "dead";
+// ---cut-after---
+same<OutboxEntryState, Real.OutboxEntryState>(true);
+```
+
+`OutboxEntryState` distinguishes work awaiting an attempt from delivered and dead entries. Only pending entries appear in `nextDue` and `claimDue`.

@@ -1,0 +1,69 @@
+---
+title: SQL action outbox
+description: Reference for the SQL outbox exports in @streamsy/serve/action/sql. They migrate and store action deliveries on an Effect SQL client.
+---
+
+```ts
+import { migrateOutbox, createSqlOutboxBacking } from "@streamsy/serve/action/sql";
+import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { OutboxUnavailable } from "@streamsy/serve/action/errors";
+import type { OutboxBacking } from "@streamsy/serve/action/outbox";
+```
+
+The SQL backing stores delivery state alongside the facts that cause an action. See [Enqueue](/docs/projections/actions#enqueue).
+
+## `migrateOutbox`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/sql";
+import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { OutboxUnavailable } from "@streamsy/serve/action/errors";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function migrateOutbox(
+  sql: SqlClient.SqlClient,
+): Effect.Effect<void, OutboxUnavailable, never>;
+// ---cut-after---
+same<typeof migrateOutbox, typeof Real.migrateOutbox>(true);
+```
+
+`migrateOutbox` creates the `streamsy_effect_outbox` table and its identity, deadline, and enqueue-order indexes. Repeating the migration preserves existing entries.
+
+The supported dialects are SQLite, Postgres, and MySQL. An unsupported dialect fails with `OutboxUnavailable`. SQL failures also become `OutboxUnavailable`.
+
+On MySQL, run the migration at startup, outside a transaction. When the supplied client has an active transaction, the migration fails with `OutboxUnavailable` and operation `migrateOutbox` before it issues DDL.
+
+## `createSqlOutboxBacking`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/action/sql";
+import type { SqlClient } from "effect/sql";
+import type { OutboxBacking } from "@streamsy/serve/action/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking;
+// ---cut-after---
+same<typeof createSqlOutboxBacking, typeof Real.createSqlOutboxBacking>(true);
+```
+
+`createSqlOutboxBacking` constructs an outbox on the supplied SQL client. Its operations join that client's transaction, so an enqueue can commit or roll back with the fact that caused it. The factory itself performs no migration.
+
+On SQLite and Postgres, each operation runs the idempotent migration before its statement. The backing does not cache readiness, so a rollback of the first migration does not prevent a later retry.
+
+On MySQL, each operation checks for the three indexes and performs no DDL. Missing migration fails with `OutboxUnavailable` and operation `ready`. Run `migrateOutbox` before exposing the store.
+
+| MySQL field      | Maximum code points |
+| ---------------- | ------------------- |
+| `sink`           | 255                 |
+| `partitionId`    | 255                 |
+| `idempotencyKey` | 512                 |
+
+When a draft exceeds a MySQL key limit, `enqueue` fails with `OutboxUnavailable` and operation `enqueue`. MySQL compares keys with a binary, NO PAD collation, so case and trailing spaces distinguish keys.
+
+The unique identity is `(sink, idempotencyKey)`. Duplicate enqueues leave the stored payload and partition unchanged. Without a caller transaction, an enqueue of several drafts can store earlier drafts before a later draft fails.
+
+The backing converts BIGINT ids and times to JavaScript numbers. When a stored state or dead-letter reason is unknown to this build, row decoding throws a `TypeError` as an Effect defect.
