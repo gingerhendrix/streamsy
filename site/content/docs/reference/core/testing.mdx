@@ -45,7 +45,7 @@ same<typeof StorageContract, typeof T.StorageContract>(true);
 - Each test builds a new `options.layer`, with a `TestClock`.
 - Each test first checks that `capabilities` of the store equals `options.expected`.
 - `run` skips each test of a capability that `options.expected` rules out, for example the fork tests when `fork` is `none`.
-- The tests of `CommitBoundary` and the owner records run only when `options.ownerRecords` is `true`. They check that the records and the stream writes commit and roll back together.
+- The tests of `CommitBoundary`, the owner records, the commit hooks, and the projection marks run only when `options.ownerRecords` is `true`. They check that the records, the marks, and the stream writes commit and roll back together, that owner record keys of any length stay distinct, and that a commit hook sees the ids of each write before the commit.
 
 `assertModes` registers one test. It checks that `configurations` holds both values of each capability that the shipped stores have: `chain` and `copy`, `store` and `stream`, `push` and `poll`, and `indexed` and `lazy`. Call it with the `expected` capabilities of each `run` of a configurable store, to check that the runs cover both modes.
 
@@ -70,12 +70,12 @@ same<StorageContractOptions, T.StorageContractOptions>(true);
 
 `StorageContractOptions` holds the options of `StorageContract.run`.
 
-| Option         | Meaning                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------- |
-| `name`         | The name of the `describe` block                                                                           |
-| `layer`        | The Layer of the adapter under test                                                                        |
-| `expected`     | The [`StorageCapabilities`](/docs/reference/core/storage#storagecapabilities) that the adapter must report |
-| `ownerRecords` | `true` when `layer` also provides `CommitBoundary` and the owner records that projections need             |
+| Option         | Meaning                                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | The name of the `describe` block                                                                                                    |
+| `layer`        | The Layer of the adapter under test                                                                                                 |
+| `expected`     | The [`StorageCapabilities`](/docs/reference/core/storage#storagecapabilities) that the adapter must report                          |
+| `ownerRecords` | `true` when `layer` also provides `CommitBoundary`, and the owner records, commit hooks, and projection marks that projections need |
 
 ### `faultyStorage`
 

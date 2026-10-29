@@ -23,28 +23,28 @@ import {
   type Storage,
   type StorageFault,
 } from "@streamsy/core";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   group: Streamsy.Group<Keys>,
   options?: MemoryStorage.Options,
-): Layer.Layer<Storage | CommitBoundary | OwnerRecords | Streamsy.Host<Streamsy.Group<Keys>>>;
+): Layer.Layer<
+  | Storage
+  | CommitBoundary
+  | OwnerRecords
+  | CommitHooks
+  | ProjectionMarks
+  | Streamsy.Host<Streamsy.Group<Keys>>
+>;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layer, typeof MemoryStorage.layer>(true);
 ```
 
-`layer` returns a Layer that provides the stream services of `group`, over one memory store. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), and `OwnerRecords`, so the projection checkpoint store runs on the same store. Each build of the Layer starts with an empty store.
+`layer` returns a Layer that provides the stream services of `group`, over one memory store. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), and the [internal services](#types-with-no-exported-name) `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`. With them, the projection checkpoint store and the pending marks of a durable attached projection run on the same store. Each build of the Layer starts with an empty store.
 
 ```ts
 // @filename: streams.ts
@@ -70,22 +70,23 @@ import {
   type StorageFault,
 } from "@streamsy/core";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layerProtocol(
   options?: MemoryStorage.Options,
-): Layer.Layer<CommitBoundary | OwnerRecords | Storage | StreamsReader | StreamsWriter>;
+): Layer.Layer<
+  | CommitBoundary
+  | CommitHooks
+  | OwnerRecords
+  | ProjectionMarks
+  | Storage
+  | StreamsReader
+  | StreamsWriter
+>;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layerProtocol, typeof MemoryStorage.layerProtocol>(true);
 ```
@@ -121,3 +122,86 @@ same<Options, MemoryStorage.Options>(true);
 Without `constrained`, the store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. Use `constrained: true` in tests to check that a program does not depend on these capabilities.
 
 Building the Layer dies with a `RangeError` when `pollIntervalMs` or `longPollTimeoutMs` is not a positive finite number, or when `readLimit` is not a positive safe integer.
+
+## Types with no exported name
+
+The Layer signatures name three services from `@streamsy/core/internal`. They connect a storage host to `@streamsy/projection`, and no public entry point exports them.
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Option, Scope } from "effect";
+import type { SqlError } from "effect/sql";
+import type { StorageFault, StreamId } from "@streamsy/core";
+import type * as Internal from "@streamsy/core/internal";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+
+interface CommitHooks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/CommitHooks",
+  {
+    readonly beforeCommit: (
+      hook: (ids: ReadonlySet<StreamId>) => Effect.Effect<void, SqlError.SqlError>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
+> {}
+
+interface ProjectionMarks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/ProjectionMarks",
+  {
+    readonly mark: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+    readonly due: (
+      projection: string,
+      now: number,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMark>, StorageFault>;
+    readonly read: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyMap<string, PendingMark>, StorageFault>;
+    readonly clear: (
+      projection: string,
+      params: string,
+      seq: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
+    readonly defer: (
+      projection: string,
+      params: string,
+      attempts: number,
+      dueAt: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+  }
+> {}
+
+// One pending mark: a binding whose input has commits that may not have run yet.
+interface PendingMark {
+  readonly params: string;
+  readonly seq: number;
+  readonly attempts: number;
+  readonly dueAt: number;
+}
+// ---cut-after---
+same<OwnerRecords, Internal.OwnerRecords>(true);
+same<CommitHooks, Internal.CommitHooks>(true);
+same<ProjectionMarks, Internal.ProjectionMarks>(true);
+same<PendingMark, Internal.PendingMark>(true);
+```
+
+`@streamsy/projection` uses each service for one job:
+
+- `OwnerRecords` holds the encoded records of the projection checkpoint store
+- `CommitHooks` runs each hook that `beforeCommit` registers inside every later owned transaction that writes at least one stream id. The hook runs after the body and before the commit, and receives the ids that the transaction created, appended to, or deleted. Its writes commit or roll back with the transaction. The memory store turns a hook failure into a defect. Closing the scope of `beforeCommit` removes the hook
+- `ProjectionMarks` holds the pending marks of durable attached projections, keyed by projection id and params. The memory store keeps them with the streams, so they are gone when the scope of the Layer closes. See [`AttachOptions`](/docs/reference/projection/units#attachoptions)

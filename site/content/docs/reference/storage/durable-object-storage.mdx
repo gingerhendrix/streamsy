@@ -26,6 +26,7 @@ import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
 import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
@@ -33,7 +34,9 @@ declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   options: DurableObjectStorage.Options,
 ): Layer.Layer<
   | CommitBoundary
+  | CommitHooks
   | OwnerRecords
+  | ProjectionMarks
   | Reactivity.Reactivity
   | SqlClient.SqlClient
   | Storage
@@ -41,21 +44,13 @@ declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   StorageFault
 >;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layer, typeof DurableObjectStorage.layer>(true);
 ```
 
-`layer` returns a Layer that provides the stream services of `group` over the SQLite storage of the object, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), `OwnerRecords`, and the `SqlClient` with its `Reactivity`.
+`layer` returns a Layer that provides the stream services of `group` over the SQLite storage of the object, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), the [internal services](#types-with-no-exported-name) `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`, and the `SqlClient` with its `Reactivity`.
 
 ```ts
 // @filename: streams.ts
@@ -86,13 +81,16 @@ import type { SqlClient } from "effect/sql";
 import type { CommitBoundary, Storage, StorageFault } from "@streamsy/core";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layerProtocol(
   options: DurableObjectStorage.Options,
 ): Layer.Layer<
   | CommitBoundary
+  | CommitHooks
   | OwnerRecords
+  | ProjectionMarks
   | Reactivity.Reactivity
   | SqlClient.SqlClient
   | Storage
@@ -101,16 +99,8 @@ declare function layerProtocol(
   StorageFault
 >;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layerProtocol, typeof DurableObjectStorage.layerProtocol>(true);
 ```
@@ -165,3 +155,82 @@ same<typeof DEFAULT_LONG_POLL_TIMEOUT_MS, typeof DurableObjectStorage.DEFAULT_LO
 ```
 
 `DEFAULT_LONG_POLL_TIMEOUT_MS` is the long-poll timeout of `layer` and `layerProtocol` when `longPollTimeoutMs` is not set: 25 000 ms. The other hosts use the 30 s default of [`Protocol.ProtocolOptions`](/docs/reference/core/protocol#protocolprotocoloptions).
+
+## Types with no exported name
+
+The Layer signatures name three services from `@streamsy/core/internal`. They connect a storage host to `@streamsy/projection`, and no public entry point exports them.
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Option, Scope } from "effect";
+import type { SqlError } from "effect/sql";
+import type { StorageFault, StreamId } from "@streamsy/core";
+import type * as Internal from "@streamsy/core/internal";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+
+interface CommitHooks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/CommitHooks",
+  {
+    readonly beforeCommit: (
+      hook: (ids: ReadonlySet<StreamId>) => Effect.Effect<void, SqlError.SqlError>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
+> {}
+
+interface ProjectionMarks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/ProjectionMarks",
+  {
+    readonly mark: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+    readonly due: (
+      projection: string,
+      now: number,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMark>, StorageFault>;
+    readonly read: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyMap<string, PendingMark>, StorageFault>;
+    readonly clear: (
+      projection: string,
+      params: string,
+      seq: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
+    readonly defer: (
+      projection: string,
+      params: string,
+      attempts: number,
+      dueAt: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+  }
+> {}
+
+// One pending mark: a binding whose input has commits that may not have run yet.
+interface PendingMark {
+  readonly params: string;
+  readonly seq: number;
+  readonly attempts: number;
+  readonly dueAt: number;
+}
+// ---cut-after---
+same<OwnerRecords, Internal.OwnerRecords>(true);
+same<CommitHooks, Internal.CommitHooks>(true);
+same<ProjectionMarks, Internal.ProjectionMarks>(true);
+same<PendingMark, Internal.PendingMark>(true);
+```
+
+The rules for these services are those of [`SqlStorage`](/docs/reference/storage/sql-storage#types-with-no-exported-name).

@@ -27,32 +27,30 @@ import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
 import type { CommitBoundary, Storage, StorageFault, Streamsy } from "@streamsy/core";
 import { SqlStorage } from "@streamsy/storage";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   group: Streamsy.Group<Keys>,
   options?: SqlStorage.Options,
 ): Layer.Layer<
-  Storage | CommitBoundary | OwnerRecords | Streamsy.Host<Streamsy.Group<Keys>>,
+  | Storage
+  | CommitBoundary
+  | OwnerRecords
+  | CommitHooks
+  | ProjectionMarks
+  | Streamsy.Host<Streamsy.Group<Keys>>,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
 >;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layer, typeof SqlStorage.layer>(true);
 ```
 
-`layer` returns a Layer that provides the stream services of `group` over the database of the `SqlClient`. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), and `OwnerRecords`, so the projection checkpoint store commits in the same transaction as the streams. `OwnerRecords` keeps its records in the `streamsy_owner_records` table.
+`layer` returns a Layer that provides the stream services of `group` over the database of the `SqlClient`. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), and the [internal services](#types-with-no-exported-name) `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`. With them, the projection checkpoint store and the pending marks of a durable attached projection commit in the same transaction as the streams.
 
 The `SqlClient` and the `Reactivity` that the Layer requires must be the pair that the client was made with. [`clientLayer`](#sqlstorageclientlayer) provides that pair.
 
@@ -77,7 +75,7 @@ import { shop } from "./streams.ts";
 const storage = SqlStorage.layer(shop).pipe(Layer.provide(SqlStorage.clientLayer(makeClient)));
 ```
 
-Building the Layer migrates the database to the current Streamsy format. On SQLite and Postgres, the migration runs in one transaction. On Postgres, it first takes an advisory lock, so several instances migrate one after the other. MySQL commits each DDL statement by itself, so the migration takes a named lock with `GET_LOCK` on one connection instead, and waits at most 30 s for it.
+Building the Layer migrates the database to the current Streamsy format. On SQLite and Postgres, the migration runs in one transaction. On Postgres, it first takes an advisory lock, so several instances migrate one after the other. MySQL commits each DDL statement by itself, so the migration takes a named lock with `GET_LOCK` on one connection instead, and waits at most 30 s for it. Schema version 2 adds the `streamsy_projection_pending` table, and an older release cannot open a database at version 2.
 
 The build fails with a [`StorageFault`](/docs/reference/core/faults#storagefault) in these cases:
 
@@ -97,6 +95,7 @@ The store follows these rules:
 - The store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. See [`StorageCapabilities`](/docs/reference/core/storage#storagecapabilities)
 - On Postgres and MySQL, each mutation transaction first locks the rows of the streams that it writes with `SELECT ... FOR UPDATE`, in id order, so writers on several connections commit one after the other
 - A create fails with a `StorageFault` with operation `mutate.stream-id` when the stream id has more than 512 code points. An append fails with operation `mutate.producer-id` when its producer id has more than 255 code points. Every dialect applies these limits, which come from the key columns of the MySQL schema
+- On MySQL, an owner record key over 512 code points is stored as its first 447 code points, `#`, and the SHA-256 hex of the full key, so two long keys that share their first 512 code points stay apart. A key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
 - To run your SQL and a mutation in one transaction, use [`CommitBoundary.withTransaction`](/docs/reference/core/storage#commitboundaryapi). Inside a transaction that you open with `sql.withTransaction`, a mutation dies, and so does `CommitBoundary.withTransaction`. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables)
 
 ### `SqlStorage.layerProtocol`
@@ -109,26 +108,25 @@ import type { SqlClient } from "effect/sql";
 import type { CommitBoundary, Storage, StorageFault } from "@streamsy/core";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { SqlStorage } from "@streamsy/storage";
+import type { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function layerProtocol(
   options?: SqlStorage.Options,
 ): Layer.Layer<
-  CommitBoundary | OwnerRecords | Storage | StreamsReader | StreamsWriter,
+  | CommitBoundary
+  | CommitHooks
+  | OwnerRecords
+  | ProjectionMarks
+  | Storage
+  | StreamsReader
+  | StreamsWriter,
   StorageFault,
   Reactivity.Reactivity | SqlClient.SqlClient
 >;
 
-// OwnerRecords has no exported name in a public entry point. It is the service
-// of the encoded records that the projection checkpoint store keeps.
-interface OwnerRecords extends Context.ServiceClass.Shape<
-  "@streamsy/core/internal/OwnerRecords",
-  {
-    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
-    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
-    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
-  }
-> {}
+// OwnerRecords, CommitHooks, and ProjectionMarks have no exported name in a
+// public entry point. See "Types with no exported name" at the end of this page.
 // ---cut-after---
 same<typeof layerProtocol, typeof SqlStorage.layerProtocol>(true);
 ```
@@ -237,3 +235,88 @@ same<
 ```
 
 `DEFAULT_TRANSACTION_RETRY_DELAY_MS` is the default of `transactionRetryDelayMs`: 25 ms.
+
+## Types with no exported name
+
+The Layer signatures name three services from `@streamsy/core/internal`. They connect a storage host to `@streamsy/projection`, and no public entry point exports them.
+
+```ts
+// ---cut-start---
+import type { Context, Effect, Option, Scope } from "effect";
+import type { SqlError } from "effect/sql";
+import type { StorageFault, StreamId } from "@streamsy/core";
+import type * as Internal from "@streamsy/core/internal";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OwnerRecords extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/OwnerRecords",
+  {
+    readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
+    readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
+  }
+> {}
+
+interface CommitHooks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/CommitHooks",
+  {
+    readonly beforeCommit: (
+      hook: (ids: ReadonlySet<StreamId>) => Effect.Effect<void, SqlError.SqlError>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
+> {}
+
+interface ProjectionMarks extends Context.ServiceClass.Shape<
+  "@streamsy/core/internal/ProjectionMarks",
+  {
+    readonly mark: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<void, SqlError.SqlError>;
+    readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+    readonly due: (
+      projection: string,
+      now: number,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMark>, StorageFault>;
+    readonly read: (
+      projection: string,
+      params: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyMap<string, PendingMark>, StorageFault>;
+    readonly clear: (
+      projection: string,
+      params: string,
+      seq: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
+    readonly defer: (
+      projection: string,
+      params: string,
+      attempts: number,
+      dueAt: number,
+    ) => Effect.Effect<void, StorageFault>;
+    readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+  }
+> {}
+
+// One pending mark: a binding whose input has commits that may not have run yet.
+interface PendingMark {
+  readonly params: string;
+  readonly seq: number;
+  readonly attempts: number;
+  readonly dueAt: number;
+}
+// ---cut-after---
+same<OwnerRecords, Internal.OwnerRecords>(true);
+same<CommitHooks, Internal.CommitHooks>(true);
+same<ProjectionMarks, Internal.ProjectionMarks>(true);
+same<PendingMark, Internal.PendingMark>(true);
+```
+
+`@streamsy/projection` uses each service for one job:
+
+- `OwnerRecords` holds the encoded records of the projection checkpoint store, in the `streamsy_owner_records` table
+- `CommitHooks` runs each hook that `beforeCommit` registers inside every later owned transaction that writes at least one stream id. The hook runs after the body and before `COMMIT`, and receives the ids that the transaction created, appended to, or deleted. Its statements join the transaction. Closing the scope of `beforeCommit` removes the hook
+- `ProjectionMarks` holds the pending marks of durable attached projections in the `streamsy_projection_pending` table, keyed by projection id and params. See [`AttachOptions`](/docs/reference/projection/units#attachoptions)
+
+The store treats a hook failure as a failure of the body. The transaction rolls back, and a retryable `SqlError` from a hook replays the whole transaction, the hook included.
