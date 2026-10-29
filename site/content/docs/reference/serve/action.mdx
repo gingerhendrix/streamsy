@@ -18,7 +18,7 @@ import {
 } from "@streamsy/serve/action";
 ```
 
-An action sink declares external effects for changes to a keyed relation. See [Declare a sink](/docs/projections/actions#declare-a-sink).
+An action sink turns changes to a keyed relation into external effects, such as a notification or a webhook. See [Declare a sink](/docs/projections/actions#declare-a-sink).
 
 ## `defineActionSink`
 
@@ -35,11 +35,11 @@ declare function defineActionSink<Payload, From extends ActionSinkRelation>(
 same<typeof defineActionSink, typeof Real.defineActionSink>(true);
 ```
 
-`defineActionSink` validates the retry policy and returns a shallow-frozen declaration. It performs no I/O.
+`defineActionSink` checks the retry policy and returns a frozen [`CheckedActionSink`](#checkedactionsink). It does no I/O.
 
 When `maxAttempts` is not an integer of at least 1, `backoffFactor` is below 1, `initialBackoffMs` is negative, or `maxBackoffMs` is below `initialBackoffMs`, `defineActionSink` throws a `TypeError`.
 
-The fingerprint covers the sink name, relation key, handler reference, and delivery policy. It excludes the codec, idempotency function, and partition function. The returned `key` comes from `spec.from.key`.
+The fingerprint covers the sink name, the relation key, the handler reference, and the delivery policy. It does not cover the payload codec, `idempotencyKey`, or `partitionBy`, so a change to one of these functions keeps the fingerprint. The `key` of the result is `spec.from.key`.
 
 ## `backoffAfter`
 
@@ -54,7 +54,7 @@ declare function backoffAfter(policy: ActionSinkDeliveryPolicy, attempts: number
 same<typeof backoffAfter, typeof Real.backoffAfter>(true);
 ```
 
-`backoffAfter` computes the delay after `attempts` failed attempts. It rounds `initialBackoffMs * backoffFactor ** Math.max(0, attempts - 1)` and caps the result at `maxBackoffMs`. It does not schedule a retry.
+`backoffAfter` returns the delay in milliseconds after `attempts` failed attempts. It rounds `initialBackoffMs * backoffFactor ** Math.max(0, attempts - 1)` and caps the result at `maxBackoffMs`. It does not schedule a retry.
 
 ## `ActionSinkRelation`
 
@@ -71,7 +71,7 @@ same<ActionSinkRelation<"id">, Real.ActionSinkRelation<"id">>(true);
 same<ActionSinkRelation, Real.ActionSinkRelation>(true);
 ```
 
-`ActionSinkRelation` identifies the declared key of the relation that a sink observes. The sink carries this key into `CheckedActionSink.key`.
+`ActionSinkRelation` holds the declared key of the relation that a sink observes. `defineActionSink` copies this key to `CheckedActionSink.key`.
 
 ## `ActionSinkChange`
 
@@ -92,7 +92,7 @@ same<
 same<ActionSinkChange<string>, Real.ActionSinkChange<string>>(true);
 ```
 
-`ActionSinkChange` describes a row entering, changing within, or leaving the observed relation. An `enter` has the new row, an `update` has both rows, and an `exit` has the old row.
+`ActionSinkChange` is one change to the observed relation: a row enters it, changes in it, or leaves it. An `enter` has the new row in `after`, an `update` has `before` and `after`, and an `exit` has the old row in `before`.
 
 ## `ActionSinkHandlerRef`
 
@@ -109,7 +109,7 @@ interface ActionSinkHandlerRef {
 same<ActionSinkHandlerRef, Real.ActionSinkHandlerRef>(true);
 ```
 
-`ActionSinkHandlerRef` names the handler and its version. Both fields contribute to the sink fingerprint. The reference declares identity. It does not register or resolve a handler.
+`ActionSinkHandlerRef` names the handler of a sink and its version. Both fields are part of the sink fingerprint. The reference does not register a handler or look one up.
 
 ## `ActionSinkDeliveryPolicy`
 
@@ -128,16 +128,16 @@ interface ActionSinkDeliveryPolicy {
 same<ActionSinkDeliveryPolicy, Real.ActionSinkDeliveryPolicy>(true);
 ```
 
-`ActionSinkDeliveryPolicy` sets the retry budget and backoff.
+`ActionSinkDeliveryPolicy` sets how many times the runtime tries to deliver an entry, and how long it waits between attempts.
 
-| Field              | Meaning                                                                          |
-| ------------------ | -------------------------------------------------------------------------------- |
-| `maxAttempts`      | Total attempts, including the first. A value of 1 dead-letters the first failure |
-| `initialBackoffMs` | Delay after the first failed attempt, in milliseconds                            |
-| `backoffFactor`    | Multiplier for each later delay                                                  |
-| `maxBackoffMs`     | Upper bound on the rounded delay. `Infinity` leaves it uncapped                  |
+| Field              | Meaning                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `maxAttempts`      | The number of attempts, including the first. With 1, the first failure dead-letters the entry |
+| `initialBackoffMs` | The delay after the first failed attempt, in milliseconds                                     |
+| `backoffFactor`    | The factor that multiplies each later delay                                                   |
+| `maxBackoffMs`     | The upper bound on the rounded delay. `Infinity` sets no bound                                |
 
-The outbox stores the next attempt time, so a restart retains the retry deadline. `defineActionSink` enforces the policy limits described above.
+The outbox stores the time of the next attempt, so the retry deadline survives a restart. [`defineActionSink`](#defineactionsink) throws for a policy outside its limits.
 
 ## `ActionSinkPayloadCodec`
 
@@ -157,7 +157,7 @@ same<
 >(true);
 ```
 
-`ActionSinkPayloadCodec` encodes a typed payload as stored JSON text and decodes the parsed value. `drain` calls `JSON.parse` before `decode`. When either step throws, `drain` dead-letters the entry as `payload-poison` without calling the handler.
+`ActionSinkPayloadCodec` converts between the typed payload and the JSON text that the outbox stores. `encode` returns the text, and `decode` takes the parsed JSON value. `drain` calls `JSON.parse` before `decode`. When either step throws, `drain` dead-letters the entry as `payload-poison` without calling the handler.
 
 ## `ActionSinkSpec`
 
@@ -189,19 +189,19 @@ same<
 >(true);
 ```
 
-`ActionSinkSpec` declares the relation, handler, payload codec, durable identity, lane, and retry policy of a sink.
+`ActionSinkSpec` declares the relation, the handler, the payload codec, the idempotency key, the lane, and the retry policy of a sink.
 
-| Field            | Meaning                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------- |
-| `name`           | Sink name, used with the idempotency key to deduplicate enqueues                    |
-| `from`           | Observed relation and its declared key                                              |
-| `handler`        | Handler name and version                                                            |
-| `payload`        | Codec between the typed payload and stored JSON                                     |
-| `idempotencyKey` | Pure function of durable facts. A repeat of the same fact must produce the same key |
-| `partitionBy`    | Function that selects the payload's lane                                            |
-| `delivery`       | Retry budget and backoff                                                            |
+| Field            | Meaning                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `name`           | The sink name. The outbox deduplicates entries by this name and the idempotency key      |
+| `from`           | The observed relation, with its declared key                                             |
+| `handler`        | The handler name and version                                                             |
+| `payload`        | The codec between the typed payload and the stored JSON                                  |
+| `idempotencyKey` | A pure function of durable facts. Two enqueues of the same fact must return the same key |
+| `partitionBy`    | The function that returns the lane of a payload                                          |
+| `delivery`       | The retry policy                                                                         |
 
-The outbox deduplicates by sink name and idempotency key across all lanes. Changing the partition does not make a repeated key new.
+The outbox deduplicates by sink name and idempotency key across all lanes, so a repeated key stays a duplicate when its lane changes.
 
 ## `CheckedActionSink`
 
@@ -227,15 +227,15 @@ same<
 >(true);
 ```
 
-`CheckedActionSink` holds the specification that `defineActionSink` validated, its relation key, and its fingerprint.
+`CheckedActionSink` is the declaration that `defineActionSink` returns: the specification with three more fields.
 
-| Added field   | Meaning                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------ |
-| `kind`        | Discriminant for a checked action sink                                                     |
-| `key`         | The value of `from.key`, with its literal type preserved                                   |
-| `fingerprint` | Contract identity computed from the sink name, key, handler reference, and delivery policy |
+| Added field   | Meaning                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| `kind`        | Always `"checked-action-sink"`                                                                     |
+| `key`         | The value of `from.key`, with its literal type                                                     |
+| `fingerprint` | The contract fingerprint of the sink name, the key, the handler reference, and the delivery policy |
 
-The declaration is shallow-frozen. Its nested objects and functions remain the references from the specification.
+`defineActionSink` freezes the declaration but not its nested objects. The nested objects and functions are the same objects as in the specification.
 
 ## `PayloadOf`
 
@@ -256,4 +256,4 @@ same<PayloadOf<{ readonly unrelated: true }>, never>(true);
 same<PayloadOf<{ readonly unrelated: true }>, Real.PayloadOf<{ readonly unrelated: true }>>(true);
 ```
 
-`PayloadOf` extracts the payload type from a `CheckedActionSink`. For a type that does not extend `CheckedActionSink`, the result is `never`.
+`PayloadOf` is the payload type of a `CheckedActionSink`, and `never` for any other type.

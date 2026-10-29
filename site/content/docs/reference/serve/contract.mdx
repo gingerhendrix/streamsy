@@ -24,7 +24,7 @@ import {
 } from "@streamsy/serve/contract";
 ```
 
-The contract exports define the headers and JSON bodies that Serve clients exchange. See [Browser clients and CORS](/docs/http/serve#browser-clients-and-cors).
+`@streamsy/serve/contract` holds the header names, the JSON encoding, and the error bodies that a Serve route and its clients share. See [Browser clients and CORS](/docs/http/serve#browser-clients-and-cors).
 
 ## `canonicalJson`
 
@@ -39,11 +39,11 @@ declare function canonicalJson(value: CanonicalValue): string;
 same<typeof canonicalJson, typeof Real.canonicalJson>(true);
 ```
 
-`canonicalJson` encodes JSON with ordinary object keys sorted recursively and array order preserved. A `null` value remains `null`. A non-finite number throws a `TypeError` when the encoder visits it.
+`canonicalJson` encodes a value as JSON with the keys of every object sorted and the order of every array kept. A `null` value remains `null`. A non-finite number throws a `TypeError` when the encoder visits it.
 
-Use ordinary objects. An object with a null prototype bypasses recursive key sorting and number validation.
+Pass ordinary objects. An object with a null prototype fails the `instanceof Object` test, so `canonicalJson` encodes it with `JSON.stringify`: it does not sort its keys, and it writes a non-finite number in it as `null`.
 
-The type excludes `undefined`. If an object member is `undefined` at run time, the encoder omits that member.
+The type excludes `undefined`. When an object member is `undefined` at run time, `canonicalJson` leaves it out.
 
 ## `contractFingerprint`
 
@@ -58,7 +58,7 @@ declare function contractFingerprint(value: CanonicalValue): string;
 same<typeof contractFingerprint, typeof Real.contractFingerprint>(true);
 ```
 
-`contractFingerprint` returns eight lowercase hexadecimal characters from FNV-1a over the canonical JSON's UTF-16 code units. Ordinary objects that differ only in property order have the same fingerprint. This is a change validator, not a security digest.
+`contractFingerprint` returns eight lowercase hexadecimal characters: an FNV-1a hash of the UTF-16 code units of `canonicalJson(value)`. Two ordinary objects that differ only in property order have the same fingerprint. The fingerprint detects a change. It is not a cryptographic hash.
 
 ## `valueEtag`
 
@@ -72,7 +72,7 @@ declare function valueEtag(canonical: string): string;
 same<typeof valueEtag, typeof Real.valueEtag>(true);
 ```
 
-`valueEtag` returns a strong ETag with sixteen lowercase hexadecimal characters inside double quotes. It concatenates two FNV-1a passes with different seeds over `canonical`. Pass the result of `canonicalJson` when the validator represents a JSON value. The digest is for cache validation, not security.
+`valueEtag` returns a strong ETag: sixteen lowercase hexadecimal characters inside double quotes. It concatenates two FNV-1a hashes of `canonical` with different seeds. To tag a JSON value, pass the result of `canonicalJson`. Like the fingerprint, the ETag is not a cryptographic hash.
 
 ## `decodePublicError`
 
@@ -87,9 +87,9 @@ declare function decodePublicError(value: unknown): PublicError;
 same<typeof decodePublicError, typeof Real.decodePublicError>(true);
 ```
 
-`decodePublicError` validates an untrusted error object and returns a fresh `PublicError` with unknown fields discarded. It throws a `TypeError` for an invalid body or unknown tag.
+`decodePublicError` validates an untrusted error object and returns a new `PublicError` without the unknown fields. It throws a `TypeError` when the body is not valid or its tag is unknown.
 
-Required fields must be own data properties. The decoder rejects inherited fields, accessors, boxed strings, arrays, and `null`. It does not invoke a getter for a required field.
+`decodePublicError` reads each required field only as an own data property, so it never calls a getter. It rejects an inherited field, an accessor, a boxed string, an array, an object with a null prototype, and `null`.
 
 ## `CanonicalValue`
 
@@ -109,7 +109,7 @@ type CanonicalValue =
 same<CanonicalValue, Real.CanonicalValue>(true);
 ```
 
-`CanonicalValue` describes JSON values, including readonly arrays and string-keyed objects. The `number` branch also admits non-finite numbers at compile time. `canonicalJson` rejects them when it visits them. Use ordinary objects for recursive validation.
+`CanonicalValue` is the type of a JSON value: a string, a number, a boolean, `null`, a readonly array, or an object with string keys. The compiler accepts `NaN` and `Infinity` as a `number`, but `canonicalJson` throws on them.
 
 ## `ReplayRecovery`
 
@@ -123,7 +123,7 @@ type ReplayRecovery = "replay-from-start";
 same<ReplayRecovery, Real.ReplayRecovery>(true);
 ```
 
-`ReplayRecovery` names replay-from-start recovery. A state client clears its local rows and reads again from offset `-1`.
+`ReplayRecovery` is the `recovery` value of the stream and state errors. On `"replay-from-start"`, a state client clears its local rows and reads again from offset `-1`.
 
 ## `ResumeRejectedReason`
 
@@ -137,13 +137,13 @@ type ResumeRejectedReason = "invalid-offset" | "history-unavailable" | "contract
 same<ResumeRejectedReason, Real.ResumeRejectedReason>(true);
 ```
 
-`ResumeRejectedReason` names why a stream or state handler rejects a resume.
+`ResumeRejectedReason` is the `reason` of a `ResumeRejected` error.
 
-| Reason                | Meaning                                                                 |
-| --------------------- | ----------------------------------------------------------------------- |
-| `invalid-offset`      | The offset is malformed, or the underlying read rejects it              |
-| `history-unavailable` | The stream is absent or gone during a resume                            |
-| `contract-changed`    | The request's contract fingerprint differs from the current fingerprint |
+| Reason                | Meaning                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `invalid-offset`      | The offset is malformed, or the read rejects it                      |
+| `history-unavailable` | The stream to resume does not exist or was deleted                   |
+| `contract-changed`    | The contract fingerprint of the request differs from the current one |
 
 ## `PublicError`
 
@@ -183,9 +183,9 @@ type PublicError =
 same<PublicError, Real.PublicError>(true);
 ```
 
-`PublicError` describes the JSON body of a Serve error. `route` is the matched route pattern. `parameter` names an invalid param, and `detail` describes an invalid param, unavailable transport, or encoding failure.
+`PublicError` is the type of the JSON body of a Serve error. `route` is the matched route pattern. In a body from Serve, `parameter` is always `"params"`. `detail` describes the failure of `InvalidParams`, `TransportUnavailable`, or `WireEncodeFailed`.
 
-`ProtocolVersionUnsupported` includes the received version and supported version `1`. `ResumeRejected` includes the rejection reason. The stream and state errors prescribe `"replay-from-start"`. `ContractChanged` prescribes `"refetch"` for a value. See [Serve errors](/docs/reference/serve/serve-errors) for the classes and HTTP statuses.
+`recovery` tells the client what to do next: `"replay-from-start"` for the stream and state errors, and `"refetch"` for `ContractChanged`. For the fields and the HTTP status of each error, see [Serve errors](/docs/reference/serve/serve-errors).
 
 ## `STATE_VERSION_HEADER`
 
@@ -199,7 +199,7 @@ declare const STATE_VERSION_HEADER: "x-streamsy-state-version";
 same<typeof STATE_VERSION_HEADER, typeof Real.STATE_VERSION_HEADER>(true);
 ```
 
-`STATE_VERSION_HEADER` names the Durable State version header. Serve sends `"1"` and treats an absent request header as `"1"`.
+`STATE_VERSION_HEADER` is the name of the Durable State version header. Serve sends `"1"`, and treats a request without the header as version `"1"`.
 
 ## `STATE_CONTRACT_HEADER`
 
@@ -213,7 +213,7 @@ declare const STATE_CONTRACT_HEADER: "x-streamsy-state-contract";
 same<typeof STATE_CONTRACT_HEADER, typeof Real.STATE_CONTRACT_HEADER>(true);
 ```
 
-`STATE_CONTRACT_HEADER` names the Durable State contract fingerprint header. A different request fingerprint causes `ResumeRejected` with reason `"contract-changed"`.
+`STATE_CONTRACT_HEADER` is the name of the Durable State contract fingerprint header. When a request sends a different fingerprint in it, `state` fails with `ResumeRejected` and reason `"contract-changed"`.
 
 ## `STREAM_VERSION_HEADER`
 
@@ -227,7 +227,7 @@ declare const STREAM_VERSION_HEADER: "x-streamsy-stream-version";
 same<typeof STREAM_VERSION_HEADER, typeof Real.STREAM_VERSION_HEADER>(true);
 ```
 
-`STREAM_VERSION_HEADER` names the Durable Streams version header. Serve sends `"1"` and treats an absent request header as `"1"`.
+`STREAM_VERSION_HEADER` is the name of the Durable Streams version header. Serve sends `"1"`, and treats a request without the header as version `"1"`.
 
 ## `STREAM_CONTRACT_HEADER`
 
@@ -241,7 +241,7 @@ declare const STREAM_CONTRACT_HEADER: "x-streamsy-stream-contract";
 same<typeof STREAM_CONTRACT_HEADER, typeof Real.STREAM_CONTRACT_HEADER>(true);
 ```
 
-`STREAM_CONTRACT_HEADER` names the Durable Streams contract fingerprint header. A different request fingerprint causes `ResumeRejected` with reason `"contract-changed"`.
+`STREAM_CONTRACT_HEADER` is the name of the Durable Streams contract fingerprint header. When a request sends a different fingerprint in it, `stream` fails with `ResumeRejected` and reason `"contract-changed"`.
 
 ## `VALUE_CONTRACT_HEADER`
 
@@ -255,7 +255,7 @@ declare const VALUE_CONTRACT_HEADER: "x-streamsy-value-contract";
 same<typeof VALUE_CONTRACT_HEADER, typeof Real.VALUE_CONTRACT_HEADER>(true);
 ```
 
-`VALUE_CONTRACT_HEADER` names the computed value contract fingerprint header. A different request fingerprint causes `ContractChanged` with recovery `"refetch"`.
+`VALUE_CONTRACT_HEADER` is the name of the contract fingerprint header of a computed value. When a request sends a different fingerprint in it, `value` fails with `ContractChanged`.
 
 ## `DURABLE_STATE_PROTOCOL`
 
@@ -269,7 +269,7 @@ declare const DURABLE_STATE_PROTOCOL: "https://durable-streams.dev/state-protoco
 same<typeof DURABLE_STATE_PROTOCOL, typeof Real.DURABLE_STATE_PROTOCOL>(true);
 ```
 
-`DURABLE_STATE_PROTOCOL` identifies version 1 of the Durable State protocol.
+`DURABLE_STATE_PROTOCOL` is the URI of version 1 of the Durable State protocol.
 
 ## `PUBLIC_ERROR_TAGS`
 
@@ -290,7 +290,7 @@ declare const PUBLIC_ERROR_TAGS: readonly [
 same<typeof PUBLIC_ERROR_TAGS, typeof Real.PUBLIC_ERROR_TAGS>(true);
 ```
 
-`PUBLIC_ERROR_TAGS` lists the six public error tags in declaration order.
+`PUBLIC_ERROR_TAGS` lists the six public error tags in the order that `PublicError` declares them.
 
 ## `PublicErrorTag`
 
@@ -305,4 +305,4 @@ type PublicErrorTag = PublicError["_tag"];
 same<PublicErrorTag, Real.PublicErrorTag>(true);
 ```
 
-`PublicErrorTag` names the discriminator values of `PublicError`. It is the union of the entries in `PUBLIC_ERROR_TAGS`.
+`PublicErrorTag` is the union of the `_tag` values of `PublicError`, which are the entries of `PUBLIC_ERROR_TAGS`.

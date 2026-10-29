@@ -11,7 +11,7 @@ import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/
 import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
 ```
 
-The Cloudflare host routes protocol requests to Durable Objects that own their storage, route app, and alarm. See [Cloudflare hosting](/docs/hosting/cloudflare).
+The Cloudflare host sends each protocol request to the Durable Object that owns the stream. Each object has its own storage, routes, and alarm. See [Cloudflare hosting](/docs/hosting/cloudflare).
 
 ## Object host
 
@@ -45,11 +45,11 @@ same<
 >(true);
 ```
 
-`Cloudflare.StreamsyObject` creates a Durable Object class through `make`. The object acquires storage and compiles its app on first fetch or alarm. Fetch and alarm share one successful acquisition.
+`Cloudflare.StreamsyObject.make` returns a Durable Object class for an `ObjectConfiguration`. On the first fetch or alarm, the object acquires its storage and builds its routes. After an acquisition succeeds, every later fetch and alarm reuses it.
 
-When acquisition fails, fetch answers 503 with `Retry-After: 1`, and the next access retries. The host closes a failed acquisition's scope before retrying. Alarm acquisition failures reject the alarm Promise so the platform can retry.
+When the acquisition fails, `fetch` answers 503 with `Retry-After: 1`, and the next fetch or alarm acquires again. The host closes the scope of the failed acquisition first. When the acquisition fails during an alarm, the alarm Promise rejects, so the platform retries the alarm.
 
-The host reconciles wakeup deadlines on acquisition and after PUT, POST, and DELETE requests, including rejected requests. A request that calls `Wakeups.touch` also triggers reconciliation. A route defect becomes 500 with the protocol security headers. Request logging is off.
+The host reconciles the wakeup due times after the acquisition, and after every PUT, POST, and DELETE request, rejected requests included. It also reconciles after a request that calls `Wakeups.touch`. When a route dies, the object answers 500 with the protocol security headers. The object does not log requests.
 
 ### `Cloudflare.ObjectConfiguration`
 
@@ -96,16 +96,16 @@ same<
 >(true);
 ```
 
-`Cloudflare.ObjectConfiguration` describes the app, local services, and links of one object class.
+`Cloudflare.ObjectConfiguration` holds the routes, the local services, the wakeups, and the links of one object class.
 
-| Field     | Meaning                                                                             |
-| --------- | ----------------------------------------------------------------------------------- |
-| `app`     | Route Layer that uses storage, wakeups, local services `R`, and linked services `L` |
-| `layer`   | Factory for local storage and services. Receives the object's state and environment |
-| `wakeups` | Additional deadline sources. Stream expiry is always present                        |
-| `links`   | Factory for clients of streams on other objects                                     |
+| Field     | Meaning                                                                                             |
+| --------- | --------------------------------------------------------------------------------------------------- |
+| `app`     | The route Layer. It can use storage, `Wakeups`, the local services `R`, and the linked services `L` |
+| `layer`   | Builds the Layer of local storage and services from the object state and the environment            |
+| `wakeups` | More wakeups. The host always adds stream expiry                                                    |
+| `links`   | Builds the clients of streams that live on other objects                                            |
 
-The host provides the alarm slot from `state.storage`. It builds linked services before the local Layer, so the local Layer can use them during acquisition. When the local Layer also provides a linked stream, acquisition fails with `StorageFault`. Keep that stream out of the local storage group.
+The host provides the alarm slot from `state.storage`. It builds the linked services before the local Layer, so the local Layer can use them. When the local Layer also provides a linked stream, the acquisition fails with `StorageFault`. Keep linked streams out of the local storage group.
 
 ### `Cloudflare.ObjectInstance`
 
@@ -126,7 +126,7 @@ interface ObjectInstance {
 same<ObjectInstance, Cloudflare.ObjectInstance>(true);
 ```
 
-`Cloudflare.ObjectInstance` describes the fetch and alarm methods of an object. The host ignores alarm invocation metadata. An HTTP request cannot invoke an alarm turn.
+`Cloudflare.ObjectInstance` is the shape of an object: its `fetch` and `alarm` methods. `alarm` ignores `info`. No HTTP request can run an alarm turn.
 
 ## Worker routing and placement
 
@@ -146,9 +146,9 @@ declare function router<Env>(options: Cloudflare.RouterOptions<Env>): Workers.Ex
 same<typeof router, typeof Cloudflare.router>(true);
 ```
 
-`Cloudflare.router` returns a Worker handler that forwards each protocol request to the object named by placement. It strips the mount prefix for placement and forwards the original request unchanged, including encoded path segments, query, headers, and body. A fork request goes to the child's object.
+`Cloudflare.router` returns a Worker fetch handler that forwards each protocol request to the object that placement names. Placement gets the stream path without the mount prefix. The object gets the original request unchanged, with its encoded path segments, query, headers, and body. The router sends a fork request to the object of the child stream.
 
-Authenticate before forwarding to the router. The router handles protocol paths. Route Serve paths in your own Worker code.
+Authenticate the caller before you pass the request to the router. The router serves protocol paths only, so route Serve paths in your own Worker code.
 
 | Condition                                     | Response                       |
 | --------------------------------------------- | ------------------------------ |
@@ -157,7 +157,7 @@ Authenticate before forwarding to the router. The router handles protocol paths.
 | Placement returns an empty or non-string name | 400, without calling an object |
 | Placement throws                              | 500, without calling an object |
 
-A fork source and child must live on the same object. Keep placement stable while that object holds data.
+A fork source and its child must live on the same object. Do not change the placement of an object that holds data.
 
 ### `Cloudflare.rule`
 
@@ -172,8 +172,9 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function rule<Params>(spec: OwnerRule<Params>): ErasedOwnerRule;
 
-// These rule shapes have no exported names. The input preserves decoded params,
-// and the output erases them for the heterogeneous byRoute table.
+// These rule shapes have no exported names. OwnerRule keeps the type of the
+// decoded params. ErasedOwnerRule hides it, so one byRoute table can hold rules
+// with different params.
 interface OwnerRule<Params> {
   readonly stream: { parse(id: string): Option.Option<Params> };
   owner(params: Params): string;
@@ -186,7 +187,7 @@ interface ErasedOwnerRule {
 same<typeof rule, typeof Cloudflare.rule>(true);
 ```
 
-`Cloudflare.rule` gives `owner` the decoded params of its stream and returns the same object. Pass the result to `Placement.byRoute`. The method syntax of `owner` preserves contextual typing while allowing rules with different params in one table.
+`Cloudflare.rule` returns `spec` with `owner` typed to take the decoded params of `stream`. Pass the result to `Placement.byRoute`. `owner` has method syntax, so the compiler still infers the params of each `owner`, and one table can hold rules with different params.
 
 ### `Cloudflare.Placement`
 
@@ -219,7 +220,7 @@ same<Placement, Cloudflare.Placement>(true);
 same<typeof Placement, typeof Cloudflare.Placement>(true);
 ```
 
-`Cloudflare.Placement` maps a stream path to an object name. The constructors provide three choices:
+`Cloudflare.Placement` names the object that owns a stream path. It has three constructors:
 
 | Constructor      | Object name                                                       |
 | ---------------- | ----------------------------------------------------------------- |
@@ -227,7 +228,7 @@ same<typeof Placement, typeof Cloudflare.Placement>(true);
 | `byKey(key)`     | The result of `key(streamPath)`                                   |
 | `byRoute(rules)` | The `owner` result of the first rule whose stream parses the path |
 
-When a route cannot decode a segment, `byRoute` tries the next rule. When no rule matches, it returns an empty string. The router turns that result into 400.
+When the stream of a rule cannot decode a segment, `byRoute` tries the next rule. When no rule matches, `byRoute` returns an empty string, and the router answers 400.
 
 ### `Cloudflare.RouterOptions`
 
@@ -252,15 +253,15 @@ same<
 >(true);
 ```
 
-`Cloudflare.RouterOptions` selects the object namespace and protocol mount.
+`Cloudflare.RouterOptions` holds the object namespace, the placement, and the protocol mount prefix of `router`.
 
-| Field       | Default                | Meaning                                                |
-| ----------- | ---------------------- | ------------------------------------------------------ |
-| `namespace` | Required               | Gets the namespace binding from the Worker environment |
-| `placement` | `Placement.byStream()` | Names the object for each stripped stream path         |
-| `prefix`    | `/`                    | Protocol mount prefix                                  |
+| Field       | Default                | Meaning                                                                  |
+| ----------- | ---------------------- | ------------------------------------------------------------------------ |
+| `namespace` | Required               | Returns the Durable Object namespace binding from the Worker environment |
+| `placement` | `Placement.byStream()` | Names the object of each stream path, without the prefix                 |
+| `prefix`    | `/`                    | The protocol mount prefix                                                |
 
-The router adds a trailing slash to the prefix when needed before it strips paths. It passes the request to the object with its original path, so the owner mount must use the same prefix.
+The router adds a trailing slash to the prefix when it has none, and then strips the prefix from each path. The object gets the original path, so its protocol mount must use the same prefix.
 
 ## Wakeups
 
@@ -293,18 +294,18 @@ same<Wakeup<{ readonly dependency: string }>, Cloudflare.Wakeup<{ readonly depen
 same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 ```
 
-`Cloudflare.Wakeup` describes bounded, idempotent work whose next deadline comes from committed state. `Wakeup.make` wraps `run` with the object's permit for that name. A run must not call its own wakeup's `run` because the permit is not reentrant.
+`Cloudflare.Wakeup` is one kind of scheduled work in an object: a bounded, idempotent `run`, and a `next` that reads its due time from committed state. `Wakeup.make` runs `run` under the permit of the object for that name. The permit is not reentrant, so a `run` must not call its own `run`.
 
-| Field   | Meaning                                                                        |
-| ------- | ------------------------------------------------------------------------------ |
-| `name`  | Unique name within the object, including the built-in `streamsy/expiry`        |
-| `next`  | Next deadline in epoch milliseconds, or `None` when there is no work           |
-| `run`   | At-least-once work. Returns `{ more: true }` when a bound leaves more due work |
-| `retry` | Schedule whose delays set alarm retry floors                                   |
+| Field   | Meaning                                                                                                        |
+| ------- | -------------------------------------------------------------------------------------------------------------- |
+| `name`  | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
+| `next`  | The next due time in epoch milliseconds, or `None` when there is no work                                       |
+| `run`   | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
+| `retry` | The schedule whose delays set the earliest retry time after a failure                                          |
 
-The host runs stream expiry first, then additional wakeups in declaration order. Duplicate names fail acquisition. A failing deadline or run does not stop other wakeups.
+The host runs stream expiry first, and then the other wakeups in declaration order. Two wakeups with the same name fail the acquisition. When one wakeup fails in `next` or `run`, the others still run.
 
-Without `retry`, failures back off exponentially from one second to one hour. A run also backs off when work due before it started remains due and it does not report more work. A finite schedule stops retries on exhaustion. Progress resets the failure count, and eviction discards the in-memory backoff state.
+Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends, the host stops retrying. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
 
 ### `Cloudflare.Wakeups`
 
@@ -339,17 +340,17 @@ same<typeof Wakeups, typeof Cloudflare.Wakeups>(true);
 same<Wakeups, Cloudflare.Wakeups>(true);
 ```
 
-`Cloudflare.Wakeups` is the service key for the object's scheduler.
+`Cloudflare.Wakeups` is the service key of the wakeup scheduler of an object.
 
-| Member      | Meaning                                                                         |
-| ----------- | ------------------------------------------------------------------------------- |
-| `touch`     | Marks the current request for reconciliation when its handler returns           |
-| `reconcile` | Reads deadlines and arms the earliest one, or clears the alarm when none remain |
-| `status`    | Reads each wakeup's deadline, failure count, and retry floor                    |
+| Member      | Meaning                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| `touch`     | Marks the current request, so the host reconciles when its handler returns                            |
+| `reconcile` | Reads the due times and arms the alarm for the earliest one, or clears the alarm when no work remains |
+| `status`    | Reads the due time, the failure count, and the retry time of each wakeup                              |
 
-Call `touch` before the handler returns. If a streamed body queues work later, call `reconcile` instead. Work outside a request also calls `reconcile`.
+Call `touch` before the handler returns. When a streamed body queues work after the handler returns, call `reconcile` instead. Work outside a request also calls `reconcile`.
 
-Due work arms at `now + 1` rather than running inside the request. An alarm turn arms a 30-second recovery guard before it runs due work, then reconciles again. The `retryAt` field is the earliest instant when backoff permits the wakeup to run. A deadline failure in `status` becomes a defect.
+`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. When `next` fails inside `status`, `status` dies.
 
 ### `Cloudflare.alarmSlotLayer`
 
@@ -379,9 +380,9 @@ interface AlarmSlot extends Context.ServiceClass.Shape<
 same<typeof alarmSlotLayer, typeof Cloudflare.alarmSlotLayer>(true);
 ```
 
-`Cloudflare.alarmSlotLayer` adapts `getAlarm`, `setAlarm`, and `deleteAlarm` on the object's storage handle to the scheduler's alarm service. A missing alarm becomes `None`. Rejected platform Promises become defects.
+`Cloudflare.alarmSlotLayer` provides the alarm service of the scheduler with `getAlarm`, `setAlarm`, and `deleteAlarm` on the storage of the object. When no alarm is set, the slot reads `None`. When a platform Promise rejects, the Effect dies.
 
-`StreamsyObject.make` installs this Layer automatically. An Alchemy object passes it in the Layer supplied to `objectHandlers`.
+`StreamsyObject.make` provides this Layer itself. An Alchemy object must include it in the Layer that it passes to `objectHandlers`.
 
 ### `Cloudflare.WakeupProgress`
 
@@ -401,7 +402,7 @@ interface WakeupProgress {
 same<WakeupProgress, Cloudflare.WakeupProgress>(true);
 ```
 
-`Cloudflare.WakeupProgress` reports whether a bounded run left more work. With `more: true` and a still-due deadline, the scheduler re-arms promptly without failure backoff.
+`Cloudflare.WakeupProgress` is the result of a bounded run. `more` is `true` when the run stopped at its bound with work left. When `more` is `true` and the work is still due, the scheduler arms the alarm again at once, without backoff.
 
 ### `Cloudflare.WakeupSource`
 
@@ -425,7 +426,7 @@ same<
 >(true);
 ```
 
-`Cloudflare.WakeupSource` accepts a ready wakeup or an Effect that acquires one in the object's storage scope. The host supplies the same acquired services to requests and wakeups.
+`Cloudflare.WakeupSource` is a wakeup, or an Effect that builds one in the storage scope of the object. Requests and wakeups get the same services from the acquisition.
 
 ## Object clients and links
 
@@ -450,9 +451,9 @@ declare const ObjectStreams: {
 same<typeof ObjectStreams, typeof Cloudflare.ObjectStreams>(true);
 ```
 
-`Cloudflare.ObjectStreams` provides stream services through `layer`, with requests sent through object stubs instead of the network. The owner must serve a Streamsy `Http.routes` mount. The client declares producer and expected-offset support.
+`Cloudflare.ObjectStreams.layer` provides stream services that send each request to the owner object through its stub, not over the network. The owner must serve an `Http.routes` mount at `prefix`. The client declares that the owner supports producers and expected offsets.
 
-The client answers 404 without calling an object when a request is outside the prefix or group. Placement failures follow the public router's 400 and 500 rules. Caller context, tracing, and cancellation reach an Effect transport.
+The client answers 404 without calling an object when a request is outside the prefix or the group. A placement failure answers 400 or 500, as in [`router`](#cloudflarerouter). An Effect transport gets the context, the tracing, and the interruption of the caller.
 
 ### `Cloudflare.ObjectLink`
 
@@ -487,11 +488,11 @@ same<
 same<typeof ObjectLink, typeof Cloudflare.ObjectLink>(true);
 ```
 
-`Cloudflare.ObjectLink` declares an internal owner mount and its caller client through `make`. Add `routes` to the owner's app and return `client(objects)` from the caller's links.
+`Cloudflare.ObjectLink.make` declares a link: an internal mount on the owner object, and the client that other objects use to reach it. Add `routes` to the app of the owner, and return `client(objects)` from the `links` of each caller.
 
-`make` throws `RangeError` unless the prefix starts with `/__` and has another non-slash character immediately after it. The protocol prefix checks also apply. Public package routers reject these reserved paths before they call an object.
+`make` throws a `RangeError` unless the prefix starts with `/__` followed by a character other than `/`. The usual protocol prefix checks also apply. The public routers of the package reject a reserved path before they call an object.
 
-The `access` setting applies to every stream, including State wake streams. Use `full` when the producer must create a missing wake stream with PUT. A link trusts callers that hold an object stub. See [Streams on other objects](/docs/hosting/cloudflare#streams-on-other-objects).
+`access` applies to every stream of the link, Durable State wake streams included. Use `full` when the producer must create a missing wake stream with PUT. A link trusts any caller that holds a stub of the object. See [Streams on other objects](/docs/hosting/cloudflare#streams-on-other-objects).
 
 ### `Cloudflare.ObjectFetch`
 
@@ -512,7 +513,7 @@ type ObjectFetch = (
 same<ObjectFetch, Cloudflare.ObjectFetch>(true);
 ```
 
-`Cloudflare.ObjectFetch` sends one web request to an object by name. `ObjectStreams.layer` and `ObjectLink.client` accept this Effect transport or a native namespace. For Alchemy stubs, construct it with [`Alchemy.objectFetch`](/docs/reference/serve/alchemy#alchemyobjectfetch).
+`Cloudflare.ObjectFetch` is an Effect transport that sends one web request to the object with a given name. `ObjectStreams.layer` and `ObjectLink.client` take this transport or a native namespace. To build one from Alchemy stubs, use [`Alchemy.objectFetch`](/docs/reference/serve/alchemy#alchemyobjectfetch).
 
 ### `Cloudflare.ObjectStreamsOptions`
 
@@ -535,14 +536,14 @@ interface ObjectStreamsOptions {
 same<ObjectStreamsOptions, Cloudflare.ObjectStreamsOptions>(true);
 ```
 
-`Cloudflare.ObjectStreamsOptions` selects the owner transport and mount.
+`Cloudflare.ObjectStreamsOptions` holds the owner transport, the placement, and the mount of `ObjectStreams.layer`.
 
-| Field       | Meaning                                                      |
-| ----------- | ------------------------------------------------------------ |
-| `objects`   | Owner namespace or Effect transport                          |
-| `placement` | The same placement rules that the public router uses         |
-| `prefix`    | Protocol mount on the owner, such as `/streams` or `/__wake` |
-| `headers`   | Extra headers on every request. Defaults to an empty object  |
+| Field       | Meaning                                                          |
+| ----------- | ---------------------------------------------------------------- |
+| `objects`   | The owner namespace or an Effect transport                       |
+| `placement` | The same placement rules that the public router uses             |
+| `prefix`    | The protocol mount on the owner, such as `/streams` or `/__wake` |
+| `headers`   | Extra headers for every request. The default is `{}`             |
 
 ### `Cloudflare.ObjectLinkOptions`
 
@@ -570,12 +571,12 @@ same<
 
 `Cloudflare.ObjectLinkOptions` gives both sides of a link the same group, internal mount, and placement rules.
 
-| Field       | Meaning                                               |
-| ----------- | ----------------------------------------------------- |
-| `group`     | Streams that the owner serves to other objects        |
-| `prefix`    | Reserved internal mount, checked by `ObjectLink.make` |
-| `placement` | Names the owner object of each stream                 |
-| `access`    | Allowed operations on the owner mount                 |
+| Field       | Meaning                                                  |
+| ----------- | -------------------------------------------------------- |
+| `group`     | The streams that the owner serves to other objects       |
+| `prefix`    | The reserved internal mount. `ObjectLink.make` checks it |
+| `placement` | Names the owner object of each stream                    |
+| `access`    | The methods that the owner mount allows                  |
 
 ### `Cloudflare.LinkAccess`
 
@@ -593,7 +594,7 @@ type LinkAccess = "read" | "append" | "full";
 same<LinkAccess, Cloudflare.LinkAccess>(true);
 ```
 
-`Cloudflare.LinkAccess` selects the operations allowed by a link's owner mount. `read` allows OPTIONS, GET, and HEAD. `append` also allows POST. `full` also allows PUT and DELETE. A method above the selected access receives 405.
+`Cloudflare.LinkAccess` sets the methods that the owner mount of a link allows. `read` allows OPTIONS, GET, and HEAD. `append` adds POST, and `full` adds PUT and DELETE. A method that the access does not allow gets 405.
 
 ### `Cloudflare.LinkClient`
 
@@ -616,7 +617,7 @@ same<LinkClient<{ readonly linked: string }>, Cloudflare.LinkClient<{ readonly l
 );
 ```
 
-`Cloudflare.LinkClient` supplies linked stream services to a caller object. `streams` names the remote stream classes, and `layer` provides their clients. The host checks `streams` for clashes with local services during acquisition.
+`Cloudflare.LinkClient` is the client side of a link in a caller object. `streams` lists the remote stream classes, and `layer` provides their clients. During the acquisition, the host checks that the local Layer provides none of `streams`.
 
 ### `Cloudflare.LinkRoutes`
 
@@ -639,4 +640,4 @@ same<LinkRoutes<never>, Cloudflare.LinkRoutes<never>>(true);
 same<LinkRoutes<Streamsy.Wildcard>, Cloudflare.LinkRoutes<Streamsy.Wildcard>>(true);
 ```
 
-`Cloudflare.LinkRoutes` is the owner route Layer of a link. Its request requirements keep the linked stream services that the router does not already provide.
+`Cloudflare.LinkRoutes` is the route Layer of a link on the owner object. Its request requirements are the linked stream services that the router does not provide itself.

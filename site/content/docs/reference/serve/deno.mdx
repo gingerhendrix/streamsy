@@ -11,7 +11,7 @@ import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 ```
 
-`Deno.listener` provides a scoped HTTP listener for a Streamsy host. See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
+`Deno.listener` is the HTTP listener Layer of a Streamsy host on Deno. Provide it to [`Serve.layer`](/docs/reference/serve/serve#servelayer). See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
 
 ## Listener
 
@@ -45,9 +45,9 @@ declare function listener(
 same<typeof listener, typeof Deno.listener>(true);
 ```
 
-`Deno.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+`Deno.listener` binds the port when its Layer builds, and closes the server when the scope of the Layer closes. When the bind fails, the Layer fails with `HttpServerError.ServeError`. The Layer requires no services.
 
-The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+The listener binds port 3000 on `127.0.0.1` unless the options set others. Without `gracefulShutdownTimeout`, the listener turns off the preemptive shutdown of the platform server, and its scope finalizer waits for in-flight requests to end. With `gracefulShutdownTimeout`, the platform server stops waiting after that time.
 
 The Deno HTTP server has no idle or response timeout that cuts off a parked long poll or an SSE body.
 
@@ -69,7 +69,7 @@ same<typeof nodeSqliteCompat, typeof Deno.nodeSqliteCompat>(true);
 
 `Deno.nodeSqliteCompat` adds a no-op `enableLoadExtension` method to the `node:sqlite` `DatabaseSync` prototype when that method is absent. It leaves an existing method unchanged.
 
-Run this Effect before the first `SqliteClient.make` from `@effect/sql-sqlite-node`. That driver calls `enableLoadExtension(false)` on each open, which otherwise throws on Deno. A rejected dynamic import becomes a defect.
+Run this Effect before the first `SqliteClient.make` from `@effect/sql-sqlite-node`. That driver calls `enableLoadExtension(false)` on each open, and on Deno that call throws without this method. When the import of `node:sqlite` fails, the Effect dies.
 
 ## Options
 
@@ -93,13 +93,13 @@ interface ListenerOptions {
 same<ListenerOptions, Deno.ListenerOptions>(true);
 ```
 
-`Deno.ListenerOptions` configures the listener.
+`Deno.ListenerOptions` holds the options of `Deno.listener`.
 
-| Field                     | Default     | Meaning                                                  |
-| ------------------------- | ----------- | -------------------------------------------------------- |
-| `port`                    | 3000        | Port to bind                                             |
-| `hostname`                | `127.0.0.1` | Address to bind                                          |
-| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+| Field                     | Default     | Meaning                                                 |
+| ------------------------- | ----------- | ------------------------------------------------------- |
+| `port`                    | 3000        | The port to bind                                        |
+| `hostname`                | `127.0.0.1` | The address to bind                                     |
+| `gracefulShutdownTimeout` | Unset       | The longest wait for in-flight requests during shutdown |
 
 ## Defaults
 

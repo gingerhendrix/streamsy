@@ -1,6 +1,6 @@
 ---
 title: Action runtime
-description: Reference for the runtime exports in @streamsy/serve/action/runtime. They construct delivery drafts and run bounded outbox passes.
+description: Reference for the runtime exports in @streamsy/serve/action/runtime. They build outbox drafts and run bounded delivery passes over the outbox.
 ---
 
 ```ts
@@ -23,7 +23,7 @@ import type { Wakeup } from "@streamsy/serve/cloudflare";
 import type { Effect } from "effect";
 ```
 
-The runtime turns payloads into outbox drafts and delivers pending entries under the sink's retry policy. See [Deliver](/docs/projections/actions#deliver).
+The runtime builds outbox drafts from payloads, and delivers pending entries under the retry policy of the sink. See [Deliver](/docs/projections/actions#deliver).
 
 ## `actionSinkHandler`
 
@@ -51,9 +51,9 @@ declare function actionSinkHandler<Payload, From extends ActionSinkRelation, Req
 same<typeof actionSinkHandler, typeof Real.actionSinkHandler>(true);
 ```
 
-`actionSinkHandler` binds the refusal helpers to `sink.handler.name` and the current delivery's idempotency key. The callback's Effect requirements remain requirements of the returned handler.
+`actionSinkHandler` builds an `ActionSinkHandler` from the `deliver` callback. For each delivery, it passes the callback a [`RefuseDelivery`](#refusedelivery) whose failures carry `sink.handler.name` and the idempotency key of the delivery. The services that the Effect of the callback requires become the `Requirements` of the handler.
 
-When the callback throws before returning its Effect, `drain` defects without recording the attempt. The runtime catches defects in the returned Effect.
+When `deliver` throws before it returns its Effect, `drain` dies with that defect and does not record the attempt. When the returned Effect dies, `drain` records a retryable refusal instead.
 
 ## `draftsFor`
 
@@ -73,9 +73,9 @@ declare function draftsFor<Payload, From extends ActionSinkRelation>(
 same<typeof draftsFor, typeof Real.draftsFor>(true);
 ```
 
-`draftsFor` maps each payload to a draft in input order. It calls the sink's `partitionBy`, `idempotencyKey`, and `payload.encode` functions and copies the supplied enqueue time.
+`draftsFor` returns one draft for each payload, in input order. It fills each draft with the results of the `partitionBy`, `idempotencyKey`, and `payload.encode` functions of the sink, and gives every draft the same `enqueuedAtMs`.
 
-`draftsFor` performs no storage write. When a declared function throws, that exception leaves the call synchronously. It does not validate or deduplicate the encoded payloads.
+`draftsFor` writes nothing, so you can enqueue its drafts in your own transaction. When a sink function throws, `draftsFor` throws the same exception. It does not validate or deduplicate the payloads.
 
 ## `drain`
 
@@ -98,21 +98,21 @@ declare const drain: <Payload, From extends ActionSinkRelation, Requirements = n
 same<typeof drain, typeof Real.drain>(true);
 ```
 
-`drain` attempts a bounded set of pending entries serially in enqueue order. It claims work using the clock at the start of the pass and checks each entry's deadline before attempting it.
+`drain` runs one delivery pass. It claims up to `limit` pending entries that are due at the start of the pass, and delivers them one at a time in enqueue order. Before each attempt, it compares the due time of the entry with the clock again, and ends the pass at the first entry that is not due.
 
-Drains that share a store object and sink name share one permit, across all lanes. A handler must not drain its own sink because the permit is not reentrant. Separate processes and separate store objects do not share the permit.
+Passes over the same sink with the same store object share one permit, so they run one at a time, across all lanes. The permit is not reentrant, so a handler must not drain its own sink. Separate processes and separate store objects do not share the permit.
 
-By default, a retry scheduled into the future does not block later due entries. With `ordered: true`, a reschedule ends the pass, and the first future entry blocks later entries in the selected scope. When `partitionId` is absent, that scope includes all lanes.
+By default, an entry that waits for a retry does not hold back later entries that are due. With `ordered: true`, a reschedule ends the pass, and the oldest pending entry holds back every later entry in the scope until it is due. Without `partitionId`, the scope is every lane of the sink.
 
-| Outcome                                  | Stored result                                                                             |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Handler succeeds                         | Delivered, with the attempt count and settlement time                                     |
-| Handler fails with a permanent refusal   | Dead, with reason `permanent`                                                             |
-| Retryable failure uses the final attempt | Dead, with reason `attempts-exhausted`                                                    |
-| Retryable failure has attempts left      | Pending, with the next deadline computed from the clock after failure plus `backoffAfter` |
-| JSON parse or payload decode throws      | Dead, with reason `payload-poison`. The handler does not run                              |
+| Outcome                                  | Stored result                                                |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| Handler succeeds                         | Delivered, with the attempt count and settlement time        |
+| Handler fails with a permanent refusal   | Dead, with reason `permanent`                                |
+| Retryable failure uses the final attempt | Dead, with reason `attempts-exhausted`                       |
+| Retryable failure has attempts left      | Pending, due at the time of the failure plus `backoffAfter`  |
+| JSON parse or payload decode throws      | Dead, with reason `payload-poison`. The handler does not run |
 
-A defect in the handler's returned Effect becomes a retryable refusal. When that Effect is interrupted, `drain` interrupts and leaves the current entry unchanged. An outbox failure leaves through `OutboxUnavailable`.
+When the Effect of the handler dies, `drain` records a retryable refusal. When that Effect is interrupted, `drain` is interrupted too, and leaves the entry unchanged. When the outbox fails, `drain` fails with `OutboxUnavailable`.
 
 Delivery is at least once. A process can stop after the external effect succeeds and before the outbox records success. The handler must accept a repeated idempotency key without repeating the external effect.
 
@@ -138,9 +138,9 @@ declare const OutboxWakeup: {
 same<typeof OutboxWakeup, typeof Real.OutboxWakeup>(true);
 ```
 
-`OutboxWakeup` adapts `nextDue` and `drain` to a host wakeup through its `make` function. Its name is `streamsy/outbox/<sink>`, with `/<partition>` appended when a partition is selected. Each component is URI-encoded.
+`OutboxWakeup.make` returns a host [`Wakeup`](/docs/reference/serve/cloudflare#cloudflarewakeup) that reads the next due time with `nextDue` and runs `drain`. The wakeup name is `streamsy/outbox/<sink>`, or `streamsy/outbox/<sink>/<partition>` when `options.partitionId` is set. `make` URI-encodes the sink and the partition, so a sink named `a/b` cannot collide with a lane.
 
-The wakeup forwards `ordered` to `nextDue`. A deadline read failure becomes a retryable `StorageFault`. A pass reports `more: true` when `claimed` reaches the configured limit, so a full pass can continue without failure backoff.
+The wakeup passes `ordered` to `nextDue`. When `nextDue` fails, the wakeup fails with a retryable `StorageFault`. When a pass claims `limit` entries, the wakeup reports `more: true`, so the host does not back off a backlog.
 
 ## `ActionSinkDelivery`
 
@@ -163,18 +163,18 @@ same<ActionSinkDelivery<{ readonly id: string }>, Real.ActionSinkDelivery<{ read
 );
 ```
 
-`ActionSinkDelivery` describes one attempt as the handler sees it.
+`ActionSinkDelivery` is one attempt at one delivery, as the handler sees it.
 
-| Field            | Meaning                                            |
-| ---------------- | -------------------------------------------------- |
-| `entryId`        | Stored entry id                                    |
-| `sink`           | Stored sink name                                   |
-| `partitionId`    | Stored lane                                        |
-| `idempotencyKey` | Durable identity that the handler must deduplicate |
-| `attempt`        | One-based attempt number                           |
-| `payload`        | Decoded payload                                    |
+| Field            | Meaning                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `entryId`        | The id of the stored entry                                                                    |
+| `sink`           | The sink name                                                                                 |
+| `partitionId`    | The lane of the entry                                                                         |
+| `idempotencyKey` | The idempotency key. The handler must not repeat the effect for a key that it accepted before |
+| `attempt`        | The attempt number, starting at 1                                                             |
+| `payload`        | The decoded payload                                                                           |
 
-A repeated attempt keeps the entry id and idempotency key.
+A retry has the same entry id and idempotency key as the first attempt.
 
 ## `ActionSinkHandler`
 
@@ -199,7 +199,7 @@ same<
 >(true);
 ```
 
-`ActionSinkHandler` supplies the Effect that performs one delivery. The host provides its `Requirements`. Success means the handler accepted the idempotency key, including a key that it accepted before.
+`ActionSinkHandler` delivers one entry: `deliver` returns the Effect that performs the external effect. The host provides its `Requirements`. When the Effect succeeds, `drain` marks the entry delivered. The Effect must also succeed for a key that the handler accepted before.
 
 ## `RefuseDelivery`
 
@@ -217,7 +217,7 @@ interface RefuseDelivery {
 same<RefuseDelivery, Real.RefuseDelivery>(true);
 ```
 
-`RefuseDelivery` constructs failures for the current handler and delivery. `retryable(detail)` allows another attempt within the budget. `permanent(detail)` stops retries immediately. The callback must fail with or yield the returned error to refuse delivery.
+`RefuseDelivery` builds the failures that refuse the current delivery. `retryable(detail)` lets `drain` try again while attempts remain. `permanent(detail)` dead-letters the entry at once. Each function only returns the error. To refuse the delivery, fail with it or `yield*` it.
 
 ## `DrainOptions`
 
@@ -235,13 +235,13 @@ interface DrainOptions {
 same<DrainOptions, Real.DrainOptions>(true);
 ```
 
-`DrainOptions` selects the scope and bound of one pass.
+`DrainOptions` sets the lanes, the size, and the order of one pass.
 
-| Field         | Default               | Meaning                                                           |
-| ------------- | --------------------- | ----------------------------------------------------------------- |
-| `partitionId` | All lanes             | Restricts the pass to one lane                                    |
-| `limit`       | `DEFAULT_DRAIN_LIMIT` | Upper bound on entries claimed                                    |
-| `ordered`     | `false`               | A future retry blocks later pending entries in the selected scope |
+| Field         | Default               | Meaning                                                                                                 |
+| ------------- | --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `partitionId` | All lanes             | The one lane to drain                                                                                   |
+| `limit`       | `DEFAULT_DRAIN_LIMIT` | The most entries that the pass claims                                                                   |
+| `ordered`     | `false`               | `true` to deliver in strict enqueue order: an entry that waits for a retry holds back every later entry |
 
 The runtime forwards `limit` to the backing without validating it.
 
@@ -265,13 +265,13 @@ same<DrainReport, Real.DrainReport>(true);
 
 `DrainReport` counts the outcomes of one completed pass.
 
-| Field          | Meaning                                                                                           |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| `sink`         | Sink name                                                                                         |
-| `claimed`      | Entries attempted, including payload failures. Excludes a future entry that stops an ordered pass |
-| `delivered`    | Successful handler attempts                                                                       |
-| `retried`      | Failures rescheduled for another attempt                                                          |
-| `deadLettered` | Entries settled as dead                                                                           |
+| Field          | Meaning                                                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `sink`         | The sink name                                                                                                           |
+| `claimed`      | The entries that the pass attempted, payload failures included. A future entry that ends an ordered pass is not counted |
+| `delivered`    | The entries delivered                                                                                                   |
+| `retried`      | The entries rescheduled for another attempt                                                                             |
+| `deadLettered` | The entries dead-lettered                                                                                               |
 
 For a completed pass, `claimed` equals `delivered + retried + deadLettered`.
 
@@ -287,4 +287,4 @@ declare const DEFAULT_DRAIN_LIMIT = 100;
 same<typeof DEFAULT_DRAIN_LIMIT, typeof Real.DEFAULT_DRAIN_LIMIT>(true);
 ```
 
-`DEFAULT_DRAIN_LIMIT` bounds a pass to 100 claimed entries when `options.limit` is absent.
+`DEFAULT_DRAIN_LIMIT` is the `limit` of a pass when `options.limit` is absent: 100 entries.

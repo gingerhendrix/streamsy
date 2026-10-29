@@ -19,7 +19,7 @@ import type {
 import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
 ```
 
-The Alchemy host provides Effect handlers for an Alchemy Durable Object and its Worker. See [Alchemy hosting](/docs/hosting/cloudflare#alchemy).
+`@streamsy/serve/alchemy` provides the Effect handlers of a Streamsy host on Alchemy: a router for the Worker, and the fetch and alarm handlers of each Durable Object. See [Alchemy hosting](/docs/hosting/cloudflare#alchemy).
 
 ## Alchemy handlers
 
@@ -55,9 +55,9 @@ declare function router(options: {
 same<typeof router, typeof Alchemy.router>(true);
 ```
 
-`Alchemy.router` forwards the current Effect HTTP request to the object named by placement. It returns a response Effect. Authenticate before evaluating it.
+`Alchemy.router` returns an Effect that forwards the current HTTP request to the object that placement names, and succeeds with the response of the object. Authenticate the caller before you run this Effect.
 
-`objects` is an Alchemy namespace binding. The prefix defaults to `/`, and placement defaults to `Placement.byStream()`. The prefix, reserved path, and placement failure rules match [`Cloudflare.router`](/docs/reference/serve/cloudflare#cloudflarerouter). The forwarded request stays unchanged. A stub's `HttpServerError` remains a typed failure.
+`objects` is an Alchemy namespace binding. `prefix` defaults to `/`, and `placement` defaults to `Placement.byStream()`. The rules for the prefix, reserved paths, and placement failures are those of [`Cloudflare.router`](/docs/reference/serve/cloudflare#cloudflarerouter). The object gets the request unchanged. When the stub fails with `HttpServerError`, the Effect fails with the same error.
 
 ### `Alchemy.objectFetch`
 
@@ -83,9 +83,9 @@ declare function objectFetch(objects: Pick<DurableObject, "getByName">): Alchemy
 same<typeof objectFetch, typeof Alchemy.objectFetch>(true);
 ```
 
-`Alchemy.objectFetch` adapts an Alchemy namespace binding to the web request transport that `ObjectStreams.layer` and `ObjectLink.client` accept. It calls `getByName` when the returned transport runs, converts the request into an Effect HTTP request, and converts the response back to a web `Response`.
+`Alchemy.objectFetch` turns an Alchemy namespace binding into the `ObjectFetch` transport that `ObjectStreams.layer` and `ObjectLink.client` take. When the transport runs, it calls `getByName`, converts the web request into an Effect HTTP request, and converts the response back to a web `Response`.
 
-A stub failure becomes an `HttpClientError` with a `TransportError` reason that retains the original cause.
+When the stub fails, the transport fails with an `HttpClientError` whose reason is a `TransportError` with the original cause.
 
 ### `Alchemy.objectHandlers`
 
@@ -135,16 +135,16 @@ interface AlarmSlot extends Context.ServiceClass.Shape<
 same<typeof objectHandlers, typeof Alchemy.objectHandlers>(true);
 ```
 
-`Alchemy.objectHandlers` creates fetch and alarm handlers that share one lazy acquisition of storage and application services. The instance scope owns that acquisition and releases it when the scope closes.
+`Alchemy.objectHandlers` returns the fetch and alarm handlers of an Alchemy Durable Object. Both handlers share one acquisition of storage and services, which runs on first use. The scope of the instance owns the acquisition, and releases it when the scope closes.
 
-| Option    | Meaning                                                                   |
-| --------- | ------------------------------------------------------------------------- |
-| `app`     | Route Layer for local and linked services                                 |
-| `layer`   | Local services and storage, including `alarmSlotLayer(state.raw.storage)` |
-| `wakeups` | Additional deadline sources, after built-in stream expiry                 |
-| `links`   | Clients of streams on other objects, as a plain array                     |
+| Option    | Meaning                                                                                      |
+| --------- | -------------------------------------------------------------------------------------------- |
+| `app`     | The route Layer. It can use the local and the linked services                                |
+| `layer`   | The Layer of local services and storage. It must include `alarmSlotLayer(state.raw.storage)` |
+| `wakeups` | More wakeups. They run after stream expiry                                                   |
+| `links`   | The clients of streams on other objects, as an array                                         |
 
-The acquisition, reconciliation, and link clash rules match [`StreamsyObject`](/docs/reference/serve/cloudflare#cloudflarestreamsyobject). A failed acquisition closes its scope, fetch answers 503 with `Retry-After: 1`, and a later call retries. An alarm acquisition failure becomes a defect so the platform can retry.
+The rules for acquisition, reconciliation, and link clashes are those of [`StreamsyObject`](/docs/reference/serve/cloudflare#cloudflarestreamsyobject). When the acquisition fails, the host closes its scope, `fetch` answers 503 with `Retry-After: 1`, and the next call acquires again. When the acquisition fails during an alarm, `alarm` dies, so the platform retries the alarm.
 
 ### `Alchemy.ObjectHandlers`
 
@@ -177,11 +177,11 @@ type ObjectHandlers = {
 same<ObjectHandlers, Alchemy.ObjectHandlers>(true);
 ```
 
-`Alchemy.ObjectHandlers` holds the handlers returned by `objectHandlers`. `fetch` uses the current HTTP request. `alarm()` runs one scheduler turn. The platform invokes the alarm separately from fetch.
+`Alchemy.ObjectHandlers` holds the handlers that `objectHandlers` returns. `fetch` answers the current HTTP request. `alarm()` runs one turn of the wakeup scheduler. The platform calls `alarm` on its own, never from a fetch.
 
 ## Shared Cloudflare exports
 
-These exports are the same exports as those from `@streamsy/serve/cloudflare`. Their signatures and rules are on the linked sections.
+These exports are the same values and types as the exports of `@streamsy/serve/cloudflare`. Each section checks the shared signature, and links to the Cloudflare section for the rules.
 
 ### `Alchemy.Placement`
 

@@ -10,7 +10,7 @@ import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/htt
 import type { BunServices } from "@effect/platform-bun";
 ```
 
-`Bun.listener` provides a scoped HTTP listener for a Streamsy host. See [the Bun hosting guide](/docs/hosting/bun).
+`Bun.listener` is the HTTP listener Layer of a Streamsy host on Bun. Provide it to [`Serve.layer`](/docs/reference/serve/serve#servelayer). See [the Bun hosting guide](/docs/hosting/bun).
 
 ## Listener
 
@@ -35,11 +35,11 @@ declare function listener(
 same<typeof listener, typeof Bun.listener>(true);
 ```
 
-`Bun.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+`Bun.listener` binds the port when its Layer builds, and closes the server when the scope of the Layer closes. When the bind fails, the Layer fails with `HttpServerError.ServeError`. The Layer requires no services.
 
-The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+The listener binds port 3000 on `127.0.0.1` unless the options set others. Without `gracefulShutdownTimeout`, the listener turns off the preemptive shutdown of the platform server, and its scope finalizer waits for in-flight requests to end. With `gracefulShutdownTimeout`, the platform server stops waiting after that time.
 
-The default `idleTimeout` is 0, so Bun does not close a parked long poll after its usual ten-second idle timeout.
+The default `idleTimeout` is 0. Bun otherwise closes an idle connection after 10 seconds, which would end a parked long poll.
 
 ## Options
 
@@ -63,14 +63,14 @@ interface ListenerOptions {
 same<ListenerOptions, Bun.ListenerOptions>(true);
 ```
 
-`Bun.ListenerOptions` configures the listener.
+`Bun.ListenerOptions` holds the options of `Bun.listener`.
 
-| Field                     | Default     | Meaning                                                  |
-| ------------------------- | ----------- | -------------------------------------------------------- |
-| `port`                    | 3000        | Port to bind                                             |
-| `hostname`                | `127.0.0.1` | Address to bind                                          |
-| `idleTimeout`             | 0           | Idle connection timeout in seconds. Zero disables it     |
-| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+| Field                     | Default     | Meaning                                                      |
+| ------------------------- | ----------- | ------------------------------------------------------------ |
+| `port`                    | 3000        | The port to bind                                             |
+| `hostname`                | `127.0.0.1` | The address to bind                                          |
+| `idleTimeout`             | 0           | The idle timeout of a connection, in seconds. 0 turns it off |
+| `gracefulShutdownTimeout` | Unset       | The longest wait for in-flight requests during shutdown      |
 
 ## Defaults
 

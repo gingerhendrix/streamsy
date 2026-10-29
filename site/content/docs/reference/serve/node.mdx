@@ -12,7 +12,7 @@ import type { ChildProcessSpawner } from "effect/process";
 import type { ServerOptions } from "node:http";
 ```
 
-`Node.listener` provides a scoped HTTP listener for a Streamsy host. See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
+`Node.listener` is the HTTP listener Layer of a Streamsy host on Node. Provide it to [`Serve.layer`](/docs/reference/serve/serve#servelayer). See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
 
 ## Listener
 
@@ -47,11 +47,13 @@ declare function listener(
 same<typeof listener, typeof Node.listener>(true);
 ```
 
-`Node.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+`Node.listener` binds the port when its Layer builds, and closes the server when the scope of the Layer closes. When the bind fails, the Layer fails with `HttpServerError.ServeError`. The Layer requires no services.
 
-The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+The listener binds port 3000 on `127.0.0.1` unless the options set others. Without `gracefulShutdownTimeout`, the listener turns off the preemptive shutdown of the platform server, and its scope finalizer waits for in-flight requests to end. With `gracefulShutdownTimeout`, the platform server stops waiting after that time.
 
-Before routes attach, and after they detach, the listener answers requests with 503, `Retry-After: 1`, and `Connection: close`. It converts raw web `Response` bodies into Effect stream bodies so Node can write Streamsy protocol responses.
+Node binds the port before the routes serve, and it never answers a request that arrives while no route handler is attached. So before the routes attach and after they detach, the listener answers each request with 503, `Retry-After: 1`, and `Connection: close`. A client that retries reaches the routes once they serve.
+
+Some protocol responses carry a web `Response` as a raw body, which the Node server cannot write. The listener converts such a body into a stream body with the same status and headers.
 
 ## Options
 
@@ -77,16 +79,16 @@ interface ListenerOptions {
 same<ListenerOptions, Node.ListenerOptions>(true);
 ```
 
-`Node.ListenerOptions` configures the listener.
+`Node.ListenerOptions` holds the options of `Node.listener`.
 
-| Field                     | Default     | Meaning                                                  |
-| ------------------------- | ----------- | -------------------------------------------------------- |
-| `port`                    | 3000        | Port to bind                                             |
-| `hostname`                | `127.0.0.1` | Address to bind                                          |
-| `server`                  | `{}`        | Options passed to `node:http` `createServer`             |
-| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+| Field                     | Default     | Meaning                                                 |
+| ------------------------- | ----------- | ------------------------------------------------------- |
+| `port`                    | 3000        | The port to bind                                        |
+| `hostname`                | `127.0.0.1` | The address to bind                                     |
+| `server`                  | `{}`        | The options of `createServer` from `node:http`          |
+| `gracefulShutdownTimeout` | Unset       | The longest wait for in-flight requests during shutdown |
 
-The default Node server options keep parked long polls and open SSE bodies alive. Node's `requestTimeout` limits the time to receive a request, rather than the time to answer it.
+Node's `requestTimeout` bounds the time to receive a request, not the time to answer it. So the default `server` options keep a parked long poll and an open SSE body alive.
 
 ## Defaults
 

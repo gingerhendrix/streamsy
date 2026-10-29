@@ -1,6 +1,6 @@
 ---
 title: Serve errors
-description: Reference for the errors in @streamsy/serve. The handlers fail with tagged classes that can produce public JSON error responses.
+description: Reference for the errors in @streamsy/serve. Each Serve handler fails with a tagged error class that renders as a public JSON error response.
 ---
 
 ```ts
@@ -10,9 +10,9 @@ import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
 import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contract";
 ```
 
-The Serve handlers fail with these classes when a request or response cannot meet the contract. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).
+The Serve handlers fail with these errors when they reject a request or cannot encode a response. To declare them in an `HttpApi`, see [HttpApiBuilder](/docs/http/serve#httpapibuilder).
 
-Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. The fences show its fields and HTTP response method. `responseHeaders` starts as `{}` and stays out of the public JSON body. The response method adds the security headers and `cache-control: no-store`.
+Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. Each fence shows the fields of one class and its `HttpServerRespondable.symbol` method, which renders the error as a JSON response with `Http.securityHeaders` and `cache-control: no-store`. `responseHeaders` starts as `{}`. The `stream`, `state`, and `value` handlers set it to their version and contract headers. The response sends these headers, and the JSON body leaves them out.
 
 ## `Serve.InvalidParams`
 
@@ -40,9 +40,9 @@ interface InvalidParams {
 same<InvalidParams, Fields<Serve.InvalidParams>>(true);
 ```
 
-`Serve.InvalidParams` reports path params that do not decode or cannot form a canonical stream id. Its HTTP response has status 400.
+A `mount` route or `params` fails with `Serve.InvalidParams` when the path params do not decode or cannot form a canonical stream id. Its response status is 400.
 
-`route` is the matched route pattern. Serve sets `parameter` to `"params"`, and `detail` describes the failure.
+`route` is the matched route pattern, and `parameter` is always `"params"`. `detail` is `"Invalid path parameters"` when the params do not decode, and `"Parameters cannot form a canonical stream id"` when `declaration.at` throws.
 
 ## `Serve.ProtocolVersionUnsupported`
 
@@ -72,9 +72,9 @@ interface ProtocolVersionUnsupported {
 same<ProtocolVersionUnsupported, Fields<Serve.ProtocolVersionUnsupported>>(true);
 ```
 
-`Serve.ProtocolVersionUnsupported` reports a stream or state version header other than `"1"`. Its HTTP response has status 409.
+`stream` and `state` fail with `Serve.ProtocolVersionUnsupported` when the version header of the request is not `"1"`. Its response status is 409.
 
-`route` is the matched route pattern, `received` is the request header, and `supported` is `1`. `recovery` is `"replay-from-start"`.
+`route` is the matched route pattern, `received` is the value of the version header, and `supported` is `1`. `recovery` is `"replay-from-start"`.
 
 ## `Serve.ResumeRejected`
 
@@ -103,7 +103,7 @@ interface ResumeRejected {
 same<ResumeRejected, Fields<Serve.ResumeRejected>>(true);
 ```
 
-`Serve.ResumeRejected` reports a resume that the handler cannot honor. Its HTTP response has status 409.
+`stream` and `state` fail with `Serve.ResumeRejected` when they cannot resume the read that the request asks for. Its response status is 409.
 
 `route` is the matched route pattern. `reason` is `"invalid-offset"`, `"history-unavailable"`, or `"contract-changed"`. `recovery` is `"replay-from-start"`. See [`ResumeRejectedReason`](/docs/reference/serve/contract#resumerejectedreason).
 
@@ -132,9 +132,9 @@ interface ContractChanged {
 same<ContractChanged, Fields<Serve.ContractChanged>>(true);
 ```
 
-`Serve.ContractChanged` reports a value contract header that differs from the current fingerprint. Its HTTP response has status 409.
+`value` fails with `Serve.ContractChanged` when the value contract header of the request differs from the current fingerprint. Its response status is 409.
 
-`route` is the matched route pattern. `recovery` is `"refetch"`, so the client fetches the value again.
+`route` is the matched route pattern. `recovery` is `"refetch"`, which tells the client to fetch the value again.
 
 ## `Serve.TransportUnavailable`
 
@@ -161,9 +161,9 @@ interface TransportUnavailable {
 same<TransportUnavailable, Fields<Serve.TransportUnavailable>>(true);
 ```
 
-`Serve.TransportUnavailable` reports a storage or transport fault during a stream or state read. Its HTTP response has status 503.
+`stream` and `state` fail with `Serve.TransportUnavailable` when the read fails with a storage or transport fault. Its response status is 503.
 
-`route` is the matched route pattern. `detail` is `"Storage unavailable"` or `"Transport unavailable"` for faults that the handler maps.
+`route` is the matched route pattern. `detail` is `"Storage unavailable"` for a `StorageFault` and `"Transport unavailable"` for a `TransportFault`.
 
 ## `Serve.WireEncodeFailed`
 
@@ -190,9 +190,13 @@ interface WireEncodeFailed {
 same<WireEncodeFailed, Fields<Serve.WireEncodeFailed>>(true);
 ```
 
-`Serve.WireEncodeFailed` reports invalid collection metadata, a value that its schema cannot encode, or a non-finite JSON value. Its HTTP response has status 500.
+A handler fails with `Serve.WireEncodeFailed` when it cannot encode its response. Its response status is 500.
 
-`route` is the matched route pattern, and `detail` describes the failure.
+`route` is the matched route pattern. `detail` names the cause:
+
+- `"Invalid collection metadata"`: `state` cannot decode the collection metadata of the address
+- `"Value cannot be encoded"`: the `value` schema cannot encode the result
+- `"Value is not finite JSON"`: the encoded `value` result holds a non-finite number
 
 ## `Serve.ServeError`
 
@@ -212,7 +216,7 @@ type ServeError =
 same<ServeError, Serve.ServeError>(true);
 ```
 
-`Serve.ServeError` names all six Serve error classes. A `value` computation can also fail with its own error type.
+`Serve.ServeError` is the union of the six Serve error classes. A `value` handler can also fail with the error of its `compute` Effect.
 
 ## `PublicErrorSchema`
 
@@ -276,6 +280,6 @@ declare const PublicErrorSchema: Schema.TaggedUnion<{
 same<typeof PublicErrorSchema, typeof Real.PublicErrorSchema>(true);
 ```
 
-`PublicErrorSchema` validates and encodes the public error body. Its `cases` field gives one tagged schema for each error class. The body matches [`PublicError`](/docs/reference/serve/contract#publicerror), without `responseHeaders`, `message`, or `stack`.
+`PublicErrorSchema` is the schema of the public error body. It validates and encodes the body, and its `cases` field holds one tagged schema for each error class. The body has the shape of [`PublicError`](/docs/reference/serve/contract#publicerror), without `responseHeaders`, `message`, or `stack`.
 
-When HttpApi encodes a declared error itself, it does not retain the Serve response headers. Convert the error with `HttpServerRespondable.toResponse` to retain those headers. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).
+When an `HttpApi` encodes a declared Serve error itself, the response leaves out the headers in `responseHeaders`. To keep them, convert the error with `HttpServerRespondable.toResponse`. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).

@@ -1,6 +1,6 @@
 ---
 title: Action errors
-description: Reference for the error exports in @streamsy/serve/action/errors. They distinguish storage failures from handler refusals.
+description: Reference for the error exports in @streamsy/serve/action/errors. `OutboxUnavailable` is a storage failure, and `ActionSinkDeliveryFailure` is a handler refusal.
 ---
 
 ```ts
@@ -15,9 +15,9 @@ import {
 } from "@streamsy/serve/action/errors";
 ```
 
-The action runtime reports outbox failures to the host and records handler refusals for retry or dead-lettering. See [Deliver](/docs/projections/actions#deliver).
+When the outbox cannot be read or written, `drain` fails with `OutboxUnavailable`, and the host handles the error. When a handler refuses a delivery, `drain` records the refusal in the outbox, and then retries or dead-letters the entry. See [Deliver](/docs/projections/actions#deliver).
 
-Each error class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. The interfaces below show the schema fields.
+Each error class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. Each fence shows the fields of one class.
 
 ## `OutboxUnavailable`
 
@@ -36,7 +36,7 @@ interface OutboxUnavailable {
 same<OutboxUnavailable, Fields<Real.OutboxUnavailable>>(true);
 ```
 
-`OutboxUnavailable` reports a failed outbox read or write. `operation` names the storage operation, and `detail` describes the failure. This error leaves `drain` through its error channel. It is not a handler outcome.
+An outbox operation fails with `OutboxUnavailable` when the backing cannot read or write the outbox. `operation` names the operation, and `detail` describes the failure. `drain` fails with this error. It is never the outcome of a delivery.
 
 ## `ActionSinkDeliveryFailure`
 
@@ -69,11 +69,11 @@ same<typeof ActionSinkDeliveryFailure.permanent, typeof Real.ActionSinkDeliveryF
 );
 ```
 
-`ActionSinkDeliveryFailure` records a handler's refusal of one delivery. `handler` names the handler, `idempotencyKey` identifies the delivery, and `detail` describes the refusal.
+A handler fails with `ActionSinkDeliveryFailure` when it refuses one delivery. `handler` is the handler name, `idempotencyKey` is the key of the delivery, and `detail` describes the refusal.
 
-`ActionSinkDeliveryFailure.retryable` sets `retryable` to `true`. `ActionSinkDeliveryFailure.permanent` sets it to `false`. `Failure` in the factory signatures is an alias for the exported error class.
+`ActionSinkDeliveryFailure.retryable` returns a failure with `retryable: true`, and `ActionSinkDeliveryFailure.permanent` returns one with `retryable: false`. In the factory signatures, `Failure` is an alias of the exported class.
 
-When `retryable` is `false`, `drain` dead-letters the entry as `permanent`. Otherwise, `drain` retries until the attempt budget runs out. `drain` records these outcomes in the outbox instead of failing with this error.
+When `retryable` is `false`, `drain` dead-letters the entry with reason `permanent`. Otherwise, `drain` retries the entry until it has made `maxAttempts` attempts. `drain` records each refusal in the outbox, and never fails with this error.
 
 ## `ACTION_SINK_ERROR_TAGS`
 
@@ -116,15 +116,15 @@ declare const DEAD_LETTER_REASONS: readonly ["attempts-exhausted", "permanent", 
 same<typeof DEAD_LETTER_REASONS, typeof Real.DEAD_LETTER_REASONS>(true);
 ```
 
-`DEAD_LETTER_REASONS` lists the reasons that stop retries.
+`DEAD_LETTER_REASONS` lists the reasons why `drain` stops retrying an entry and dead-letters it.
 
-| Reason               | Meaning                                                  |
-| -------------------- | -------------------------------------------------------- |
-| `attempts-exhausted` | A retryable failure used the last allowed attempt        |
-| `permanent`          | The handler refused the delivery with `retryable: false` |
-| `payload-poison`     | The stored JSON or the sink's payload decoder threw      |
+| Reason               | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `attempts-exhausted` | A retryable failure used the last allowed attempt                    |
+| `permanent`          | The handler refused the delivery with `retryable: false`             |
+| `payload-poison`     | `JSON.parse` or the `decode` of the sink threw on the stored payload |
 
-A permanent refusal takes precedence over an exhausted budget. A payload failure dead-letters immediately.
+When a permanent refusal is also the last allowed attempt, the reason is `permanent`. An entry whose payload does not decode dead-letters at once, as `payload-poison`.
 
 ## `DeadLetterReason`
 

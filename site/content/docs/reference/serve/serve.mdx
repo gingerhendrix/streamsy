@@ -13,7 +13,7 @@ import type { StreamRoute } from "@streamsy/core/protocol";
 import type { CanonicalValue } from "@streamsy/serve/contract";
 ```
 
-`Serve` builds read routes and response Effects for streams, Durable State, and computed JSON values. See [Serve handlers](/docs/http/serve) and [Long-running hosts](/docs/http/serve#long-running-hosts).
+`Serve` builds the HTTP read routes for streams and Durable State, and the responses for computed JSON values. `Serve.layer` serves the routes and drains live reads when the host stops. See [Serve handlers](/docs/http/serve) and [Long-running hosts](/docs/http/serve#long-running-hosts).
 
 The error classes and `ServeError` are on the [Serve errors](/docs/reference/serve/serve-errors) page.
 
@@ -206,13 +206,13 @@ same<
 >(true);
 ```
 
-`mount` decodes the matched path params and resolves `declaration.at` for each request. When the address has `collections`, `mount` chooses [`state`](#servestate). Otherwise, it chooses [`stream`](#servestream). It does not create a stream.
+`mount` adds a [`route`](#serveroute) at `path`. For each request, the route decodes the path params with `declaration.paramSchema` and calls `declaration.at` with them to get the address. It serves an address that has `collections` with [`state`](#servestate), and any other address with [`stream`](#servestream). `mount` does not create a stream.
 
-For a literal `path`, the compiler requires exactly the param names of `P`. A missing name, an extra name, or an optional param such as `:seat?` fails the check. A path typed as `` `/${string}` `` bypasses that name check.
+When `path` is a literal, its param names must be exactly the keys of `P`. The compiler rejects a missing name, an extra name, or an optional param such as `:seat?`. It skips this check for a path typed as `` `/${string}` ``.
 
-When the params do not decode, or `declaration.at` throws, the handler fails with `Serve.InvalidParams`. The route accepts GET and HEAD. Other methods answer 405 with `allow: GET, HEAD`, including beneath a protocol wildcard route.
+When the params do not decode, or `declaration.at` throws, the route fails with `Serve.InvalidParams`. The route serves GET and HEAD, and answers any other method with 405 and `allow: GET, HEAD`.
 
-Serve decodes path segments, while protocol routes use raw encoded ids. Use URL-safe stream segments. Two routes with the same shape fail application construction.
+`mount` decodes percent-encoded params, but the protocol routes use the raw encoded id. Use URL-safe stream segments. When two routes have the same path shape, the Layer build fails.
 
 ## `Serve.route`
 
@@ -237,9 +237,9 @@ declare function route<E, R>(
 same<typeof route, typeof Serve.route>(true);
 ```
 
-`route` owns every method at `path`, including beneath a protocol wildcard route. It runs `handler` for GET and HEAD. Other methods answer 405 with `allow: GET, HEAD` and [`Http.securityHeaders`](/docs/reference/core/http#httpsecurityheaders).
+`route` adds a route for every method at `path`, so no request for `path` falls through to a protocol wildcard route. It runs `handler` for GET and HEAD. It answers any other method with 405, `allow: GET, HEAD`, and [`Http.securityHeaders`](/docs/reference/core/http#httpsecurityheaders).
 
-The route retains the handler's errors and required services in the router's request types. `route` does not decode params or change the handler's HEAD response.
+The Layer type carries the errors and services of `handler` as router request types. `route` does not decode params, and it does not change the response of `handler` to a HEAD request.
 
 ## `Serve.params`
 
@@ -258,7 +258,7 @@ declare const params: <P>(declaration: {
 same<typeof params, typeof Serve.params>(true);
 ```
 
-`params` decodes the matched route's path params with `declaration.paramSchema`. When decoding fails, it fails with `Serve.InvalidParams`, with `parameter: "params"` and `detail: "Invalid path parameters"`.
+`params` decodes the path params of the matched route with `declaration.paramSchema`. When they do not decode, `params` fails with `Serve.InvalidParams`, with `parameter: "params"` and `detail: "Invalid path parameters"`.
 
 ## `Serve.stream`
 
@@ -285,13 +285,13 @@ declare function stream<A, K, RD, RE>(
 same<typeof stream, typeof Serve.stream>(true);
 ```
 
-`stream` serves a resolved address through [`Http.read`](/docs/reference/core/http#httpread), with the Durable Streams version and contract headers. It supports catch-up reads, long polls, SSE, and HEAD metadata.
+`stream` answers the request with [`Http.read`](/docs/reference/core/http#httpread) on `address`, and adds the Durable Streams version and contract headers. It serves catch-up reads, long polls, SSE, and HEAD requests.
 
-The handler accepts version `1`, which is also the default when the request omits its version header. Another version fails with `Serve.ProtocolVersionUnsupported`. A contract header that differs from the current fingerprint fails with `Serve.ResumeRejected` and reason `"contract-changed"`.
+`stream` accepts protocol version `1`, and treats a request with no version header as version `1`. Any other version fails with `Serve.ProtocolVersionUnsupported`. When the request sends a contract header that differs from the current fingerprint, `stream` fails with `Serve.ResumeRejected` and reason `"contract-changed"`.
 
-A non-HEAD request resumes when its `offset` is present and differs from `-1` and `now`. An invalid offset fails with `Serve.ResumeRejected` and reason `"invalid-offset"`. When history is absent or gone, a resume fails with reason `"history-unavailable"`. A read that does not resume answers 404 for an absent stream or 410 for a gone stream.
+A request other than HEAD resumes when its `offset` is present and is neither `-1` nor `now`. An invalid offset fails with `Serve.ResumeRejected` and reason `"invalid-offset"`. A resume fails with reason `"history-unavailable"` when the stream does not exist or was deleted. A request that does not resume answers 404 when the stream does not exist, and 410 when it was deleted.
 
-A storage or transport fault fails with `Serve.TransportUnavailable`. An unsupported read answers 400. The handler also retains `Serve.WireEncodeFailed` in its error type.
+A `StorageFault` or `TransportFault` from the read fails with `Serve.TransportUnavailable`. When the read fails with `NotSupported`, `stream` answers 400. The error type lists `Serve.WireEncodeFailed` because `stream` shares its read path with `state`, but only `state` fails with it.
 
 ## `Serve.state`
 
@@ -319,11 +319,11 @@ declare function state<C extends StreamAddress.Collections, K, RD, RE>(
 same<typeof state, typeof Serve.state>(true);
 ```
 
-`state` serves a Durable State change stream with replay-from-start recovery. It follows the version, resume, and fault rules of [`stream`](#servestream), with the state headers.
+`state` serves the change stream of a Durable State address with the state version and contract headers. It follows the version, resume, and fault rules of [`stream`](#servestream).
 
-The handler passes stored control messages through in order with the changes. It does not create snapshots. A request with `x-streamsy-state-reset: snapshot` answers 400. See [State routes](/docs/http/serve#state-routes).
+`state` sends stored control messages in order with the changes. It does not create snapshots, and it answers a request with `x-streamsy-state-reset: snapshot` with 400. See [State routes](/docs/http/serve#state-routes).
 
-The contract fingerprint includes the collection names and their key fields. When collection metadata fails validation, the handler fails with `Serve.WireEncodeFailed`.
+The contract fingerprint of `state` includes the collection names and their key fields. When the collection metadata of the address does not decode, `state` fails with `Serve.WireEncodeFailed`.
 
 ## `Serve.value`
 
@@ -348,11 +348,11 @@ declare const value: <A, I extends CanonicalValue, E, R, RE>(
 same<typeof value, typeof Serve.value>(true);
 ```
 
-`value` runs `compute`, encodes the result with `schema`, and serves canonical JSON with an ETag. Errors from `compute` remain in the Effect error channel. A schema encoding failure or a non-finite JSON number fails with `Serve.WireEncodeFailed`.
+`value` runs `compute`, encodes the result with `schema`, and answers with the result as canonical JSON and an ETag. When `compute` fails, `value` fails with the same error. When `schema` cannot encode the result, or the encoded value holds a non-finite number, `value` fails with `Serve.WireEncodeFailed`.
 
-When the request's value contract header differs from the fingerprint, `value` fails with `Serve.ContractChanged` before it runs `compute`. The fingerprint covers the route, the cache policy, and `options.contract`.
+When the request sends a value contract header that differs from the fingerprint, `value` fails with `Serve.ContractChanged` before it runs `compute`. The fingerprint covers the route, the cache policy, and `options.contract`.
 
-When `if-none-match` contains `*` or the current ETag, `value` answers 304. It accepts weak ETags and comma-separated tags. It still runs `compute` and encodes the value before that comparison. A HEAD request also computes and encodes the value, but returns an empty body.
+When `if-none-match` holds `*` or the current ETag, `value` answers 304. The header can list several tags separated by commas, and a weak tag matches its strong form. `value` runs `compute` and encodes the result before it compares the tags. A HEAD request also runs `compute`, and gets the headers with an empty body.
 
 ## `Serve.layer`
 
@@ -384,9 +384,9 @@ declare const layer: <
 same<typeof layer, typeof Serve.layer>(true);
 ```
 
-`layer` serves `routes` through `HttpRouter.serve` and provides the shutdown signal for live reads. The host supplies storage, a listener, and its runtime's `runMain`.
+`layer` serves `routes` with `HttpRouter.serve` and provides the `ShutdownSignal` that live reads watch. The host provides the storage Layer and the listener Layer, and runs the result with the `runMain` of its runtime.
 
-Before the serve Layer closes, the drain answers a parked long poll with 204, its offset, and its cursor. An open SSE body ends after its last whole batch. The drain waits until no live read runs or `drainTimeout` passes. The serve Layer then interrupts any handler that still runs. The default timeout is 2 seconds.
+When the Layer closes, it drains live reads first. A parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The Layer waits until no live read runs or until `drainTimeout` passes, and then interrupts any handler that still runs. The default `drainTimeout` is 2 seconds.
 
 See [Long-running hosts](/docs/http/serve#long-running-hosts) for the Layer and runtime setup.
 
@@ -403,9 +403,9 @@ declare const teardown: Runtime.Teardown;
 same<typeof teardown, typeof Serve.teardown>(true);
 ```
 
-`teardown` sets the exit code after a long-running host drains. Pass it to the runtime's `runMain` as `{ teardown: Serve.teardown }`.
+`teardown` chooses the process exit code when a long-running host stops. Pass it to the `runMain` of your runtime as `{ teardown: Serve.teardown }`.
 
-Every interrupt-only exit maps to 0, including an interrupt that no OS signal caused. Other exits use `Runtime.defaultTeardown`, so startup failures remain non-zero. A `Layer.launch` main ends only on failure or interruption.
+When the main Effect ends with interrupts only, `teardown` exits with code 0, whether or not an OS signal caused the interrupt. It passes every other exit to `Runtime.defaultTeardown`, so a startup failure still exits with a non-zero code. A `Layer.launch` main ends only on a failure or an interrupt.
 
 ## `Serve.ReadOptions`
 
@@ -423,7 +423,7 @@ interface ReadOptions extends Http.ReadOptions {
 same<ReadOptions, Serve.ReadOptions>(true);
 ```
 
-`ReadOptions` holds the read policy and explicit contract revision for `mount`, `stream`, and `state`.
+`ReadOptions` holds the read settings of `mount`, `stream`, and `state`, and an optional contract revision.
 
 | Field             | Meaning                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------ |
@@ -431,7 +431,7 @@ same<ReadOptions, Serve.ReadOptions>(true);
 | `cacheVisibility` | `private` or `public` in the read's `cache-control` header. The default is `private` |
 | `contract`        | Extra metadata in the contract fingerprint. The default is `null`                    |
 
-The SSE deadline must be finite and positive. When the handler runs, an invalid deadline causes a `RangeError` defect from [`Http.read`](/docs/reference/core/http#httpread). Set `contract` when a schema changes without a change to the stream address or collection metadata.
+`sseDeadlineMs` must be finite and positive. When it is not, [`Http.read`](/docs/reference/core/http#httpread) dies with a `RangeError` when the handler runs. Change `contract` when a schema changes but the stream address and the collection metadata do not.
 
 ## `Serve.ValueOptions`
 
@@ -453,16 +453,16 @@ interface ValueOptions {
 same<ValueOptions, Serve.ValueOptions>(true);
 ```
 
-`ValueOptions` holds the cache policy and explicit contract revision for `value`.
+`ValueOptions` holds the cache policy of `value` and an optional contract revision.
 
 | Field                  | Meaning                                                                 |
 | ---------------------- | ----------------------------------------------------------------------- |
 | `cache.visibility`     | `private` or `public` in `cache-control`                                |
 | `cache.maxAgeSeconds`  | The `max-age` value in seconds                                          |
-| `cache.mustRevalidate` | Whether `cache-control` includes `must-revalidate`                      |
+| `cache.mustRevalidate` | `true` to add `must-revalidate` to `cache-control`                      |
 | `contract`             | Extra metadata in the value contract fingerprint. The default is `null` |
 
-When `cache` is absent, the policy is `private, max-age=0, must-revalidate`. When `cache` is present, all three cache fields are required. Set `contract` when a schema or computation changes without a change to the route or cache policy.
+When `cache` is absent, the policy is `private, max-age=0, must-revalidate`. When `cache` is present, all three cache fields are required. Change `contract` when the schema or the computation changes but the route and the cache policy do not.
 
 ## `Serve.LayerOptions`
 
@@ -496,4 +496,4 @@ same<
 >(true);
 ```
 
-`LayerOptions` adds `drainTimeout` to the options of `HttpRouter.serve`. `drainTimeout` bounds the wait for live reads to end, with a default of 2 seconds. The other fields retain the router's meanings.
+`LayerOptions` holds the options of `HttpRouter.serve` and one more field, `drainTimeout`. `drainTimeout` is the longest time that `layer` waits for live reads to end, and defaults to 2 seconds. The other fields mean what they mean for `HttpRouter.serve`.

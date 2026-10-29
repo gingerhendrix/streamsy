@@ -1,6 +1,6 @@
 ---
 title: Action outbox
-description: Reference for the outbox exports in @streamsy/serve/action/outbox. They store delivery decisions and retry state.
+description: Reference for the outbox exports in @streamsy/serve/action/outbox. The outbox stores each decision to deliver and its retry state.
 ---
 
 ```ts
@@ -20,7 +20,7 @@ import type { OutboxUnavailable, DeadLetterReason } from "@streamsy/serve/action
 import { Context, type Effect, type Layer, type Option } from "effect";
 ```
 
-The outbox stores each decision before a separate pass attempts delivery. See [Enqueue](/docs/projections/actions#enqueue).
+An action sink writes each decision to deliver into the outbox first. A separate [`drain`](/docs/reference/serve/action-runtime#drain) pass then reads the outbox and delivers the entries, so a process that stops before delivery loses no decision. See [Enqueue](/docs/projections/actions#enqueue).
 
 ## `makeMemoryOutboxBacking`
 
@@ -35,9 +35,9 @@ declare function makeMemoryOutboxBacking(): OutboxBacking;
 same<typeof makeMemoryOutboxBacking, typeof Real.makeMemoryOutboxBacking>(true);
 ```
 
-`makeMemoryOutboxBacking` creates an empty outbox held in the process. Each call owns a separate set of entries and idempotency keys. The backing loses its entries when the process ends.
+`makeMemoryOutboxBacking` returns an empty outbox in process memory. Each call returns a separate outbox with its own entries and idempotency keys. The entries are lost when the process ends.
 
-The backing enforces sink-and-key uniqueness and enqueue ordering. A settlement or reschedule for an unknown entry id throws an `Error` as an Effect defect.
+Like the [SQL backing](/docs/reference/serve/action-sql), it absorbs a repeated sink and idempotency key, and returns entries in enqueue order. `markDelivered`, `reschedule`, or `deadLetter` with an unknown entry id dies with an `Error`.
 
 ## `outboxStore`
 
@@ -52,7 +52,7 @@ declare function outboxStore(backing: OutboxBacking): OutboxStoreService;
 same<typeof outboxStore, typeof Real.outboxStore>(true);
 ```
 
-`outboxStore` returns `backing` as the `OutboxStore` service. It does not acquire resources or migrate storage.
+`outboxStore` returns `backing` as the service of `OutboxStore`. It opens nothing and runs no migration.
 
 ## `outboxStoreLayer`
 
@@ -69,7 +69,7 @@ declare const outboxStoreLayer: (backing: OutboxBacking) => Layer.Layer<OutboxSt
 same<typeof outboxStoreLayer, typeof Real.outboxStoreLayer>(true);
 ```
 
-`outboxStoreLayer` provides the given backing as `OutboxStore`. It constructs the service synchronously.
+`outboxStoreLayer` returns a Layer that provides `backing` as `OutboxStore`. The Layer builds the service synchronously.
 
 ## `OutboxStore`
 
@@ -88,7 +88,7 @@ same<typeof OutboxStore, typeof Real.OutboxStore>(true);
 same<OutboxStore, Real.OutboxStore>(true);
 ```
 
-`OutboxStore` is the service key that `drain` and `OutboxWakeup` require. Its service implements `OutboxStoreService`.
+`OutboxStore` is the service key that `drain` and `OutboxWakeup` require. Its service has the type `OutboxStoreService`.
 
 ## `OutboxBacking`
 
@@ -143,19 +143,19 @@ interface OutboxBacking {
 same<OutboxBacking, Real.OutboxBacking>(true);
 ```
 
-`OutboxBacking` defines the outbox's storage operations. Every operation can fail with `OutboxUnavailable`.
+`OutboxBacking` is the storage contract of an outbox. Every operation can fail with [`OutboxUnavailable`](/docs/reference/serve/action-errors#outboxunavailable).
 
-| Method          | Rule                                                                                                                                                                                                       |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enqueue`       | Absorbs a draft when its sink and idempotency key already exist, including settled entries. New entries start pending with zero attempts and are due at `enqueuedAtMs`                                     |
-| `nextDue`       | Excludes settled entries. Returns the earliest pending deadline by default, or the oldest pending entry's deadline when `ordered` is `true`. Returns `Option.none()` when no entry is pending              |
-| `claimDue`      | Returns pending entries in enqueue order, up to `limit`. By default, excludes entries due after `nowMs`. With `ordered: true`, includes future entries so the caller can stop at the first future deadline |
-| `markDelivered` | Records success, the supplied attempt count, and the settlement time. Clears `lastError`                                                                                                                   |
-| `reschedule`    | Keeps the entry pending and records the supplied attempt count, retry time, and error detail                                                                                                               |
-| `deadLetter`    | Records the dead state, supplied attempt count, reason, error detail, and settlement time                                                                                                                  |
-| `list`          | Returns all entries of the sink in enqueue order, including settled entries                                                                                                                                |
+| Method          | Rule                                                                                                                                                                                               |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enqueue`       | Absorbs a draft whose sink and idempotency key already exist, even when that entry is settled. A new entry starts pending with zero attempts, and is due at `enqueuedAtMs`                         |
+| `nextDue`       | Returns the earliest due time of the pending entries. With `ordered: true`, returns the due time of the oldest pending entry instead. Returns `Option.none()` when no entry is pending             |
+| `claimDue`      | Returns up to `limit` pending entries in enqueue order. By default, leaves out entries due after `nowMs`. With `ordered: true`, includes them, so the caller can stop at the first future due time |
+| `markDelivered` | Marks the entry delivered, records the given attempt count and settlement time, and clears `lastError`                                                                                             |
+| `reschedule`    | Keeps the entry pending, and records the given attempt count, retry time, and error detail                                                                                                         |
+| `deadLetter`    | Marks the entry dead, and records the given attempt count, reason, error detail, and settlement time                                                                                               |
+| `list`          | Returns every entry of the sink in enqueue order, settled entries included                                                                                                                         |
 
-For `nextDue`, `claimDue`, and `list`, an undefined `partitionId` selects every lane of the sink. `claimDue` reads entries without changing their state or taking a durable lease. The runtime's permit serializes drains that share one service object and sink. It does not coordinate separate processes or service objects.
+For `nextDue`, `claimDue`, and `list`, an undefined `partitionId` selects every lane of the sink. `claimDue` does not change the state of an entry or take a durable lease. The runtime runs one `drain` at a time for each pair of service object and sink. It does not coordinate separate processes or separate service objects.
 
 ## `OutboxStoreService`
 
@@ -190,17 +190,17 @@ interface OutboxDraft {
 same<OutboxDraft, Real.OutboxDraft>(true);
 ```
 
-`OutboxDraft` holds a delivery decision before the outbox assigns an entry id.
+`OutboxDraft` is one decision to deliver, before the outbox gives it an entry id.
 
-| Field            | Meaning                                                  |
-| ---------------- | -------------------------------------------------------- |
-| `sink`           | Sink name                                                |
-| `partitionId`    | Lane selected by the sink                                |
-| `idempotencyKey` | Durable identity within the sink, shared across lanes    |
-| `payload`        | Encoded JSON text                                        |
-| `enqueuedAtMs`   | Enqueue time and initial retry deadline, in milliseconds |
+| Field            | Meaning                                                            |
+| ---------------- | ------------------------------------------------------------------ |
+| `sink`           | The sink name                                                      |
+| `partitionId`    | The lane that `partitionBy` returned                               |
+| `idempotencyKey` | The idempotency key, unique in the sink across all lanes           |
+| `payload`        | The payload as JSON text                                           |
+| `enqueuedAtMs`   | The enqueue time in milliseconds, which is also the first due time |
 
-[`draftsFor`](/docs/reference/serve/action-runtime#draftsfor) constructs drafts from a sink and its payloads. Enqueue the drafts in the same transaction as the fact that causes the action.
+[`draftsFor`](/docs/reference/serve/action-runtime#draftsfor) builds drafts from a sink and its payloads. Enqueue the drafts in the same transaction as the fact that causes the action.
 
 ## `OutboxEnqueueReport`
 
@@ -217,7 +217,7 @@ interface OutboxEnqueueReport {
 same<OutboxEnqueueReport, Real.OutboxEnqueueReport>(true);
 ```
 
-`OutboxEnqueueReport` counts newly stored drafts in `enqueued` and repeated sink-and-key pairs in `absorbed`. An absorbed draft does not replace the stored payload or partition.
+`OutboxEnqueueReport` counts the new entries in `enqueued`, and the drafts whose sink and idempotency key already exist in `absorbed`. An absorbed draft does not replace the stored payload or lane.
 
 ## `OutboxEntry`
 
@@ -246,24 +246,24 @@ interface OutboxEntry {
 same<OutboxEntry, Real.OutboxEntry>(true);
 ```
 
-`OutboxEntry` holds a stored delivery and its current retry or settlement state.
+`OutboxEntry` is one stored delivery, with its retry or settlement state.
 
-| Field              | Meaning                                                      |
-| ------------------ | ------------------------------------------------------------ |
-| `id`               | Monotonic enqueue order                                      |
-| `sink`             | Sink name                                                    |
-| `partitionId`      | Delivery lane                                                |
-| `idempotencyKey`   | Durable identity within the sink                             |
-| `payload`          | Stored JSON text                                             |
-| `state`            | Pending, delivered, or dead                                  |
-| `attempts`         | Attempts already spent. Zero before the first attempt        |
-| `nextAttemptAtMs`  | Earliest next attempt time, in milliseconds                  |
-| `lastError`        | Most recent failure detail, or `undefined`                   |
-| `deadLetterReason` | Reason retries stopped, or `undefined`                       |
-| `enqueuedAtMs`     | Original enqueue time, in milliseconds                       |
-| `settledAtMs`      | Delivery or dead-letter time, or `undefined` while unsettled |
+| Field              | Meaning                                                                     |
+| ------------------ | --------------------------------------------------------------------------- |
+| `id`               | The enqueue order. Each new entry gets a higher id                          |
+| `sink`             | The sink name                                                               |
+| `partitionId`      | The lane of the entry                                                       |
+| `idempotencyKey`   | The idempotency key, unique in the sink                                     |
+| `payload`          | The stored JSON text                                                        |
+| `state`            | `pending`, `delivered`, or `dead`                                           |
+| `attempts`         | The number of attempts made. 0 before the first attempt                     |
+| `nextAttemptAtMs`  | The earliest time of the next attempt, in milliseconds                      |
+| `lastError`        | The detail of the last failure, or `undefined`                              |
+| `deadLetterReason` | The reason why the entry was dead-lettered, or `undefined`                  |
+| `enqueuedAtMs`     | The enqueue time, in milliseconds                                           |
+| `settledAtMs`      | The delivery or dead-letter time, or `undefined` while the entry is pending |
 
-The store retains delivered and dead entries. Their sink-and-key identities continue to absorb repeated enqueues.
+The outbox keeps delivered and dead entries, so it still absorbs a later enqueue with the same sink and idempotency key.
 
 ## `OutboxEntryState`
 
@@ -277,4 +277,4 @@ type OutboxEntryState = "pending" | "delivered" | "dead";
 same<OutboxEntryState, Real.OutboxEntryState>(true);
 ```
 
-`OutboxEntryState` distinguishes work awaiting an attempt from delivered and dead entries. Only pending entries appear in `nextDue` and `claimDue`.
+`OutboxEntryState` is `pending` until the entry is delivered or dead-lettered. `nextDue` and `claimDue` read only pending entries.

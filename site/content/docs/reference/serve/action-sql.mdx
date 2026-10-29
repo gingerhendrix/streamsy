@@ -11,7 +11,7 @@ import type { OutboxUnavailable } from "@streamsy/serve/action/errors";
 import type { OutboxBacking } from "@streamsy/serve/action/outbox";
 ```
 
-The SQL backing stores delivery state alongside the facts that cause an action. See [Enqueue](/docs/projections/actions#enqueue).
+The SQL backing stores the outbox in the database of your SQL client, so an enqueue can commit in the same transaction as the fact that caused it. See [Enqueue](/docs/projections/actions#enqueue).
 
 ## `migrateOutbox`
 
@@ -30,11 +30,11 @@ declare function migrateOutbox(
 same<typeof migrateOutbox, typeof Real.migrateOutbox>(true);
 ```
 
-`migrateOutbox` creates the `streamsy_effect_outbox` table and its identity, deadline, and enqueue-order indexes. Repeating the migration preserves existing entries.
+`migrateOutbox` creates the `streamsy_effect_outbox` table and three indexes: a unique index on the sink and idempotency key, one on the due time, and one on the enqueue order. A second run keeps the existing entries.
 
-The supported dialects are SQLite, Postgres, and MySQL. An unsupported dialect fails with `OutboxUnavailable`. SQL failures also become `OutboxUnavailable`.
+`migrateOutbox` supports SQLite, Postgres, and MySQL. On any other dialect, and on any SQL error, it fails with `OutboxUnavailable`.
 
-On MySQL, run the migration at startup, outside a transaction. When the supplied client has an active transaction, the migration fails with `OutboxUnavailable` and operation `migrateOutbox` before it issues DDL.
+On MySQL, run the migration at startup, outside a transaction. When the client has an open transaction, `migrateOutbox` fails with `OutboxUnavailable` and operation `migrateOutbox` before it runs any DDL.
 
 ## `createSqlOutboxBacking`
 
@@ -50,11 +50,11 @@ declare function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking
 same<typeof createSqlOutboxBacking, typeof Real.createSqlOutboxBacking>(true);
 ```
 
-`createSqlOutboxBacking` constructs an outbox on the supplied SQL client. Its operations join that client's transaction, so an enqueue can commit or roll back with the fact that caused it. The factory itself performs no migration.
+`createSqlOutboxBacking` returns an outbox on the SQL client. Its operations join the open transaction of the client, so an enqueue commits or rolls back with the fact that caused it. `createSqlOutboxBacking` runs no migration itself.
 
-On SQLite and Postgres, each operation runs the idempotent migration before its statement. The backing does not cache readiness, so a rollback of the first migration does not prevent a later retry.
+On SQLite and Postgres, each operation runs the migration before its statement. The backing does not remember that the migration ran, so when a transaction rolls back the first migration, the next operation runs it again.
 
-On MySQL, each operation checks for the three indexes and performs no DDL. Missing migration fails with `OutboxUnavailable` and operation `ready`. Run `migrateOutbox` before exposing the store.
+On MySQL, each operation checks that the three indexes exist, and runs no DDL. When they are missing, the operation fails with `OutboxUnavailable` and operation `ready`. Run `migrateOutbox` before you provide the store.
 
 | MySQL field      | Maximum code points |
 | ---------------- | ------------------- |
@@ -62,8 +62,8 @@ On MySQL, each operation checks for the three indexes and performs no DDL. Missi
 | `partitionId`    | 255                 |
 | `idempotencyKey` | 512                 |
 
-When a draft exceeds a MySQL key limit, `enqueue` fails with `OutboxUnavailable` and operation `enqueue`. MySQL compares keys with a binary, NO PAD collation, so case and trailing spaces distinguish keys.
+When a field of a draft is longer than its MySQL limit, `enqueue` fails with `OutboxUnavailable` and operation `enqueue`. MySQL compares these keys with a binary, NO PAD collation, so two keys that differ only in case or in trailing spaces are different keys.
 
-The unique identity is `(sink, idempotencyKey)`. Duplicate enqueues leave the stored payload and partition unchanged. Without a caller transaction, an enqueue of several drafts can store earlier drafts before a later draft fails.
+The unique key of an entry is `(sink, idempotencyKey)`. A repeated enqueue leaves the stored payload and lane unchanged. Outside a transaction, an enqueue of several drafts can store the first drafts and then fail on a later one.
 
-The backing converts BIGINT ids and times to JavaScript numbers. When a stored state or dead-letter reason is unknown to this build, row decoding throws a `TypeError` as an Effect defect.
+The backing reads `BIGINT` ids and times as JavaScript numbers. When a row holds a state or a dead-letter reason that this version does not know, reading it dies with a `TypeError`.
