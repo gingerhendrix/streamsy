@@ -1,25 +1,9 @@
 ---
 title: How the reference works
-description: Reference pages for every public entry point of the four @streamsy packages. The site build checks every signature on these pages against the package.
+description: Reference pages for every public entry point of the @streamsy packages.
 ---
 
-The guides show how to use Streamsy. The reference describes each public export of `@streamsy/core`, `@streamsy/projection`, `@streamsy/storage`, and `@streamsy/serve`, and the rules that apply to it.
-
-The reference covers every public entry point of the four packages. `@streamsy/core/internal` is not public, so it has no pages.
-
-## How the pages are organized
-
-Each package has one folder in the sidebar and one table below. A page covers one namespace, one entry point, or one group of related exports. A large namespace takes more than one page: `Projection` has a page for its constructors and a page for its runners.
-
-Each page starts with the import that its signatures use. Each export then has a section, headed by its name as you write it after that import. A section has three parts:
-
-- the signature
-- what the export does, and the rules that the signature does not show
-- a link to the guide that uses the export, when one exists
-
-## How the build checks the pages
-
-The site build type-checks every `ts` fence on these pages with Twoslash, so a wrong import path or export name fails the build. Each signature fence also has a hidden check. The check compiles only when the shown declaration has the same type as the real export. When a package changes and a page does not, the build fails and names the page and the line.
+The guides show how to use Streamsy. The reference describes each public export of `@streamsy/core`, `@streamsy/projection`, `@streamsy/storage`, and `@streamsy/serve`, organised by package and topic.
 
 ## `@streamsy/core`
 
