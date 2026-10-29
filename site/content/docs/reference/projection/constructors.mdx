@@ -29,15 +29,15 @@ The signatures use types that have no exported name, such as `Common`, `Addresse
 
 Every constructor takes the fields of `Common`:
 
-| Field        | Meaning                                                                          |
-| ------------ | -------------------------------------------------------------------------------- |
-| `id`         | The projection name. It is part of the checkpoint key                            |
-| `version`    | The declared version. The default is `1`                                         |
-| `generation` | The checkpoint generation. The default is `1`. A new generation starts from zero |
-| `params`     | The param codecs, by name. Use `{}` for a projection with no params              |
-| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both        |
+| Field        | Meaning                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `id`         | The projection name. It is part of the checkpoint key                                                                    |
+| `version`    | The declared version. The default is `1`                                                                                 |
+| `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start |
+| `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                      |
+| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                |
 
-Each stream declaration in `inputs` and `outputs` must declare a subset of `params`, with the same types. When one does not, the compiler reports its field as `never`. A fixed address takes no params from the projection.
+Each stream declaration in `inputs` and `outputs` must declare a subset of `params`, with the same types. When one does not, the type of its field becomes `never`, and the compiler rejects the definition. A fixed address takes no params from the projection.
 
 ## Constructors
 
@@ -267,12 +267,12 @@ same<
 >(true);
 ```
 
-`fold` declares a projection that folds each entry of a unit into one state value. The runner calls `fold` once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. `fold` returns the next value, or an Effect of it.
+`fold` declares a projection that folds each entry of a unit into one state value. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
 
 - `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
-- `commit` is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also accepts a `Folded` result.
+- `commit` is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also fits `fold`.
 - After each unit, the runner encodes the value with `state.schema`. When the value does not encode, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
-- A step with external effects runs again when a unit is retried. Keep the step free of external effects, or use `Commit.transaction`.
+- When the runner retries a unit, it calls the handler again for each entry. Keep the handler free of external effects. With `Commit.transaction`, the SQL of the handler commits with the checkpoint.
 
 ### `Projection.process`
 
@@ -514,10 +514,10 @@ same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
 same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 ```
 
-`process` declares a projection that runs effects. The runner calls `process` once for each unit, with one slice for each input. `process` keeps no state and writes no outputs. [`Projection.each`](/docs/reference/projection/runners#projectioneach) adapts a handler for one entry.
+`process` declares a projection that runs an effect for each unit. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state and writes no outputs. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
 
 - `commit` is required. `Commit.transaction` runs `process` in the SQL transaction of the checkpoint, and `Commit.atLeastOnce` runs it at least once.
-- `prepare` is optional and needs `Commit.transaction`. With another Commit, `process` throws a `RangeError` when you call it.
+- `prepare` is optional and needs `Commit.transaction`, alone or wrapped by `Commit.withCompensation`. With another Commit, the `process` call throws a `RangeError`.
 - `Commit.transaction` runs `prepare` before it opens the transaction, and passes its result to `process` as `prepared`. A retry of the unit runs `prepare` again.
 
 ### `Projection.emit`
@@ -748,15 +748,15 @@ same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
 same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 ```
 
-`emit` declares a projection that maps each entry to output items. The runner calls `emit` once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order. `emit` returns an [`Emits`](/docs/reference/projection/declarations#emits) object, or an Effect of it, and keeps no state.
+`emit` declares a projection that maps each entry to output items. The runner calls the `emit` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order. The handler returns an [`Emits`](/docs/reference/projection/declarations#emits) object, or an Effect of it. The projection keeps no state.
 
 - `outputs` names the output streams: stream declarations, fixed addresses, or both. Each output must be a JSON or State stream.
-- The `Emits` object holds an array of items for each output name. A missing name emits nothing. A name that `outputs` does not declare is a compile error on `undeclaredOutput`.
+- The `Emits` object holds an array of items for each output name. A missing name emits nothing. For a name that `outputs` does not declare, the compiler reports an error on `undeclaredOutput`.
 - `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` appends in the SQL transaction of the checkpoint.
 - `at` throws a `RangeError` when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
-- When an item array is not an array, or a row change does not fit its collection, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
+- When the value of an output name is not an array, or a change does not fit its collection, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 
-The bound projection also has `streams`: the address of each output after `at` binds the params.
+The bound projection also has `streams`, which holds the address of each output after `at` binds the params.
 
 ### `Projection.mapAccum`
 
@@ -1013,7 +1013,7 @@ same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
 same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 ```
 
-`mapAccum` declares a projection that threads a state value through each entry and emits output items. The runner calls `mapAccum` once for each entry, with the value that the previous call returned. `mapAccum` returns `[state, emits]`, or an Effect of it.
+`mapAccum` declares a projection that keeps a state value and emits output items for each entry. The runner calls the `mapAccum` handler once for each entry, with the state that the previous call returned. The handler returns `[state, emits]`, or an Effect of it.
 
 `state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required: `Commit.producer` or `Commit.transaction`.
 
@@ -1272,9 +1272,9 @@ same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
 same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 ```
 
-`mapAccumBatch` declares a projection that computes the next state value and the output items once for each unit. The runner calls `mapAccumBatch` with the whole batch. It returns `[state, emits]`, or an Effect of it.
+`mapAccumBatch` declares a projection that computes the next state value and the output items once for each unit. The runner calls the `mapAccumBatch` handler with the [`Slices`](/docs/reference/projection/units#slices) of the unit. The handler returns `[state, emits]`, or an Effect of it.
 
-The rules of [`Projection.mapAccum`](#projectionmapaccum) apply. A unit can hold any number of entries, so the handler must give the same final rows for any split of the input into units. The emitted history can differ.
+The rules of [`Projection.mapAccum`](#projectionmapaccum) apply. A unit can hold any number of entries, so the handler must give the same final rows for any split of the input into units. The emitted items can differ.
 
 ### `Projection.wake`
 
@@ -1487,13 +1487,13 @@ same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
 same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 ```
 
-`wake` declares a wake projection: each unit of one source stream writes one row to one wake stream. `input` is the source, and `output` is a stream class from [`Streamsy.wake`](/docs/reference/core/wake#streamsywake). Both must declare a subset of `params`.
+`wake` declares a wake projection, which writes one row to a wake stream for each unit of a source stream. `input` is the source, and `output` is a stream class from [`Streamsy.wake`](/docs/reference/core/wake#streamsywake). Both must declare a subset of `params`.
 
-- Each unit appends one upsert `{ stream, offset, closed? }` with `Commit.producer`. Several source writes in one unit give one row, and a retry of the append answers `Duplicate`.
+- Each unit appends one upsert `{ stream, offset, closed? }` with `Commit.producer`. Several source writes in one unit give one row, and the server answers a retry of the append with `Duplicate`.
 - `offset` is the `nextOffset` of the source slice. `closed` is `true` when the source is closed.
-- When the source is removed or expires, the binding appends a delete of its row, and the runner then forgets the binding.
+- When the source is removed or expires, the projection appends a delete of its row, and the runner then forgets the binding.
 - `Commit.producer` creates a missing wake stream on its own storage owner. A wake stream on another owner must exist before the first append.
-- The declaration needs `CheckpointStore`. It has no `commit` field and keeps the state `null`.
+- The definition has no `commit` field. The declaration needs `CheckpointStore`, and its state is always `null`.
 
 ```ts
 // @filename: streams.ts
@@ -1522,7 +1522,7 @@ const filesWake = Projection.wake({
 
 ## Types with no exported name
 
-The constructor signatures use these types. The package does not export them, so you cannot import them. They are shown here so that you can read the signatures.
+The constructor signatures use these types. The package does not export them, so you cannot import them. This section shows them so that you can read the signatures.
 
 ```ts
 // ---cut-start---

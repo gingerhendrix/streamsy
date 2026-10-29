@@ -123,7 +123,7 @@ same<typeof pass, typeof Projection.pass>(true);
 - When the checkpoint holds a pinned unit, `pass` reads the pinned ranges again and runs that unit first. A Commit that does not pin fails with reason `invalid-record`.
 - When an input is gone, `pass` runs one final unit with `gone` on its slice, then forgets the binding. Its status is `source-closed`.
 - A handler failure fails `pass` with the error of the handler. `pass` does not wrap it.
-- The requirements hold the handler services `R` without the services `P` that the Commit provides, the Commit services `Q`, the output services `OR`, and the input stream services.
+- The Effect requires the handler services `R` minus the services `P` that the Commit provides, and also the Commit services `Q`, the output services `OR`, and the services of the input streams.
 
 ### `Projection.run`
 
@@ -300,10 +300,10 @@ declare function follow<Inputs extends InputMap, E, R, Q, Result, P, S = never, 
 same<typeof follow, typeof Projection.follow>(true);
 ```
 
-`follow` returns a pull stream of cycles. Each cycle runs [`run`](#projectionrun) to caught up, closed, or `limit`, and each element is the [`Progress`](/docs/reference/projection/units#progress) of one cycle. To run the stream is to be the writer of the key.
+`follow` returns a pull stream of cycles. Each cycle runs [`run`](#projectionrun) to caught up, closed, or `limit`, and each element is the [`Progress`](/docs/reference/projection/units#progress) of one cycle. While the stream runs, it is the writer of the projection key.
 
 - The stream emits after the first cycle, even when it commits nothing. Then it emits after each cycle that commits a unit or reaches `limit`, and after the last cycle when every input is closed or an input is gone. Then it ends.
-- After a caught-up cycle, `follow` waits for a change on any input, for at most `repairIntervalMs`. A wait that finds no input emits nothing.
+- After a caught-up cycle, `follow` waits for a change on any input, for at most `repairIntervalMs`. A wait that ends with no change emits nothing.
 - The next cycle runs only when the consumer pulls. A slow consumer gets one element for all the input that arrived while it worked.
 - `follow` retries a `ProjectionFault` whose `retryable` is `true`, and logs a warning for each retry. It uses `options.retry`, then [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry). Other failures fail the stream.
 - `follow` checks `limit` and `repairIntervalMs` at the first pull. A bad value fails the stream with reason `invalid-options`.
@@ -391,11 +391,11 @@ same<typeof attach, typeof Projection.attach>(true);
 `attach` returns a Layer that runs a projection whenever a local commit writes one of its inputs. It takes the declaration, not a bound projection. Use it on long-lived hosts, such as Bun and Node. On a Cloudflare object, use [`ProjectionWakeup`](#projectionwakeup).
 
 - The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
-- For each written stream id, the `parse` of an input gives the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
+- For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
 - `attach` throws a `RangeError` when `limit` is not a positive safe integer.
 - A failed run logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
-- The set lives in memory. After a crash between a commit and its run, the binding stays late until its source gets its next write.
+- The set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
 - An input on another storage owner never commits here, so it never triggers a run.
 - A binding whose source was removed before its first run is dropped, with a warning.
 
@@ -496,14 +496,14 @@ declare const ProjectionWakeup: {
 same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 ```
 
-`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply. Acquire it in the scope of the object layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
+`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply. Acquire it in the scope of the object Layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
 
-| Field   | Meaning                                                                                   |
-| ------- | ----------------------------------------------------------------------------------------- |
-| `name`  | `streamsy/projection/` and the URI-encoded projection id                                  |
-| `next`  | The current time while a binding has work, or `None` when no binding has work             |
-| `run`   | Runs each binding with work. `more` is `true` when a binding still has work after the run |
-| `retry` | `options.retry`, or the `ProjectionRetry` schedule                                        |
+| Field   | Meaning                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------------- |
+| `name`  | `streamsy/projection/` followed by the URI-encoded projection id                                              |
+| `next`  | The current time while a binding has work, or `None` when no binding has work                                 |
+| `run`   | The Effect that runs each binding with work. Its `more` is `true` when a binding still has work after the run |
+| `retry` | `options.retry`, or the `ProjectionRetry` schedule                                                            |
 
 ## Reads
 
@@ -675,7 +675,7 @@ same<typeof current, typeof Projection.current>(true);
 
 - `current` reads pages until a page has no items. A growing input can delay the result.
 - A `mapAccum` or `mapAccumBatch` handler computes the state, and `current` drops the emitted items.
-- A pinned unit is folded from the committed offsets.
+- `current` reads a pinned unit again from the committed offsets, as part of the tail.
 - With no checkpoint, `current` folds each input from the start. The handler must give the same result for any split of the input into pages.
 
 ### `Projection.decide`

@@ -78,7 +78,7 @@ same<typeof Real.CheckpointStore, typeof Checkpoint.CheckpointStore>(true);
 
 Every storage host provides `CommitBoundary` and `OwnerRecords`, including `MemoryStorage.layer`. With `CheckpointStore.layer`, the checkpoints and the streams on that owner commit in one transaction, and `Commit.producer` can create a missing output on that owner. A SQL host keeps the records in its `streamsy_owner_records` table.
 
-`CheckpointStore.layerMemory` shares no owner with the streams, so processing over it is at least once. Use it for rebuilt values, tests, and a remote host. Each build of the Layer starts with no records.
+`CheckpointStore.layerMemory` shares no owner with the streams, so a projection over it processes each unit at least once. Use it for rebuilt values, tests, and a remote host. Each build of the Layer starts with no records.
 
 ### `CheckpointStoreApi`
 
@@ -130,7 +130,7 @@ declare function fromStore(store: EncodedStore): CheckpointStoreApi;
 same<typeof fromStore, typeof real>(true);
 ```
 
-`fromStore` builds a [`CheckpointStoreApi`](#checkpointstoreapi) over an [`EncodedStore`](#encodedstore). Both shipped Layers use it. Exported from `@streamsy/projection/checkpoint` only.
+`fromStore` builds a [`CheckpointStoreApi`](#checkpointstoreapi) over an [`EncodedStore`](#encodedstore). Both built-in Layers use it. Only `@streamsy/projection/checkpoint` exports it.
 
 - It stores each record under [`recordKey(key)`](#recordkey), as a JSON object with the record and a version number. The token is the version as a string.
 - `compareAndSet` loads the record, compares the token, and writes the next version, all in one `withTransaction` call.
@@ -156,7 +156,7 @@ interface EncodedStore {
 same<EncodedStore, Checkpoint.EncodedStore>(true);
 ```
 
-`EncodedStore` is a store of encoded strings by key, which [`fromStore`](#fromstore) turns into a checkpoint store. Exported from `@streamsy/projection/checkpoint` only.
+`EncodedStore` is a store of encoded strings by key, which [`fromStore`](#fromstore) turns into a checkpoint store. Only `@streamsy/projection/checkpoint` exports it.
 
 `read` returns `None` for a key with no value. `withTransaction` must run `body` so that no other write to the same key happens between its read and its write. `remove` ignores a key with no value.
 
@@ -196,7 +196,7 @@ declare function recordKey(key: ProjectionKey): string;
 same<typeof recordKey, typeof real>(true);
 ```
 
-`recordKey` returns the storage key of a record: a JSON array of `"streamsy.projection.v1"`, the id, the version, the generation, and the params as JSON with sorted keys. Exported from `@streamsy/projection/checkpoint` only.
+`recordKey` returns the storage key of a record: a JSON array of `"streamsy.projection.v1"`, the id, the version, the generation, and the params as JSON with sorted keys. Only `@streamsy/projection/checkpoint` exports it.
 
 ```ts
 import { recordKey } from "@streamsy/projection/checkpoint";
@@ -229,7 +229,7 @@ interface Identity {
 same<Identity, Real.Identity>(true);
 ```
 
-An `Identity` is what a runner needs to find and check the record of a bound projection: the fields of a [`ProjectionKey`](#projectionkey) and the bound inputs. Every bound projection is an `Identity`. Exported from `@streamsy/projection` only.
+An `Identity` is what a runner needs to find and check the record of a bound projection: the fields of a [`ProjectionKey`](#projectionkey) and the bound inputs. Every bound projection is an `Identity`. Only `@streamsy/projection` exports it.
 
 ### `Loaded`
 
@@ -250,7 +250,7 @@ same<Loaded, Real.Loaded>(true);
 same<Loaded, Checkpoint.Loaded>(true);
 ```
 
-`load` returns a `Loaded`: the stored record, or `None`, and its token. The token is `"0"` when no record exists.
+A `Loaded` is the result of `load`: the stored record, or `None`, and its token. The token is `"0"` when no record exists.
 
 ### `CheckpointRecord`
 
@@ -301,7 +301,7 @@ A `CheckpointRecord` is the stored progress of one projection key. `CheckpointRe
 | `inputs`   | The accepted offset of each input. The next pass reads after it                                              |
 | `pending`  | A pinned unit: the range and item count of each input, and the sequence of each output for `Commit.producer` |
 | `closed`   | The inputs whose close the projection has handled                                                            |
-| `ended`    | `true` when the final unit of a removed input committed. Only `forget` remains                               |
+| `ended`    | `true` when the final unit of a removed input committed. The next pass deletes the record                    |
 | `state`    | The state as JSON                                                                                            |
 | `adapters` | The producer epoch and the next sequence of each output of `Commit.producer`                                 |
 

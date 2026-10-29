@@ -24,7 +24,7 @@ import type { Cause, Data, Effect, Layer, Pipeable } from "effect";
 import type { SqlClient } from "effect/sql";
 ```
 
-A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type picks the constructors that it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/define#commits) and [Custom Commits](/docs/projections/state#custom-commits).
+A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type decides which constructors it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/define#commits) and [Custom Commits](/docs/projections/state#custom-commits).
 
 | Commit               | Result                   | Guarantee                           | Needs                            |
 | -------------------- | ------------------------ | ----------------------------------- | -------------------------------- |
@@ -85,7 +85,7 @@ same<typeof transaction, typeof Commit.transaction>(true);
 - Only `transaction`, alone or wrapped by `withCompensation`, accepts `prepare`. It runs `prepare` before it opens the transaction.
 - A retry reads the inputs again, so a longer tail can change `unit.key`. An external call in the handler happens at least once.
 
-[`Transaction`](#transaction) supplies the transaction. A memory host has no `SqlClient`, so `transaction` needs a SQL host.
+The [`Transaction`](#transaction) service opens the transaction. A memory host has no `SqlClient`, so `transaction` needs a SQL host.
 
 ### `Commit.producer`
 
@@ -106,7 +106,7 @@ same<typeof producer, typeof Commit.producer>(true);
 `producer` appends the items of each output with a producer position, so a retry does not write a unit twice. It fits `emit`, `mapAccum`, and `mapAccumBatch`. The handler must give the same items for the same unit.
 
 1. It runs the handler.
-2. When an output has items, it saves the input ranges and the next sequence of each such output in the checkpoint. This is the pin.
+2. When an output has items, it saves the input ranges and the next sequence of each such output in the checkpoint. This write is the pin.
 3. It appends the items of each output with its own producer position. A retry sends the same positions, and the server drops the duplicates.
 4. It saves the state and the new offsets.
 
@@ -238,13 +238,13 @@ same<Commit<void>, Real.Commit<void>>(true);
 
 A `Commit` writes the units of one projection. `Result` is the handler result that it takes, `Provides` holds the services that it gives the handler, and `Requires` holds the services that it needs.
 
-| Field       | Meaning                                                               |
-| ----------- | --------------------------------------------------------------------- |
-| `name`      | A name for messages                                                   |
-| `guarantee` | How often the effects of one unit happen                              |
-| `load`      | Loads the checkpoint record of a key, and its token                   |
-| `apply`     | Runs the handler of one unit and writes the result and the checkpoint |
-| `remove`    | Deletes the checkpoint record of a key. `Projection.forget` calls it  |
+| Field       | Meaning                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| `name`      | A name for messages                                                                             |
+| `guarantee` | How often the effects of one unit happen                                                        |
+| `load`      | The function that loads the checkpoint record of a key, and its token                           |
+| `apply`     | The function that runs the handler of one unit and writes the result and the checkpoint         |
+| `remove`    | The optional function that deletes the checkpoint record of a key. `Projection.forget` calls it |
 
 A Commit with a result type that does not fit a constructor fails at the `commit:` field of the definition.
 
@@ -278,13 +278,13 @@ same<Pending<void>, Real.Pending<void>>(true);
 
 `apply` takes a `Pending`: one unit that is ready to commit.
 
-| Field    | Meaning                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------ |
-| `key`    | The checkpoint key                                                                         |
-| `unit`   | The unit, with the encoded params                                                          |
-| `loaded` | The record and the token that the runner loaded before it read the unit                    |
-| `next`   | The record to save after the unit: the new offsets, and the state from before the unit     |
-| `run`    | Runs the handler. It fails with `HandlerFailed`, and the runner restores the handler error |
+| Field    | Meaning                                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `key`    | The checkpoint key                                                                                                |
+| `unit`   | The unit, with the encoded params                                                                                 |
+| `loaded` | The record and the token that the runner loaded before it read the unit                                           |
+| `next`   | The record to save after the unit: the new offsets, and the state from before the unit                            |
+| `run`    | The Effect that runs the handler. It fails with `HandlerFailed`, and the runner unwraps the handler error from it |
 
 To save the state, put the `encoded` field of a `Folded` or `Accumulated` result into `next` as `state`.
 
@@ -304,7 +304,7 @@ interface Variance<in Result, in Provides, out Requires> {
 same<Variance<number, string, boolean>, Real.Variance<number, string, boolean>>(true);
 ```
 
-`Variance` carries the type parameters of a `Commit` under [`TypeId`](#committypeid). It has no run-time use.
+`Variance` holds the type parameters of a `Commit` under [`TypeId`](#committypeid). It has no run-time use.
 
 ### `Commit.TypeId`
 
@@ -365,7 +365,7 @@ same<Folded<number>, Commit.Folded<number>>(true);
 same<typeof Folded, typeof Commit.Folded>(true);
 ```
 
-`Folded` is the result of a `fold` handler. `value` is the state after the unit, and `encoded` is the state as JSON. The value `Commit.Folded` builds one.
+`Folded` is the result of a `fold` handler. `value` is the state after the unit, and `encoded` is the state as JSON. The constructor `Commit.Folded` builds one.
 
 ### `Emitted`
 
@@ -392,7 +392,7 @@ same<Emitted<O>, Commit.Emitted<O>>(true);
 same<typeof Emitted, typeof Commit.Emitted>(true);
 ```
 
-`Emitted` is the result of an `emit` handler. `outputs` holds the items of the unit for each output. The value `Commit.Emitted` builds one.
+`Emitted` is the result of an `emit` handler. `outputs` holds the items of the unit for each output. The constructor `Commit.Emitted` builds one.
 
 ### `Accumulated`
 
@@ -421,7 +421,7 @@ same<Accumulated<number, O>, Commit.Accumulated<number, O>>(true);
 same<typeof Accumulated, typeof Commit.Accumulated>(true);
 ```
 
-`Accumulated` is the result of a `mapAccum` or `mapAccumBatch` handler: the state after the unit, as in [`Folded`](#folded), and the output items, as in [`Emitted`](#emitted). The value `Commit.Accumulated` builds one.
+`Accumulated` is the result of a `mapAccum` or `mapAccumBatch` handler: the state after the unit, as in [`Folded`](#folded), and the output items, as in [`Emitted`](#emitted). The constructor `Commit.Accumulated` builds one.
 
 ### `OutputBatch`
 
@@ -444,7 +444,7 @@ same<OutputBatch<O>, Real.OutputBatch<O>>(true);
 same<OutputBatch<O>, Commit.OutputBatch<O>>(true);
 ```
 
-An `OutputBatch` holds the items of one unit for each output: the address after `at` bound the params, and the items in entry order. The items of a State output are State change messages. An output with no items has an empty array.
+An `OutputBatch` holds the items of one unit for each output: the address after `at` bound the params, and the items in entry order. The items of a State output are changes and State control messages. An output with no items has an empty array.
 
 ## Services
 

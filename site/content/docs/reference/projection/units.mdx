@@ -43,7 +43,7 @@ type InputMap = Record<string, Streamsy.Address<unknown, unknown>>;
 same<InputMap, Real.InputMap>(true);
 ```
 
-`InputMap` is the bound inputs of a projection: one address for each input name. The order of the names is the read order of every pass, and the order of the entries in [`Projection.items`](/docs/reference/projection/runners#projectionitems).
+`InputMap` holds the bound inputs of a projection: one address for each input name. The order of the names is the read order of every pass, and the order of the entries in [`Projection.items`](/docs/reference/projection/runners#projectionitems).
 
 ### `ItemOf`
 
@@ -93,7 +93,7 @@ A `Slice` holds the items of one input in one unit, and the read position around
 | `closed`     | `true` when the input is closed                                                        |
 | `gone`       | `true` when the input was removed or expired. The runner then forgets the binding      |
 
-A closed input with no new items still makes one unit, with `closed` on its slice. The checkpoint records the close, so the next pass does not repeat the empty unit. A removed input with a checkpoint makes one final unit with `gone`. An input with no checkpoint that is missing fails with reason `history-unavailable`.
+A closed input with no new items still makes one unit, with `closed` on its slice. The checkpoint records the close, so the next pass does not repeat the empty unit. A removed input with a checkpoint makes one final unit with `gone`. When an input is missing and has no checkpoint, the pass fails with reason `history-unavailable`.
 
 ### `Slices`
 
@@ -166,7 +166,7 @@ same<Unit<{ readonly user: string }>, Real.Unit<{ readonly user: string }>>(true
 same<Unit, Real.Unit>(true);
 ```
 
-A `Unit` describes the unit that a handler runs. A handler gets the decoded params as `params`.
+A `Unit` identifies the unit that a handler runs. A handler gets the decoded params as `params`.
 
 | Field          | Meaning                                                                                    |
 | -------------- | ------------------------------------------------------------------------------------------ |

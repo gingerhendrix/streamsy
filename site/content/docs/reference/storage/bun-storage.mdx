@@ -68,13 +68,13 @@ import { shop } from "./streams.ts";
 const storage = BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } });
 ```
 
-Before the client opens a file, the build prepares it. A `filename` of `":memory:"` skips these steps.
+Before the client opens the file, the build prepares it in three steps. The build skips them when `filename` is `":memory:"`.
 
 1. When the open may write and create, which is the default, the build creates the parent folder. A `readonly` open, or `create: false`, creates no folder and no file.
 2. When the file exists, the build reads its format. It fails with operation `migration.open` when the file holds an older Streamsy format or a newer schema version, and does not change the file.
 3. Unless the open is `readonly` or sets `disableWAL`, the build sets WAL mode and a busy timeout of 0 on the file.
 
-The client also has a busy timeout of 0 unless `client.busyTimeout` sets one. The store retries a busy transaction itself, as `transactionRetryAttempts` and `transactionRetryDelayMs` set, so a busy file does not block the event loop. A SQLite error while the file opens becomes a [`StorageFault`](/docs/reference/core/faults#storagefault) with operation `migration.open`. The fault is retryable when the file is busy or locked, and the preparation steps retry it in the same way.
+The client also has a busy timeout of 0 unless `client.busyTimeout` sets one. With a busy timeout of 0, SQLite does not wait for a locked file, so a busy file does not block the event loop. The store retries a busy transaction itself instead, as `transactionRetryAttempts` and `transactionRetryDelayMs` set. When SQLite fails while the file opens, the build fails with a [`StorageFault`](/docs/reference/core/faults#storagefault) with operation `migration.open`. The fault is retryable when the file is busy or locked, and the preparation steps retry it with the same policy.
 
 Several Bun processes can share one file. A commit in one process wakes the readers in another within `repairIntervalMs`. See [Several processes](/docs/hosting/bun#several-processes).
 
@@ -119,7 +119,7 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
 same<typeof layerProtocol, typeof BunStorage.layerProtocol>(true);
 ```
 
-`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite file, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. The file and the options follow the rules of [`layer`](#bunstoragelayer).
+`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite file, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) read and write any stream id. The file and the options follow the rules of [`layer`](#bunstoragelayer).
 
 ## Options
 

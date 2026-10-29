@@ -63,7 +63,7 @@ same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
 | `storage-failure`         | Storage, transport, or SQL failed                                                             |
 | `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                  |
 
-`retryable` is `true` when `reason` is `storage-failure` and the cause is not a Streams fault, or is a retryable one. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
+`retryable` is `true` when `reason` is `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
 
 ## `ProjectionRetry`
 
@@ -78,7 +78,7 @@ declare const ProjectionRetry: Context.Reference<Schedule.Schedule<unknown>>;
 same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
 ```
 
-`ProjectionRetry` is the reference of the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
+`ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
 
 The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
 

@@ -70,7 +70,7 @@ import { shop } from "./streams.ts";
 const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storage } });
 ```
 
-- Pass the full `ctx.storage` handle as `client.storage`. Each mutation runs in a transaction, and the client needs the transaction API of that handle
+- Pass the full `ctx.storage` handle as `client.storage`. Each mutation runs in a transaction, so the client needs the transaction API of that handle
 - The long-poll timeout is [`DEFAULT_LONG_POLL_TIMEOUT_MS`](#durableobjectstoragedefault_long_poll_timeout_ms), 25 s, unless `longPollTimeoutMs` sets one
 - The migration, the store, and the option checks follow the rules of [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer)
 
@@ -115,7 +115,7 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
 same<typeof layerProtocol, typeof DurableObjectStorage.layerProtocol>(true);
 ```
 
-`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite storage of the object, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. The options follow the rules of [`layer`](#durableobjectstoragelayer), including the 25 s long-poll default.
+`layerProtocol` returns a Layer with the generic protocol reader and writer over the SQLite storage of the object, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) read and write any stream id. The options follow the rules of [`layer`](#durableobjectstoragelayer), including the 25 s long-poll default.
 
 ## Options
 

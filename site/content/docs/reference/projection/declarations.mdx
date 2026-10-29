@@ -58,15 +58,15 @@ same<Declaration<{}, string>, Real.Declaration<{}, string>>(true);
 
 A `Declaration` is the inert value that a constructor returns. It reads no stream and holds no resource. `Bound` is the bound projection that `at` returns, which the [runners](/docs/reference/projection/runners) take.
 
-| Field        | Meaning                                                        |
-| ------------ | -------------------------------------------------------------- |
-| `id`         | The projection name                                            |
-| `version`    | The declared version, `1` when the definition leaves it out    |
-| `generation` | The declared generation, `1` when the definition leaves it out |
-| `params`     | The param codecs, by name                                      |
-| `inputs`     | The declared inputs, before `at` binds them                    |
-| `at`         | Binds the params and returns the bound projection              |
-| `parse`      | Gives the params of a stream id that one of the inputs owns    |
+| Field        | Meaning                                                                       |
+| ------------ | ----------------------------------------------------------------------------- |
+| `id`         | The projection name                                                           |
+| `version`    | The declared version, `1` when the definition leaves it out                   |
+| `generation` | The declared generation, `1` when the definition leaves it out                |
+| `params`     | The param codecs, by name                                                     |
+| `inputs`     | The declared inputs, before `at` binds them                                   |
+| `at`         | The method that binds the params and returns the bound projection             |
+| `parse`      | The method that returns the params of a stream id that one of the inputs owns |
 
 `at` encodes each param with its codec, and throws a `RangeError` when a param does not encode. For a declaration with outputs, `at` also checks the outputs. See [`Projection.emit`](/docs/reference/projection/constructors#projectionemit).
 
@@ -107,7 +107,7 @@ same<
 >(true);
 ```
 
-A `CurrentProjection` is a bound projection with `state:`, as [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) and [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) take it. A projection from `fold`, `mapAccum`, or `mapAccumBatch` fits. A projection with no `state:` does not, and the compiler reports it. `current` drops the output items of the handler.
+A `CurrentProjection` is a bound projection that has a `state:` definition. [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) and [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) take it. A projection from `fold`, `mapAccum`, or `mapAccumBatch` fits. A projection with no `state:` does not, and the compiler reports it. `current` drops the output items of the handler.
 
 ### `DecideSpec`
 
@@ -135,12 +135,12 @@ same<
 >(true);
 ```
 
-[`Projection.decide`](/docs/reference/projection/runners#projectiondecide) takes a `DecideSpec`.
+A `DecideSpec` tells [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) which input to append to, how to decide, and when to retry.
 
 | Field    | Meaning                                                                                                    |
 | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `input`  | The name of the input to append to. Its offset in the snapshot is the `expectedOffset` of the append       |
-| `decide` | Returns the answer and the items to append. It must not write                                              |
+| `decide` | The function that returns the answer and the items to append. It must not write                            |
 | `retry`  | The schedule for a retry after the append fails with `OffsetMismatch`. The default is `Schedule.recurs(3)` |
 
 The items of the `Decision` have the item type of the input that `input` names.
@@ -266,4 +266,4 @@ same<NonNullable<Emits<O0>["notes"]>[number], NonNullable<Real.Emits<O0>["notes"
 same<keyof Emits<O0>, keyof Real.Emits<O0>>(true);
 ```
 
-`Emits` is the object that an output handler returns: an array of items for each output name. A missing name emits nothing, and an empty array uses no producer sequence. The items of a State output are [`DurableState.Entry`](/docs/reference/core/durable-state#durablestateentry) values: row changes, and State control messages such as `StreamAddress.reset()`. The items of a JSON output have its item type.
+`Emits` is the object that an output handler returns: an array of items for each output name. A missing name emits nothing, and an empty array uses no producer sequence. The items of a State output are [`DurableState.Entry`](/docs/reference/core/durable-state#durablestateentry) values: changes, and State control messages such as `StreamAddress.reset()`. The items of a JSON output have its item type.
