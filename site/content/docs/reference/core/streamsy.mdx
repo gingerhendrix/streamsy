@@ -23,8 +23,6 @@ import type { Context, Effect, Function, Option, Schema, Stream } from "effect";
 
 A stream class declares a set of streams with a service name, an id template, and a codec. A group lists the stream classes that one host stores and serves. For a worked example, see [Declare streams](/docs/streams/declare).
 
-The root of `@streamsy/core` also exports each member of `Streamsy` under its own name, for example `json` and `group`. `json` and `Streamsy.json` are the same function.
-
 The signatures use `StreamRoute` from `@streamsy/core/protocol`. `StreamRoute.ParamCodecs` is a record with one `Schema.Codec<unknown, string>` for each template param. `StreamRoute.Params<C>` is the record of decoded params. `StreamRoute.ExactTemplateParams` makes the compiler check that the template and the record name the same params.
 
 ## `Streamsy.json`

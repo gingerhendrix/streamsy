@@ -1,78 +1,84 @@
 ---
 title: How the reference works
-description: One page for each group of exports in the @streamsy packages. Every signature on these pages is checked against the package at build.
+description: Reference pages for every public entry point of the four @streamsy packages. The site build checks every signature on these pages against the package.
 ---
 
-The guides show how to use Streamsy. The reference pages list what each package exports and the rules for each export.
+The guides show how to use Streamsy. The reference describes each public export of `@streamsy/core`, `@streamsy/projection`, `@streamsy/storage`, and `@streamsy/serve`, and the rules that apply to it.
 
-Each page starts with the import that its signatures use. Each export then has a section with three parts:
+The reference covers every public entry point of the four packages. `@streamsy/core/internal` is not public, so it has no pages.
 
-- the signature, written as you would write it after that import
+## How the pages are organized
+
+Each package has one folder in the sidebar and one table below. A page covers one namespace, one entry point, or one group of related exports. A large namespace takes more than one page: `Projection` has a page for its constructors and a page for its runners.
+
+Each page starts with the import that its signatures use. Each export then has a section, headed by its name as you write it after that import. A section has three parts:
+
+- the signature
 - what the export does, and the rules that the signature does not show
 - a link to the guide that uses the export, when one exists
 
-The site build compares each signature on these pages with the real export. When a package changes and a page does not, the build fails and names the page.
+## How the build checks the pages
+
+The site build type-checks every `ts` fence on these pages with Twoslash, so a wrong import path or export name fails the build. Each signature fence also has a hidden check. The check compiles only when the shown declaration has the same type as the real export. When a package changes and a page does not, the build fails and names the page and the line.
 
 ## `@streamsy/core`
 
-| Page                                                            | Exports                                                                            |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [Streamsy](/docs/reference/core/streamsy)                       | The stream class factories, `group`, `Wildcard` and the class types                |
-| [StreamAddress](/docs/reference/core/stream-address)            | Addresses, collections, and the State changes and controls                         |
-| [Producer](/docs/reference/core/producer)                       | `Producer.Position`, `Producer.next`                                               |
-| [DurableState](/docs/reference/core/durable-state)              | `upsert`, `remove`, `changes`, `materialize` and their types                       |
-| [Options and results](/docs/reference/core/options-and-results) | The options of create, append and read, and their results                          |
-| [Toolkit types](/docs/reference/core/toolkit)                   | `Batch`, the fold and decide types, and the failure unions                         |
-| [Errors](/docs/reference/core/errors)                           | The protocol errors, the error unions, `isProtocolError`                           |
-| [Faults](/docs/reference/core/faults)                           | The storage, transport and codec faults, and their guards                          |
-| [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, `compare`                       |
-| [Wake streams](/docs/reference/core/wake)                       | `Streamsy.wake`, `followWake`, `wakeActions` and the wake types                    |
-| [Storage contract](/docs/reference/core/storage)                | `Storage`, `CommitBoundary`, the mutations and their results                       |
-| [MemoryStorage](/docs/reference/core/memory-storage)            | `MemoryStorage.layer`, `layerProtocol`, `Options`                                  |
-| [Stream records](/docs/reference/core/records)                  | `StreamRecord`, `StoredMessage`, `RecordPatch` and the other stored values         |
-| [Http](/docs/reference/core/http)                               | `Http.routes`, `Http.app`, `Http.read` and the shutdown signal                     |
-| [RemoteStreams](/docs/reference/core/remote-streams)            | `RemoteStreams.layer`, `layerProtocol`, `Options` (`@streamsy/core/remote`)        |
-| [Protocol](/docs/reference/core/protocol)                       | `Protocol`, `StreamsReader`, `StreamsWriter`, `routes` (`@streamsy/core/protocol`) |
-| [Streams](/docs/reference/core/streams)                         | The `Streams` functions on a raw address (`@streamsy/core/protocol`)               |
-| [StreamRoute](/docs/reference/core/stream-route)                | The route functions and types (`@streamsy/core/protocol`)                          |
-| [Testing](/docs/reference/core/testing)                         | `StorageContract`, `faultyStorage`, `layerTest` (`@streamsy/core/testing`)         |
+| Page                                                            | Entry point                             | Exports                                                                                |
+| --------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Streamsy](/docs/reference/core/streamsy)                       | `@streamsy/core`                        | The stream class factories, `group`, `Wildcard`, and the class types                   |
+| [Wake streams](/docs/reference/core/wake)                       | `@streamsy/core`                        | `Streamsy.wake`, `followWake`, `wakeActions`, and the wake types                       |
+| [StreamAddress](/docs/reference/core/stream-address)            | `@streamsy/core`                        | The addresses, the collections, and the State changes and controls                     |
+| [Producer](/docs/reference/core/producer)                       | `@streamsy/core`                        | `Producer.next` and `Producer.Position`                                                |
+| [DurableState](/docs/reference/core/durable-state)              | `@streamsy/core`                        | `upsert`, `remove`, `changes`, `materialized`, `materialize`, and their types          |
+| [Options and results](/docs/reference/core/options-and-results) | `@streamsy/core`                        | The options of create, append, and read, and their results                             |
+| [Toolkit types](/docs/reference/core/toolkit)                   | `@streamsy/core`                        | `Batch`, the fold and decide types, and the failure unions                             |
+| [Errors](/docs/reference/core/errors)                           | `@streamsy/core`                        | The protocol errors, the error unions, and `isProtocolError`                           |
+| [Faults](/docs/reference/core/faults)                           | `@streamsy/core`                        | The storage, transport, and codec faults, and their guards                             |
+| [Ids and offsets](/docs/reference/core/ids-and-offsets)         | `@streamsy/core`                        | `StreamId`, `Offset`, `ProducerId`, `ZERO_OFFSET`, and `compare`                       |
+| [Storage contract](/docs/reference/core/storage)                | `@streamsy/core`                        | `Storage`, `StorageCapabilities`, `CommitBoundary`, the mutations, and their results   |
+| [MemoryStorage](/docs/reference/core/memory-storage)            | `@streamsy/core`                        | `MemoryStorage.layer`, `layerProtocol`, and `Options`                                  |
+| [Stream records](/docs/reference/core/records)                  | `@streamsy/core`                        | `StreamRecord`, `StoredMessage`, `RecordPatch`, and the other stored values            |
+| [Http](/docs/reference/core/http)                               | `@streamsy/core`, `@streamsy/core/http` | `Http.routes`, `Http.app`, `Http.read`, and the shutdown signal                        |
+| [RemoteStreams](/docs/reference/core/remote-streams)            | `@streamsy/core/remote`                 | `RemoteStreams.layer`, `layerProtocol`, `Options`, and `TransportFault`                |
+| [Protocol](/docs/reference/core/protocol)                       | `@streamsy/core/protocol`               | `Protocol`, `StreamsReader`, `StreamsWriter`, `Reader`, `Writer`, and `routes`         |
+| [Streams](/docs/reference/core/streams)                         | `@streamsy/core/protocol`               | The `Streams` functions on an address, and their options, results, and failures        |
+| [StreamRoute](/docs/reference/core/stream-route)                | `@streamsy/core/protocol`               | The route functions and types                                                          |
+| [Testing](/docs/reference/core/testing)                         | `@streamsy/core/testing`                | `StorageContract`, `faultyStorage`, `layerTest`, `StreamsTest`, and `expectFailureTag` |
 
 ## `@streamsy/projection`
 
-| Page                                                               | Exports                                                                      |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [Projection constructors](/docs/reference/projection/constructors) | `Projection.fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch`, `wake`    |
-| [Projection runners](/docs/reference/projection/runners)           | `Projection.pass`, `run`, `follow`, `attach`, the reads, `ProjectionWakeup`  |
-| [Declarations and state](/docs/reference/projection/declarations)  | `Declaration`, `CurrentProjection`, `DecideSpec`, the state and step types   |
-| [Units and progress](/docs/reference/projection/units)             | `Slice`, `Entry`, `Unit`, `Range`, the results, and the runner options       |
-| [Commit](/docs/reference/projection/commit)                        | The `Commit` namespace, the handler results, `HandlerFailed`, `Transaction`  |
-| [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `CheckpointStore`, `CheckpointRecord`, and `@streamsy/projection/checkpoint` |
-| [Faults and retry](/docs/reference/projection/faults)              | `ProjectionFault`, `ProjectionRetry`                                         |
+| Page                                                               | Entry point                                               | Exports                                                                            |
+| ------------------------------------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [Projection constructors](/docs/reference/projection/constructors) | `@streamsy/projection`                                    | `Projection.fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch`, and `wake`      |
+| [Projection runners](/docs/reference/projection/runners)           | `@streamsy/projection`                                    | The runners, the reads, the helpers, and `ProjectionWakeup`                        |
+| [Declarations and state](/docs/reference/projection/declarations)  | `@streamsy/projection`                                    | `Declaration`, `CurrentProjection`, `DecideSpec`, and the state and step types     |
+| [Units and progress](/docs/reference/projection/units)             | `@streamsy/projection`                                    | `Slice`, `Entry`, `Unit`, `Range`, the results, and the runner options             |
+| [Commit](/docs/reference/projection/commit)                        | `@streamsy/projection`                                    | The `Commit` namespace, the handler results, `HandlerFailed`, and `Transaction`    |
+| [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `@streamsy/projection`, `@streamsy/projection/checkpoint` | `CheckpointStore`, `CheckpointRecord`, `fromStore`, `recordKey`, and the key types |
+| [Faults and retry](/docs/reference/projection/faults)              | `@streamsy/projection`                                    | `ProjectionFault` and `ProjectionRetry`                                            |
 
 ## `@streamsy/storage`
 
-| Page                                                                   | Exports                                                                                       |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [SqlStorage](/docs/reference/storage/sql-storage)                      | `SqlStorage.layer`, `layerProtocol`, `clientLayer`, `Options` and the defaults                |
-| [BunStorage](/docs/reference/storage/bun-storage)                      | `BunStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/bun`)                      |
-| [DurableObjectStorage](/docs/reference/storage/durable-object-storage) | `DurableObjectStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/durable-object`) |
+| Page                                                                   | Entry point                        | Exports                                                                                     |
+| ---------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| [SqlStorage](/docs/reference/storage/sql-storage)                      | `@streamsy/storage`                | `SqlStorage.layer`, `layerProtocol`, `clientLayer`, `Options`, and the defaults             |
+| [BunStorage](/docs/reference/storage/bun-storage)                      | `@streamsy/storage/bun`            | `BunStorage.layer`, `layerProtocol`, and `Options`                                          |
+| [DurableObjectStorage](/docs/reference/storage/durable-object-storage) | `@streamsy/storage/durable-object` | `DurableObjectStorage.layer`, `layerProtocol`, `Options`, and the default long-poll timeout |
 
 ## `@streamsy/serve`
 
-| Page                                                   | Exports                                                                                                    |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| [Serve](/docs/reference/serve/serve)                   | The route and response functions, `layer`, `teardown`, and their options                                   |
-| [Serve errors](/docs/reference/serve/serve-errors)     | The Serve error classes, `ServeError`, and `PublicErrorSchema`                                             |
-| [Contract](/docs/reference/serve/contract)             | Canonical JSON, validators, headers, and public error bodies (`@streamsy/serve/contract`)                  |
-| [Action sinks](/docs/reference/serve/action)           | Sink declarations, payload codecs, identity, and retry policy (`@streamsy/serve/action`)                   |
-| [Action errors](/docs/reference/serve/action-errors)   | Storage failures, handler refusals, and dead-letter reasons (`@streamsy/serve/action/errors`)              |
-| [Action outbox](/docs/reference/serve/action-outbox)   | The store service, backing contract, drafts, entries, and memory backing (`@streamsy/serve/action/outbox`) |
-| [Action runtime](/docs/reference/serve/action-runtime) | Draft construction, handlers, drain passes, and `OutboxWakeup` (`@streamsy/serve/action/runtime`)          |
-| [SQL action outbox](/docs/reference/serve/action-sql)  | Migration and SQL backing (`@streamsy/serve/action/sql`)                                                   |
-| [Bun](/docs/reference/serve/bun)                     | The Bun listener, options, and defaults (`@streamsy/serve/bun`)                                         |
-| [Node](/docs/reference/serve/node)                   | The Node listener, options, and defaults (`@streamsy/serve/node`)                                       |
-| [Deno](/docs/reference/serve/deno)                   | The Deno listener, options, defaults, and SQLite compatibility Effect (`@streamsy/serve/deno`)          |
-| [Cloudflare](/docs/reference/serve/cloudflare)       | Worker routing, Durable Object hosts, placement, wakeups, and object links (`@streamsy/serve/cloudflare`) |
-| [Alchemy](/docs/reference/serve/alchemy)             | Effect routing, object transports, handlers, and shared Cloudflare exports (`@streamsy/serve/alchemy`)  |
-
-These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), of `@streamsy/storage` (the root, `/bun`, and `/durable-object`), and of `@streamsy/serve` (the root, `/contract`, `/action`, `/action/errors`, `/action/outbox`, `/action/runtime`, and `/action/sql`). The serve host entry points have no reference pages yet.
+| Page                                                   | Entry point                      | Exports                                                                          |
+| ------------------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------- |
+| [Serve](/docs/reference/serve/serve)                   | `@streamsy/serve`                | The route and response functions, `layer`, `teardown`, and their options         |
+| [Serve errors](/docs/reference/serve/serve-errors)     | `@streamsy/serve`                | The Serve error classes, `ServeError`, and `PublicErrorSchema`                   |
+| [Contract](/docs/reference/serve/contract)             | `@streamsy/serve/contract`       | Canonical JSON, fingerprints and ETags, header names, and public error bodies    |
+| [Action sinks](/docs/reference/serve/action)           | `@streamsy/serve/action`         | Sink declarations, payload codecs, identity, and retry policy                    |
+| [Action errors](/docs/reference/serve/action-errors)   | `@streamsy/serve/action/errors`  | Storage failures, handler refusals, and dead-letter reasons                      |
+| [Action outbox](/docs/reference/serve/action-outbox)   | `@streamsy/serve/action/outbox`  | The store service, the backing contract, drafts, entries, and the memory backing |
+| [Action runtime](/docs/reference/serve/action-runtime) | `@streamsy/serve/action/runtime` | Draft construction, handlers, drain passes, and `OutboxWakeup`                   |
+| [SQL action outbox](/docs/reference/serve/action-sql)  | `@streamsy/serve/action/sql`     | The migration and the SQL backing                                                |
+| [Bun](/docs/reference/serve/bun)                       | `@streamsy/serve/bun`            | The Bun listener, its options, and its defaults                                  |
+| [Node](/docs/reference/serve/node)                     | `@streamsy/serve/node`           | The Node listener, its options, and its defaults                                 |
+| [Deno](/docs/reference/serve/deno)                     | `@streamsy/serve/deno`           | The Deno listener, its options and defaults, and `nodeSqliteCompat`              |
+| [Cloudflare](/docs/reference/serve/cloudflare)         | `@streamsy/serve/cloudflare`     | Worker routing, Durable Object hosts, placement, wakeups, and object links       |
+| [Alchemy](/docs/reference/serve/alchemy)               | `@streamsy/serve/alchemy`        | Effect routing, object transports, handlers, and the shared Cloudflare exports   |
