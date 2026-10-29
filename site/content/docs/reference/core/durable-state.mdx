@@ -77,7 +77,7 @@ For each change, `changes` does four things:
 - It sets `headers.txid` to `${offset}:${index}`, unless the change sets its own `txid`. Without `options.offset`, the event has no default `txid`.
 - It copies `timestamp` and `from` from the headers of the change.
 
-A control entry, such as `StreamAddress.reset()`, passes through unchanged, except that it gets `options.offset` when it has no offset of its own.
+A control message in `entries`, such as `StreamAddress.reset()`, passes through unchanged, except that it gets `options.offset` when it has no offset of its own.
 
 A change to a collection that the address does not declare does not compile. At run time, `changes` throws a `TypeError` when a key is `null`, `undefined`, or empty.
 
@@ -115,10 +115,10 @@ same<typeof materialize, typeof DurableState.materialize>(true);
 `materialize` folds `events` into `state` and returns the new state. It applies the rules of the [Durable State protocol](https://durablestreams.com/durable-state):
 
 - An upsert sets the row of its key, and a delete removes it.
-- A `reset` control clears every collection and closes an open snapshot.
-- A `snapshot-start` control opens a snapshot. The `snapshot-end` control that closes it removes each row that no upsert named since `snapshot-start`.
+- A `reset` control message clears every collection and closes an open snapshot.
+- A `snapshot-start` control message opens a snapshot. The `snapshot-end` control message that closes it removes each row that no upsert named since `snapshot-start`.
 
-A snapshot can span several calls, because the returned `snapshot` carries it to the next call. A `snapshot-end` with no open snapshot changes nothing. A change to a collection that `state.rows` does not hold is dropped.
+A snapshot can span several calls, because the returned `snapshot` carries it to the next call. A `snapshot-end` with no open snapshot changes nothing. `materialize` drops a change to a collection that `state.rows` does not hold.
 
 `materialize` does not change `state`. It copies only the maps of the collections that `events` change, and the returned state shares every other map with `state`.
 

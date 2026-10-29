@@ -50,7 +50,7 @@ same<CreateOptions, Core.CreateOptions>(true);
 | `contentType`   | The content type of the stream. A stream class sets it from the address                                          |
 | `ttlSeconds`    | The time to live, in seconds. Each append and each read restarts it                                              |
 | `expiresAt`     | A fixed expiry time                                                                                              |
-| `closed`        | Creates the stream already closed                                                                                |
+| `closed`        | `true` to create the stream already closed                                                                       |
 | `forkedFrom`    | The id of the source stream of a fork. `fork` sets it from `source`                                              |
 | `forkOffset`    | The fork copies every source message up to and including this offset                                             |
 | `forkSubOffset` | The fork also copies the start of the next source message. For a JSON stream it counts messages, otherwise bytes |
@@ -138,14 +138,14 @@ same<AppendOptions, Core.AppendOptions>(true);
 
 `AppendOptions` holds the options of one append on the protocol writer.
 
-| Option           | Meaning                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `data`           | The encoded body                                                                                 |
-| `contentType`    | The content type of the body. It must match the content type of the stream                       |
-| `seq`            | The `Stream-Seq` of the writer. Each `seq` must sort after the previous one, compared as strings |
-| `producer`       | The producer position. The server accepts each position once                                     |
-| `close`          | Closes the stream after this append. With an empty body, the append only closes the stream       |
-| `expectedOffset` | The append succeeds only when the tail is this offset                                            |
+| Option           | Meaning                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| `data`           | The encoded body                                                                                    |
+| `contentType`    | The content type of the body. It must match the content type of the stream                          |
+| `seq`            | The `Stream-Seq` of the writer. Each `seq` must sort after the previous one, compared as strings    |
+| `producer`       | The producer position. The server accepts each position once                                        |
+| `close`          | `true` to close the stream after this append. With an empty body, the append only closes the stream |
+| `expectedOffset` | The append succeeds only when the tail is this offset                                               |
 
 The append fails with `AppendConflict` when the content type differs from the stream, or when `seq` does not sort after the previous one. When `expectedOffset` differs from the tail, the append fails with `OffsetMismatch` and changes nothing: it writes no messages, does not close the stream, and does not update the producer state. `expectedOffset` is a Streamsy extension to the Durable Streams protocol. See [Conditional writes](/docs/streams/write#conditional-writes).
 

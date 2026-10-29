@@ -17,8 +17,8 @@ The template functions share these rules:
 
 - A `template` is a relative path. Each segment is a literal or a `:name` param.
 - `params` has one codec for each `:name` in the template, and no other codec. The compiler checks this through [`ExactTemplateParams`](#streamrouteexacttemplateparams) when `template` is a string literal.
-- The call throws a `RangeError` when `template` is empty, starts with `/`, or has an empty segment. It also throws for `?`, `#`, or `*` in the template, a param with no name, a repeated param, or a literal segment that is not a canonical id segment.
-- The call also throws a `RangeError` when the params and the codecs differ, which covers a `template` typed as a plain `string`.
+- Each template function throws a `RangeError` when `template` is empty, starts with `/`, or has an empty segment. It also throws for `?`, `#`, or `*` in the template, a param with no name, a repeated param, or a literal segment that is not a canonical id segment.
+- Each template function also throws a `RangeError` when the params and the codecs differ. This check catches a `template` that is typed as a plain `string`, which the compiler cannot check.
 
 A canonical id segment is not empty, is not `.` or `..`, and has no `%`, `?`, `#`, `/`, or `\`.
 
@@ -171,7 +171,7 @@ A `StreamRoute` is the id grammar of one stream class, with the params type `Rou
 
 A template route matches an id when the id has the same number of segments, each literal segment is equal, each param segment is a canonical id segment, and each param decodes with its codec.
 
-The `address` of a template route encodes each param with its codec. It throws a `RangeError` when a param cannot encode, or encodes to a segment that is not canonical.
+The `address` of a template route encodes each param with its codec. `address` throws a `RangeError` when a param cannot encode, or encodes to a segment that is not canonical.
 
 ### `StreamRoute.StateRoute`
 
@@ -232,7 +232,7 @@ interface Matcher {
 same<Matcher, StreamRoute.Matcher>(true);
 ```
 
-A `Matcher` is the part of a route that the group checks and HTTP dispatch need: `match`. Every route is a `Matcher`.
+A `Matcher` is a route reduced to `match`, which is all that the group checks and HTTP dispatch need. Every route is a `Matcher`.
 
 ### `StreamRoute.ParamCodecs`
 

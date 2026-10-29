@@ -148,7 +148,7 @@ declare const fold: <A, RD, RE, S>(
 same<typeof fold, typeof Streams.fold>(true);
 ```
 
-`fold` reads to the tail and folds every item into one value, starting from `initial()`. It returns the value and the tail that it read up to. To fold on from an earlier result, pass its `offset` as `options.offset`. See [Fold](/docs/streams/read#fold).
+`fold` reads to the tail and folds every item into one value, starting from `initial()`. It returns the value and the tail that it read up to. To continue a fold from an earlier result, pass its `offset` as `options.offset`. See [Fold](/docs/streams/read#fold).
 
 ### `Streams.collect`
 
@@ -192,7 +192,7 @@ same<typeof decide, typeof Streams.decide>(true);
 
 `decide` folds the stream to its tail, calls `spec.decide` with the state, and appends the items of the decision with `expectedOffset` set to the tail that it read. When the decision has no items, `decide` writes nothing.
 
-After an `OffsetMismatch` on its own append, `decide` folds on from the tail it had and decides again, while `spec.retry` allows. Then it fails with the last `OffsetMismatch`. It retries no other failure. The rules of `spec` are under [`DecideSpec`](/docs/reference/core/toolkit#decidespec). See [Read, fold, append](/docs/streams/write#read-fold-append).
+After an `OffsetMismatch` on its own append, `decide` continues the fold from the tail that it had and decides again, as long as `spec.retry` allows another attempt. Then it fails with the last `OffsetMismatch`. It retries no other failure. The rules of `spec` are under [`DecideSpec`](/docs/reference/core/toolkit#decidespec). See [Read, fold, append](/docs/streams/write#read-fold-append).
 
 ### `Streams.session`
 
@@ -291,7 +291,7 @@ interface FollowOptions extends ReadOptions {
 same<FollowOptions, Streams.FollowOptions>(true);
 ```
 
-`FollowOptions` holds the options of `follow`: the [`ReadOptions`](/docs/reference/core/options-and-results#readoptions), and `retry`. `retry` is the schedule for a read that fails with a retryable fault. The default schedule is exponential from 200 ms, with jitter, with each wait capped at 30 s, and it never stops.
+`FollowOptions` holds the options of `follow`: the [`ReadOptions`](/docs/reference/core/options-and-results#readoptions), and `retry`. `retry` is the schedule for a read that fails with a retryable fault. The default schedule is exponential from 200 ms with jitter, caps each wait at 30 s, and never stops.
 
 ## Results
 

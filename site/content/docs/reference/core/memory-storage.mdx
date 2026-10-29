@@ -9,7 +9,7 @@ import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type { Layer } from "effect";
 ```
 
-`MemoryStorage` keeps streams in the process. The data is lost when the Layer is disposed. Each mutation copies the whole store, so an append takes linear time. Use it for development and tests. See [Memory](/docs/hosting#memory).
+`MemoryStorage` keeps streams in the memory of the process, and the data is gone when the scope of the Layer closes. Each mutation copies the whole store, so the time of an append grows with the size of the store. Use it for development and tests. See [Memory](/docs/hosting#memory).
 
 ## `MemoryStorage.layer`
 
@@ -90,7 +90,7 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
 same<typeof layerProtocol, typeof MemoryStorage.layerProtocol>(true);
 ```
 
-`layerProtocol` returns a Layer with the generic protocol reader and writer over a memory store, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) reach any stream id. Protocol tools and tests use it, for example to write raw messages that a typed service does not write.
+`layerProtocol` returns a Layer with the generic protocol reader and writer over a memory store, and no stream classes. [`StreamsReader`](/docs/reference/core/protocol#streamsreader) and [`StreamsWriter`](/docs/reference/core/protocol#streamswriter) read and write any stream id. Protocol tools and tests use `layerProtocol`, for example to write raw messages that a typed service does not write.
 
 ## `MemoryStorage.Options`
 
@@ -120,4 +120,4 @@ same<Options, MemoryStorage.Options>(true);
 
 Without `constrained`, the store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. Use `constrained: true` in tests to check that a program does not depend on these capabilities.
 
-Building the Layer dies with a `RangeError` when `pollIntervalMs` or `longPollTimeoutMs` is not a positive number, or when `readLimit` is not a positive safe integer.
+Building the Layer dies with a `RangeError` when `pollIntervalMs` or `longPollTimeoutMs` is not a positive finite number, or when `readLimit` is not a positive safe integer.

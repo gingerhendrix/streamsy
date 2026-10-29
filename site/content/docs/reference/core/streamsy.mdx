@@ -343,7 +343,7 @@ same<Api<P, Item>, Streamsy.Api<P, Item>>(true);
 same<Api<P, Item, Decoding, Encoding>, Streamsy.Api<P, Item, Decoding, Encoding>>(true);
 ```
 
-`Api` is the service of a stream class. Each method takes the params of one stream as its first argument, and it can reach only the ids of its own class. A call with an id outside the class dies with a `RangeError`.
+`Api` is the service of a stream class. Each method takes the params of one stream as its first argument, and it works only on the ids of its own class. A call with an id outside the class dies with a `RangeError`.
 
 | Method    | Does                                                                               | Guide                                                      |
 | --------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |

@@ -47,9 +47,9 @@ class UserWake extends Streamsy.wake<UserWake>()("App/UserWake", "users/:user/wa
 }) {}
 ```
 
-The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](/docs/reference/core/streamsy#streamsyjson). A wake stream on another storage owner must exist before a projection appends to it, so its owner creates it at start.
+The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](/docs/reference/core/streamsy#streamsyjson). A wake stream on another storage owner must exist before a projection appends to it, so that owner creates the wake stream when it starts.
 
-A wake row relies on append-only source streams. Do not create a stream again under the id of a removed or expired stream. The new stream starts at a lower offset, and a client with a saved cursor for the old stream skips its items.
+`wakeActions` compares each row offset with a saved cursor, so it assumes that the offsets of a source stream only grow. Do not create a stream again under the id of a removed or expired stream. The new stream starts at a lower offset, and a client with a saved cursor for the old stream skips its items.
 
 ### `Streamsy.followWake`
 
@@ -110,8 +110,8 @@ same<typeof wakeActions, typeof Streamsy.wakeActions>(true);
 - It collapses the rows of one stream in the batch to one item, at the position of the last row for that stream. The one exception is a delete and then an upsert, below.
 - An upsert gives `Dirty` when the row `offset` sorts after the saved cursor of the stream, or when the row has `closed`. The saved cursor is the entry in `cursors`, or `-1` when the map has none.
 - A delete gives `Removed`. A delete and then an upsert of one stream give `Removed`, then `Dirty` from `-1`.
-- A `reset` control drops the items before it in the batch, closes an open snapshot, and gives `Reset`. Each later upsert in the batch gives `Dirty` from `-1`.
-- A `snapshot-start` control opens a snapshot. The `snapshot-end` control that closes it gives the items of the rows before it, then `Snapshot`. `Snapshot` holds each stream that an upsert named since `snapshot-start` and that no later delete removed.
+- A `reset` control message drops the items before it in the batch, closes an open snapshot, and gives `Reset`. Each later upsert in the batch gives `Dirty` from `-1`.
+- A `snapshot-start` control message opens a snapshot. The `snapshot-end` control message that closes it gives the items of the rows before it, then `Snapshot`. `Snapshot` holds each stream that an upsert named since `snapshot-start` and that no later delete removed.
 
 A `snapshot-end` with no open snapshot gives no item.
 
@@ -240,7 +240,7 @@ same<WakeItem, Streamsy.WakeItem>(true);
 same<typeof WakeItem, typeof Streamsy.WakeItem>(true);
 ```
 
-`WakeItem` is one action for the consumer of a wake stream. `Streamsy.WakeItem` is also the value that holds a constructor for each tag, and `$is` and `$match`.
+`WakeItem` is one action for the consumer of a wake stream. The value `Streamsy.WakeItem` holds a constructor for each tag, and `$is` and `$match`.
 
 | Tag        | Action                                                                   |
 | ---------- | ------------------------------------------------------------------------ |
@@ -267,7 +267,7 @@ interface WakeBatch {
 same<WakeBatch, Streamsy.WakeBatch>(true);
 ```
 
-[`followWake`](#streamsyfollowwake) emits a `WakeBatch` for each batch of the wake stream. `offset` is the `nextOffset` of that batch: save it as the wake cursor after you handle every item. `upToDate` is `true` when the batch reached the tail of the wake stream.
+`WakeBatch` holds the actions of one batch of the wake stream. [`followWake`](#streamsyfollowwake) emits one for each batch that it reads. `offset` is the `nextOffset` of that batch. Save it as the wake cursor after you handle every item. `upToDate` is `true` when the batch reached the tail of the wake stream.
 
 ### `Streamsy.FollowWakeOptions`
 
@@ -329,4 +329,4 @@ interface WakeActions {
 same<WakeActions, Streamsy.WakeActions>(true);
 ```
 
-[`wakeActions`](#streamsywakeactions) returns a `WakeActions`. `items` holds the actions of the batch, in order. `snapshot` holds the streams of a snapshot that is still open at the end of the batch, or `undefined` when no snapshot is open. Pass it to the call for the next batch.
+`WakeActions` is the result of [`wakeActions`](#streamsywakeactions). `items` holds the actions of the batch, in order. `snapshot` holds the streams of a snapshot that is still open at the end of the batch, or `undefined` when no snapshot is open. Pass `snapshot` to the call for the next batch.

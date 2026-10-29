@@ -114,12 +114,12 @@ same<
 
 A `DecideSpec` is the input of the `decide` method. The method folds the stream into a state, calls your `decide` function on that state, and appends the items that it returns.
 
-| Field     | Meaning                                                                                          |
-| --------- | ------------------------------------------------------------------------------------------------ |
-| `initial` | Returns the start value of the fold. Each call of the method calls `initial` once                |
-| `fold`    | Returns the state after one more item                                                            |
-| `decide`  | Returns a value and the items to append. `at.offset` is the tail that `state` includes           |
-| `retry`   | The schedule for retries after another writer appends first. The default is `Schedule.recurs(3)` |
+| Field     | Meaning                                                                                                  |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| `initial` | The function that returns the start value of the fold. Each call of the method calls `initial` once      |
+| `fold`    | The function that returns the state after one more item                                                  |
+| `decide`  | The function that returns a value and the items to append. `at.offset` is the tail that `state` includes |
+| `retry`   | The schedule for retries after another writer appends first. The default is `Schedule.recurs(3)`         |
 
 Your `decide` function must not write to the stream, and it must not mutate `state`. After a lost race, the method passes the state that it already has to `fold` together with the new items.
 

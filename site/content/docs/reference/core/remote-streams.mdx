@@ -11,7 +11,7 @@ import type { Layer } from "effect";
 import type { HttpClient } from "effect/http";
 ```
 
-`RemoteStreams` runs the stream operations against a remote host over HTTP, so a program runs over a remote host with no change. The Layers need an Effect `HttpClient`. See [Remote client](/docs/http/remote).
+`RemoteStreams` sends the stream operations to a remote Durable Streams host over HTTP, so a program that uses stream classes runs against the host with no change. The Layers need an Effect `HttpClient`. See [Remote client](/docs/http/remote).
 
 ## `RemoteStreams.layer`
 
@@ -35,7 +35,7 @@ declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof layer, typeof RemoteStreams.layer>(true);
 ```
 
-`layer` returns a Layer with the service of each stream class in `group`, over `layerProtocol(options)`. It provides no `Storage` and no local change feed. The limits are in [Limits](/docs/http/remote#limits).
+`layer` returns a Layer with the service of each stream class in `group`, over `layerProtocol(options)`. It provides no `Storage` and no local change feed. For what a remote Layer cannot do, see [Limits](/docs/http/remote#limits).
 
 ```ts
 // @filename: streams.ts
@@ -71,7 +71,7 @@ declare function layerProtocol(
 same<typeof layerProtocol, typeof RemoteStreams.layerProtocol>(true);
 ```
 
-`layerProtocol` returns a Layer with the generic protocol reader and writer over HTTP, and no stream classes. Each operation sends its request to `baseUrl` followed by the stream id. Protocol tools use it.
+`layerProtocol` returns a Layer with the generic protocol reader and writer over HTTP, and no stream classes. Each operation sends its request to `baseUrl` followed by the stream id. Protocol tools use `layerProtocol`.
 
 - Building the Layer fails with a `TransportFault` whose `reason` is `configuration` when `baseUrl` is not an HTTP or HTTPS URL, or has a query, a fragment, or credentials.
 - An operation fails with a `TransportFault` whose `reason` is `configuration` when the stream id is not a canonical relative path, for example when it has an empty segment, `..`, `%`, `?`, `#`, or `\`.

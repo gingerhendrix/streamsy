@@ -17,7 +17,7 @@ import type { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/prot
 import type { Context, Effect, Layer } from "effect";
 ```
 
-These tools test storage adapters and protocol code. `StorageContract` and `expectFailureTag` call Vitest, so import this entry point only in test files that Vitest runs. Application tests provide `MemoryStorage.layer(group)` instead. See [Testing](/docs/hosting#testing).
+The exports of `@streamsy/core/testing` test storage adapters and protocol code. `StorageContract` and `expectFailureTag` call Vitest, so import this entry point only in test files that Vitest runs. Application tests provide `MemoryStorage.layer(group)` instead. See [Testing](/docs/hosting#testing).
 
 ## Storage contract
 
@@ -44,7 +44,7 @@ same<typeof StorageContract, typeof T.StorageContract>(true);
 
 - Each test builds a new `options.layer`, with a `TestClock`.
 - Each test first checks that `capabilities` of the store equals `options.expected`.
-- A test of a capability that `options.expected` rules out is skipped, for example the fork tests when `fork` is `none`.
+- `run` skips each test of a capability that `options.expected` rules out, for example the fork tests when `fork` is `none`.
 - The tests of `CommitBoundary` and the owner records run only when `options.ownerRecords` is `true`. They check that the records and the stream writes commit and roll back together.
 
 `assertModes` registers one test. It checks that `configurations` holds both values of each capability that the shipped stores have: `chain` and `copy`, `store` and `stream`, `push` and `poll`, and `indexed` and `lazy`. Call it with the `expected` capabilities of each `run` of a configurable store, to check that the runs cover both modes.
@@ -100,7 +100,7 @@ same<typeof faultyStorage, typeof T.faultyStorage>(true);
 `faultyStorage` wraps the store of `source` so that one `mutate` call fails with a retryable `StorageFault`. The call that fails is the `failOn`th call, counted from 1, after each build of the Layer.
 
 - With `when: "before"`, the call fails and the store does not apply the mutation.
-- With `when: "after"`, the store applies the mutation, and then the call fails. Use it to test a write whose reply is lost.
+- With `when: "after"`, the store applies the mutation, and then the call fails. Use `after` to test a write whose reply is lost.
 
 Every other call passes to the store unchanged. Building the Layer dies with a `RangeError` when `failOn` is not a positive integer.
 
@@ -170,11 +170,11 @@ same<StreamsTest, T.StreamsTest>(true);
 
 `StreamsTest` is the service that `layerTest` provides. It lets a test see the `changes` subscriptions of the store, so the test can wait for a live read without a sleep.
 
-| Member        | Does                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `storage`     | The store under the protocol Layer                                                                                                                |
-| `subscribers` | Returns the number of `changes` subscriptions that are open now                                                                                   |
-| `snapshot`    | Waits for the next [`ChangeSnapshot`](/docs/reference/core/records#changesnapshot) that any subscription emits, and returns it with its stream id |
+| Member        | Does                                                                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `storage`     | The store under the protocol Layer                                                                                                                     |
+| `subscribers` | Succeeds with the number of `changes` subscriptions that are open now                                                                                  |
+| `snapshot`    | Waits for the next [`ChangeSnapshot`](/docs/reference/core/records#changesnapshot) that any subscription emits, and succeeds with it and its stream id |
 
 ### `expectFailureTag`
 

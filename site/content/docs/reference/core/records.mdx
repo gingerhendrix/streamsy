@@ -158,7 +158,7 @@ interface MessageWindow {
 same<MessageWindow, Core.MessageWindow>(true);
 ```
 
-`MessageWindow` selects the messages that `StorageShape.messages` returns. It returns the messages after `after`, up to and including `until`, in offset order, and at most `limit` of them. A field that you leave out sets no bound.
+`MessageWindow` selects the messages that `StorageShape.messages` returns. `messages` returns the messages after `after`, up to and including `until`, in offset order, and at most `limit` of them. A field that you leave out sets no bound.
 
 ### `ChangeSnapshot`
 
@@ -178,7 +178,7 @@ interface ChangeSnapshot {
 same<ChangeSnapshot, Core.ChangeSnapshot>(true);
 ```
 
-`StorageShape.changes` emits a `ChangeSnapshot` of one stream. `present` is `false` when no record has the id. `currentOffset`, `closed`, and `softDeleted` copy the fields of the record. A reader compares a snapshot with the state it saw before, because a snapshot with no change is valid.
+`ChangeSnapshot` is the state of one stream that `StorageShape.changes` emits. `present` is `false` when no record has the id. `currentOffset`, `closed`, and `softDeleted` copy the fields of the record. A reader compares a snapshot with the state it saw before, because a snapshot with no change is valid.
 
 ## Writes
 

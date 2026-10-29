@@ -47,12 +47,12 @@ same<typeof routes, typeof Http.routes>(true);
 
 `routes` returns an `HttpRouter` route Layer that serves the protocol for each stream class in `group`, under `options.prefix`. The Layer needs the service of each class in the group, so provide a storage Layer for the group.
 
-- A request for an id that no class owns answers 404.
-- A method that the access of the class does not allow answers 405, with an `allow` header.
-- A request for the bare prefix answers 400.
+- `routes` answers 404 to a request for an id that no class owns.
+- `routes` answers 405, with an `allow` header, to a method that the access of the class does not allow.
+- `routes` answers 400 to a request for the bare prefix.
 - `routes` removes one trailing `/` from `prefix`, so `/streams/` is the same as `/streams`.
 
-`routes` throws a `RangeError` when `prefix` does not start with `/`, or contains `?`, `:`, `#`, `*`, or `//`. It also throws for the same groups as [`Streamsy.group`](/docs/reference/core/streamsy#streamsygroup), and when `sseDeadlineMs` is not a positive number.
+`routes` throws a `RangeError` when `prefix` does not start with `/`, or contains `?`, `:`, `#`, `*`, or `//`. It also throws for the same groups as [`Streamsy.group`](/docs/reference/core/streamsy#streamsygroup), and when `sseDeadlineMs` is not a positive finite number.
 
 ### `Http.RoutesOptions`
 
@@ -100,7 +100,7 @@ same<Access<typeof Streamsy.Wildcard>, Http.Access<typeof Streamsy.Wildcard>>(tr
 | `append` | GET, HEAD, POST, OPTIONS              |
 | `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
 
-For a class with `read` or `append` access, the answer to OPTIONS lists only the allowed methods in `access-control-allow-methods`.
+For a class with `read` or `append` access, the response to OPTIONS lists only the allowed methods in `access-control-allow-methods`.
 
 ## Programs
 
@@ -125,11 +125,11 @@ declare function app(
 same<typeof app, typeof Http.app>(true);
 ```
 
-`app` returns the HTTP program of the whole protocol, over the generic `StreamsReader` and `StreamsWriter`. It serves every id under `pathPrefix`, with no access rules. `routes` runs it for each request that a class owns, and `routes` from `@streamsy/core/protocol` mounts it as it is.
+`app` returns the HTTP program of the whole protocol, over the generic `StreamsReader` and `StreamsWriter`. It serves every id under `pathPrefix`, with no access rules. `routes` runs it for each request that a class owns, and `routes` from `@streamsy/core/protocol` mounts it unchanged.
 
-`app` answers every request and never fails. It maps each protocol error to its HTTP status, for example `StreamNotFound` to 404 and `OffsetMismatch` to 409. A `StorageFault` or a `TransportFault` answers 500. A body larger than `maxMessageSize` answers 413. Every response has the [`securityHeaders`](#httpsecurityheaders).
+`app` answers every request and never fails. It maps each protocol error to its HTTP status, for example `StreamNotFound` to 404 and `OffsetMismatch` to 409. `app` answers 500 for a `StorageFault` or a `TransportFault`, and 413 for a body larger than `maxMessageSize`. Every response has the [`securityHeaders`](#httpsecurityheaders).
 
-`app` throws a `RangeError` when `sseDeadlineMs` is not a positive number.
+`app` throws a `RangeError` when `sseDeadlineMs` is not a positive finite number.
 
 ### `Http.HttpOptions`
 
@@ -179,9 +179,9 @@ declare function read(
 same<typeof read, typeof Http.read>(true);
 ```
 
-`read` answers a GET or HEAD request for the stream `id`, which the caller has already resolved. It handles catch-up reads, long polls, and SSE, as `app` does. A HEAD request answers the metadata of the stream in headers.
+`read` answers a GET or HEAD request for the stream `id`, which the caller has already resolved. It handles catch-up reads, long polls, and SSE, as `app` does. For a HEAD request, `read` answers with the metadata of the stream in headers.
 
-Unlike `app`, `read` does not map errors to responses. It fails with the protocol error or the fault, and the caller answers it. `read` throws a `RangeError` when `sseDeadlineMs` is not a positive number.
+Unlike `app`, `read` does not map errors to responses. It fails with the protocol error or the fault, and the caller builds the response. `read` throws a `RangeError` when `sseDeadlineMs` is not a positive finite number.
 
 ### `Http.ReadOptions`
 
@@ -212,7 +212,7 @@ declare function checkReadOptions(options: Http.ReadOptions): void;
 same<typeof checkReadOptions, typeof Http.checkReadOptions>(true);
 ```
 
-`checkReadOptions` throws a `RangeError` when `options.sseDeadlineMs` is set and is not a positive number. `app`, `routes`, and `read` call it when they are built, so a host that builds its own read route can fail at the same time.
+`checkReadOptions` throws a `RangeError` when `options.sseDeadlineMs` is set and is not a positive finite number. `app`, `routes`, and `read` call it when they are built. A host that builds its own read route can call it to fail at the same point.
 
 ### `Http.streamPath`
 
@@ -235,7 +235,7 @@ same<typeof streamPath, typeof Http.streamPath>(true);
 | Member                   | Returns                                                                                                            |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `requiredPathPattern`    | The pattern of a stream path, for example `/streams/{path}`, for error messages                                    |
-| `strip`                  | `pathname` without the prefix. A path without the prefix comes back unchanged                                      |
+| `strip`                  | `pathname` without the prefix. `strip` returns a path without the prefix unchanged                                 |
 | `canonicalizeForkSource` | The stream id of a fork source. It strips the prefix when the source has it, and otherwise removes one leading `/` |
 
 ### `Http.securityHeaders`
@@ -290,7 +290,7 @@ declare const layerShutdownSignal: Layer.Layer<Http.ShutdownSignal>;
 same<typeof layerShutdownSignal, typeof Http.layerShutdownSignal>(true);
 ```
 
-`layerShutdownSignal` provides a new signal with no live reads. Provide it to the routes, and call `drain` before the routes close.
+`layerShutdownSignal` is a Layer that provides a new signal with no live reads. Provide it to the routes, and call `drain` before the routes close.
 
 ### `Http.ShutdownSignalService`
 

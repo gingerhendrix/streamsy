@@ -111,9 +111,9 @@ same<StorageShape, Core.StorageShape>(true);
 | `committed`                | Subscribes to the stream ids of each later local commit                                               |
 | `nextExpiry`               | Returns the earliest expiry deadline, with its stream, or `None` when the adapter has no expiry index |
 
-`mutate` fails with `MutationRejected` when a precondition of an operation does not hold, and it then writes nothing. Two operations on the same stream in one mutation are a defect. When `capabilities.atomicScope` is `stream`, a mutation with more than one stream is a defect too.
+`mutate` fails with `MutationRejected` when a precondition of an operation does not hold, and it then writes nothing. `mutate` dies when one mutation has two operations on the same stream. When `capabilities.atomicScope` is `stream`, it also dies for a mutation with more than one stream.
 
-`committed` creates the subscription before it returns, so each commit after that point lands in it. Each item holds the ids that one commit created, appended to, or deleted, and it arrives after that commit. A rolled-back mutation publishes nothing. The subscription has no replay and shows only commits in this process, not commits by another process on the same database. Its scope releases it.
+`committed` creates the subscription before it returns, so the subscription receives each commit after that point. Each item holds the ids that one commit created, appended to, or deleted, and it arrives after that commit. A rolled-back mutation publishes nothing. The subscription has no replay and shows only commits in this process, not commits by another process on the same database. The subscription ends when its scope closes.
 
 ### `StorageCapabilities`
 
@@ -132,7 +132,7 @@ interface StorageCapabilities {
 same<StorageCapabilities, Core.StorageCapabilities>(true);
 ```
 
-`StorageCapabilities` says what an adapter can do. `StorageCapabilities` is also the `Schema` of the value.
+`StorageCapabilities` holds the four features that an adapter declares. The value `StorageCapabilities` is the `Schema` of the type.
 
 | Field         | Values                                                                                                                    |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -178,7 +178,7 @@ interface CommitBoundaryApi {
 same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
 ```
 
-`withTransaction` runs `body` in the transaction of the storage owner. The stream writes in `body` commit together, and on a SQL host the application SQL in `body` commits with them. When `body` fails, nothing in it commits.
+`CommitBoundaryApi` is the service of `CommitBoundary`. Its one member, `withTransaction`, runs `body` in the transaction of the storage owner. The stream writes in `body` commit together, and on a SQL host the application SQL in `body` commits with them. When `body` fails, nothing in it commits.
 
 - A nested `withTransaction` joins the outer transaction and has no savepoint. To roll back, a failure must escape the outer `body`.
 - Keep `body` on the calling fiber. The memory host dies when another fiber writes in the transaction.
@@ -307,7 +307,7 @@ type MutationApplied = {
 same<MutationApplied, Core.MutationApplied>(true);
 ```
 
-`mutate` succeeds with `MutationApplied`. `results` holds one result for each operation, in the order of the operations.
+`MutationApplied` is the success value of `mutate`. `results` holds one result for each operation, in the order of the operations.
 
 ### `MutationRejected`
 
@@ -367,7 +367,7 @@ declare const Operations: Data.TaggedEnum.Constructor<Operation>;
 same<typeof Operations, typeof Core.Operations>(true);
 ```
 
-`Operations` holds a constructor for each tag of `Operation`, and `$is` and `$match`. A constructor builds a plain object and does not validate it. The adapter decodes at its own boundary.
+`Operations` holds a constructor for each tag of `Operation`, and `$is` and `$match`. A constructor builds a plain object and does not validate it. The adapter decodes the values that it reads from its store.
 
 ```ts
 import { Operations, StreamId } from "@streamsy/core";

@@ -39,9 +39,9 @@ declare function layer(
 same<typeof layer, typeof Protocol.layer>(true);
 ```
 
-`layer` builds the protocol reader and writer over the `Storage` service. It implements the Durable Streams rules on top of the store: offsets, expiry, closed streams, forks, and producer fencing. Provide a [`Storage`](/docs/reference/core/storage#storage) Layer to it.
+`layer` returns a Layer that builds the protocol reader and writer over the `Storage` service. It implements the Durable Streams rules on top of the store: offsets, expiry, closed streams, forks, and producer fencing. Provide a [`Storage`](/docs/reference/core/storage#storage) Layer to it.
 
-Building the Layer dies with a `RangeError` when `longPollTimeoutMs` is not a positive number, or when `readLimit` is not a positive safe integer.
+Building the Layer dies with a `RangeError` when `longPollTimeoutMs` is not a positive finite number, or when `readLimit` is not a positive safe integer.
 
 ### `Protocol.ProtocolOptions`
 
@@ -113,7 +113,7 @@ declare const expireDue: () => Effect.Effect<void, StorageFault, Storage>;
 same<typeof expireDue, typeof Protocol.expireDue>(true);
 ```
 
-`expireDue` runs one expiry sweep. It reads `nextExpiry` from the store and deletes that stream, and repeats until the next deadline is later than the clock. The host decides when to run a sweep, and it can interrupt one.
+`expireDue` returns an Effect that runs one expiry sweep. The sweep reads `nextExpiry` from the store, deletes that stream, and repeats until the next deadline is later than the clock. The host decides when to run a sweep, and it can interrupt one.
 
 When a concurrent renewal or delete changes a stream first, the sweep skips that stream.
 
@@ -143,7 +143,7 @@ declare function routes(
 same<typeof routes, typeof P.routes>(true);
 ```
 
-`routes` returns an `HttpRouter` route Layer that serves the whole protocol for every id under `prefix`, over `StreamsReader` and `StreamsWriter`. It has no stream classes and no access rules, so every method is allowed. Adapters and the upstream conformance tests use it. An application uses [`Http.routes`](/docs/reference/core/http#httproutes).
+`routes` returns an `HttpRouter` route Layer that serves the whole protocol for every id under `prefix`, over `StreamsReader` and `StreamsWriter`. It has no stream classes and no access rules, so every method is allowed. Adapters and the upstream conformance tests use `routes`. An application uses [`Http.routes`](/docs/reference/core/http#httproutes).
 
 `options` takes the options of [`Http.RoutesOptions`](/docs/reference/core/http#httproutesoptions) except `access`. `routes` removes one trailing `/` from `prefix`. It throws a `RangeError` when `prefix` does not start with `/`, or contains `?`, `:`, `#`, `*`, or `//`.
 
@@ -228,7 +228,7 @@ same<Reader<never>, P.Reader<never>>(true);
 | ---------- | ----------------------------------------------------------------------------------------------------------- |
 | `head`     | Returns the metadata of the stream as a [`HeadResult`](/docs/reference/core/options-and-results#headresult) |
 | `read`     | Returns one catch-up page after `options.offset`                                                            |
-| `readNext` | Returns the messages after `options.offset`, and waits for new messages when there are none (long poll)     |
+| `readNext` | Returns the messages after `options.offset`. When there are none, it waits for new messages (long poll)     |
 
 The options and results are on [Options and results](/docs/reference/core/options-and-results#read), and the errors are on [Errors](/docs/reference/core/errors#errors-by-operation).
 
