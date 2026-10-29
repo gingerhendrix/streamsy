@@ -116,6 +116,8 @@ same<typeof producer, typeof Commit.producer>(true);
 | `producerEpoch` | The generation                                                                |
 | `producerSeq`   | The pinned sequence of that output                                            |
 
+Storage refuses a producer id over 255 code points. When the `producerId` above is longer, `producer` appends under `id/v<version>/#` and the SHA-256 hex of the full id instead. When the projection id itself is long, `producer` cuts the part before `#` by code point, so the whole id is 255 code points. A retry computes the same id, and a `producerId` of at most 255 code points is used as it is.
+
 - `producer` creates a missing output on the storage owner of the checkpoint. An output on another owner must exist before the first append.
 - A closed output fails the unit with phase `pin` and reason `invalid-output`.
 - When the stored epoch of an output is not the generation, or a newer generation has appended to the output, the unit fails with reason `stale-epoch`.

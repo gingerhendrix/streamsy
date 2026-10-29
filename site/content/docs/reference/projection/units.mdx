@@ -349,6 +349,8 @@ import { same } from "./reference-check.ts";
 interface AttachOptions {
   readonly limit?: number;
   readonly retry?: Schedule.Schedule<unknown>;
+  readonly durable?: boolean;
+  readonly batch?: number;
 }
 // ---cut-after---
 same<AttachOptions, Real.AttachOptions>(true);
@@ -356,10 +358,16 @@ same<AttachOptions, Real.AttachOptions>(true);
 
 `AttachOptions` holds the options of [`Projection.attach`](/docs/reference/projection/runners#projectionattach) and [`ProjectionWakeup.attach`](/docs/reference/projection/runners#projectionwakeup).
 
-| Field   | Meaning                                                                                                                            |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `limit` | The most units for each binding in one run. The default is `100`                                                                   |
-| `retry` | The schedule for a retry after a failed run. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry) |
+| Field     | Meaning                                                                                                                                                                               |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `limit`   | The most units for each binding in one run. The default is `100`                                                                                                                      |
+| `retry`   | The schedule for a retry after a failed run. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)                                                    |
+| `durable` | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach` |
+| `batch`   | With `durable`, the most due marks that one pass reads. The default is `25`                                                                                                           |
+
+In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks and runs those bindings. When a binding fails, the runner defers its mark and logs a warning, and the other bindings still run. The deferred binding runs again after 1 s, and the wait doubles with each failure, up to 1 hour. The runner removes a mark whose params no longer decode, and logs a warning.
+
+Durable mode needs a local memory or SQL storage Layer, which provides the projection marks. Over other storage, such as remote storage, acquiring the runner dies. The runner throws a `RangeError` when `batch` is not a positive safe integer.
 
 ### `Attachable`
 

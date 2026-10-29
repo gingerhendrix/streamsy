@@ -393,9 +393,10 @@ same<typeof attach, typeof Projection.attach>(true);
 - The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
-- `attach` throws a `RangeError` when `limit` is not a positive safe integer.
-- A failed run logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
-- The set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
+- `attach` throws a `RangeError` when `limit` or `batch` is not a positive safe integer.
+- A failed pass, or a failed read of the marks, logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
+- By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
+- With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding defers its own mark and does not fail the pass. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 - An input on another storage owner never commits here, so it never triggers a run.
 - A binding whose source was removed before its first run is dropped, with a warning.
 
@@ -406,7 +407,7 @@ Do not also run an attached binding under `follow`.
 ```ts
 // ---cut-start---
 import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
-import type { AppendFailure, Decided, Storage, Streamsy } from "@streamsy/core";
+import type { AppendFailure, Decided, Storage, StorageFault, Streamsy } from "@streamsy/core";
 import type * as Real from "@streamsy/projection";
 import {
   Projection,
@@ -480,13 +481,16 @@ declare const ProjectionWakeup: {
   ) => Effect.Effect<
     {
       name: string;
-      next: Effect.Effect<Option.Option<number>>;
+      next: Effect.Effect<Option.Option<number>, StorageFault>;
+      // The in-memory and the durable pass each return `{ more: boolean }`,
+      // so the declared type names it twice.
       run: Effect.Effect<
-        { more: boolean },
-        E | ProjectionFault,
+        { more: boolean } | { more: boolean },
+        E | ProjectionFault | StorageFault,
         Exclude<R, P> | Q | OR | InputServices<I>
       >;
       retry: Schedule.Schedule<unknown>;
+      deferred: Effect.Effect<number, StorageFault>;
     },
     never,
     Scope.Scope | Storage
@@ -496,14 +500,15 @@ declare const ProjectionWakeup: {
 same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 ```
 
-`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply. Acquire it in the scope of the object Layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
+`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
 
-| Field   | Meaning                                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------------------------- |
-| `name`  | `streamsy/projection/` followed by the URI-encoded projection id                                              |
-| `next`  | The current time while a binding has work, or `None` when no binding has work                                 |
-| `run`   | The Effect that runs each binding with work. Its `more` is `true` when a binding still has work after the run |
-| `retry` | `options.retry`, or the `ProjectionRetry` schedule                                                            |
+| Field      | Meaning                                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | `streamsy/projection/` followed by the URI-encoded projection id                                                                                     |
+| `next`     | The current time while a binding has work in memory. Otherwise, in durable mode, the earliest due time of the marks. `None` when no binding has work |
+| `run`      | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                    |
+| `retry`    | `options.retry`, or the `ProjectionRetry` schedule                                                                                                   |
+| `deferred` | The number of bindings whose marks wait on their own backoff after a failure. It is always `0` when `durable` is `false`                             |
 
 ## Reads
 

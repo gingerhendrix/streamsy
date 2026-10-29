@@ -210,6 +210,8 @@ const key = recordKey({
 // ["streamsy.projection.v1","order-totals","1","2","{\"workspaceId\":\"ws-42\"}"]
 ```
 
+A record key has no length limit. On MySQL, SQL storage stores a key over 512 code points under a hash, as [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer) describes. An `EncodedStore` of your own receives the full key, and must fit it into the key limit of its own store.
+
 ### `Identity`
 
 ```ts

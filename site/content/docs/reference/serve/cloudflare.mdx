@@ -281,6 +281,7 @@ interface Wakeup<R = never> {
   readonly next: Effect.Effect<Option.Option<number>, StorageFault, R>;
   readonly run: Effect.Effect<void | Cloudflare.WakeupProgress, unknown, R>;
   readonly retry?: Schedule.Schedule<unknown>;
+  readonly deferred?: Effect.Effect<number, StorageFault, R>;
 }
 
 declare const Wakeup: {
@@ -296,12 +297,13 @@ same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 
 `Cloudflare.Wakeup` is one kind of scheduled work in an object: a bounded, idempotent `run`, and a `next` that reads its due time from committed state. `Wakeup.make` runs `run` under the permit of the object for that name. The permit is not reentrant, so a `run` must not call its own `run`.
 
-| Field   | Meaning                                                                                                        |
-| ------- | -------------------------------------------------------------------------------------------------------------- |
-| `name`  | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
-| `next`  | The next due time in epoch milliseconds, or `None` when there is no work                                       |
-| `run`   | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
-| `retry` | The schedule whose delays set the earliest retry time after a failure                                          |
+| Field      | Meaning                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `name`     | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
+| `next`     | The next due time in epoch milliseconds, or `None` when there is no work                                       |
+| `run`      | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
+| `retry`    | The schedule whose delays set the earliest retry time after a failure                                          |
+| `deferred` | The number of units that failed and wait on their own backoff. Without it, `status` reports `0`                |
 
 The host runs stream expiry first, and then the other wakeups in declaration order. Two wakeups with the same name fail the acquisition. When one wakeup fails in `next` or `run`, the others still run.
 
@@ -329,6 +331,7 @@ class Wakeups extends Context.Service<
         readonly next: Option.Option<number>;
         readonly failures: number;
         readonly retryAt: Option.Option<number>;
+        readonly deferred: number;
       }>,
       never,
       never
@@ -346,11 +349,11 @@ same<Wakeups, Cloudflare.Wakeups>(true);
 | ----------- | ----------------------------------------------------------------------------------------------------- |
 | `touch`     | Marks the current request, so the host reconciles when its handler returns                            |
 | `reconcile` | Reads the due times and arms the alarm for the earliest one, or clears the alarm when no work remains |
-| `status`    | Reads the due time, the failure count, and the retry time of each wakeup                              |
+| `status`    | Reads the due time, the failure count, the retry time, and the deferred count of each wakeup          |
 
 Call `touch` before the handler returns. When a streamed body queues work after the handler returns, call `reconcile` instead. Work outside a request also calls `reconcile`.
 
-`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. When `next` fails inside `status`, `status` dies.
+`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. `deferred` is the count that the `deferred` field of the wakeup reports, such as the deferred bindings of a durable [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). When `next` or `deferred` fails inside `status`, `status` dies.
 
 ### `Cloudflare.alarmSlotLayer`
 
