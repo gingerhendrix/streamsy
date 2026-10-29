@@ -1,0 +1,281 @@
+---
+title: Serve errors
+description: Reference for the errors in @streamsy/serve. The handlers fail with tagged classes that can produce public JSON error responses.
+---
+
+```ts
+import { Serve, PublicErrorSchema } from "@streamsy/serve";
+import { Schema, type Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contract";
+```
+
+The Serve handlers fail with these classes when a request or response cannot meet the contract. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).
+
+Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. The fences show its fields and HTTP response method. `responseHeaders` starts as `{}` and stays out of the public JSON body. The response method adds the security headers and `cache-control: no-store`.
+
+## `Serve.InvalidParams`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidParams {
+  readonly _tag: "InvalidParams";
+  readonly route: string;
+  readonly parameter: string;
+  readonly detail: string;
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<InvalidParams, Fields<Serve.InvalidParams>>(true);
+```
+
+`Serve.InvalidParams` reports path params that do not decode or cannot form a canonical stream id. Its HTTP response has status 400.
+
+`route` is the matched route pattern. Serve sets `parameter` to `"params"`, and `detail` describes the failure.
+
+## `Serve.ProtocolVersionUnsupported`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { ReplayRecovery } from "@streamsy/serve/contract";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ProtocolVersionUnsupported {
+  readonly _tag: "ProtocolVersionUnsupported";
+  readonly route: string;
+  readonly supported: 1;
+  readonly received: string;
+  readonly recovery: ReplayRecovery;
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<ProtocolVersionUnsupported, Fields<Serve.ProtocolVersionUnsupported>>(true);
+```
+
+`Serve.ProtocolVersionUnsupported` reports a stream or state version header other than `"1"`. Its HTTP response has status 409.
+
+`route` is the matched route pattern, `received` is the request header, and `supported` is `1`. `recovery` is `"replay-from-start"`.
+
+## `Serve.ResumeRejected`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contract";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ResumeRejected {
+  readonly _tag: "ResumeRejected";
+  readonly route: string;
+  readonly reason: ResumeRejectedReason;
+  readonly recovery: ReplayRecovery;
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<ResumeRejected, Fields<Serve.ResumeRejected>>(true);
+```
+
+`Serve.ResumeRejected` reports a resume that the handler cannot honor. Its HTTP response has status 409.
+
+`route` is the matched route pattern. `reason` is `"invalid-offset"`, `"history-unavailable"`, or `"contract-changed"`. `recovery` is `"replay-from-start"`. See [`ResumeRejectedReason`](/docs/reference/serve/contract#resumerejectedreason).
+
+## `Serve.ContractChanged`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ContractChanged {
+  readonly _tag: "ContractChanged";
+  readonly route: string;
+  readonly recovery: "refetch";
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<ContractChanged, Fields<Serve.ContractChanged>>(true);
+```
+
+`Serve.ContractChanged` reports a value contract header that differs from the current fingerprint. Its HTTP response has status 409.
+
+`route` is the matched route pattern. `recovery` is `"refetch"`, so the client fetches the value again.
+
+## `Serve.TransportUnavailable`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface TransportUnavailable {
+  readonly _tag: "TransportUnavailable";
+  readonly route: string;
+  readonly detail: string;
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<TransportUnavailable, Fields<Serve.TransportUnavailable>>(true);
+```
+
+`Serve.TransportUnavailable` reports a storage or transport fault during a stream or state read. Its HTTP response has status 503.
+
+`route` is the matched route pattern. `detail` is `"Storage unavailable"` or `"Transport unavailable"` for faults that the handler maps.
+
+## `Serve.WireEncodeFailed`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
+import type { Fields } from "./reference-check.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WireEncodeFailed {
+  readonly _tag: "WireEncodeFailed";
+  readonly route: string;
+  readonly detail: string;
+  responseHeaders: Readonly<Record<string, string>>;
+  [HttpServerRespondable.symbol](): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    never
+  >;
+}
+// ---cut-after---
+same<WireEncodeFailed, Fields<Serve.WireEncodeFailed>>(true);
+```
+
+`Serve.WireEncodeFailed` reports invalid collection metadata, a value that its schema cannot encode, or a non-finite JSON value. Its HTTP response has status 500.
+
+`route` is the matched route pattern, and `detail` describes the failure.
+
+## `Serve.ServeError`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ServeError =
+  | Serve.InvalidParams
+  | Serve.ProtocolVersionUnsupported
+  | Serve.ResumeRejected
+  | Serve.ContractChanged
+  | Serve.TransportUnavailable
+  | Serve.WireEncodeFailed;
+// ---cut-after---
+same<ServeError, Serve.ServeError>(true);
+```
+
+`Serve.ServeError` names all six Serve error classes. A `value` computation can also fail with its own error type.
+
+## `PublicErrorSchema`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve";
+import type { Schema } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const PublicErrorSchema: Schema.TaggedUnion<{
+  readonly ContractChanged: Schema.TaggedStruct<
+    "ContractChanged",
+    {
+      readonly route: Schema.String;
+      readonly recovery: Schema.Literal<"refetch">;
+    }
+  >;
+  readonly InvalidParams: Schema.TaggedStruct<
+    "InvalidParams",
+    {
+      readonly route: Schema.String;
+      readonly parameter: Schema.String;
+      readonly detail: Schema.String;
+    }
+  >;
+  readonly ProtocolVersionUnsupported: Schema.TaggedStruct<
+    "ProtocolVersionUnsupported",
+    {
+      readonly route: Schema.String;
+      readonly supported: Schema.Literal<1>;
+      readonly received: Schema.String;
+      readonly recovery: Schema.Literal<"replay-from-start">;
+    }
+  >;
+  readonly ResumeRejected: Schema.TaggedStruct<
+    "ResumeRejected",
+    {
+      readonly route: Schema.String;
+      readonly reason: Schema.Literals<
+        readonly ["invalid-offset", "history-unavailable", "contract-changed"]
+      >;
+      readonly recovery: Schema.Literal<"replay-from-start">;
+    }
+  >;
+  readonly TransportUnavailable: Schema.TaggedStruct<
+    "TransportUnavailable",
+    {
+      readonly route: Schema.String;
+      readonly detail: Schema.String;
+    }
+  >;
+  readonly WireEncodeFailed: Schema.TaggedStruct<
+    "WireEncodeFailed",
+    {
+      readonly route: Schema.String;
+      readonly detail: Schema.String;
+    }
+  >;
+}>;
+// ---cut-after---
+same<typeof PublicErrorSchema, typeof Real.PublicErrorSchema>(true);
+```
+
+`PublicErrorSchema` validates and encodes the public error body. Its `cases` field gives one tagged schema for each error class. The body matches [`PublicError`](/docs/reference/serve/contract#publicerror), without `responseHeaders`, `message`, or `stack`.
+
+When HttpApi encodes a declared error itself, it does not retain the Serve response headers. Convert the error with `HttpServerRespondable.toResponse` to retain those headers. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).

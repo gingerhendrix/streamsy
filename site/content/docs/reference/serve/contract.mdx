@@ -1,0 +1,308 @@
+---
+title: Contract
+description: Reference for the contract exports in @streamsy/serve/contract. They define canonical JSON, change validators, header names, and public error bodies.
+---
+
+```ts
+import {
+  canonicalJson,
+  contractFingerprint,
+  valueEtag,
+  decodePublicError,
+  STATE_VERSION_HEADER,
+  STATE_CONTRACT_HEADER,
+  STREAM_VERSION_HEADER,
+  STREAM_CONTRACT_HEADER,
+  VALUE_CONTRACT_HEADER,
+  DURABLE_STATE_PROTOCOL,
+  PUBLIC_ERROR_TAGS,
+  type CanonicalValue,
+  type ReplayRecovery,
+  type ResumeRejectedReason,
+  type PublicError,
+  type PublicErrorTag,
+} from "@streamsy/serve/contract";
+```
+
+The contract exports define the headers and JSON bodies that Serve clients exchange. See [Browser clients and CORS](/docs/http/serve#browser-clients-and-cors).
+
+## `canonicalJson`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function canonicalJson(value: CanonicalValue): string;
+// ---cut-after---
+same<typeof canonicalJson, typeof Real.canonicalJson>(true);
+```
+
+`canonicalJson` encodes JSON with ordinary object keys sorted recursively and array order preserved. A `null` value remains `null`. A non-finite number throws a `TypeError` when the encoder visits it.
+
+Use ordinary objects. An object with a null prototype bypasses recursive key sorting and number validation.
+
+The type excludes `undefined`. If an object member is `undefined` at run time, the encoder omits that member.
+
+## `contractFingerprint`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function contractFingerprint(value: CanonicalValue): string;
+// ---cut-after---
+same<typeof contractFingerprint, typeof Real.contractFingerprint>(true);
+```
+
+`contractFingerprint` returns eight lowercase hexadecimal characters from FNV-1a over the canonical JSON's UTF-16 code units. Ordinary objects that differ only in property order have the same fingerprint. This is a change validator, not a security digest.
+
+## `valueEtag`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function valueEtag(canonical: string): string;
+// ---cut-after---
+same<typeof valueEtag, typeof Real.valueEtag>(true);
+```
+
+`valueEtag` returns a strong ETag with sixteen lowercase hexadecimal characters inside double quotes. It concatenates two FNV-1a passes with different seeds over `canonical`. Pass the result of `canonicalJson` when the validator represents a JSON value. The digest is for cache validation, not security.
+
+## `decodePublicError`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import type { PublicError } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function decodePublicError(value: unknown): PublicError;
+// ---cut-after---
+same<typeof decodePublicError, typeof Real.decodePublicError>(true);
+```
+
+`decodePublicError` validates an untrusted error object and returns a fresh `PublicError` with unknown fields discarded. It throws a `TypeError` for an invalid body or unknown tag.
+
+Required fields must be own data properties. The decoder rejects inherited fields, accessors, boxed strings, arrays, and `null`. It does not invoke a getter for a required field.
+
+## `CanonicalValue`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type CanonicalValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly CanonicalValue[]
+  | { readonly [key: string]: CanonicalValue };
+// ---cut-after---
+same<CanonicalValue, Real.CanonicalValue>(true);
+```
+
+`CanonicalValue` describes JSON values, including readonly arrays and string-keyed objects. The `number` branch also admits non-finite numbers at compile time. `canonicalJson` rejects them when it visits them. Use ordinary objects for recursive validation.
+
+## `ReplayRecovery`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ReplayRecovery = "replay-from-start";
+// ---cut-after---
+same<ReplayRecovery, Real.ReplayRecovery>(true);
+```
+
+`ReplayRecovery` names replay-from-start recovery. A state client clears its local rows and reads again from offset `-1`.
+
+## `ResumeRejectedReason`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ResumeRejectedReason = "invalid-offset" | "history-unavailable" | "contract-changed";
+// ---cut-after---
+same<ResumeRejectedReason, Real.ResumeRejectedReason>(true);
+```
+
+`ResumeRejectedReason` names why a stream or state handler rejects a resume.
+
+| Reason                | Meaning                                                                 |
+| --------------------- | ----------------------------------------------------------------------- |
+| `invalid-offset`      | The offset is malformed, or the underlying read rejects it              |
+| `history-unavailable` | The stream is absent or gone during a resume                            |
+| `contract-changed`    | The request's contract fingerprint differs from the current fingerprint |
+
+## `PublicError`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type PublicError =
+  | {
+      readonly _tag: "InvalidParams";
+      readonly route: string;
+      readonly parameter: string;
+      readonly detail: string;
+    }
+  | {
+      readonly _tag: "ProtocolVersionUnsupported";
+      readonly route: string;
+      readonly supported: 1;
+      readonly received: string;
+      readonly recovery: ReplayRecovery;
+    }
+  | {
+      readonly _tag: "ResumeRejected";
+      readonly route: string;
+      readonly reason: ResumeRejectedReason;
+      readonly recovery: ReplayRecovery;
+    }
+  | { readonly _tag: "ContractChanged"; readonly route: string; readonly recovery: "refetch" }
+  | {
+      readonly _tag: "TransportUnavailable" | "WireEncodeFailed";
+      readonly route: string;
+      readonly detail: string;
+    };
+// ---cut-after---
+same<PublicError, Real.PublicError>(true);
+```
+
+`PublicError` describes the JSON body of a Serve error. `route` is the matched route pattern. `parameter` names an invalid param, and `detail` describes an invalid param, unavailable transport, or encoding failure.
+
+`ProtocolVersionUnsupported` includes the received version and supported version `1`. `ResumeRejected` includes the rejection reason. The stream and state errors prescribe `"replay-from-start"`. `ContractChanged` prescribes `"refetch"` for a value. See [Serve errors](/docs/reference/serve/serve-errors) for the classes and HTTP statuses.
+
+## `STATE_VERSION_HEADER`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const STATE_VERSION_HEADER: "x-streamsy-state-version";
+// ---cut-after---
+same<typeof STATE_VERSION_HEADER, typeof Real.STATE_VERSION_HEADER>(true);
+```
+
+`STATE_VERSION_HEADER` names the Durable State version header. Serve sends `"1"` and treats an absent request header as `"1"`.
+
+## `STATE_CONTRACT_HEADER`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const STATE_CONTRACT_HEADER: "x-streamsy-state-contract";
+// ---cut-after---
+same<typeof STATE_CONTRACT_HEADER, typeof Real.STATE_CONTRACT_HEADER>(true);
+```
+
+`STATE_CONTRACT_HEADER` names the Durable State contract fingerprint header. A different request fingerprint causes `ResumeRejected` with reason `"contract-changed"`.
+
+## `STREAM_VERSION_HEADER`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const STREAM_VERSION_HEADER: "x-streamsy-stream-version";
+// ---cut-after---
+same<typeof STREAM_VERSION_HEADER, typeof Real.STREAM_VERSION_HEADER>(true);
+```
+
+`STREAM_VERSION_HEADER` names the Durable Streams version header. Serve sends `"1"` and treats an absent request header as `"1"`.
+
+## `STREAM_CONTRACT_HEADER`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const STREAM_CONTRACT_HEADER: "x-streamsy-stream-contract";
+// ---cut-after---
+same<typeof STREAM_CONTRACT_HEADER, typeof Real.STREAM_CONTRACT_HEADER>(true);
+```
+
+`STREAM_CONTRACT_HEADER` names the Durable Streams contract fingerprint header. A different request fingerprint causes `ResumeRejected` with reason `"contract-changed"`.
+
+## `VALUE_CONTRACT_HEADER`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const VALUE_CONTRACT_HEADER: "x-streamsy-value-contract";
+// ---cut-after---
+same<typeof VALUE_CONTRACT_HEADER, typeof Real.VALUE_CONTRACT_HEADER>(true);
+```
+
+`VALUE_CONTRACT_HEADER` names the computed value contract fingerprint header. A different request fingerprint causes `ContractChanged` with recovery `"refetch"`.
+
+## `DURABLE_STATE_PROTOCOL`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DURABLE_STATE_PROTOCOL: "https://durable-streams.dev/state-protocol/v1";
+// ---cut-after---
+same<typeof DURABLE_STATE_PROTOCOL, typeof Real.DURABLE_STATE_PROTOCOL>(true);
+```
+
+`DURABLE_STATE_PROTOCOL` identifies version 1 of the Durable State protocol.
+
+## `PUBLIC_ERROR_TAGS`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const PUBLIC_ERROR_TAGS: readonly [
+  "InvalidParams",
+  "ProtocolVersionUnsupported",
+  "ResumeRejected",
+  "ContractChanged",
+  "TransportUnavailable",
+  "WireEncodeFailed",
+];
+// ---cut-after---
+same<typeof PUBLIC_ERROR_TAGS, typeof Real.PUBLIC_ERROR_TAGS>(true);
+```
+
+`PUBLIC_ERROR_TAGS` lists the six public error tags in declaration order.
+
+## `PublicErrorTag`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/contract";
+import type { PublicError } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type PublicErrorTag = PublicError["_tag"];
+// ---cut-after---
+same<PublicErrorTag, Real.PublicErrorTag>(true);
+```
+
+`PublicErrorTag` names the discriminator values of `PublicError`. It is the union of the entries in `PUBLIC_ERROR_TAGS`.

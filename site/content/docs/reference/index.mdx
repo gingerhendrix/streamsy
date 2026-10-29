@@ -57,4 +57,12 @@ The site build compares each signature on these pages with the real export. When
 | [BunStorage](/docs/reference/storage/bun-storage)                      | `BunStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/bun`)                      |
 | [DurableObjectStorage](/docs/reference/storage/durable-object-storage) | `DurableObjectStorage.layer`, `layerProtocol`, `Options` (`@streamsy/storage/durable-object`) |
 
-These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), and of `@streamsy/storage` (the root, `/bun`, and `/durable-object`). The other packages have no reference pages yet.
+## `@streamsy/serve`
+
+| Page                                               | Exports                                                                                   |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [Serve](/docs/reference/serve/serve)               | The route and response functions, `layer`, `teardown`, and their options                  |
+| [Serve errors](/docs/reference/serve/serve-errors) | The Serve error classes, `ServeError`, and `PublicErrorSchema`                            |
+| [Contract](/docs/reference/serve/contract)         | Canonical JSON, validators, headers, and public error bodies (`@streamsy/serve/contract`) |
+
+These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), of `@streamsy/storage` (the root, `/bun`, and `/durable-object`), and of `@streamsy/serve` (the root and `/contract`). The other serve entry points have no reference pages yet.

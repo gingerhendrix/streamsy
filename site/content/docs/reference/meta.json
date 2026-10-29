@@ -1,4 +1,4 @@
 {
   "title": "Reference",
-  "pages": ["index", "core", "projection", "storage"]
+  "pages": ["index", "core", "projection", "storage", "serve"]
 }

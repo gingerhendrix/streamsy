@@ -1,0 +1,4 @@
+{
+  "title": "@streamsy/serve",
+  "pages": ["serve", "serve-errors", "contract"]
+}

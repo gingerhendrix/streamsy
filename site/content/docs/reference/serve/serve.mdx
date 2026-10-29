@@ -1,0 +1,499 @@
+---
+title: Serve
+description: Reference for the Serve namespace in @streamsy/serve. It mounts read routes, serves JSON values, and drains live reads when a host stops.
+---
+
+```ts
+import { Serve } from "@streamsy/serve";
+import type { Duration, Effect, Layer, Runtime, Schema } from "effect";
+import type { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import type { Http, StreamAddress, Streamsy } from "@streamsy/core";
+import type { ShutdownSignal } from "@streamsy/core/http";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+```
+
+`Serve` builds read routes and response Effects for streams, Durable State, and computed JSON values. See [Serve handlers](/docs/http/serve) and [Long-running hosts](/docs/http/serve#long-running-hosts).
+
+The error classes and `ServeError` are on the [Serve errors](/docs/reference/serve/serve-errors) page.
+
+## `Serve.mount`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Layer } from "effect";
+import type { HttpRouter } from "effect/http";
+import type { Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function mount<P, A, K, RD, RE, const Path extends `/${string}`>(
+  declaration: {
+    readonly paramSchema: StreamRoute.PathSchema<P>;
+    readonly at: (params: P) => Streamsy.Address<A, K, RD, RE>;
+  },
+  path: Path & ExactPath<Path, NoInfer<P>>,
+  options?: Serve.ReadOptions,
+): Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request<"Error", Serve.InvalidParams>
+  | HttpRouter.Request<"Error", Serve.ProtocolVersionUnsupported>
+  | HttpRouter.Request<"Error", Serve.ResumeRejected>
+  | HttpRouter.Request<"Error", Serve.TransportUnavailable>
+  | HttpRouter.Request<"Error", Serve.WireEncodeFailed>
+  | HttpRouter.Request.From<"Requires", Exclude<K, HttpRouter.Provided>>
+>;
+
+// These local types have no exported names. They require the path's param
+// names to match P when Path is a literal.
+type Names<S extends string> = S extends `${string}:${infer N}/${infer Tail}`
+  ? N | Names<Tail>
+  : S extends `${string}:${infer N}`
+    ? N
+    : never;
+type ExactPath<Path extends string, P> = `/${string}` extends Path
+  ? unknown
+  : [Exclude<Names<Path>, keyof P>, Exclude<keyof P, Names<Path>>] extends [never, never]
+    ? unknown
+    : never;
+// ---cut-after---
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat"
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly zone: string; readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/zones/:zone/feed/:seat"
+  >,
+  typeof Serve.mount<
+    { readonly zone: string; readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/zones/:zone/feed/:seat"
+  >
+>(true);
+same<
+  typeof mount<
+    {},
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed"
+  >,
+  typeof Serve.mount<
+    {},
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:wrong"
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:wrong"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed"
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat/:extra"
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat/:extra"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat?"
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    "/feed/:seat?"
+  >
+>(true);
+same<
+  typeof mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    `/${string}`
+  >,
+  typeof Serve.mount<
+    { readonly seat: number },
+    string,
+    { readonly service: "stream" },
+    { readonly service: "decode" },
+    { readonly service: "encode" },
+    `/${string}`
+  >
+>(true);
+```
+
+`mount` decodes the matched path params and resolves `declaration.at` for each request. When the address has `collections`, `mount` chooses [`state`](#servestate). Otherwise, it chooses [`stream`](#servestream). It does not create a stream.
+
+For a literal `path`, the compiler requires exactly the param names of `P`. A missing name, an extra name, or an optional param such as `:seat?` fails the check. A path typed as `` `/${string}` `` bypasses that name check.
+
+When the params do not decode, or `declaration.at` throws, the handler fails with `Serve.InvalidParams`. The route accepts GET and HEAD. Other methods answer 405 with `allow: GET, HEAD`, including beneath a protocol wildcard route.
+
+Serve decodes path segments, while protocol routes use raw encoded ids. Use URL-safe stream segments. Two routes with the same shape fail application construction.
+
+## `Serve.route`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect, Layer } from "effect";
+import type { HttpRouter, HttpServerResponse } from "effect/http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function route<E, R>(
+  path: HttpRouter.PathInput,
+  handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+): Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Error", E>
+  | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+>;
+// ---cut-after---
+same<typeof route, typeof Serve.route>(true);
+```
+
+`route` owns every method at `path`, including beneath a protocol wildcard route. It runs `handler` for GET and HEAD. Other methods answer 405 with `allow: GET, HEAD` and [`Http.securityHeaders`](/docs/reference/core/http#httpsecurityheaders).
+
+The route retains the handler's errors and required services in the router's request types. `route` does not decode params or change the handler's HEAD response.
+
+## `Serve.params`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import type { HttpRouter } from "effect/http";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const params: <P>(declaration: {
+  readonly paramSchema: StreamRoute.PathSchema<P>;
+}) => Effect.Effect<P, Serve.InvalidParams, HttpRouter.RouteContext>;
+// ---cut-after---
+same<typeof params, typeof Serve.params>(true);
+```
+
+`params` decodes the matched route's path params with `declaration.paramSchema`. When decoding fails, it fails with `Serve.InvalidParams`, with `parameter: "params"` and `detail: "Invalid path parameters"`.
+
+## `Serve.stream`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import type { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import type { Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function stream<A, K, RD, RE>(
+  address: Streamsy.Address<A, K, RD, RE>,
+  options?: Serve.ReadOptions,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  | Serve.ProtocolVersionUnsupported
+  | Serve.ResumeRejected
+  | Serve.TransportUnavailable
+  | Serve.WireEncodeFailed,
+  K | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext
+>;
+// ---cut-after---
+same<typeof stream, typeof Serve.stream>(true);
+```
+
+`stream` serves a resolved address through [`Http.read`](/docs/reference/core/http#httpread), with the Durable Streams version and contract headers. It supports catch-up reads, long polls, SSE, and HEAD metadata.
+
+The handler accepts version `1`, which is also the default when the request omits its version header. Another version fails with `Serve.ProtocolVersionUnsupported`. A contract header that differs from the current fingerprint fails with `Serve.ResumeRejected` and reason `"contract-changed"`.
+
+A non-HEAD request resumes when its `offset` is present and differs from `-1` and `now`. An invalid offset fails with `Serve.ResumeRejected` and reason `"invalid-offset"`. When history is absent or gone, a resume fails with reason `"history-unavailable"`. A read that does not resume answers 404 for an absent stream or 410 for a gone stream.
+
+A storage or transport fault fails with `Serve.TransportUnavailable`. An unsupported read answers 400. The handler also retains `Serve.WireEncodeFailed` in its error type.
+
+## `Serve.state`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect } from "effect";
+import type { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import type { StreamAddress, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function state<C extends StreamAddress.Collections, K, RD, RE>(
+  address: StreamAddress.StateAddress<C, RD, RE> &
+    Streamsy.Address<StreamAddress.CollectionsEvent<C>, K, RD, RE>,
+  options?: Serve.ReadOptions,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  | Serve.ProtocolVersionUnsupported
+  | Serve.ResumeRejected
+  | Serve.TransportUnavailable
+  | Serve.WireEncodeFailed,
+  K | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext
+>;
+// ---cut-after---
+same<typeof state, typeof Serve.state>(true);
+```
+
+`state` serves a Durable State change stream with replay-from-start recovery. It follows the version, resume, and fault rules of [`stream`](#servestream), with the state headers.
+
+The handler passes stored control messages through in order with the changes. It does not create snapshots. A request with `x-streamsy-state-reset: snapshot` answers 400. See [State routes](/docs/http/serve#state-routes).
+
+The contract fingerprint includes the collection names and their key fields. When collection metadata fails validation, the handler fails with `Serve.WireEncodeFailed`.
+
+## `Serve.value`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Effect, Schema } from "effect";
+import type { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const value: <A, I extends CanonicalValue, E, R, RE>(
+  schema: Schema.Codec<A, I, never, RE>,
+  compute: Effect.Effect<A, E, R>,
+  options?: Serve.ValueOptions | undefined,
+) => Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  E | Serve.ContractChanged | Serve.WireEncodeFailed,
+  R | RE | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext
+>;
+// ---cut-after---
+same<typeof value, typeof Serve.value>(true);
+```
+
+`value` runs `compute`, encodes the result with `schema`, and serves canonical JSON with an ETag. Errors from `compute` remain in the Effect error channel. A schema encoding failure or a non-finite JSON number fails with `Serve.WireEncodeFailed`.
+
+When the request's value contract header differs from the fingerprint, `value` fails with `Serve.ContractChanged` before it runs `compute`. The fingerprint covers the route, the cache policy, and `options.contract`.
+
+When `if-none-match` contains `*` or the current ETag, `value` answers 304. It accepts weak ETags and comma-separated tags. It still runs `compute` and encodes the value before that comparison. A HEAD request also computes and encodes the value, but returns an empty body.
+
+## `Serve.layer`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Layer } from "effect";
+import type { HttpRouter, HttpServer } from "effect/http";
+import type { ShutdownSignal } from "@streamsy/core/http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const layer: <
+  A,
+  E,
+  R,
+  HE = never,
+  HR = HttpRouter.Request.Only<"Requires", R> | HttpRouter.Request.Only<"GlobalRequires", R>,
+>(
+  routes: Layer.Layer<A, E, R>,
+  options?: Serve.LayerOptions<R, HE, HR>,
+) => Layer.Layer<
+  A,
+  HttpRouter.Request.Without<E>,
+  | HttpServer.HttpServer
+  | Exclude<Exclude<Exclude<HR, HttpRouter.GlobalProvided>, HttpRouter.HttpRouter>, ShutdownSignal>
+  | Exclude<Exclude<HttpRouter.Request.Without<R>, HttpRouter.HttpRouter>, ShutdownSignal>
+>;
+// ---cut-after---
+same<typeof layer, typeof Serve.layer>(true);
+```
+
+`layer` serves `routes` through `HttpRouter.serve` and provides the shutdown signal for live reads. The host supplies storage, a listener, and its runtime's `runMain`.
+
+Before the serve Layer closes, the drain answers a parked long poll with 204, its offset, and its cursor. An open SSE body ends after its last whole batch. The drain waits until no live read runs or `drainTimeout` passes. The serve Layer then interrupts any handler that still runs. The default timeout is 2 seconds.
+
+See [Long-running hosts](/docs/http/serve#long-running-hosts) for the Layer and runtime setup.
+
+## `Serve.teardown`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Runtime } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const teardown: Runtime.Teardown;
+// ---cut-after---
+same<typeof teardown, typeof Serve.teardown>(true);
+```
+
+`teardown` sets the exit code after a long-running host drains. Pass it to the runtime's `runMain` as `{ teardown: Serve.teardown }`.
+
+Every interrupt-only exit maps to 0, including an interrupt that no OS signal caused. Other exits use `Runtime.defaultTeardown`, so startup failures remain non-zero. A `Layer.launch` main ends only on failure or interruption.
+
+## `Serve.ReadOptions`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Http } from "@streamsy/core";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ReadOptions extends Http.ReadOptions {
+  readonly contract?: CanonicalValue;
+}
+// ---cut-after---
+same<ReadOptions, Serve.ReadOptions>(true);
+```
+
+`ReadOptions` holds the read policy and explicit contract revision for `mount`, `stream`, and `state`.
+
+| Field             | Meaning                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `sseDeadlineMs`   | The lifetime of one SSE response. The default is 60 s                                |
+| `cacheVisibility` | `private` or `public` in the read's `cache-control` header. The default is `private` |
+| `contract`        | Extra metadata in the contract fingerprint. The default is `null`                    |
+
+The SSE deadline must be finite and positive. When the handler runs, an invalid deadline causes a `RangeError` defect from [`Http.read`](/docs/reference/core/http#httpread). Set `contract` when a schema changes without a change to the stream address or collection metadata.
+
+## `Serve.ValueOptions`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { CanonicalValue } from "@streamsy/serve/contract";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ValueOptions {
+  readonly cache?: {
+    readonly visibility: "private" | "public";
+    readonly maxAgeSeconds: number;
+    readonly mustRevalidate: boolean;
+  };
+  readonly contract?: CanonicalValue;
+}
+// ---cut-after---
+same<ValueOptions, Serve.ValueOptions>(true);
+```
+
+`ValueOptions` holds the cache policy and explicit contract revision for `value`.
+
+| Field                  | Meaning                                                                 |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `cache.visibility`     | `private` or `public` in `cache-control`                                |
+| `cache.maxAgeSeconds`  | The `max-age` value in seconds                                          |
+| `cache.mustRevalidate` | Whether `cache-control` includes `must-revalidate`                      |
+| `contract`             | Extra metadata in the value contract fingerprint. The default is `null` |
+
+When `cache` is absent, the policy is `private, max-age=0, must-revalidate`. When `cache` is present, all three cache fields are required. Set `contract` when a schema or computation changes without a change to the route or cache policy.
+
+## `Serve.LayerOptions`
+
+```ts
+// ---cut-start---
+import { Serve } from "@streamsy/serve";
+import type { Duration } from "effect";
+import type { HttpRouter } from "effect/http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LayerOptions<
+  R = never,
+  HE = never,
+  HR = HttpRouter.Request.Only<"Requires", R> | HttpRouter.Request.Only<"GlobalRequires", R>,
+> = NonNullable<Parameters<typeof HttpRouter.serve<unknown, unknown, R, HE, HR>>[1]> & {
+  readonly drainTimeout?: Duration.Input | undefined;
+};
+// ---cut-after---
+same<LayerOptions, Serve.LayerOptions>(true);
+same<
+  LayerOptions<
+    HttpRouter.Request.From<"Requires", { readonly service: "request" }>,
+    Error,
+    { readonly host: "host" }
+  >,
+  Serve.LayerOptions<
+    HttpRouter.Request.From<"Requires", { readonly service: "request" }>,
+    Error,
+    { readonly host: "host" }
+  >
+>(true);
+```
+
+`LayerOptions` adds `drainTimeout` to the options of `HttpRouter.serve`. `drainTimeout` bounds the wait for live reads to end, with a default of 2 seconds. The other fields retain the router's meanings.
