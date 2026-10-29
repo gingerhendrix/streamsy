@@ -1,0 +1,129 @@
+---
+title: Node
+description: Reference for the host exports in @streamsy/serve/node. They provide a scoped Node HTTP listener.
+---
+
+```ts
+import * as Node from "@streamsy/serve/node";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import type { ServerOptions } from "node:http";
+```
+
+`Node.listener` provides a scoped HTTP listener for a Streamsy host. See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
+
+## Listener
+
+### `Node.listener`
+
+```ts
+// ---cut-start---
+import * as Node from "@streamsy/serve/node";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import type { ServerOptions } from "node:http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function listener(
+  options?: Node.ListenerOptions,
+): Layer.Layer<
+  | Etag.Generator
+  | HttpPlatform.HttpPlatform
+  | HttpServer.HttpServer
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | Stdio.Stdio
+  | Terminal.Terminal,
+  HttpServerError.ServeError,
+  never
+>;
+// ---cut-after---
+same<typeof listener, typeof Node.listener>(true);
+```
+
+`Node.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+
+The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+
+Before routes attach, and after they detach, the listener answers requests with 503, `Retry-After: 1`, and `Connection: close`. It converts raw web `Response` bodies into Effect stream bodies so Node can write Streamsy protocol responses.
+
+## Options
+
+### `Node.ListenerOptions`
+
+```ts
+// ---cut-start---
+import * as Node from "@streamsy/serve/node";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import type { ServerOptions } from "node:http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ListenerOptions {
+  readonly port?: number;
+  readonly hostname?: string;
+  readonly server?: ServerOptions;
+  readonly gracefulShutdownTimeout?: Duration.Input;
+}
+// ---cut-after---
+same<ListenerOptions, Node.ListenerOptions>(true);
+```
+
+`Node.ListenerOptions` configures the listener.
+
+| Field                     | Default     | Meaning                                                  |
+| ------------------------- | ----------- | -------------------------------------------------------- |
+| `port`                    | 3000        | Port to bind                                             |
+| `hostname`                | `127.0.0.1` | Address to bind                                          |
+| `server`                  | `{}`        | Options passed to `node:http` `createServer`             |
+| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+
+The default Node server options keep parked long polls and open SSE bodies alive. Node's `requestTimeout` limits the time to receive a request, rather than the time to answer it.
+
+## Defaults
+
+### `Node.DEFAULT_PORT`
+
+```ts
+// ---cut-start---
+import * as Node from "@streamsy/serve/node";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import type { ServerOptions } from "node:http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_PORT: 3000;
+// ---cut-after---
+same<typeof DEFAULT_PORT, typeof Node.DEFAULT_PORT>(true);
+```
+
+`Node.DEFAULT_PORT` is the default port of `Node.listener`: 3000.
+
+### `Node.DEFAULT_HOSTNAME`
+
+```ts
+// ---cut-start---
+import * as Node from "@streamsy/serve/node";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import type { ServerOptions } from "node:http";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_HOSTNAME: "127.0.0.1";
+// ---cut-after---
+same<typeof DEFAULT_HOSTNAME, typeof Node.DEFAULT_HOSTNAME>(true);
+```
+
+`Node.DEFAULT_HOSTNAME` is the default bind address of `Node.listener`: `127.0.0.1`.

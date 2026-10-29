@@ -1,0 +1,140 @@
+---
+title: Deno
+description: Reference for the host exports in @streamsy/serve/deno. They provide a scoped Deno HTTP listener.
+---
+
+```ts
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+```
+
+`Deno.listener` provides a scoped HTTP listener for a Streamsy host. See [host Layers](/docs/hosting#layers) and [long-running hosts](/docs/http/serve#long-running-hosts).
+
+## Listener
+
+### `Deno.listener`
+
+```ts
+// ---cut-start---
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function listener(
+  options?: Deno.ListenerOptions,
+): Layer.Layer<
+  | Etag.Generator
+  | HttpPlatform.HttpPlatform
+  | HttpServer.HttpServer
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | Stdio.Stdio
+  | Terminal.Terminal,
+  HttpServerError.ServeError,
+  never
+>;
+// ---cut-after---
+same<typeof listener, typeof Deno.listener>(true);
+```
+
+`Deno.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+
+The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+
+The Deno HTTP server has no idle or response timeout that cuts off a parked long poll or an SSE body.
+
+### `Deno.nodeSqliteCompat`
+
+```ts
+// ---cut-start---
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const nodeSqliteCompat: Effect.Effect<void, never, never>;
+// ---cut-after---
+same<typeof nodeSqliteCompat, typeof Deno.nodeSqliteCompat>(true);
+```
+
+`Deno.nodeSqliteCompat` adds a no-op `enableLoadExtension` method to the `node:sqlite` `DatabaseSync` prototype when that method is absent. It leaves an existing method unchanged.
+
+Run this Effect before the first `SqliteClient.make` from `@effect/sql-sqlite-node`. That driver calls `enableLoadExtension(false)` on each open, which otherwise throws on Deno. A rejected dynamic import becomes a defect.
+
+## Options
+
+### `Deno.ListenerOptions`
+
+```ts
+// ---cut-start---
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ListenerOptions {
+  readonly port?: number;
+  readonly hostname?: string;
+  readonly gracefulShutdownTimeout?: Duration.Input;
+}
+// ---cut-after---
+same<ListenerOptions, Deno.ListenerOptions>(true);
+```
+
+`Deno.ListenerOptions` configures the listener.
+
+| Field                     | Default     | Meaning                                                  |
+| ------------------------- | ----------- | -------------------------------------------------------- |
+| `port`                    | 3000        | Port to bind                                             |
+| `hostname`                | `127.0.0.1` | Address to bind                                          |
+| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+
+## Defaults
+
+### `Deno.DEFAULT_PORT`
+
+```ts
+// ---cut-start---
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_PORT: 3000;
+// ---cut-after---
+same<typeof DEFAULT_PORT, typeof Deno.DEFAULT_PORT>(true);
+```
+
+`Deno.DEFAULT_PORT` is the default port of `Deno.listener`: 3000.
+
+### `Deno.DEFAULT_HOSTNAME`
+
+```ts
+// ---cut-start---
+import * as Deno from "@streamsy/serve/deno";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_HOSTNAME: "127.0.0.1";
+// ---cut-after---
+same<typeof DEFAULT_HOSTNAME, typeof Deno.DEFAULT_HOSTNAME>(true);
+```
+
+`Deno.DEFAULT_HOSTNAME` is the default bind address of `Deno.listener`: `127.0.0.1`.

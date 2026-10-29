@@ -1,0 +1,642 @@
+---
+title: Cloudflare
+description: Reference for the host exports in @streamsy/serve/cloudflare. They route protocol requests to Durable Objects and schedule work over each object's storage.
+---
+
+```ts
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+```
+
+The Cloudflare host routes protocol requests to Durable Objects that own their storage, route app, and alarm. See [Cloudflare hosting](/docs/hosting/cloudflare).
+
+## Object host
+
+### `Cloudflare.StreamsyObject`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const StreamsyObject: {
+  make: <Env = unknown, R = never, L = never>(
+    configuration: Cloudflare.ObjectConfiguration<Env, R, L>,
+  ) => new (state: Workers.DurableObjectState, env: Env) => ObjectHost<Env, R, L>;
+};
+
+// ObjectHost has no exported name. Keep the package's nominal instance type,
+// which extends the platform DurableObject and implements ObjectInstance.
+type ObjectHost<Env, R, L> = InstanceType<
+  ReturnType<typeof Cloudflare.StreamsyObject.make<Env, R, L>>
+>;
+// ---cut-after---
+same<typeof StreamsyObject, typeof Cloudflare.StreamsyObject>(true);
+same<
+  Pick<InstanceType<ReturnType<typeof StreamsyObject.make>>, keyof Cloudflare.ObjectInstance>,
+  Cloudflare.ObjectInstance
+>(true);
+```
+
+`Cloudflare.StreamsyObject` creates a Durable Object class through `make`. The object acquires storage and compiles its app on first fetch or alarm. Fetch and alarm share one successful acquisition.
+
+When acquisition fails, fetch answers 503 with `Retry-After: 1`, and the next access retries. The host closes a failed acquisition's scope before retrying. Alarm acquisition failures reject the alarm Promise so the platform can retry.
+
+The host reconciles wakeup deadlines on acquisition and after PUT, POST, and DELETE requests, including rejected requests. A request that calls `Wakeups.touch` also triggers reconciliation. A route defect becomes 500 with the protocol security headers. Request logging is off.
+
+### `Cloudflare.ObjectConfiguration`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ObjectConfiguration<Env, R = never, L = never> {
+  readonly app: ObjectApp<R | L>;
+  readonly wakeups?: ReadonlyArray<Cloudflare.WakeupSource<Storage | R | L>>;
+  readonly layer: (
+    state: Workers.DurableObjectState,
+    env: Env,
+  ) => Layer.Layer<Storage | R, StorageFault, L>;
+  readonly links?: (env: Env) => ReadonlyArray<Cloudflare.LinkClient<L>>;
+}
+
+// ObjectApp has no exported name. It is the route Layer that the object hosts accept.
+type ObjectApp<R = never> = Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Requires", Storage | Cloudflare.Wakeups | R>
+  | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
+>;
+// ---cut-after---
+same<ObjectConfiguration<unknown>, Cloudflare.ObjectConfiguration<unknown>>(true);
+same<
+  ObjectConfiguration<
+    { readonly binding: string },
+    { readonly local: "local" },
+    { readonly linked: "linked" }
+  >,
+  Cloudflare.ObjectConfiguration<
+    { readonly binding: string },
+    { readonly local: "local" },
+    { readonly linked: "linked" }
+  >
+>(true);
+```
+
+`Cloudflare.ObjectConfiguration` describes the app, local services, and links of one object class.
+
+| Field     | Meaning                                                                             |
+| --------- | ----------------------------------------------------------------------------------- |
+| `app`     | Route Layer that uses storage, wakeups, local services `R`, and linked services `L` |
+| `layer`   | Factory for local storage and services. Receives the object's state and environment |
+| `wakeups` | Additional deadline sources. Stream expiry is always present                        |
+| `links`   | Factory for clients of streams on other objects                                     |
+
+The host provides the alarm slot from `state.storage`. It builds linked services before the local Layer, so the local Layer can use them during acquisition. When the local Layer also provides a linked stream, acquisition fails with `StorageFault`. Keep that stream out of the local storage group.
+
+### `Cloudflare.ObjectInstance`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ObjectInstance {
+  fetch(request: Request): Promise<Response>;
+  alarm(info?: Workers.AlarmInvocationInfo): Promise<void>;
+}
+// ---cut-after---
+same<ObjectInstance, Cloudflare.ObjectInstance>(true);
+```
+
+`Cloudflare.ObjectInstance` describes the fetch and alarm methods of an object. The host ignores alarm invocation metadata. An HTTP request cannot invoke an alarm turn.
+
+## Worker routing and placement
+
+### `Cloudflare.router`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function router<Env>(options: Cloudflare.RouterOptions<Env>): Workers.ExportedHandler<Env>;
+// ---cut-after---
+same<typeof router, typeof Cloudflare.router>(true);
+```
+
+`Cloudflare.router` returns a Worker handler that forwards each protocol request to the object named by placement. It strips the mount prefix for placement and forwards the original request unchanged, including encoded path segments, query, headers, and body. A fork request goes to the child's object.
+
+Authenticate before forwarding to the router. The router handles protocol paths. Route Serve paths in your own Worker code.
+
+| Condition                                     | Response                       |
+| --------------------------------------------- | ------------------------------ |
+| Path starts with `/__`                        | 404, without calling an object |
+| Path has no stream id under the prefix        | 400, without calling an object |
+| Placement returns an empty or non-string name | 400, without calling an object |
+| Placement throws                              | 500, without calling an object |
+
+A fork source and child must live on the same object. Keep placement stable while that object holds data.
+
+### `Cloudflare.rule`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function rule<Params>(spec: OwnerRule<Params>): ErasedOwnerRule;
+
+// These rule shapes have no exported names. The input preserves decoded params,
+// and the output erases them for the heterogeneous byRoute table.
+interface OwnerRule<Params> {
+  readonly stream: { parse(id: string): Option.Option<Params> };
+  owner(params: Params): string;
+}
+interface ErasedOwnerRule {
+  readonly stream: { parse(id: string): Option.Option<unknown> };
+  owner(params: never): string;
+}
+// ---cut-after---
+same<typeof rule, typeof Cloudflare.rule>(true);
+```
+
+`Cloudflare.rule` gives `owner` the decoded params of its stream and returns the same object. Pass the result to `Placement.byRoute`. The method syntax of `owner` preserves contextual typing while allowing rules with different params in one table.
+
+### `Cloudflare.Placement`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Placement {
+  readonly name: (streamPath: string) => string;
+}
+
+declare const Placement: {
+  readonly byStream: () => Cloudflare.Placement;
+  readonly byKey: (key: (streamPath: string) => string) => Cloudflare.Placement;
+  readonly byRoute: (rules: ReadonlyArray<ErasedOwnerRule>) => Cloudflare.Placement;
+};
+
+// ErasedOwnerRule has no exported name. Build these values with rule.
+interface ErasedOwnerRule {
+  readonly stream: { parse(id: string): Option.Option<unknown> };
+  owner(params: never): string;
+}
+// ---cut-after---
+same<Placement, Cloudflare.Placement>(true);
+same<typeof Placement, typeof Cloudflare.Placement>(true);
+```
+
+`Cloudflare.Placement` maps a stream path to an object name. The constructors provide three choices:
+
+| Constructor      | Object name                                                       |
+| ---------------- | ----------------------------------------------------------------- |
+| `byStream()`     | The stripped stream path, unchanged                               |
+| `byKey(key)`     | The result of `key(streamPath)`                                   |
+| `byRoute(rules)` | The `owner` result of the first rule whose stream parses the path |
+
+When a route cannot decode a segment, `byRoute` tries the next rule. When no rule matches, it returns an empty string. The router turns that result into 400.
+
+### `Cloudflare.RouterOptions`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface RouterOptions<Env> {
+  readonly namespace: (env: Env) => Workers.DurableObjectNamespace;
+  readonly placement?: Cloudflare.Placement;
+  readonly prefix?: `/${string}`;
+}
+// ---cut-after---
+same<
+  RouterOptions<{ readonly binding: string }>,
+  Cloudflare.RouterOptions<{ readonly binding: string }>
+>(true);
+```
+
+`Cloudflare.RouterOptions` selects the object namespace and protocol mount.
+
+| Field       | Default                | Meaning                                                |
+| ----------- | ---------------------- | ------------------------------------------------------ |
+| `namespace` | Required               | Gets the namespace binding from the Worker environment |
+| `placement` | `Placement.byStream()` | Names the object for each stripped stream path         |
+| `prefix`    | `/`                    | Protocol mount prefix                                  |
+
+The router adds a trailing slash to the prefix when needed before it strips paths. It passes the request to the object with its original path, so the owner mount must use the same prefix.
+
+## Wakeups
+
+### `Cloudflare.Wakeup`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Wakeup<R = never> {
+  readonly name: string;
+  readonly next: Effect.Effect<Option.Option<number>, StorageFault, R>;
+  readonly run: Effect.Effect<void | Cloudflare.WakeupProgress, unknown, R>;
+  readonly retry?: Schedule.Schedule<unknown>;
+}
+
+declare const Wakeup: {
+  make: <R>(wakeup: Cloudflare.Wakeup<R>) => Cloudflare.Wakeup<R>;
+};
+// ---cut-after---
+same<Wakeup, Cloudflare.Wakeup>(true);
+same<Wakeup<{ readonly dependency: string }>, Cloudflare.Wakeup<{ readonly dependency: string }>>(
+  true,
+);
+same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
+```
+
+`Cloudflare.Wakeup` describes bounded, idempotent work whose next deadline comes from committed state. `Wakeup.make` wraps `run` with the object's permit for that name. A run must not call its own wakeup's `run` because the permit is not reentrant.
+
+| Field   | Meaning                                                                        |
+| ------- | ------------------------------------------------------------------------------ |
+| `name`  | Unique name within the object, including the built-in `streamsy/expiry`        |
+| `next`  | Next deadline in epoch milliseconds, or `None` when there is no work           |
+| `run`   | At-least-once work. Returns `{ more: true }` when a bound leaves more due work |
+| `retry` | Schedule whose delays set alarm retry floors                                   |
+
+The host runs stream expiry first, then additional wakeups in declaration order. Duplicate names fail acquisition. A failing deadline or run does not stop other wakeups.
+
+Without `retry`, failures back off exponentially from one second to one hour. A run also backs off when work due before it started remains due and it does not report more work. A finite schedule stops retries on exhaustion. Progress resets the failure count, and eviction discards the in-memory backoff state.
+
+### `Cloudflare.Wakeups`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+class Wakeups extends Context.Service<
+  Wakeups,
+  {
+    readonly touch: Effect.Effect<void, never, never>;
+    readonly reconcile: Effect.Effect<void, never, never>;
+    readonly status: Effect.Effect<
+      ReadonlyArray<{
+        readonly name: string;
+        readonly next: Option.Option<number>;
+        readonly failures: number;
+        readonly retryAt: Option.Option<number>;
+      }>,
+      never,
+      never
+    >;
+  }
+>()("@streamsy/serve/cloudflare/Wakeups") {}
+// ---cut-after---
+same<typeof Wakeups, typeof Cloudflare.Wakeups>(true);
+same<Wakeups, Cloudflare.Wakeups>(true);
+```
+
+`Cloudflare.Wakeups` is the service key for the object's scheduler.
+
+| Member      | Meaning                                                                         |
+| ----------- | ------------------------------------------------------------------------------- |
+| `touch`     | Marks the current request for reconciliation when its handler returns           |
+| `reconcile` | Reads deadlines and arms the earliest one, or clears the alarm when none remain |
+| `status`    | Reads each wakeup's deadline, failure count, and retry floor                    |
+
+Call `touch` before the handler returns. If a streamed body queues work later, call `reconcile` instead. Work outside a request also calls `reconcile`.
+
+Due work arms at `now + 1` rather than running inside the request. An alarm turn arms a 30-second recovery guard before it runs due work, then reconciles again. The `retryAt` field is the earliest instant when backoff permits the wakeup to run. A deadline failure in `status` becomes a defect.
+
+### `Cloudflare.alarmSlotLayer`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function alarmSlotLayer(
+  storage: Workers.DurableObjectStorage,
+): Layer.Layer<AlarmSlot, never, never>;
+
+// AlarmSlot has no exported name. It is the object's one platform alarm slot.
+interface AlarmSlot extends Context.ServiceClass.Shape<
+  "@streamsy/serve/cloudflare/AlarmSlot",
+  {
+    readonly current: Effect.Effect<Option.Option<number>, never, never>;
+    readonly arm: (at: number) => Effect.Effect<void, never, never>;
+    readonly clear: Effect.Effect<void, never, never>;
+  }
+> {}
+// ---cut-after---
+same<typeof alarmSlotLayer, typeof Cloudflare.alarmSlotLayer>(true);
+```
+
+`Cloudflare.alarmSlotLayer` adapts `getAlarm`, `setAlarm`, and `deleteAlarm` on the object's storage handle to the scheduler's alarm service. A missing alarm becomes `None`. Rejected platform Promises become defects.
+
+`StreamsyObject.make` installs this Layer automatically. An Alchemy object passes it in the Layer supplied to `objectHandlers`.
+
+### `Cloudflare.WakeupProgress`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeupProgress {
+  readonly more: boolean;
+}
+// ---cut-after---
+same<WakeupProgress, Cloudflare.WakeupProgress>(true);
+```
+
+`Cloudflare.WakeupProgress` reports whether a bounded run left more work. With `more: true` and a still-due deadline, the scheduler re-arms promptly without failure backoff.
+
+### `Cloudflare.WakeupSource`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeupSource<R = never> =
+  | Cloudflare.Wakeup<R | Cloudflare.Wakeups>
+  | Effect.Effect<Cloudflare.Wakeup<R | Cloudflare.Wakeups>, never, R | Scope.Scope>;
+// ---cut-after---
+same<WakeupSource, Cloudflare.WakeupSource>(true);
+same<
+  WakeupSource<{ readonly dependency: string }>,
+  Cloudflare.WakeupSource<{ readonly dependency: string }>
+>(true);
+```
+
+`Cloudflare.WakeupSource` accepts a ready wakeup or an Effect that acquires one in the object's storage scope. The host supplies the same acquired services to requests and wakeups.
+
+## Object clients and links
+
+### `Cloudflare.ObjectStreams`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const ObjectStreams: {
+  readonly layer: <const Keys extends ReadonlyArray<Streamsy.Any>>(
+    group: Streamsy.Group<Keys>,
+    options: Cloudflare.ObjectStreamsOptions,
+  ) => Layer.Layer<Streamsy.Services<Streamsy.Group<Keys>>, never, never>;
+};
+// ---cut-after---
+same<typeof ObjectStreams, typeof Cloudflare.ObjectStreams>(true);
+```
+
+`Cloudflare.ObjectStreams` provides stream services through `layer`, with requests sent through object stubs instead of the network. The owner must serve a Streamsy `Http.routes` mount. The client declares producer and expected-offset support.
+
+The client answers 404 without calling an object when a request is outside the prefix or group. Placement failures follow the public router's 400 and 500 rules. Caller context, tracing, and cancellation reach an Effect transport.
+
+### `Cloudflare.ObjectLink`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ObjectLink<Keys extends ReadonlyArray<Streamsy.Any>> {
+  readonly group: Streamsy.Group<Keys>;
+  readonly prefix: `/__${string}`;
+  readonly routes: Cloudflare.LinkRoutes<Streamsy.Services<Streamsy.Group<Keys>>>;
+  readonly client: (
+    objects: Workers.DurableObjectNamespace | Cloudflare.ObjectFetch,
+  ) => Cloudflare.LinkClient<Streamsy.Services<Streamsy.Group<Keys>>>;
+}
+
+declare const ObjectLink: {
+  readonly make: <const Keys extends ReadonlyArray<Streamsy.Any>>(
+    options: Cloudflare.ObjectLinkOptions<Keys>,
+  ) => Cloudflare.ObjectLink<Keys>;
+};
+// ---cut-after---
+same<
+  ObjectLink<readonly [typeof Streamsy.Wildcard]>,
+  Cloudflare.ObjectLink<readonly [typeof Streamsy.Wildcard]>
+>(true);
+same<typeof ObjectLink, typeof Cloudflare.ObjectLink>(true);
+```
+
+`Cloudflare.ObjectLink` declares an internal owner mount and its caller client through `make`. Add `routes` to the owner's app and return `client(objects)` from the caller's links.
+
+`make` throws `RangeError` unless the prefix starts with `/__` and has another non-slash character immediately after it. The protocol prefix checks also apply. Public package routers reject these reserved paths before they call an object.
+
+The `access` setting applies to every stream, including State wake streams. Use `full` when the producer must create a missing wake stream with PUT. A link trusts callers that hold an object stub. See [Streams on other objects](/docs/hosting/cloudflare#streams-on-other-objects).
+
+### `Cloudflare.ObjectFetch`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectFetch = (
+  name: string,
+  request: Request,
+) => Effect.Effect<Response, HttpClientError.HttpClientError, never>;
+// ---cut-after---
+same<ObjectFetch, Cloudflare.ObjectFetch>(true);
+```
+
+`Cloudflare.ObjectFetch` sends one web request to an object by name. `ObjectStreams.layer` and `ObjectLink.client` accept this Effect transport or a native namespace. For Alchemy stubs, construct it with [`Alchemy.objectFetch`](/docs/reference/serve/alchemy#alchemyobjectfetch).
+
+### `Cloudflare.ObjectStreamsOptions`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ObjectStreamsOptions {
+  readonly objects: Workers.DurableObjectNamespace | Cloudflare.ObjectFetch;
+  readonly placement: Cloudflare.Placement;
+  readonly prefix: `/${string}`;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+// ---cut-after---
+same<ObjectStreamsOptions, Cloudflare.ObjectStreamsOptions>(true);
+```
+
+`Cloudflare.ObjectStreamsOptions` selects the owner transport and mount.
+
+| Field       | Meaning                                                      |
+| ----------- | ------------------------------------------------------------ |
+| `objects`   | Owner namespace or Effect transport                          |
+| `placement` | The same placement rules that the public router uses         |
+| `prefix`    | Protocol mount on the owner, such as `/streams` or `/__wake` |
+| `headers`   | Extra headers on every request. Defaults to an empty object  |
+
+### `Cloudflare.ObjectLinkOptions`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ObjectLinkOptions<Keys extends ReadonlyArray<Streamsy.Any>> {
+  readonly group: Streamsy.Group<Keys>;
+  readonly prefix: `/__${string}`;
+  readonly placement: Cloudflare.Placement;
+  readonly access: Cloudflare.LinkAccess;
+}
+// ---cut-after---
+same<
+  ObjectLinkOptions<readonly [typeof Streamsy.Wildcard]>,
+  Cloudflare.ObjectLinkOptions<readonly [typeof Streamsy.Wildcard]>
+>(true);
+```
+
+`Cloudflare.ObjectLinkOptions` gives both sides of a link the same group, internal mount, and placement rules.
+
+| Field       | Meaning                                               |
+| ----------- | ----------------------------------------------------- |
+| `group`     | Streams that the owner serves to other objects        |
+| `prefix`    | Reserved internal mount, checked by `ObjectLink.make` |
+| `placement` | Names the owner object of each stream                 |
+| `access`    | Allowed operations on the owner mount                 |
+
+### `Cloudflare.LinkAccess`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LinkAccess = "read" | "append" | "full";
+// ---cut-after---
+same<LinkAccess, Cloudflare.LinkAccess>(true);
+```
+
+`Cloudflare.LinkAccess` selects the operations allowed by a link's owner mount. `read` allows OPTIONS, GET, and HEAD. `append` also allows POST. `full` also allows PUT and DELETE. A method above the selected access receives 405.
+
+### `Cloudflare.LinkClient`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface LinkClient<I> {
+  readonly streams: ReadonlyArray<Streamsy.Any>;
+  readonly layer: Layer.Layer<I, never, never>;
+}
+// ---cut-after---
+same<LinkClient<{ readonly linked: string }>, Cloudflare.LinkClient<{ readonly linked: string }>>(
+  true,
+);
+```
+
+`Cloudflare.LinkClient` supplies linked stream services to a caller object. `streams` names the remote stream classes, and `layer` provides their clients. The host checks `streams` for clashes with local services during acquisition.
+
+### `Cloudflare.LinkRoutes`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LinkRoutes<I> = Layer.Layer<
+  never,
+  never,
+  HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<I, HttpRouter.Provided>>
+>;
+// ---cut-after---
+same<LinkRoutes<never>, Cloudflare.LinkRoutes<never>>(true);
+same<LinkRoutes<Streamsy.Wildcard>, Cloudflare.LinkRoutes<Streamsy.Wildcard>>(true);
+```
+
+`Cloudflare.LinkRoutes` is the owner route Layer of a link. Its request requirements keep the linked stream services that the router does not already provide.

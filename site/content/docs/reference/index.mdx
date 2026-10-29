@@ -69,5 +69,10 @@ The site build compares each signature on these pages with the real export. When
 | [Action outbox](/docs/reference/serve/action-outbox)   | The store service, backing contract, drafts, entries, and memory backing (`@streamsy/serve/action/outbox`) |
 | [Action runtime](/docs/reference/serve/action-runtime) | Draft construction, handlers, drain passes, and `OutboxWakeup` (`@streamsy/serve/action/runtime`)          |
 | [SQL action outbox](/docs/reference/serve/action-sql)  | Migration and SQL backing (`@streamsy/serve/action/sql`)                                                   |
+| [Bun](/docs/reference/serve/bun)                     | The Bun listener, options, and defaults (`@streamsy/serve/bun`)                                         |
+| [Node](/docs/reference/serve/node)                   | The Node listener, options, and defaults (`@streamsy/serve/node`)                                       |
+| [Deno](/docs/reference/serve/deno)                   | The Deno listener, options, defaults, and SQLite compatibility Effect (`@streamsy/serve/deno`)          |
+| [Cloudflare](/docs/reference/serve/cloudflare)       | Worker routing, Durable Object hosts, placement, wakeups, and object links (`@streamsy/serve/cloudflare`) |
+| [Alchemy](/docs/reference/serve/alchemy)             | Effect routing, object transports, handlers, and shared Cloudflare exports (`@streamsy/serve/alchemy`)  |
 
 These pages cover the public entry points of `@streamsy/core` (the root, `/http`, `/remote`, `/protocol`, and `/testing`), of `@streamsy/projection` (the root and `/checkpoint`), of `@streamsy/storage` (the root, `/bun`, and `/durable-object`), and of `@streamsy/serve` (the root, `/contract`, `/action`, `/action/errors`, `/action/outbox`, `/action/runtime`, and `/action/sql`). The serve host entry points have no reference pages yet.

@@ -8,6 +8,11 @@
     "action-errors",
     "action-outbox",
     "action-runtime",
-    "action-sql"
+    "action-sql",
+    "bun",
+    "node",
+    "deno",
+    "cloudflare",
+    "alchemy"
   ]
 }

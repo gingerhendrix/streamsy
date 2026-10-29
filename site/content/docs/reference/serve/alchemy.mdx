@@ -1,0 +1,592 @@
+---
+title: Alchemy
+description: Reference for the host exports in @streamsy/serve/alchemy. They adapt routing, object clients, and object handlers to Alchemy Effects.
+---
+
+```ts
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+```
+
+The Alchemy host provides Effect handlers for an Alchemy Durable Object and its Worker. See [Alchemy hosting](/docs/hosting/cloudflare#alchemy).
+
+## Alchemy handlers
+
+### `Alchemy.router`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function router(options: {
+  readonly objects: Pick<DurableObject, "getByName">;
+  readonly prefix?: `/${string}`;
+  readonly placement?: Alchemy.Placement;
+}): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  HttpServerError.HttpServerError,
+  HttpServerRequest.HttpServerRequest
+>;
+// ---cut-after---
+same<typeof router, typeof Alchemy.router>(true);
+```
+
+`Alchemy.router` forwards the current Effect HTTP request to the object named by placement. It returns a response Effect. Authenticate before evaluating it.
+
+`objects` is an Alchemy namespace binding. The prefix defaults to `/`, and placement defaults to `Placement.byStream()`. The prefix, reserved path, and placement failure rules match [`Cloudflare.router`](/docs/reference/serve/cloudflare#cloudflarerouter). The forwarded request stays unchanged. A stub's `HttpServerError` remains a typed failure.
+
+### `Alchemy.objectFetch`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function objectFetch(objects: Pick<DurableObject, "getByName">): Alchemy.ObjectFetch;
+// ---cut-after---
+same<typeof objectFetch, typeof Alchemy.objectFetch>(true);
+```
+
+`Alchemy.objectFetch` adapts an Alchemy namespace binding to the web request transport that `ObjectStreams.layer` and `ObjectLink.client` accept. It calls `getByName` when the returned transport runs, converts the request into an Effect HTTP request, and converts the response back to a web `Response`.
+
+A stub failure becomes an `HttpClientError` with a `TransportError` reason that retains the original cause.
+
+### `Alchemy.objectHandlers`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function objectHandlers<R = never, L = never>(options: {
+  readonly app: ObjectApp<R | L>;
+  readonly layer: Layer.Layer<Storage | AlarmSlot | R, StorageFault, L>;
+  readonly wakeups?: ReadonlyArray<Alchemy.WakeupSource<Storage | R | L>>;
+  readonly links?: ReadonlyArray<Alchemy.LinkClient<L>>;
+}): Effect.Effect<Alchemy.ObjectHandlers, never, Scope.Scope>;
+
+// ObjectApp has no exported name. It is the route Layer that the object hosts accept.
+type ObjectApp<R = never> = Layer.Layer<
+  never,
+  never,
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Requires", Storage | Cloudflare.Wakeups | R>
+  | HttpRouter.Request.From<"Error", HttpServerRespondable.Respondable>
+>;
+
+// AlarmSlot has no exported name. alarmSlotLayer provides this service.
+interface AlarmSlot extends Context.ServiceClass.Shape<
+  "@streamsy/serve/cloudflare/AlarmSlot",
+  {
+    readonly current: Effect.Effect<Option.Option<number>, never, never>;
+    readonly arm: (at: number) => Effect.Effect<void, never, never>;
+    readonly clear: Effect.Effect<void, never, never>;
+  }
+> {}
+// ---cut-after---
+same<typeof objectHandlers, typeof Alchemy.objectHandlers>(true);
+```
+
+`Alchemy.objectHandlers` creates fetch and alarm handlers that share one lazy acquisition of storage and application services. The instance scope owns that acquisition and releases it when the scope closes.
+
+| Option    | Meaning                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| `app`     | Route Layer for local and linked services                                 |
+| `layer`   | Local services and storage, including `alarmSlotLayer(state.raw.storage)` |
+| `wakeups` | Additional deadline sources, after built-in stream expiry                 |
+| `links`   | Clients of streams on other objects, as a plain array                     |
+
+The acquisition, reconciliation, and link clash rules match [`StreamsyObject`](/docs/reference/serve/cloudflare#cloudflarestreamsyobject). A failed acquisition closes its scope, fetch answers 503 with `Retry-After: 1`, and a later call retries. An alarm acquisition failure becomes a defect so the platform can retry.
+
+### `Alchemy.ObjectHandlers`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectHandlers = {
+  readonly fetch: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    HttpServerRequest.HttpServerRequest
+  >;
+  readonly alarm: () => Effect.Effect<void, never, never>;
+};
+// ---cut-after---
+same<ObjectHandlers, Alchemy.ObjectHandlers>(true);
+```
+
+`Alchemy.ObjectHandlers` holds the handlers returned by `objectHandlers`. `fetch` uses the current HTTP request. `alarm()` runs one scheduler turn. The platform invokes the alarm separately from fetch.
+
+## Shared Cloudflare exports
+
+These exports are the same exports as those from `@streamsy/serve/cloudflare`. Their signatures and rules are on the linked sections.
+
+### `Alchemy.Placement`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Placement = Cloudflare.Placement;
+declare const Placement: typeof Cloudflare.Placement;
+// ---cut-after---
+same<Placement, Alchemy.Placement>(true);
+same<typeof Placement, typeof Alchemy.Placement>(true);
+```
+
+`Alchemy.Placement` re-exports [`Cloudflare.Placement`](/docs/reference/serve/cloudflare#cloudflareplacement) unchanged.
+
+### `Alchemy.rule`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const rule: typeof Cloudflare.rule;
+// ---cut-after---
+same<typeof rule, typeof Alchemy.rule>(true);
+```
+
+`Alchemy.rule` re-exports [`Cloudflare.rule`](/docs/reference/serve/cloudflare#cloudflarerule) unchanged.
+
+### `Alchemy.Wakeup`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Wakeup<R = never> = Cloudflare.Wakeup<R>;
+declare const Wakeup: typeof Cloudflare.Wakeup;
+// ---cut-after---
+same<Wakeup, Alchemy.Wakeup>(true);
+same<Wakeup<Storage>, Alchemy.Wakeup<Storage>>(true);
+same<typeof Wakeup, typeof Alchemy.Wakeup>(true);
+```
+
+`Alchemy.Wakeup` re-exports [`Cloudflare.Wakeup`](/docs/reference/serve/cloudflare#cloudflarewakeup) unchanged.
+
+### `Alchemy.Wakeups`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Wakeups = Cloudflare.Wakeups;
+declare const Wakeups: typeof Cloudflare.Wakeups;
+// ---cut-after---
+same<Wakeups, Alchemy.Wakeups>(true);
+same<typeof Wakeups, typeof Alchemy.Wakeups>(true);
+```
+
+`Alchemy.Wakeups` re-exports [`Cloudflare.Wakeups`](/docs/reference/serve/cloudflare#cloudflarewakeups) unchanged.
+
+### `Alchemy.WakeupProgress`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeupProgress = Cloudflare.WakeupProgress;
+// ---cut-after---
+same<WakeupProgress, Alchemy.WakeupProgress>(true);
+```
+
+`Alchemy.WakeupProgress` re-exports [`Cloudflare.WakeupProgress`](/docs/reference/serve/cloudflare#cloudflarewakeupprogress) unchanged.
+
+### `Alchemy.WakeupSource`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type WakeupSource<R = never> = Cloudflare.WakeupSource<R>;
+// ---cut-after---
+same<WakeupSource, Alchemy.WakeupSource>(true);
+same<WakeupSource<Storage>, Alchemy.WakeupSource<Storage>>(true);
+```
+
+`Alchemy.WakeupSource` re-exports [`Cloudflare.WakeupSource`](/docs/reference/serve/cloudflare#cloudflarewakeupsource) unchanged.
+
+### `Alchemy.alarmSlotLayer`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const alarmSlotLayer: typeof Cloudflare.alarmSlotLayer;
+// ---cut-after---
+same<typeof alarmSlotLayer, typeof Alchemy.alarmSlotLayer>(true);
+```
+
+`Alchemy.alarmSlotLayer` re-exports [`Cloudflare.alarmSlotLayer`](/docs/reference/serve/cloudflare#cloudflarealarmslotlayer) unchanged.
+
+### `Alchemy.ObjectStreams`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const ObjectStreams: typeof Cloudflare.ObjectStreams;
+// ---cut-after---
+same<typeof ObjectStreams, typeof Alchemy.ObjectStreams>(true);
+```
+
+`Alchemy.ObjectStreams` re-exports [`Cloudflare.ObjectStreams`](/docs/reference/serve/cloudflare#cloudflareobjectstreams) unchanged.
+
+### `Alchemy.ObjectFetch`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectFetch = Cloudflare.ObjectFetch;
+// ---cut-after---
+same<ObjectFetch, Alchemy.ObjectFetch>(true);
+```
+
+`Alchemy.ObjectFetch` re-exports [`Cloudflare.ObjectFetch`](/docs/reference/serve/cloudflare#cloudflareobjectfetch) unchanged.
+
+### `Alchemy.ObjectStreamsOptions`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectStreamsOptions = Cloudflare.ObjectStreamsOptions;
+// ---cut-after---
+same<ObjectStreamsOptions, Alchemy.ObjectStreamsOptions>(true);
+```
+
+`Alchemy.ObjectStreamsOptions` re-exports [`Cloudflare.ObjectStreamsOptions`](/docs/reference/serve/cloudflare#cloudflareobjectstreamsoptions) unchanged.
+
+### `Alchemy.ObjectLink`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectLink<Keys extends ReadonlyArray<Streamsy.Any>> = Cloudflare.ObjectLink<Keys>;
+declare const ObjectLink: typeof Cloudflare.ObjectLink;
+// ---cut-after---
+same<
+  ObjectLink<readonly [typeof Streamsy.Wildcard]>,
+  Alchemy.ObjectLink<readonly [typeof Streamsy.Wildcard]>
+>(true);
+same<typeof ObjectLink, typeof Alchemy.ObjectLink>(true);
+```
+
+`Alchemy.ObjectLink` re-exports [`Cloudflare.ObjectLink`](/docs/reference/serve/cloudflare#cloudflareobjectlink) unchanged.
+
+### `Alchemy.LinkAccess`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LinkAccess = Cloudflare.LinkAccess;
+// ---cut-after---
+same<LinkAccess, Alchemy.LinkAccess>(true);
+```
+
+`Alchemy.LinkAccess` re-exports [`Cloudflare.LinkAccess`](/docs/reference/serve/cloudflare#cloudflarelinkaccess) unchanged.
+
+### `Alchemy.LinkClient`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LinkClient<I> = Cloudflare.LinkClient<I>;
+// ---cut-after---
+same<LinkClient<Storage>, Alchemy.LinkClient<Storage>>(true);
+```
+
+`Alchemy.LinkClient` re-exports [`Cloudflare.LinkClient`](/docs/reference/serve/cloudflare#cloudflarelinkclient) unchanged.
+
+### `Alchemy.LinkRoutes`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type LinkRoutes<I> = Cloudflare.LinkRoutes<I>;
+// ---cut-after---
+same<LinkRoutes<never>, Alchemy.LinkRoutes<never>>(true);
+same<LinkRoutes<Streamsy.Wildcard>, Alchemy.LinkRoutes<Streamsy.Wildcard>>(true);
+```
+
+`Alchemy.LinkRoutes` re-exports [`Cloudflare.LinkRoutes`](/docs/reference/serve/cloudflare#cloudflarelinkroutes) unchanged.
+
+### `Alchemy.ObjectLinkOptions`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import type { DurableObject } from "alchemy/Cloudflare";
+import type { Context, Effect, Layer, Option, Scope } from "effect";
+import type {
+  HttpRouter,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type ObjectLinkOptions<Keys extends ReadonlyArray<Streamsy.Any>> =
+  Cloudflare.ObjectLinkOptions<Keys>;
+// ---cut-after---
+same<
+  ObjectLinkOptions<readonly [typeof Streamsy.Wildcard]>,
+  Alchemy.ObjectLinkOptions<readonly [typeof Streamsy.Wildcard]>
+>(true);
+```
+
+`Alchemy.ObjectLinkOptions` re-exports [`Cloudflare.ObjectLinkOptions`](/docs/reference/serve/cloudflare#cloudflareobjectlinkoptions) unchanged.

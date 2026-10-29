@@ -1,0 +1,109 @@
+---
+title: Bun
+description: Reference for the host exports in @streamsy/serve/bun. They provide a scoped Bun HTTP listener.
+---
+
+```ts
+import * as Bun from "@streamsy/serve/bun";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { BunServices } from "@effect/platform-bun";
+```
+
+`Bun.listener` provides a scoped HTTP listener for a Streamsy host. See [the Bun hosting guide](/docs/hosting/bun).
+
+## Listener
+
+### `Bun.listener`
+
+```ts
+// ---cut-start---
+import * as Bun from "@streamsy/serve/bun";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { BunServices } from "@effect/platform-bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function listener(
+  options?: Bun.ListenerOptions,
+): Layer.Layer<
+  Etag.Generator | HttpPlatform.HttpPlatform | HttpServer.HttpServer | BunServices.BunServices,
+  HttpServerError.ServeError,
+  never
+>;
+// ---cut-after---
+same<typeof listener, typeof Bun.listener>(true);
+```
+
+`Bun.listener` opens the listener when its Layer builds and closes it when the scope closes. A bind failure fails the Layer with `ServeError`. The Layer requires no services.
+
+The listener uses port 3000 and hostname `127.0.0.1` unless the options set them. Without `gracefulShutdownTimeout`, the listener disables the platform server's preemptive shutdown. Setting that option bounds the drain of in-flight requests.
+
+The default `idleTimeout` is 0, so Bun does not close a parked long poll after its usual ten-second idle timeout.
+
+## Options
+
+### `Bun.ListenerOptions`
+
+```ts
+// ---cut-start---
+import * as Bun from "@streamsy/serve/bun";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { BunServices } from "@effect/platform-bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ListenerOptions {
+  readonly port?: number;
+  readonly hostname?: string;
+  readonly idleTimeout?: number;
+  readonly gracefulShutdownTimeout?: Duration.Input;
+}
+// ---cut-after---
+same<ListenerOptions, Bun.ListenerOptions>(true);
+```
+
+`Bun.ListenerOptions` configures the listener.
+
+| Field                     | Default     | Meaning                                                  |
+| ------------------------- | ----------- | -------------------------------------------------------- |
+| `port`                    | 3000        | Port to bind                                             |
+| `hostname`                | `127.0.0.1` | Address to bind                                          |
+| `idleTimeout`             | 0           | Idle connection timeout in seconds. Zero disables it     |
+| `gracefulShutdownTimeout` | Unset       | Bound on the wait for in-flight requests during shutdown |
+
+## Defaults
+
+### `Bun.DEFAULT_PORT`
+
+```ts
+// ---cut-start---
+import * as Bun from "@streamsy/serve/bun";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { BunServices } from "@effect/platform-bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_PORT: 3000;
+// ---cut-after---
+same<typeof DEFAULT_PORT, typeof Bun.DEFAULT_PORT>(true);
+```
+
+`Bun.DEFAULT_PORT` is the default port of `Bun.listener`: 3000.
+
+### `Bun.DEFAULT_HOSTNAME`
+
+```ts
+// ---cut-start---
+import * as Bun from "@streamsy/serve/bun";
+import type { Duration, Effect, Layer } from "effect";
+import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
+import type { BunServices } from "@effect/platform-bun";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const DEFAULT_HOSTNAME: "127.0.0.1";
+// ---cut-after---
+same<typeof DEFAULT_HOSTNAME, typeof Bun.DEFAULT_HOSTNAME>(true);
+```
+
+`Bun.DEFAULT_HOSTNAME` is the default bind address of `Bun.listener`: `127.0.0.1`.
