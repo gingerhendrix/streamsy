@@ -1,0 +1,25 @@
+{
+  "name": "todo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "test": "bun run test:unit",
+    "test:unit": "bun --bun vitest run --dir test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "bun-types": "^1.4.3",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
