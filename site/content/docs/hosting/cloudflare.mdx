@@ -85,7 +85,7 @@ Rules:
 | Any request that calls `Wakeups.touch` | Reconciles when the request ends                                    |
 | Defect                                 | 500 with security headers                                           |
 
-Request logging is off. No URL or request header can start an alarm turn.
+The host logs each request at INFO level when it ends. A failed request logs its full cause. No URL or request header can start an alarm turn.
 
 ## Wakeups
 

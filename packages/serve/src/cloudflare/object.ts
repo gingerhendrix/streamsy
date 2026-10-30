@@ -56,9 +56,7 @@ class ObjectHost<Env, R, L> extends DurableObject<Env> {
             ),
             (context, alarm) =>
               Effect.gen(function* () {
-                const web = HttpRouter.toWebHandler(providedApp(configuration.app, context), {
-                  disableLogger: true,
-                });
+                const web = HttpRouter.toWebHandler(providedApp(configuration.app, context));
 
                 yield* Effect.addFinalizer(() => Effect.promise(web.dispose));
 
