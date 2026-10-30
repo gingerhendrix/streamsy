@@ -1,4 +1,4 @@
-import { Array, Data } from "effect";
+import { Array, Data, Result } from "effect";
 /** Fork-side validation and plan building. */
 
 import { Operations, type Operation } from "../storage/mutation.ts";
@@ -17,7 +17,7 @@ interface Clock {
 }
 
 import { contentTypeMatches } from "./content-type-matcher.ts";
-import { frameMessages } from "./message-framer.ts";
+import { frameCreateMessages } from "./create-validation.ts";
 import { next, compare as compareOffsets, isValid, ZERO_OFFSET } from "../offset/index.ts";
 
 export interface ForkDescriptor {
@@ -156,10 +156,15 @@ export class ForkPlanBuilder {
     if (subOffset !== undefined && subOffset > 0) fork.forkSubOffset = subOffset;
     const baseRecord = this.deps.newRecord(targetId, contentType, { ...options, ...expiry }, fork);
 
+    const framed = frameCreateMessages(targetId, options.initialData, contentType);
+
+    if (Result.isFailure(framed))
+      return ForkBuildResult.Rejected({
+        error: new InvalidForkRequest({ id: targetId, message: framed.failure.message }),
+      });
+
     const initialMessages = this.initialMessages(
-      prefix.messages,
-      options.initialData,
-      contentType,
+      [...prefix.messages, ...framed.success],
       baseRecord.currentOffset,
     );
 
@@ -221,13 +226,7 @@ export class ForkPlanBuilder {
     return ForkPrefix.Prefix({ messages: [first.data.subarray(0, subOffset)] });
   }
 
-  private initialMessages(
-    prefix: Uint8Array[],
-    initialData: Uint8Array | undefined,
-    contentType: string,
-    previousOffset: Offset,
-  ): StoredMessage[] {
-    const framed = [...prefix, ...(initialData ? frameMessages(initialData, contentType) : [])];
+  private initialMessages(framed: Uint8Array[], previousOffset: Offset): StoredMessage[] {
     let offset = previousOffset;
     const now = this.deps.clock.now();
 

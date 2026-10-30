@@ -78,6 +78,7 @@ const toFoldError = (
     CreateConflict: toUnavailable,
     ForkSourceNotFound: toUnavailable,
     InvalidForkRequest: toUnavailable,
+    InvalidCreateRequest: toUnavailable,
     SchemaError: toUnavailable,
   });
 

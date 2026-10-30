@@ -6,7 +6,7 @@ import { ZERO_OFFSET, next, isValid } from "../offset/index.ts";
 import { configMatches } from "../policy/create-config-matcher.ts";
 import { computeExpiresAtMs } from "../policy/expiry-policy.ts";
 import { ForkPlanBuilder, type ForkDescriptor } from "../policy/fork-plan-builder.ts";
-import { frameMessages } from "../policy/message-framer.ts";
+import { frameCreateMessages, validateCreateOptions } from "../policy/create-validation.ts";
 import type { CreateOptions } from "./options.ts";
 import { CreateConflict, ForkSourceNotFound, NotSupported, type CreateError } from "./errors.ts";
 import { CreateResult } from "./results.ts";
@@ -73,6 +73,8 @@ export const create = Effect.fn("Protocol.create")(function* (
   id: StreamId,
   options: CreateOptions = {},
 ): Effect.fn.Return<CreateResult, CreateError | StorageFault> {
+  yield* validateCreateOptions(id, options);
+
   // Capability refusal must not acquire records, read messages or attempt writes.
   if (options.forkedFrom !== undefined && storage.capabilities.fork === "none")
     return yield* new NotSupported({ id, feature: "fork" });
@@ -115,10 +117,13 @@ export const create = Effect.fn("Protocol.create")(function* (
     const record = newRecord(id, type, options, now);
     let offset = record.currentOffset;
 
-    const initialMessages = Array.map(
-      options.initialData ? frameMessages(options.initialData, type) : [],
-      (data) => ({ data, offset: (offset = next(offset)), timestamp: now }),
-    );
+    const framed = yield* Effect.fromResult(frameCreateMessages(id, options.initialData, type));
+
+    const initialMessages = Array.map(framed, (data) => ({
+      data,
+      offset: (offset = next(offset)),
+      timestamp: now,
+    }));
 
     plan = Operations.Create({
       record: {

@@ -78,6 +78,11 @@ export class InvalidAppendRequest extends Schema.TaggedError<InvalidAppendReques
   { id: StreamId, message: Schema.String },
 ) {}
 
+export class InvalidCreateRequest extends Schema.TaggedError<InvalidCreateRequest>()(
+  "InvalidCreateRequest",
+  { id: StreamId, message: Schema.String },
+) {}
+
 export class CreateConflict extends Schema.TaggedError<CreateConflict>()("CreateConflict", {
   id: StreamId,
   reason: Schema.optionalKey(
@@ -130,7 +135,12 @@ export type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
 
 export type ReadNextError = ReadError | NotSupported;
 
-export type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
+export type CreateError =
+  | CreateConflict
+  | InvalidCreateRequest
+  | ForkSourceNotFound
+  | InvalidForkRequest
+  | NotSupported;
 
 /**
  * Append rejections that any call can get, whatever its options. The memory and
@@ -189,6 +199,7 @@ const protocolErrorTags = {
   ProducerGap: true,
   InvalidEpochSeq: true,
   InvalidAppendRequest: true,
+  InvalidCreateRequest: true,
   CreateConflict: true,
   ForkSourceNotFound: true,
   InvalidForkRequest: true,

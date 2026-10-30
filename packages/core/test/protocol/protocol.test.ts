@@ -14,6 +14,7 @@ import { StorageFault } from "../../src/fault.ts";
 import { layerTest, StreamsTest } from "../../src/testing/streams-test.ts";
 import { faultyStorage } from "../../src/testing/fault-injection.ts";
 import * as Memory from "../../src/storage/memory/layer.ts";
+import { expiryValidationCases, invalidJson } from "../fixtures/create-validation.ts";
 
 const id = StreamId.make("s");
 
@@ -59,6 +60,86 @@ function check<E>(
 
 for (const constrained of [false, true]) {
   const mode = constrained ? "copy/poll" : "chain/push";
+  it(`${mode}: invalid create expiry fails before storage access for plain and fork creates`, () =>
+    check(
+      Effect.gen(function* () {
+        const control = yield* StreamsTest;
+        const forbidden = Effect.die("Invalid create accessed storage");
+
+        const storage = Storage.of({
+          ...control.storage,
+          record: () => forbidden,
+          messages: () => forbidden,
+          mutate: () => forbidden,
+        });
+
+        for (const fixture of expiryValidationCases) {
+          for (const options of [fixture.options, { ...fixture.options, forkedFrom: "source" }]) {
+            expect(yield* Effect.flip(create(storage, id, options))).toMatchObject({
+              _tag: "InvalidCreateRequest",
+              id,
+              message: fixture.message,
+            });
+          }
+
+          const writer = yield* StreamsWriter;
+          expect(
+            yield* Effect.flip(writer.fork(id, StreamId.make("source"), fixture.options)),
+          ).toMatchObject({
+            _tag: "InvalidCreateRequest",
+            id,
+            message: fixture.message,
+          });
+        }
+      }),
+      constrained,
+    ));
+
+  it(`${mode}: malformed JSON create data is a typed failure and leaves no child`, () =>
+    check(
+      Effect.gen(function* () {
+        const writer = yield* StreamsWriter;
+        const reader = yield* StreamsReader;
+        const source = StreamId.make("source");
+        yield* writer.create(source, {
+          contentType: "application/json",
+          initialData: new TextEncoder().encode("[1]"),
+        });
+        expect(
+          yield* Effect.flip(
+            writer.create(id, { contentType: "application/json", initialData: invalidJson }),
+          ),
+        ).toMatchObject({
+          _tag: "InvalidCreateRequest",
+          id,
+          message: "Invalid JSON",
+        });
+
+        // The fork inherits JSON from the source when no content type is supplied.
+        for (const attempt of [
+          writer.fork(id, source, { initialData: invalidJson }),
+          writer.create(id, { forkedFrom: source, initialData: invalidJson }),
+        ]) {
+          expect(yield* Effect.flip(attempt)).toMatchObject({
+            _tag: "InvalidForkRequest",
+            id,
+            message: "Invalid JSON",
+          });
+        }
+
+        expect(yield* Effect.flip(reader.head(id))).toMatchObject({ _tag: "StreamNotFound" });
+        expect((yield* reader.read(source)).messages).toHaveLength(1);
+        // A retry with valid JSON can still create the rejected target.
+        expect(
+          yield* writer.create(id, {
+            contentType: "application/json",
+            initialData: new TextEncoder().encode("[2]"),
+          }),
+        ).toMatchObject({ _tag: "Created" });
+      }),
+      constrained,
+    ));
+
   it(`${mode}: create idempotency and every config conflict`, () =>
     check(
       Effect.gen(function* () {

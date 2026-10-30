@@ -214,6 +214,24 @@ same<InvalidAppendRequest, Fields<Core.InvalidAppendRequest>>(true);
 
 The protocol append fails with `InvalidAppendRequest` when the request is not valid, for example an append with no items and no `close`. `message` says why. The `append` method of a stream class does not list this error in its type. When a host returns it, the append dies with a defect.
 
+### `InvalidCreateRequest`
+
+```ts
+// ---cut-start---
+import type * as Core from "@streamsy/core";
+import type { StreamId } from "@streamsy/core";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidCreateRequest {
+  readonly _tag: "InvalidCreateRequest";
+  readonly id: StreamId;
+}
+// ---cut-after---
+same<InvalidCreateRequest, Fields<Core.InvalidCreateRequest>>(true);
+```
+
+`create` and `fork` fail with `InvalidCreateRequest` when both `ttlSeconds` and `expiresAt` are set, or when `expiresAt` cannot be parsed by `DateTime.make`. A plain `create` also fails with `InvalidCreateRequest` when JSON `initialData` is invalid. The remote client returns `InvalidCreateRequest` for a plain create HTTP 400 response without `stream-not-supported`. `message` says why. Typed stream `create` methods surface this as a typed failure.
+
 ### `CreateConflict`
 
 ```ts
@@ -269,7 +287,7 @@ interface InvalidForkRequest {
 same<InvalidForkRequest, Fields<Core.InvalidForkRequest>>(true);
 ```
 
-A `fork` fails with `InvalidForkRequest` when its fork offset is not a valid offset, or when the offset is past the tail of the source. `message` says which case applies.
+A `fork` fails with `InvalidForkRequest` when its fork offset is not a valid offset, when the offset is past the tail of the source, or when its JSON `initialData` is invalid. The remote client also returns this error for a fork HTTP 400 response without `stream-not-supported`. `message` says why.
 
 ### `NotSupported`
 
@@ -386,13 +404,15 @@ same<ReadNextError, Core.ReadNextError>(true);
 import type * as Core from "@streamsy/core";
 import type {
   CreateConflict,
+  InvalidCreateRequest,
   ForkSourceNotFound,
   InvalidForkRequest,
   NotSupported,
 } from "@streamsy/core";
 import { same } from "./reference-check.ts";
 // ---cut-end---
-type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
+type CreateError =
+  CreateConflict | InvalidCreateRequest | ForkSourceNotFound | InvalidForkRequest | NotSupported;
 // ---cut-after---
 same<CreateError, Core.CreateError>(true);
 ```

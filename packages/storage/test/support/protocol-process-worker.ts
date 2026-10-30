@@ -147,6 +147,7 @@ try {
             CreateConflict: (error: ProtocolError) => Effect.succeed(error),
             ForkSourceNotFound: (error: ProtocolError) => Effect.succeed(error),
             InvalidForkRequest: (error: ProtocolError) => Effect.succeed(error),
+            InvalidCreateRequest: (error: ProtocolError) => Effect.succeed(error),
             NotSupported: (error: ProtocolError) => Effect.succeed(error),
           }),
         ),

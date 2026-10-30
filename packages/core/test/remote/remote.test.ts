@@ -20,6 +20,7 @@ import { MemoryStorage } from "../../src/index.ts";
 import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { HttpRouter } from "effect/http";
 import { RemoteStreams } from "@streamsy/core/remote";
+import { expiryValidationCases, invalidJson } from "../fixtures/create-validation.ts";
 
 const id = StreamId.make("orders/nested");
 
@@ -208,6 +209,143 @@ const against = (response: () => Response, capabilities: { readonly producer?: b
   RemoteStreams.layerProtocol({ baseUrl: "http://localhost/streams", capabilities }).pipe(
     Layer.provide(mock(response)),
   );
+
+baseIt.live("remote create rejects invalid expiry before sending plain or fork requests", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+
+    const remote = against(() => {
+      requests++;
+
+      return new Response("Unexpected request", { status: 500 });
+    });
+
+    yield* Effect.gen(function* () {
+      const writer = yield* StreamsWriter;
+
+      for (const validation of expiryValidationCases) {
+        for (const attempt of [
+          writer.create(id, validation.options),
+          writer.create(id, { ...validation.options, forkedFrom: "source" }),
+          writer.fork(id, StreamId.make("source"), validation.options),
+          Streams.create(address, validation.options),
+        ]) {
+          expect(yield* Effect.flip(attempt)).toMatchObject({
+            _tag: "InvalidCreateRequest",
+            message: validation.message,
+          });
+        }
+      }
+    }).pipe(Effect.provideContext(yield* Layer.build(remote)));
+    expect(requests).toBe(0);
+  }),
+);
+
+baseIt.live("remote create distinguishes plain, fork and unsupported HTTP 400 responses", () =>
+  Effect.gen(function* () {
+    for (const message of [
+      "Cannot specify both Stream-TTL and Stream-Expires-At",
+      "Invalid Stream-Expires-At format",
+      "Invalid JSON",
+      "Server validation failed",
+    ]) {
+      yield* Effect.gen(function* () {
+        const writer = yield* StreamsWriter;
+        expect(yield* Effect.flip(writer.create(id))).toMatchObject({
+          _tag: "InvalidCreateRequest",
+          id,
+          message,
+        });
+        expect(yield* Effect.flip(writer.create(id, { forkedFrom: "source" }))).toMatchObject({
+          _tag: "InvalidForkRequest",
+          id,
+          message,
+        });
+        expect(yield* Effect.flip(writer.fork(id, StreamId.make("source")))).toMatchObject({
+          _tag: "InvalidForkRequest",
+          id,
+          message,
+        });
+        expect(yield* Effect.flip(Streams.create(address))).toMatchObject({
+          _tag: "InvalidCreateRequest",
+          message,
+        });
+      }).pipe(
+        Effect.provideContext(
+          yield* Layer.build(against(() => new Response(message, { status: 400 }))),
+        ),
+      );
+    }
+
+    yield* Effect.gen(function* () {
+      const writer = yield* StreamsWriter;
+
+      for (const attempt of [writer.create(id), writer.fork(id, StreamId.make("source"))]) {
+        expect(yield* Effect.flip(attempt)).toMatchObject({
+          _tag: "NotSupported",
+          id,
+          feature: "fork",
+        });
+      }
+    }).pipe(
+      Effect.provideContext(
+        yield* Layer.build(
+          against(
+            () =>
+              new Response("Unavailable", {
+                status: 400,
+                headers: { "stream-not-supported": "fork" },
+              }),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+baseIt.live("remote JSON create and fork receive typed failures from a real HTTP host", () =>
+  Effect.gen(function* () {
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+          { disableLogger: true },
+        ),
+      ),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
+
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => Bun.serve({ port: 0, fetch: (request) => edge.handler(request) })),
+      (acquired) => Effect.promise(() => acquired.stop(true)),
+    );
+
+    const remote = RemoteStreams.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const writer = yield* StreamsWriter;
+      const reader = yield* StreamsReader;
+      const source = StreamId.make("source");
+      yield* writer.create(source, { contentType: "application/json" });
+      expect(
+        yield* Effect.flip(
+          writer.create(id, { contentType: "application/json", initialData: invalidJson }),
+        ),
+      ).toMatchObject({ _tag: "InvalidCreateRequest", id, message: "Invalid JSON" });
+      expect(
+        yield* Effect.flip(Streams.create(address, { initialData: invalidJson })),
+      ).toMatchObject({ _tag: "InvalidCreateRequest", id: address.id, message: "Invalid JSON" });
+      expect(
+        yield* Effect.flip(
+          writer.fork(id, source, { contentType: "application/json", initialData: invalidJson }),
+        ),
+      ).toMatchObject({ _tag: "InvalidForkRequest", id, message: "Invalid JSON" });
+      expect(yield* Effect.flip(reader.head(id))).toMatchObject({ _tag: "StreamNotFound" });
+    }).pipe(Effect.provideContext(yield* Layer.build(remote)));
+  }),
+);
 
 const headOver = (response: () => Response) =>
   Effect.gen(function* () {

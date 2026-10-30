@@ -6,6 +6,7 @@ import { Streamsy } from "../../src/index.ts";
 import type {
   AppendBaseError,
   AppendErrorFor,
+  InvalidCreateRequest,
   OffsetMismatch,
   ProducerGap,
   ReadError,
@@ -27,6 +28,13 @@ type ProducerError = StaleEpoch | ProducerGap;
 type Base = AppendBaseError | StreamsFault | EncodeFault;
 
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
+
+const created = Streams.create(address);
+
+export const createValidationError: Equal<
+  Extract<ErrorOf<typeof created>, InvalidCreateRequest>,
+  InvalidCreateRequest
+> = true;
 
 const item = { n: 1 };
 
@@ -95,6 +103,14 @@ class Events extends Streamsy.json<Events>()("StreamsTypes/Events", "events", {
 
 export const service = Effect.gen(function* () {
   const events = yield* Events;
+  const serviceCreated = events.create({});
+
+  const validationError: Equal<
+    Extract<ErrorOf<typeof serviceCreated>, InvalidCreateRequest>,
+    InvalidCreateRequest
+  > = true;
+
+  void validationError;
   const appended = events.append({}, [item], { expectedOffset: "0" });
   const conditionalService: Equal<ErrorOf<typeof appended>, Base | OffsetMismatch> = true;
   // @ts-expect-error the service append needs items too

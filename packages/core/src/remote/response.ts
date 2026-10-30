@@ -23,6 +23,7 @@ import {
   CreateConflict,
   ForkSourceNotFound,
   InvalidForkRequest,
+  InvalidCreateRequest,
   NotSupported,
   type HeadError,
   type ReadError,
@@ -107,6 +108,12 @@ export const create = (
 
       if (feature !== undefined) return yield* new NotSupported({ id: context.id, feature });
       const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+
+      if (context.source === undefined)
+        return yield* new InvalidCreateRequest({
+          id: context.id,
+          message: message ?? "Invalid create parameters",
+        });
 
       return yield* new InvalidForkRequest({
         id: context.id,

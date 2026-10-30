@@ -5,11 +5,36 @@ import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { ForeignOwner, isForeignOwner } from "../../src/internal/owner.ts";
 import { Array, Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { Streamsy, StreamId, StreamAddress, MemoryStorage } from "../../src/index.ts";
+import { expiryValidationCases, invalidJson } from "../fixtures/create-validation.ts";
 
 class Notes extends Streamsy.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.Struct({ text: Schema.String }),
 }) {}
+
+layer(MemoryStorage.layer(Streamsy.group(Notes)))((it) => {
+  it.effect("JSON stream service create preserves validation failures", () =>
+    Effect.gen(function* () {
+      const notes = yield* Notes;
+
+      for (const fixture of expiryValidationCases) {
+        expect(yield* Effect.flip(notes.create({ user: "ann" }, fixture.options))).toMatchObject({
+          _tag: "InvalidCreateRequest",
+          id: "notes/ann",
+          message: fixture.message,
+        });
+      }
+
+      expect(
+        yield* Effect.flip(notes.create({ user: "ann" }, { initialData: invalidJson })),
+      ).toMatchObject({
+        _tag: "InvalidCreateRequest",
+        id: "notes/ann",
+        message: "Invalid JSON",
+      });
+    }),
+  );
+});
 
 class Copies extends Streamsy.json<Copies>()("Copies", "notes/:user", {
   params: { user: Schema.String },
