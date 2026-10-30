@@ -29,7 +29,7 @@ const Server = Layer.unwrap(
     const config = yield* ServerConfig;
     const host = applicationLayer(yield* storage(yield* storageChoice(config)), config.workspaces);
 
-    return Serve.layer(app(config.workspaces), { disableLogger: true }).pipe(
+    return Serve.layer(app(config.workspaces)).pipe(
       Layer.provide(host),
       Layer.provideMerge(listener({ port: config.port })),
     );

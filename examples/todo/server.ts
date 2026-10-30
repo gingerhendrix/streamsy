@@ -365,8 +365,7 @@ const Listener = Layer.unwrap(
 );
 
 if (import.meta.main) {
-  BunRuntime.runMain(
-    Layer.launch(Serve.layer(app(Host), { disableLogger: true }).pipe(Layer.provide(Listener))),
-    { teardown: Serve.teardown },
-  );
+  BunRuntime.runMain(Layer.launch(Serve.layer(app(Host)).pipe(Layer.provide(Listener))), {
+    teardown: Serve.teardown,
+  });
 }

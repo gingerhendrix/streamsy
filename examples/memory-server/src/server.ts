@@ -4,6 +4,6 @@ import { Layer } from "effect";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 
-export const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
-  disableLogger: true,
-}).pipe(Layer.provide(MemoryStorage.layer(streams)));
+export const Server = Serve.layer(Http.routes(streams, { access: "full" })).pipe(
+  Layer.provide(MemoryStorage.layer(streams)),
+);

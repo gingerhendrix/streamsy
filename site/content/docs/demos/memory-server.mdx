@@ -15,9 +15,9 @@ import { Layer } from "effect";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 
-export const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
-  disableLogger: true,
-}).pipe(Layer.provide(MemoryStorage.layer(streams)));
+export const Server = Serve.layer(Http.routes(streams, { access: "full" })).pipe(
+  Layer.provide(MemoryStorage.layer(streams)),
+);
 ```
 
 `Streamsy.Wildcard` makes the group own every stream id. `Http.routes` serves the
@@ -42,10 +42,10 @@ with the Bun SQLite Layer:
 
  const streams = Streamsy.group(Streamsy.Wildcard);
 
- export const Server = Serve.layer(Http.routes(streams, { access: "full" }), {
-   disableLogger: true,
--}).pipe(Layer.provide(MemoryStorage.layer(streams)));
-+}).pipe(Layer.provide(BunStorage.layer(streams, { client: { filename: "./streams.sqlite" } })));
+ export const Server = Serve.layer(Http.routes(streams, { access: "full" })).pipe(
+-  Layer.provide(MemoryStorage.layer(streams)),
++  Layer.provide(BunStorage.layer(streams, { client: { filename: "./streams.sqlite" } })),
+ );
 ```
 
 The routes do not change. See [Bun](/docs/hosting/bun) for the SQLite options, and

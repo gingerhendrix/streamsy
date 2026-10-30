@@ -84,9 +84,7 @@ import { App, game } from "./app.ts";
 
 const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });
 
-const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage)), {
-  disableLogger: true,
-});
+const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage)));
 // await web.handler(request)
 // await web.dispose() at shutdown
 ```

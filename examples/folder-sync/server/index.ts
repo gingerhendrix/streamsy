@@ -41,9 +41,6 @@ const Server = Serve.layer(
     Serve.mount(FolderWake, "/streams/wake"),
     mountFiles(),
   ),
-  {
-    disableLogger: true,
-  },
 ).pipe(
   Layer.provide(Listener),
   Layer.provide(FileIndexLive),

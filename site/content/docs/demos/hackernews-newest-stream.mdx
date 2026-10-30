@@ -225,7 +225,7 @@ scoped lifetime. There is no background watcher: the poller folds the projection
 each live read before the router closes. `Serve.teardown` then exits 0:
 
 ```ts title="src/server/index.ts"
-const serverLayer = Serve.layer(app, { disableLogger: true }).pipe(
+const serverLayer = Serve.layer(app).pipe(
   Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
   Layer.provide(listenerLayer),
 );

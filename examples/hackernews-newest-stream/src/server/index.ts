@@ -17,7 +17,7 @@ const pollerLayer = Layer.unwrap(
 
 const listenerLayer = Layer.unwrap(Effect.map(DemoConfig, ({ port }) => listener({ port })));
 
-const serverLayer = Serve.layer(app, { disableLogger: true }).pipe(
+const serverLayer = Serve.layer(app).pipe(
   Layer.provide(pollerLayer.pipe(Layer.provideMerge(demoHostLayer))),
   Layer.provide(listenerLayer),
 );

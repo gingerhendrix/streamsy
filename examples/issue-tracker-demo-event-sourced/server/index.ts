@@ -44,7 +44,7 @@ const RoutesLive = Layer.mergeAll(
 // seeds `main` and starts a read model runner for each workspace before the
 // listener starts. On shutdown the listener stops, the runners stop, and
 // storage closes last.
-const ServerLive = Serve.layer(RoutesLive, { disableLogger: true }).pipe(
+const ServerLive = Serve.layer(RoutesLive).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(BootLive),
   Layer.provide(IssueTrackerLive),

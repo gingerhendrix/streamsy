@@ -41,7 +41,7 @@ const RoutesLive = Layer.mergeAll(
 // first and the main workspace is seeded before the listener starts. On
 // shutdown `Serve.layer` answers parked long polls with 204, then the
 // listener stops, and storage closes last.
-const ServerLive = Serve.layer(RoutesLive, { disableLogger: true }).pipe(
+const ServerLive = Serve.layer(RoutesLive).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),

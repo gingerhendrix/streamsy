@@ -17,6 +17,6 @@ export const layer = <E>(
 ) =>
   Layer.unwrap(
     Effect.map(PortConfig, (port) =>
-      Serve.layer(App.routes(options), { disableLogger: true }).pipe(Layer.provide(listener(port))),
+      Serve.layer(App.routes(options)).pipe(Layer.provide(listener(port))),
     ),
   );

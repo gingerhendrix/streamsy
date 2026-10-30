@@ -86,7 +86,7 @@ function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, S
 The whole server is one layer graph. `Layer.provide` builds its argument first and releases it last. So the storage opens first, then the `IssueTracker` service, then the seed step, and the listener starts last. On shutdown the order is the reverse, and the storage closes last.
 
 ```ts title="server/index.ts"
-const ServerLive = Serve.layer(RoutesLive, { disableLogger: true }).pipe(
+const ServerLive = Serve.layer(RoutesLive).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
