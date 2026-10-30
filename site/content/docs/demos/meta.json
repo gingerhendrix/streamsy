@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "memory-server",
+    "todo",
     "hackernews-newest-stream",
     "issue-tracker",
     "fold-agent",
