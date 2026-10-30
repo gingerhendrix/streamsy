@@ -25,6 +25,7 @@ export function protocolErrorResponse(
     AppendConflict: conflict,
     InvalidReadRequest: badRequest,
     InvalidForkRequest: badRequest,
+    InvalidCreateRequest: badRequest,
     InvalidAppendRequest: badRequest,
     StreamClosed: ({ offset }) =>
       responses.empty(409, { "stream-closed": "true", "stream-next-offset": offset }),

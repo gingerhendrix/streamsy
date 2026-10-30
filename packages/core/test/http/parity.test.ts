@@ -1,10 +1,14 @@
 import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- These tests exercise the named Web conversion boundary and consume actual response bytes.
 import { expect, it } from "vitest";
-import { Clock, Effect, Layer, Record as EffectRecord } from "effect";
+import { Clock, Effect, Layer, ManagedRuntime, Record as EffectRecord } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 import { MemoryStorage } from "../../src/index.ts";
-import { StreamsReader } from "../../src/protocol/index.ts";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
+import { StreamId } from "../../src/schema/index.ts";
+import { protocolErrorResponse } from "../../src/http/protocol-error-response.ts";
+import { InvalidCreateRequest, InvalidForkRequest } from "../../src/protocol/errors.ts";
+import { expiryValidationCases } from "../fixtures/create-validation.ts";
 import fixtures from "../../src/http/fixtures/wire.json";
 import * as Http from "../../src/http/index.ts";
 import { HttpRouter } from "effect/http";
@@ -18,6 +22,116 @@ interface WireFixture {
 }
 
 const expiryFixtures: Readonly<Record<string, ReadonlyArray<WireFixture>>> = fixtures;
+
+it("create validation agrees on HTTP status and message with the local protocol", async () => {
+  const local = ManagedRuntime.make(MemoryStorage.layerProtocol());
+
+  const edge = HttpRouter.toWebHandler(
+    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(MemoryStorage.layerProtocol())),
+    { disableLogger: true },
+  );
+
+  try {
+    await local.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* StreamsWriter).create(StreamId.make("source"), {
+          contentType: "application/json",
+        });
+      }),
+    );
+    expect(
+      (
+        await edge.handler(
+          new Request("http://example.test/streams/source", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+          }),
+        )
+      ).status,
+    ).toBe(201);
+
+    for (const fork of [false, true]) {
+      const cases = [
+        ...expiryValidationCases,
+        {
+          name: "invalid JSON",
+          options: { contentType: "application/json", initialData: new TextEncoder().encode("{") },
+          headers: { "content-type": "application/json" },
+          message: "Invalid JSON",
+        },
+        // Exercise the protocol error mapper when the HTTP edge cannot know the inherited type.
+        ...(fork
+          ? [
+              {
+                name: "inherited JSON",
+                options: { initialData: new TextEncoder().encode("{") },
+                headers: {},
+                message: "Invalid JSON",
+              },
+            ]
+          : []),
+      ];
+
+      for (const fixture of cases) {
+        const error = await local.runPromise(
+          Effect.gen(function* () {
+            return yield* Effect.flip(
+              (yield* StreamsWriter).create(StreamId.make("target"), {
+                ...fixture.options,
+                forkedFrom: fork ? "source" : undefined,
+              }),
+            );
+          }),
+        );
+
+        const headers = new Headers(fixture.headers);
+
+        if (fork) headers.set("stream-forked-from", "/streams/source");
+
+        const response = await edge.handler(
+          new Request("http://example.test/streams/target", {
+            method: "PUT",
+            headers,
+            body: fixture.options.initialData,
+          }),
+        );
+
+        expect(error).toMatchObject({
+          _tag:
+            fork && fixture.message === "Invalid JSON"
+              ? "InvalidForkRequest"
+              : "InvalidCreateRequest",
+          message: fixture.message,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.text()).toBe(error.message);
+        expect(
+          (
+            await edge.handler(
+              new Request("http://example.test/streams/target", { method: "HEAD" }),
+            )
+          ).status,
+        ).toBe(404);
+      }
+    }
+  } finally {
+    await local.dispose();
+    await edge.dispose();
+  }
+});
+
+it("HTTP maps invalid create and fork JSON errors to 400 with their message", async () => {
+  const id = StreamId.make("target");
+
+  for (const error of [
+    new InvalidCreateRequest({ id, message: "Invalid JSON" }),
+    new InvalidForkRequest({ id, message: "Invalid JSON" }),
+  ]) {
+    const response = protocolErrorResponse(error, { method: "PUT" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid JSON");
+  }
+});
 
 async function assertWire(response: Response, expected: WireFixture, bytes?: Uint8Array) {
   expect(response.status).toBe(expected.status);

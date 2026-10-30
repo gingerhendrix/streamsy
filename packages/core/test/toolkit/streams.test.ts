@@ -15,8 +15,34 @@ import {
 import { StreamsWriter, type Writer } from "../../src/protocol/tags.ts";
 import { TransportFault, type StreamsFault } from "../../src/fault.ts";
 import { StreamId } from "../../src/schema/index.ts";
+import { expiryValidationCases, invalidJson } from "../fixtures/create-validation.ts";
 
 const address = StreamAddress.json("events", { schema: Schema.Struct({ n: Schema.Finite }) });
+
+layer(MemoryStorage.layerProtocol())((it) => {
+  it.effect("typed create surfaces invalid expiry and JSON as typed failures", () =>
+    Effect.gen(function* () {
+      for (const fixture of expiryValidationCases) {
+        expect(yield* Effect.flip(Streams.create(address, fixture.options))).toMatchObject({
+          _tag: "InvalidCreateRequest",
+          id: address.id,
+          message: fixture.message,
+        });
+      }
+
+      expect(
+        yield* Effect.flip(Streams.create(address, { initialData: invalidJson })),
+      ).toMatchObject({
+        _tag: "InvalidCreateRequest",
+        id: address.id,
+        message: "Invalid JSON",
+      });
+      expect(yield* Effect.flip(Streams.head(address))).toMatchObject({ _tag: "StreamNotFound" });
+      yield* Streams.create(address, { initialData: new TextEncoder().encode('[{"n":1}]') });
+      expect((yield* Streams.collect(address)).items).toEqual([{ n: 1 }]);
+    }),
+  );
+});
 
 layer(MemoryStorage.layerProtocol({ readLimit: 1 }))((it) => {
   it.effect("fold reduces every page and returns the tail of the last page", () =>

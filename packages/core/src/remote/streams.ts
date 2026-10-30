@@ -4,6 +4,7 @@ import { Context, Effect, Fiber, Layer, Scope } from "effect";
 import { HttpClient, type HttpClientRequest } from "effect/http";
 import { StreamId } from "../schema/index.ts";
 import { NotSupported } from "../protocol/errors.ts";
+import { validateCreateOptions } from "../policy/create-validation.ts";
 import { TransportFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import { requests, type Options } from "./request.ts";
@@ -103,21 +104,29 @@ export const layerProtocol = (options: Options) =>
 
       const writer: Writer<TransportFault> = {
         create: (id, input) =>
-          execute(
-            "create",
-            () => request.create(id, input),
-            (operation, response) =>
-              Response.create(operation, response, {
-                id,
-                source:
-                  input?.forkedFrom === undefined ? undefined : StreamId.make(input.forkedFrom),
-              }),
+          validateCreateOptions(id, input).pipe(
+            Effect.andThen(
+              execute(
+                "create",
+                () => request.create(id, input),
+                (operation, response) =>
+                  Response.create(operation, response, {
+                    id,
+                    source:
+                      input?.forkedFrom === undefined ? undefined : StreamId.make(input.forkedFrom),
+                  }),
+              ),
+            ),
           ),
         fork: (id, source, input) =>
-          execute(
-            "create",
-            () => request.create(id, { ...input, forkedFrom: source }),
-            (operation, response) => Response.create(operation, response, { id, source }),
+          validateCreateOptions(id, input).pipe(
+            Effect.andThen(
+              execute(
+                "create",
+                () => request.create(id, { ...input, forkedFrom: source }),
+                (operation, response) => Response.create(operation, response, { id, source }),
+              ),
+            ),
           ),
         append: (id, input) => {
           if (input.expectedOffset !== undefined && options.capabilities?.expectedOffset !== true)

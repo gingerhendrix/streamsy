@@ -9,6 +9,7 @@ test("public root exposes fault schemas, guards and result matchers", () => {
     "isStreamsFault",
     "isRetryableFault",
     "CreateResult",
+    "InvalidCreateRequest",
     "AppendResult",
   ]) {
     expect(Record.keys(Root)).toContain(name);
