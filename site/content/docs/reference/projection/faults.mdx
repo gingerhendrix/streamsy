@@ -8,7 +8,7 @@ import { ProjectionFault, ProjectionRetry } from "@streamsy/projection";
 import type { Context, Schedule } from "effect";
 ```
 
-A runner fails with a `ProjectionFault`, or with the error of the handler itself. `follow` and the attached runners retry a retryable fault under `ProjectionRetry`. See [Faults](/docs/projections/state#faults).
+A runner fails with a `ProjectionFault`, or with the error of the handler itself. `follow` and the attached runners retry a retryable fault under `ProjectionRetry`. See [Faults](/docs/projections/checkpoints#faults).
 
 ## `ProjectionFault`
 

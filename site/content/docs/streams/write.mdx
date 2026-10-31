@@ -1,7 +1,9 @@
 ---
 title: Write
-description: Append items as one atomic write, retry with a producer position, and make a write conditional on the tail offset.
+description: Append items as one atomic write, close a stream, retry safely with a producer position, and make an append conditional on the tail offset.
 ---
+
+A stream service appends to the streams of its class. Each `append` encodes its items with the codec of the stream class and writes them as one atomic append. For the full signatures, see [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) and [`AppendCallOptions`](/docs/reference/core/options-and-results#appendcalloptions).
 
 ## Append
 
@@ -20,79 +22,27 @@ const write = Effect.gen(function* () {
 });
 ```
 
-`append(params, items, options?)` encodes the items and writes them as one atomic append.
+`append(params, items, options?)` encodes every item before it sends anything. An item that does not encode fails the append with `EncodeFault`, and nothing is written. The stream then stores all the items, or none of them.
 
-| Result      | Meaning                                                      |
-| ----------- | ------------------------------------------------------------ |
-| `Appended`  | Written. `offset` is the new tail and the next read position |
-| `Duplicate` | This producer position was already accepted                  |
+| Result      | Meaning                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `Appended`  | The append was written. `offset` is the new tail, and a read from it starts after these items                                         |
+| `Duplicate` | Only with `producer`. The stream already accepted this producer position and wrote nothing. See [Producer retries](#producer-retries) |
 
-| Option           | Effect                                     |
-| ---------------- | ------------------------------------------ |
-| `close`          | Closes the stream after the items          |
-| `producer`       | Sends a producer position for safe retries |
-| `expectedOffset` | Writes only if the tail equals this offset |
+Both results have `offset` and `closed`. `closed` is `true` when the stream is closed after the call.
 
-A JSON stream keeps one message for each item. A bytes stream joins the items of one append into one message.
+| Option           | Effect                                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `close`          | `true` closes the stream after the items. See [Close](#close)                                        |
+| `producer`       | A producer position, so that a retry cannot write the items twice                                    |
+| `expectedOffset` | The append runs only when the tail equals this offset. See [Conditional writes](#conditional-writes) |
+| `seq`            | A writer sequence string. Each `seq` must sort after the last one, compared as strings               |
 
-## Durable State changes
+`items` must have at least one item, unless `close` is `true`. The compiler checks this. A JSON stream stores each item as a separate message, and a read returns the same items with the same boundaries. A byte stream concatenates the items of one append into one message, and an HTTP read concatenates the messages of a batch, so a byte read has no append boundaries. See [Byte streams](/docs/streams/declare#byte-streams). An empty `Uint8Array` item makes the append die with a `RangeError` before anything is sent.
 
-`DurableState.changes` makes the change events for one address of a `Streamsy.state` stream.
+Each append restarts the TTL of a stream that has one. See [Expiry](/docs/streams/create#expiry).
 
-```ts
-// @filename: streams.ts
-export * from "./notes-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Effect } from "effect";
-import { DurableState } from "@streamsy/core";
-import { Workspace } from "./streams.ts";
-
-const createIssue = (offset: string, issue: { id: string; projectId: string; title: string }) =>
-  Effect.gen(function* () {
-    const workspace = yield* Workspace;
-    const params = { workspaceId: "main" };
-    const facts = DurableState.changes(Workspace.at(params), { offset }, [
-      DurableState.upsert("issue", issue),
-    ]);
-    yield* workspace.append(params, facts);
-  });
-```
-
-| Field    | Value                                                                       |
-| -------- | --------------------------------------------------------------------------- |
-| `key`    | The collection key field of an upserted value, or the key given to `remove` |
-| `offset` | The source offset you give                                                  |
-| `txid`   | `${offset}:${index}`, unless the change sets it                             |
-
-`DurableState.remove("issue", id)` deletes by key. Add `{ oldValue }` to also write `old_value`. If you give no `offset`, the events have no `offset` and no default `txid`. An upsert or delete can also set `timestamp` or `from`. A change to an undeclared collection, or a value that does not match its schema, does not compile.
-
-### Control messages
-
-`DurableState.changes` also takes the State control messages. Make them with `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()`. Each takes an optional `{ offset }`.
-
-```ts
-// @filename: streams.ts
-export * from "./notes-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Effect } from "effect";
-import { DurableState, StreamAddress } from "@streamsy/core";
-import { Workspace } from "./streams.ts";
-
-const replaceIssues = (issues: ReadonlyArray<{ id: string; projectId: string; title: string }>) =>
-  Effect.gen(function* () {
-    const workspace = yield* Workspace;
-    const params = { workspaceId: "main" };
-    const facts = DurableState.changes(Workspace.at(params), {}, [
-      StreamAddress.reset(),
-      ...issues.map((issue) => DurableState.upsert("issue", issue)),
-    ]);
-    yield* workspace.append(params, facts);
-  });
-```
-
-A control passes through `changes` unchanged. With an `offset`, a control that has no offset of its own gets that offset. Controls do not take a `txid`, but they count in the `index` of the default `txid` of the changes after them.
+To write a Durable State stream, see [Write changes](/docs/streams/durable-state#write-changes).
 
 ## Close
 
@@ -107,11 +57,13 @@ import { Notes } from "./streams.ts";
 const close = Effect.flatMap(Notes, (notes) => notes.append({}, [], { close: true }));
 ```
 
-Later appends fail with `StreamClosed`.
+`close: true` with no items only closes the stream. With items, the append writes the items and closes the stream in the same atomic append. A close-only append on a stream that is already closed succeeds with `Appended`, so a close is safe to repeat.
+
+After the close, an append with items fails with `StreamClosed`. The `offset` of the error is the tail of the closed stream. Reads still work. A batch that reaches the tail has `closed: true`, and `follow` ends after it. See [Follow](/docs/streams/read#follow).
 
 ## Producer retries
 
-A producer position is `{ producerId, producerEpoch, producerSeq }`. `Producer.next` advances it.
+A producer position is `{ producerId, producerEpoch, producerSeq }`. It names one writer and counts its appends. `Producer.next` returns the position with `producerSeq` increased by one.
 
 ```ts
 // @filename: streams.ts
@@ -133,20 +85,29 @@ const importOne = (position: Producer.Position) =>
   });
 ```
 
-Advance the position only after `Appended` or `Duplicate`. Send the same bytes on a retry. The server compares positions, not payloads.
+Advance the position only after `Appended` or `Duplicate`. On a retry, send the same items with the same position. The stream compares positions, not items, so a retry with other items also answers `Duplicate` and writes nothing.
 
-| Case                         | Result        |
-| ---------------------------- | ------------- |
-| Next `producerSeq`           | `Appended`    |
-| Accepted `producerSeq` again | `Duplicate`   |
-| Skipped `producerSeq`        | `ProducerGap` |
-| Older `producerEpoch`        | `StaleEpoch`  |
+The stream keeps the last epoch and the last `producerSeq` of each `producerId`. It checks each position against them:
 
-`producerSeq` starts at 0 for each new epoch. For restarts, see the [core producer restart contract](https://github.com/gingerhendrix/streamsy/blob/effect/packages/core/README.md#producer-restarts) and [PROTOCOL.md section 5.2.1](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#521-idempotent-producers).
+| Position                                      | Result                                      |
+| --------------------------------------------- | ------------------------------------------- |
+| A new `producerId` with `producerSeq` 0       | `Appended`                                  |
+| A new `producerId` with `producerSeq` above 0 | `ProducerGap`, with `expectedSeq` 0         |
+| The same epoch and the next `producerSeq`     | `Appended`                                  |
+| The same epoch and an accepted `producerSeq`  | `Duplicate`                                 |
+| The same epoch and a skipped `producerSeq`    | `ProducerGap`                               |
+| A higher epoch with `producerSeq` 0           | `Appended`. The higher epoch is now current |
+| A lower epoch                                 | `StaleEpoch`, with `currentEpoch`           |
+
+A higher epoch with a `producerSeq` above 0 makes the append die with `InvalidEpochSeq`. The producer check runs before every other check, so a retry of an append that closed the stream still answers `Duplicate`.
+
+A `Duplicate` result has the current tail as `offset`, and the last accepted `producerEpoch` and `producerSeq`. That `producerSeq` can be higher than the one you sent.
+
+To hand a `producerId` to a new writer, start a higher epoch at `producerSeq` 0. Appends of the old writer then fail with `StaleEpoch`. Streamsy does not choose epochs. A writer that restarts and cannot build the same items again must store the items with their position before it appends. See [`Producer.next`](/docs/reference/core/producer#producernext) and [PROTOCOL.md section 5.2.1](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#521-idempotent-producers).
 
 ## Conditional writes
 
-`expectedOffset` writes only if the tail still equals it. `ZERO_OFFSET` means the stream must be empty. A miss writes nothing and fails with `OffsetMismatch`, with `expected` and `actual`.
+`expectedOffset` makes the append run only when the tail still equals it. `ZERO_OFFSET` means that the stream must be empty. On a miss, the append fails with `OffsetMismatch`, with `expected` and `actual`. It writes no items, does not close the stream, and does not change the producer state.
 
 ```ts include write-reserve
 // @filename: orders.ts
@@ -167,30 +128,36 @@ export const apply = (state: OrdersState, event: typeof OrderEvent.Type): Orders
 // - orders
 // @filename: index.ts
 // ---cut---
-import { Effect, Predicate } from "effect";
+import { Data, Effect, Predicate } from "effect";
 import { Orders, apply, initial } from "./orders.ts";
+
+type Reservation = Data.TaggedEnum<{
+  Rejected: {};
+  Committed: { readonly offset: string };
+}>;
+const Reservation = Data.taggedEnum<Reservation>();
 
 const reserve = (sku: string) =>
   Effect.gen(function* () {
     const orders = yield* Orders;
     const { state, offset } = yield* orders.fold({}, () => initial, apply);
-    if (state.reserved.has(sku)) return { _tag: "Rejected" as const };
+    if (state.reserved.has(sku)) return Reservation.Rejected();
     const appended = yield* orders.append({}, [{ type: "reserved", sku }], {
       expectedOffset: offset,
     });
-    return { _tag: "Committed" as const, offset: appended.offset };
+    return Reservation.Committed({ offset: appended.offset });
   }).pipe(Effect.retry({ while: Predicate.isTagged("OffsetMismatch"), times: 5 }));
 ```
 
-`fold` returns the folded state and the tail it read up to. That tail is the `expectedOffset`. A competing writer moves the tail, so the append fails and the retry reads again. To give one writer ownership of a stream, use a producer epoch.
+`fold` returns the folded state and the tail that it read up to. That tail is the `expectedOffset`. When another writer appends first, the tail moves, the append fails with `OffsetMismatch`, and the retry folds again.
 
-The append's `AppendFailure<O>` type follows its options. Only an append with `expectedOffset` can fail with `OffsetMismatch`, and only an append with `producer` can fail with `StaleEpoch` or `ProducerGap`. An append needs at least one item, unless it sets `close: true`.
+The error type of `append` follows its options. Only an append with `expectedOffset` can fail with `OffsetMismatch`, and only an append with `producer` can fail with `StaleEpoch` or `ProducerGap`.
 
-`expectedOffset` is a Streamsy extension to the protocol. See [Extensions](/docs/http/routes#extensions).
+`expectedOffset` is a Streamsy extension to the Durable Streams protocol. See [Extensions](/docs/servers/protocol#extensions).
 
 ### Read, fold, append
 
-`decide` does the loop above in one call. It folds the stream, calls `decide` with the state and the tail it read, and appends with that tail as `expectedOffset`:
+`decide(params, spec)` runs the loop above in one call. It folds the stream, calls `spec.decide` with the state and the tail that it read, and appends with that tail as `expectedOffset`:
 
 ```ts
 // @include: write-reserve-orders
@@ -218,43 +185,82 @@ const reserve = (sku: string) =>
   });
 ```
 
-What `decide` does:
+The steps of `decide`:
 
-- It folds the stream from the start with `initial` and `fold`.
-- It calls `decide` with the state and the tail it read. `decide` must not write and must not change the state.
-- Empty `items` returns at once. There is no append and no tail check.
-- Otherwise it appends the items with `expectedOffset` set to that tail.
-- When its own append fails with `OffsetMismatch`, it folds only the new items onto the same state and decides again. `retry` sets the schedule. The default is `Schedule.recurs(3)`. When the schedule ends, it fails with the last `OffsetMismatch`.
-- It does not retry other failures. An `OffsetMismatch` that `decide` raises is not retried. A lost reply can hide an append that landed, so a caller that retries the whole call must make `decide` safe against its own write.
+1. It folds the stream from the start with `initial` and `fold`.
+2. It calls `spec.decide` with the state and `{ offset }`, the tail that it read. `spec.decide` must not write and must not change the state.
+3. When `items` is empty, it returns at once, with no append and no tail check.
+4. Otherwise it appends the items with `expectedOffset` set to that tail.
+5. When its own append fails with `OffsetMismatch`, it folds only the new items onto the same state and goes back to step 2.
 
-It returns `{ value, offset, appended }`. `offset` is the new tail after a write, or the tail that was read. `Streams.decide(address, spec)` is the same call on an address.
+`spec.retry` is the `Schedule` for step 5. The default is `Schedule.recurs(3)`, so one call makes at most four appends. When the schedule ends, `decide` fails with the last `OffsetMismatch`. An `OffsetMismatch` that `spec.decide` itself fails with is not retried.
 
-On a Durable State stream, pass the offset to `DurableState.changes`, so each change records the offset that the append checks. The [issue tracker](/docs/demos/issue-tracker#5-read-fold-append) does this in `IssueTracker.mutate`.
+`decide` does not retry any other failure. A lost reply can hide an append that was written, so a caller that retries the whole call must make `spec.decide` safe against its own earlier write.
+
+`decide` returns `{ value, offset, appended }`. `offset` is the new tail after an append, or the tail that it read when there was none. `appended` is `true` when it wrote the items. `Streams.decide(address, spec)` is the same call on an address. See [`DecideSpec`](/docs/reference/core/toolkit#decidespec).
+
+On a Durable State stream, also pass the offset to `DurableState.changes`. See [Conditional writes on a State stream](/docs/streams/durable-state#conditional-writes).
 
 To project a stream into state and then append, see [Read, decide, append](/docs/projections/state#read-decide-append).
 
 ## Errors
 
-`AppendFailure<O>` includes protocol rejections, `StreamsFault`, and `EncodeFault`. `create` and `fork` use `CreateFailure`; `remove` uses `RemoveFailure`. Import these types from `@streamsy/core`.
+`append` fails with `AppendFailure<O>`, where `O` is the type of its options. `decide` fails with `ReadFailure`, `AppendFailure<{ expectedOffset: string }>`, or an error of `spec.decide`. Import these types from `@streamsy/core`. Each failure has a `_tag`.
 
-Caller bugs are defects in toolkit `append`: `InvalidAppendRequest`, `InvalidEpochSeq`, and rejections ruled out by its options. An empty encoded bytes item dies with a `RangeError` before the write. The protocol writer and HTTP edge keep all append rejections typed.
+| `_tag`           | When                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `StreamNotFound` | No stream has the id, or the stream expired                                                      |
+| `StreamGone`     | The stream was removed, and forks still use it                                                   |
+| `StreamClosed`   | The stream is closed. `offset` is its tail                                                       |
+| `AppendConflict` | The stream has another content type, or `seq` does not sort after the last one                   |
+| `StreamBusy`     | The storage lost 64 attempts in a row to other writers, or the server answered 503               |
+| `NotSupported`   | Over the remote Layer only. Its `capabilities` do not allow the option, or the server refused it |
+| `OffsetMismatch` | With `expectedOffset` only. The tail is not `expectedOffset`                                     |
+| `StaleEpoch`     | With `producer` only. The epoch is lower than the current epoch                                  |
+| `ProducerGap`    | With `producer` only. The `producerSeq` skips a number                                           |
+| `EncodeFault`    | An item does not encode with the codec. Nothing was written                                      |
+| `StorageFault`   | A local store failed                                                                             |
+| `TransportFault` | The remote Layer could not send the request or read the response                                 |
 
-| Error            | When                                                             |
-| ---------------- | ---------------------------------------------------------------- |
-| `StreamClosed`   | The stream is closed                                             |
-| `OffsetMismatch` | The tail is not `expectedOffset`                                 |
-| `StaleEpoch`     | A higher producer epoch exists                                   |
-| `ProducerGap`    | A producer sequence was skipped                                  |
-| `AppendConflict` | The content type does not match, or `Stream-Seq` did not advance |
-| `EncodeFault`    | An item does not match the codec                                 |
+The typed API sends the content type of the stream class, so `AppendConflict` for a content type means that something else created the stream, such as a raw HTTP client. See [What the server checks](/docs/servers/protocol#what-the-server-checks).
+
+These cases are caller bugs, and `append` dies with them in place of a typed failure:
+
+- `InvalidAppendRequest`, for an append with no items that does not close the stream.
+- `InvalidEpochSeq`, for a higher epoch that does not start at `producerSeq` 0.
+- A rejection that the options rule out, such as `OffsetMismatch` from an append without `expectedOffset`.
+- `RangeError`, for an empty `Uint8Array` item.
+
+The `StreamsWriter` service from `@streamsy/core/protocol` keeps every rejection typed. See [`AppendError`](/docs/reference/core/errors#appenderror).
 
 ## Over HTTP
 
-`POST` on the stream path appends. It needs `append` or `full` access.
+`POST` on the stream path appends the body. `Http.routes` serves it for a stream whose `access` is `"append"` or `"full"`. With `"read"`, the server answers 405 with an `allow` header. See [Expose the stream protocol](/docs/servers/protocol).
 
-| Header                                          | Carries                  |
-| ----------------------------------------------- | ------------------------ |
-| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | The producer position    |
-| `Stream-Expected-Offset`                        | The expected tail offset |
+| Header                                          | Value                                                                       |
+| ----------------------------------------------- | --------------------------------------------------------------------------- |
+| `Content-Type`                                  | The content type of the stream. Required when the body is not empty         |
+| `Stream-Closed`                                 | `true` closes the stream. With an empty body, the request only closes it    |
+| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | The producer position. Send all three, with whole numbers for epoch and seq |
+| `Stream-Expected-Offset`                        | `expectedOffset`                                                            |
+| `Stream-Seq`                                    | `seq`                                                                       |
 
-The remote Layer sends these headers only when its `capabilities` allow them. See [Remote client](/docs/http/remote).
+A JSON stream takes a JSON array and stores each element as one message, or takes one JSON value and stores it as one message. Another stream stores the body as one message. The body can be at most `maxMessageSize`, 1 MiB by default.
+
+A successful append answers with `stream-next-offset`, the new tail. It adds `stream-closed: true` when the stream is closed, and `producer-epoch` and `producer-seq` when the request had a producer position.
+
+| Status | When                                                                                                                                                                    |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200    | `Appended`, for a request with a producer position and a body                                                                                                           |
+| 204    | `Appended` for any other request, or `Duplicate`                                                                                                                        |
+| 400    | A header is invalid, the body is empty without `Stream-Closed: true`, `Content-Type` is missing, the JSON does not parse or is `[]`, or a new epoch does not start at 0 |
+| 403    | `StaleEpoch`. `producer-epoch` holds the current epoch                                                                                                                  |
+| 404    | No stream in the group matches the id, or no stream has the id                                                                                                          |
+| 409    | `StreamClosed`, `OffsetMismatch`, `ProducerGap`, or `AppendConflict`                                                                                                    |
+| 410    | The stream was removed, and forks still use it                                                                                                                          |
+| 413    | The body is larger than `maxMessageSize`                                                                                                                                |
+| 503    | `StreamBusy`. Try again later                                                                                                                                           |
+
+A 409 for `StreamClosed` has `stream-closed: true` and the tail in `stream-next-offset`. A 409 for `OffsetMismatch` has the tail in `stream-next-offset`. A 409 for `ProducerGap` has `producer-expected-seq` and `producer-received-seq`.
+
+The remote Layer sends `expectedOffset` and `producer` only when its `capabilities` allow them. Without the capability, the append fails with `NotSupported` before any request, with `feature` set to `"expected-offset"` or `"producer"`. See [Connect to a remote server](/docs/servers/remote).

@@ -10,7 +10,7 @@ import type { Duration, Effect, Layer, Stream } from "effect";
 import type { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 ```
 
-`Http` serves the Durable Streams protocol over HTTP. An application mounts [`Http.routes`](#httproutes) for a group. Protocol tools and hosts use the other exports. See [Protocol routes](/docs/http/routes).
+`Http` serves the Durable Streams protocol over HTTP. An application mounts [`Http.routes`](#httproutes) for a group. Protocol tools and hosts use the other exports. See [Expose the stream protocol](/docs/servers/protocol).
 
 The entry point `@streamsy/core/http` exports the same module, with each name at the top level. `Http.routes` and `routes` from `@streamsy/core/http` are the same function. This page uses the `Http.` form.
 
@@ -257,7 +257,7 @@ same<typeof securityHeaders, typeof Http.securityHeaders>(true);
 
 ## Shutdown
 
-`ShutdownSignal` lets a host stop live reads before it closes. When the host starts to drain, a parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The client then reconnects as after a timeout. `Serve.layer` from `@streamsy/serve` provides the signal and drains it. See [Long-running hosts](/docs/http/serve#long-running-hosts).
+`ShutdownSignal` lets a host stop live reads before it closes. When the host starts to drain, a parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The client then reconnects as after a timeout. `Serve.layer` from `@streamsy/serve` provides the signal and drains it. See [Clean shutdown](/docs/servers/process#clean-shutdown).
 
 ### `Http.ShutdownSignal`
 

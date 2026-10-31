@@ -8,7 +8,7 @@ import { DurableState, StreamAddress } from "@streamsy/core";
 import type { Array } from "effect";
 ```
 
-`DurableState` builds the items that you append to a `Streamsy.state` stream. `upsert` and `remove` each describe one change. `changes` turns a list of changes into change events: it adds the key and the headers, and the compiler checks each change against the collections of the address. For a worked example, see [Durable State changes](/docs/streams/write#durable-state-changes).
+`DurableState` builds the items that you append to a `Streamsy.state` stream. `upsert` and `remove` each describe one change. `changes` turns a list of changes into change events: it adds the key and the headers, and the compiler checks each change against the collections of the address. For a worked example, see [Write changes](/docs/streams/durable-state#write-changes).
 
 ## `DurableState.upsert`
 

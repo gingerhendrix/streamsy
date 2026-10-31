@@ -1,4 +1,13 @@
 {
   "title": "Streams",
-  "pages": ["declare", "create", "read", "write"]
+  "pages": [
+    "declare",
+    "create",
+    "read",
+    "write",
+    "---Kinds of stream---",
+    "durable-state",
+    "wake",
+    "custom"
+  ]
 }

@@ -13,7 +13,7 @@ import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
 ```
 
-`DurableObjectStorage` keeps streams in the SQLite storage of one Durable Object. It builds the `@effect/sql-sqlite-do` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [Storage](/docs/hosting/cloudflare#storage) in the Cloudflare guide.
+`DurableObjectStorage` keeps streams in the SQLite storage of one Durable Object. It builds the `@effect/sql-sqlite-do` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [Storage](/docs/servers/cloudflare#storage) in the Cloudflare guide.
 
 ## Layers
 
@@ -69,7 +69,7 @@ const storage = DurableObjectStorage.layer(shop, { client: { storage: ctx.storag
 - The long-poll timeout is [`DEFAULT_LONG_POLL_TIMEOUT_MS`](#durableobjectstoragedefault_long_poll_timeout_ms), 25 s, unless `longPollTimeoutMs` sets one
 - The migration, the store, and the option checks follow the rules of [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer)
 
-In a Worker, pass a function that returns this Layer as the `layer` option of `StreamsyObject.make` from `@streamsy/serve/cloudflare`. The object builds it on first access. See [Object lifecycle](/docs/hosting/cloudflare#object-lifecycle).
+In a Worker, pass a function that returns this Layer as the `layer` option of `StreamsyObject.make` from `@streamsy/serve/cloudflare`. The object builds it on first access. See [Object lifecycle](/docs/servers/cloudflare#object-lifecycle).
 
 ### `DurableObjectStorage.layerProtocol`
 

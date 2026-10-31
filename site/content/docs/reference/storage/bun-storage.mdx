@@ -13,7 +13,7 @@ import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
 ```
 
-`BunStorage` keeps streams in one SQLite file on Bun. It builds the `bun:sqlite` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [SQLite storage](/docs/hosting/bun#sqlite-storage).
+`BunStorage` keeps streams in one SQLite file on Bun. It builds the `bun:sqlite` client and runs [`SqlStorage`](/docs/reference/storage/sql-storage) over it. See [Use SQLite](/docs/storage/sqlite#bun).
 
 ## Layers
 
@@ -50,7 +50,7 @@ declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof layer, typeof BunStorage.layer>(true);
 ```
 
-`layer` returns a Layer that provides the stream services of `group` over one SQLite file, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), the [internal services](#types-with-no-exported-name) `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`, and the `SqlClient` with its `Reactivity`. Your own SQL can use that client and commit with a stream mutation. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables).
+`layer` returns a Layer that provides the stream services of `group` over one SQLite file, and requires nothing. The Layer also provides [`Storage`](/docs/reference/core/storage#storage), [`CommitBoundary`](/docs/reference/core/storage#commitboundary), the [internal services](#types-with-no-exported-name) `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`, and the `SqlClient` with its `Reactivity`. Your own SQL can use that client and commit with a stream mutation. See [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables).
 
 ```ts
 // @filename: streams.ts
@@ -71,7 +71,7 @@ Before the client opens the file, the build prepares it in three steps. The buil
 
 The client also has a busy timeout of 0 unless `client.busyTimeout` sets one. With a busy timeout of 0, SQLite does not wait for a locked file, so a busy file does not block the event loop. The store retries a busy transaction itself instead, as `transactionRetryAttempts` and `transactionRetryDelayMs` set. When SQLite fails while the file opens, the build fails with a [`StorageFault`](/docs/reference/core/faults#storagefault) with operation `migration.open`. The fault is retryable when the file is busy or locked, and the preparation steps retry it with the same policy.
 
-Several Bun processes can share one file. A commit in one process wakes the readers in another within `repairIntervalMs`. See [Several processes](/docs/hosting/bun#several-processes).
+Several Bun processes can share one file. A commit in one process wakes the readers in another within `repairIntervalMs`. See [Several processes](/docs/storage/sqlite#several-processes).
 
 The migration, the store, and the option checks follow the rules of [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer). The long-poll timeout is 30 s unless `longPollTimeoutMs` sets one.
 

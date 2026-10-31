@@ -1,0 +1,58 @@
+---
+title: Servers and clients
+description: The pieces that expose stream services over HTTP, consume them from another program, and run the server.
+---
+
+A Streamsy server is three separate choices. The storage Layer provides the stream services. HTTP routes expose some of those services at URLs. A runtime owns the listener or the Worker entry point, the lifetime of the services, and background work. A client is a program that gets its stream services from a server instead of from local storage.
+
+```text
+Application program → stream services → local storage Layer
+                                     or → RemoteStreams.layer → an existing server
+
+HTTP request → Http.routes or Serve routes → stream services
+
+Runtime → listener or Worker entry point + service lifetime + background work
+```
+
+## Two server interfaces
+
+| Interface                                    | Package           | Serves                                                                                                    | Guide                                                |
+| -------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `Http.routes(group, options)`                | `@streamsy/core`  | The Durable Streams protocol for every stream in a group: create, append, read, and remove                | [Expose the stream protocol](/docs/servers/protocol) |
+| `Serve.stream`, `Serve.state`, `Serve.value` | `@streamsy/serve` | Read-only endpoints at application URLs: one stream, one Durable State change feed, or one computed value | [Serve application reads](/docs/servers/serve)       |
+
+Both are Effect `HttpRouter` route Layers. One server can merge both with `Layer.mergeAll`, and each needs the stream services of the streams that it reads. Neither creates a stream, runs a projection, or authenticates a caller.
+
+## Clients
+
+| Client                                        | Uses                | Guide                                                                    |
+| --------------------------------------------- | ------------------- | ------------------------------------------------------------------------ |
+| An Effect program with `RemoteStreams.layer`  | The protocol routes | [Connect to a remote server](/docs/servers/remote)                       |
+| A browser app with the Durable Streams client | The protocol routes | [Browsers](/docs/servers/remote#browsers)                                |
+| A browser app that reads Serve endpoints      | Serve routes        | [Browser clients and CORS](/docs/servers/serve#browser-clients-and-cors) |
+
+A remote Effect program uses the same stream classes as the server, and its code does not change. A browser app does not load the server's Effect services. It reads the wire format through `@durable-streams/client` or `@durable-streams/state`.
+
+## Runtimes
+
+| Runtime                    | Owns                                                                                | Guide                                         |
+| -------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- |
+| Bun, Node, or Deno process | A listener, one scope for storage and background fibers, and a drain at shutdown    | [Run a process server](/docs/servers/process) |
+| Cloudflare                 | A Worker router, and Durable Objects that each own their storage, routes, and alarm | [Run on Cloudflare](/docs/servers/cloudflare) |
+
+A process runs until a signal stops it, so it can keep a follow fiber or a delivery loop running. A Durable Object gets no stop signal and can be evicted between requests. It runs background work in alarm turns instead. See [Schedule work with alarms](/docs/servers/cloudflare/alarms).
+
+The routes and the storage contract are the same on every runtime. Only the composition around them changes.
+
+## Pick a guide
+
+| Task                                                                  | Guide                                                        |
+| --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Let protocol clients create, append, and read streams                 | [Expose the stream protocol](/docs/servers/protocol)         |
+| Give a browser one feed, one state, or one value at an app URL        | [Serve application reads](/docs/servers/serve)               |
+| Use another server's streams from an Effect program                   | [Connect to a remote server](/docs/servers/remote)           |
+| Start and stop a server on Bun, Node, or Deno                         | [Run a process server](/docs/servers/process)                |
+| Run the routes in a Worker and Durable Objects                        | [Run on Cloudflare](/docs/servers/cloudflare)                |
+| Run projections or deliveries with no request in flight on Cloudflare | [Schedule work with alarms](/docs/servers/cloudflare/alarms) |
+| Use a stream that another Durable Object owns                         | [Connect Durable Objects](/docs/servers/cloudflare/objects)  |
+| Choose where the data lives                                           | [Choose storage](/docs/storage)                              |

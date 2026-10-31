@@ -1,0 +1,151 @@
+---
+title: Use SQLite
+description: Keep streams in SQLite on Bun, Node, Deno, or a Durable Object, and commit your own SQL rows with stream writes.
+---
+
+The SQLite Layers keep streams in a SQLite database. They also provide the `SqlClient` of that database, so your own tables can commit in the same transaction as a stream write.
+
+| Runtime        | Layer                                            | Package                            | Client                                   |
+| -------------- | ------------------------------------------------ | ---------------------------------- | ---------------------------------------- |
+| Bun            | `BunStorage.layer`                               | `@streamsy/storage/bun`            | Built by the Layer, `bun:sqlite`         |
+| Node, Deno     | `SqlStorage.layer` with `SqlStorage.clientLayer` | `@streamsy/storage`                | `@effect/sql-sqlite-node`, which you add |
+| Durable Object | `DurableObjectStorage.layer`                     | `@streamsy/storage/durable-object` | Built by the Layer, from `ctx.storage`   |
+
+The reference pages list every option: [`BunStorage`](/docs/reference/storage/bun-storage), [`SqlStorage`](/docs/reference/storage/sql-storage), and [`DurableObjectStorage`](/docs/reference/storage/durable-object-storage).
+
+## Bun
+
+This script keeps the `shop` streams in `shop.sqlite`. It starts no server.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Stream } from "effect";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Orders, shop } from "./streams.ts";
+
+const storage = BunStorage.layer(shop, { client: { filename: "./data/shop.sqlite" } });
+
+const program = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  yield* orders.append({}, [{ orderId: "o-17", amount: 40 }]);
+  return yield* orders.read({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runCollect,
+  );
+});
+
+const items = await Effect.runPromise(program.pipe(Effect.provide(storage)));
+```
+
+Each run appends one more order, and the read returns every order that earlier runs wrote.
+
+The Layer creates `data/` and the file when they do not exist. A `readonly` open, or `create: false`, creates nothing. The Layer refuses a file with an older Streamsy format or a newer schema version, and does not change it. Use a new file for an older format.
+
+`client` holds the options of `SqliteClient.make` from `@effect/sql-sqlite-bun`. A `filename` of `":memory:"` gives a database that lives as long as the Layer.
+
+## SQLite on Node and Deno
+
+On Node and Deno, add `@effect/sql-sqlite-node` and give its client to `SqlStorage.layer`:
+
+```ts no-twoslash
+import { Layer } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { SqlStorage } from "@streamsy/storage";
+import { shop } from "./streams.ts";
+
+const client = SqlStorage.clientLayer(SqliteClient.make({ filename: "./data/shop.sqlite" }));
+
+export const storage = SqlStorage.layer(shop).pipe(Layer.provideMerge(client));
+```
+
+`SqlStorage.layer` requires a `SqlClient` and the `Reactivity` that the client was made with. The store invalidates reads through that `Reactivity` after each commit. `SqlStorage.clientLayer` runs the driver's `make` and provides the client together with its `Reactivity`. `Layer.provideMerge` keeps the client in the output, so your own SQL can use it.
+
+On Deno, `@effect/sql-sqlite-node` calls `DatabaseSync.enableLoadExtension` on each open, and Deno's `node:sqlite` has no such method. Run `nodeSqliteCompat` from `@streamsy/serve/deno` before the client opens:
+
+```ts no-twoslash
+import { Effect, Layer } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { nodeSqliteCompat } from "@streamsy/serve/deno";
+import { SqlStorage } from "@streamsy/storage";
+import { shop } from "./streams.ts";
+
+const client = SqlStorage.clientLayer(
+  nodeSqliteCompat.pipe(Effect.andThen(SqliteClient.make({ filename: "./data/shop.sqlite" }))),
+);
+
+export const storage = SqlStorage.layer(shop).pipe(Layer.provideMerge(client));
+```
+
+`nodeSqliteCompat` adds a no-op method when it is missing, and changes nothing on a runtime that has it. Node and Deno pass the official conformance suite with SQLite through these Layers.
+
+`SqlStorage.layer` also accepts a Postgres or MySQL client. See [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer) for the migration rules of each database.
+
+## Durable Objects
+
+`DurableObjectStorage.layer(group, { client: { storage: ctx.storage } })` keeps streams in the SQLite storage of one Durable Object. Pass the full `ctx.storage` handle. Each mutation runs in a transaction, so the client needs the transaction API of that handle.
+
+The data belongs to that object only. A fork, a mutation, and a `CommitBoundary` transaction stay inside one object. To write a stream that another object owns, use a [Commit.producer](/docs/projections/commits#producer) output or an [object link](/docs/servers/cloudflare/objects). The object builds the Layer on first access. See [Run on Cloudflare](/docs/servers/cloudflare) for the object class, placement, and lifecycle.
+
+## Commit with your own tables
+
+Each SQLite Layer provides `CommitBoundary`. `CommitBoundary.withTransaction` runs its body in one SQL transaction. Your SQL statements and every stream mutation in the body commit together, or roll back together.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { CommitBoundary, type Offset } from "@streamsy/core";
+import { SqlClient } from "effect/sql";
+import { Orders } from "./streams.ts";
+
+const placeOrder = (orderId: string, amount: number, expectedOffset: Offset) =>
+  Effect.gen(function* () {
+    const boundary = yield* CommitBoundary;
+    const sql = yield* SqlClient.SqlClient;
+    const orders = yield* Orders;
+
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO invoices (order_id, amount) VALUES (${orderId}, ${amount})`;
+        return yield* orders.append({}, [{ orderId, amount }], { expectedOffset });
+      }),
+    );
+  }).pipe(Effect.catchTag("OffsetMismatch", () => Effect.succeed(undefined)));
+```
+
+The program needs `CommitBoundary`, `SqlClient`, and `Orders`. `BunStorage.layer(shop, options)` provides all three. Create the `invoices` table with your own migration.
+
+When another writer appends first, the append fails with `OffsetMismatch`. The failure leaves the boundary, so the transaction rolls back and the invoice row is not written. Catch the failure outside `withTransaction`, as above. A failure that you catch inside the body does not reach the boundary, so the transaction commits the rows that the body already wrote.
+
+These rules apply to the transaction:
+
+- Readers see no change until the outer transaction commits. Wakes and attached projections start only after the commit, and a rollback publishes nothing.
+- A nested `withTransaction` joins the outer transaction. It makes no savepoint, so a failure in the inner body rolls back the whole transaction when it leaves the outer body.
+- Open the transaction with `withTransaction`, not with `sql.withTransaction`. A stream mutation inside a transaction that `sql.withTransaction` opened dies, and so does a `withTransaction` call inside it.
+- The store retries a busy transaction that it opens for one mutation. It does not retry `withTransaction`. A busy lock fails the call with a `SqlError`, and you decide whether to retry the whole body.
+- One transaction has one owner. A stream on another storage Layer or on another object does not join it.
+
+`MemoryStorage` also provides `CommitBoundary`, so the same program runs in tests without the SQL statements. See [`CommitBoundary`](/docs/reference/core/storage#commitboundary).
+
+## Several processes
+
+| Runtime    | Locking                                                                                                | Processes for each file |
+| ---------- | ------------------------------------------------------------------------------------------------------ | ----------------------- |
+| Bun        | WAL mode and a busy timeout of 0. The store retries a busy transaction without blocking the event loop | Several                 |
+| Node, Deno | WAL mode and the driver's busy timeout of 5 s. A busy lock blocks the event loop for up to 5 s         | One                     |
+
+`transactionRetryAttempts` (default 16) and `transactionRetryDelayMs` (default 25 ms) set the retry of a busy transaction.
+
+Several Bun processes can share one file. Creates, conditional appends, and producer epoch fences hold across processes. A commit in one process wakes the readers in another within `repairIntervalMs`, which is 1 s by default. Within one process, a commit wakes readers at once.
+
+Some work belongs to one process even when the file is shared. Run one projection runner for each projection key, and one listener for each port. A `CommitBoundary` transaction runs in the process that opened it.
+
+## Projection services
+
+`CheckpointStore.layer` keeps projection checkpoints on the same SQL owner as the streams. `Transaction.layer` gives `Commit.transaction` the SQL client and its transaction. Compose both from `@streamsy/projection` over the storage Layer with `Layer.provideMerge`. See [Checkpoints](/docs/projections/checkpoints#layers) and [Commits](/docs/projections/commits).

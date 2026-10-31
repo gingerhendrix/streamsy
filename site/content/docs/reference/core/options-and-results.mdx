@@ -56,7 +56,9 @@ same<CreateOptions, Core.CreateOptions>(true);
 | `forkSubOffset` | The fork also copies the start of the next source message. For a JSON stream it counts messages, otherwise bytes |
 | `initialData`   | The first messages, written in the same operation as the create                                                  |
 
-Set `ttlSeconds` or `expiresAt`, not both. A fork that sets neither keeps the expiry of its source.
+Set `ttlSeconds` or `expiresAt`, not both. `create` and `fork` fail with [`InvalidCreateRequest`](/docs/reference/core/errors#invalidcreaterequest) when both are set, including when `ttlSeconds` is 0, or when `DateTime.make` cannot parse `expiresAt`. The local protocol checks these options before storage access. The remote Layer checks them before sending a request. A fork that sets neither keeps the expiry of its source.
+
+`initialData` takes raw bytes and bypasses the stream codec. For a new JSON stream, an array becomes one message per element, and another JSON value becomes one message. Invalid JSON fails with `InvalidCreateRequest` for a plain create and [`InvalidForkRequest`](/docs/reference/core/errors#invalidforkrequest) for a fork. Streamsy does not check these messages against the stream schema.
 
 When a stream with the id already exists, `create` succeeds with `Exists` if the options match that stream. If they do not match, `create` fails with `CreateConflict`. See [Create and fork](/docs/streams/create).
 

@@ -1,0 +1,244 @@
+---
+title: Run a projection
+description: Run units of a bound projection, follow its inputs for changes, or attach it to local commits, and choose a trigger for each host.
+---
+
+A runner reads each input of a bound projection after its checkpoint offset, runs the handler over one unit, and lets the Commit write the unit. Pick a runner, then pick what starts it on your host. For the full signatures, see [Projection runners](/docs/reference/projection/runners).
+
+## Runners
+
+| Runner                                     | Takes              | Returns                     | Runs                                                           |
+| ------------------------------------------ | ------------------ | --------------------------- | -------------------------------------------------------------- |
+| `Projection.pass(projection)`              | A bound projection | An Effect of a `PassResult` | One unit, or nothing when no input has new items               |
+| `Projection.run(projection, options?)`     | A bound projection | An Effect of a `Progress`   | Units until the inputs are caught up or closed, or `limit`     |
+| `Projection.follow(projection, options?)`  | A bound projection | A `Stream` of `Progress`    | One `run` cycle, then a wait for a change, then the next cycle |
+| `Projection.attach(declaration, options?)` | A declaration      | A `Layer`                   | `run` for each binding whose input a local commit writes       |
+
+`declaration.at(params)` gives the bound projection. See [Parameters and binding](/docs/projections/define#parameters-and-binding).
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+export const orderTotalsProjection = orderTotals.at({});
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+import { shop } from "./streams.ts";
+
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
+const program = Projection.run(orderTotalsProjection, { limit: 10 });
+
+const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
+```
+
+`limit` is the most units that one `run` call commits. With no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with a `ProjectionFault` with phase `load` and reason `invalid-options`. See [`RunOptions`](/docs/reference/projection/units#runoptions).
+
+### Results
+
+`pass` gives a [`PassResult`](/docs/reference/projection/units#passresult). `run` and each `follow` element give a [`Progress`](/docs/reference/projection/units#progress).
+
+| Field     | `PassResult`                                 | `Progress`                                                                         |
+| --------- | -------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `status`  | See the table below                          | See the table below                                                                |
+| `units`   | `1` when the pass committed a unit, else `0` | The units that the cycle committed                                                 |
+| `items`   | The input items in the unit                  | The input items in those units                                                     |
+| `offsets` | The offset of each input after the pass      | The offsets that the last pass left                                                |
+| `state`   | Not present                                  | The state that the last pass left. `undefined` when the projection has no `state:` |
+
+`state` and `offsets` in a `Progress` come from the same checkpoint record, so they always match.
+
+| Status          | Returned by        | Meaning                                             |
+| --------------- | ------------------ | --------------------------------------------------- |
+| `progress`      | `pass`             | The pass committed a unit                           |
+| `caught-up`     | All three          | The last pass found no new input                    |
+| `source-closed` | All three          | Every input is closed and read, or an input is gone |
+| `limit-reached` | `run` and `follow` | The cycle committed `limit` units                   |
+
+A runner fails with the error of the handler or with a `ProjectionFault`. See [Faults](/docs/projections/checkpoints#faults).
+
+## Follow
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+export const orderTotalsProjection = orderTotals.at({});
+// @filename: index.ts
+// ---cut---
+import { Effect, Stream } from "effect";
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+
+const follower = Projection.follow(orderTotalsProjection, { repairIntervalMs: 30000 }).pipe(
+  Stream.runForEach(({ units, offsets }) => Effect.log("committed", units, offsets)),
+);
+
+const consumer = Effect.gen(function* () {
+  const fiber = yield* follower.pipe(Effect.forkScoped);
+  return fiber;
+});
+```
+
+`follow` runs one `run` cycle at a time. Its stream emits a `Progress`:
+
+- after the first cycle, also when that cycle committed nothing,
+- after each later cycle that commits a unit or reaches `limit`,
+- after the last cycle, when every input is closed and read or an input is gone. Then the stream ends.
+
+A wait that ends with no new input emits nothing. `limit` applies to each cycle. After a cycle that reaches `limit`, the next cycle starts at the next pull, with no wait.
+
+After a cycle that is caught up, `follow` makes one long-poll read on each input from its offset. The first input with new items, or an input that is removed, ends the wait, and the next cycle runs. A close with no new items does not end the wait. `repairIntervalMs` bounds each wait. When the interval ends with no change, `follow` runs a cycle anyway, and that cycle sees any close. The default is 30000 ms. A value that is not a positive safe integer fails the stream with reason `invalid-options`. `follow` checks its options at the first pull, not when you call it.
+
+The stream is pull based. The next cycle runs only when the consumer pulls. A slow consumer gets one element for all the input that arrived while it worked, so the consumer's pace sets the follower's pace. To decouple them, add `Stream.buffer({ capacity: 1, strategy: "sliding" })`. A consumer failure stops the follower, so catch render errors in the consumer. To stop the follower, interrupt its fiber.
+
+`follow` retries a retryable `ProjectionFault`: reason `storage-failure`, unless its cause is a `StorageFault` or `TransportFault` whose `retryable` is `false`. It logs a warning for each retry. The schedule is `options.retry` when you pass one, else the `ProjectionRetry` reference. The default `ProjectionRetry` is exponential from 200 ms, jittered, with each wait capped at 30 s, and has no limit. Provide your own `ProjectionRetry` to change it for every follower and attached runner. Every other fault, and every handler error, fails the stream. See [`FollowOptions`](/docs/reference/projection/units#followoptions) and [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).
+
+Create every input before you start the follower. An input that does not exist and has no checkpoint fails the first cycle with reason `history-unavailable`.
+
+## Attach
+
+`Projection.attach` takes a declaration and gives a Layer. The Layer subscribes to `Storage.committed` when you build it. For each stream id that a local commit writes, the input's `parse` gives the params, and the runner calls `Projection.run(declaration.at(params), { limit })`. Use it on a long-lived Bun or Node host, beside the API Layer and over the same storage and checkpoint Layers.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { orderTotals } from "./order-totals.ts";
+import { shop } from "./streams.ts";
+
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
+const attached = Projection.attach(orderTotals, { durable: true }).pipe(Layer.provideMerge(host));
+```
+
+Build the Layer before the application writes. A commit before the subscription exists does not start a run. Only a commit through this process's `Storage` starts a run. Remote inputs, inputs on another storage owner, and commits by another process on the same database do not.
+
+Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
+
+| Option    | Default           | Effect                                                                                |
+| --------- | ----------------- | ------------------------------------------------------------------------------------- |
+| `limit`   | `100`             | The most units for each binding in one run. A binding that reaches it runs again next |
+| `retry`   | `ProjectionRetry` | The schedule for a retry after a failed pass                                          |
+| `durable` | `false`           | Keep a pending mark for each binding with work in storage                             |
+| `batch`   | `25`              | With `durable`, the most due marks that one pass reads                                |
+
+By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`.
+
+With `durable: true`, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. When the Layer starts, it runs the bindings that have marks. A binding that catches up deletes its mark, unless a write during the run marked it again. A binding that fails waits alone, from 1 s doubling to 1 hour, and the runner logs a warning while the other bindings run. `durable: true` needs a local memory or SQL storage Layer. Over other storage, building the Layer dies. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
+
+The runner drops a binding whose source was removed before its first run, and logs a warning. To write wake rows for each source stream, see [Wake streams](/docs/streams/wake).
+
+On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) in place of `Projection.attach`. It runs the same runner in an alarm turn, and it is durable by default.
+
+## Closed and gone inputs
+
+A closed input with no new items still makes one unit, with `closed` set on its slice. The checkpoint records the close, so a later run does not repeat the empty unit. A batch handler can react to the close. A handler for each entry gets no entries.
+
+When an input with a checkpoint is gone, and a head read of it answers `StreamNotFound` or `StreamGone`, the runner makes one final unit with `gone: true` on its slice. It then deletes the checkpoint record. The last `run` result or `follow` element holds the state and offsets that the final unit committed. After that, `Projection.read` gives the initial state, because the record is gone.
+
+These cases stay faults:
+
+- an input that does not exist and has no checkpoint fails with reason `history-unavailable`,
+- missing history on an input that still exists fails with reason `history-unavailable`,
+- a storage failure fails with reason `storage-failure`.
+
+A pending unit replays its pinned ranges. When an input is removed between the pin and the settle, the replay fails with reason `range-unreproducible`, and the pin stays. The final gone unit does not run for that binding. Keep input history until pending work settles, or forget the binding after you clean up its outputs. See [Forget](/docs/projections/checkpoints#forget).
+
+`Projection.follow` ends when every input is closed and read. A later removal needs an attached projection or another `run`.
+
+## Triggers
+
+A runner does nothing until something calls it. Pick the trigger by host.
+
+| Host                      | Trigger                                                                                                              | Inputs                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Bun or Node process       | A `Projection.attach` Layer                                                                                          | Local storage in the same process       |
+| Bun or Node process       | A `Projection.follow` stream in a scoped fiber, as in [Follow](#follow)                                              | Any stream Layer that serves long polls |
+| Request handler           | `Projection.run` with a `limit`, before the response                                                                 | Any stream Layer                        |
+| Cloudflare Durable Object | [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections), or `run` in request middleware or a wakeup | The object's storage                    |
+| CLI or scheduled job      | `Projection.run`                                                                                                     | Any stream Layer                        |
+
+`run` reads pages only, so it works over every stream Layer, including the remote Layer. `follow` also waits with long-poll reads. Over the remote Layer, a server that refuses the long poll with a `stream-not-supported` header fails the stream with reason `unsupported-composition`. `attach` needs the `Storage` service of a local storage Layer, because it subscribes to local commits.
+
+Bounded work before a request answers:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+export const orderTotalsProjection = orderTotals.at({});
+// @filename: index.ts
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+declare const readOrderTotals: Effect.Effect<number>;
+// ---cut---
+const handler = Effect.gen(function* () {
+  const progress = yield* Projection.run(orderTotalsProjection, { limit: 5 });
+  return yield* readOrderTotals;
+});
+```
+
+When `progress.status` is `limit-reached`, the outputs do not yet include every input item. A later request or another trigger runs the rest.
+
+## One writer
+
+Use one writer for each projection key: one running `follow` stream, one attached runner, or one `run` at a time. Each run of a `follow` stream value is a new writer. Do not run an attached binding under `follow` too.
+
+To give one follower to several consumers, use `Stream.share`. It starts the follower for the first consumer and stops it after the last consumer exits. To keep a projection up with no consumer, drain the follower and publish each element to a `SubscriptionRef`. A scheduled `run` must not overlap the one before it.
+
+A second writer is a deployment fault. The checkpoint token detects it when the record moves, and the write fails with reason `token-conflict`. See [One writer](/docs/projections/checkpoints#one-writer).
+
+The [Bugsy example](/docs/examples/bugsy) uses request and change triggers on one key.

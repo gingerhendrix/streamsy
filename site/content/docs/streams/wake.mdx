@@ -1,0 +1,150 @@
+---
+title: Wake streams
+description: Index the tails of a family of source streams in one Durable State stream, write its rows with a projection, and follow it to read only the sources that moved.
+---
+
+A client that mirrors many source streams, such as one stream for each folder, needs to know which sources changed. With one `follow` for each source, the client holds one long-poll read open for each source. A wake stream replaces those reads with one. It is a Durable State stream with one row for each source stream in a family, and each row holds the tail of its source after the last write. The client follows the wake stream and reads only the sources whose row moved past its saved cursor.
+
+## Declare
+
+`Streamsy.wake<Self>()(name, template, { params })`
+
+```ts include wake-streams
+// @filename: wake.ts
+// ---cut---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export class Files extends Streamsy.json<Files>()(
+  "Docs/Files",
+  "users/:user/folders/:folderId/files",
+  { params: { user: Schema.String, folderId: Schema.String }, schema: Schema.String },
+) {}
+
+export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+```
+
+`Streamsy.wake` calls `Streamsy.state` with `Streamsy.wakeCollections`, so a wake class has the normal State service and the item format of a [Durable State stream](/docs/streams/durable-state#items). The declaration takes no `collections` and names no sources. The service name, template, and params work as for every stream class. See [Declare streams](/docs/streams/declare).
+
+The one collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is the tail of the source after the write. `closed` is `true` when the source is closed, and a row for an open source leaves it out.
+
+## Write rows
+
+`Projection.wake({ id, params, input, output })` from `@streamsy/projection` links one source stream to one wake stream. `input` is the source stream class, and `output` is the wake class. The params of `input` and of `output` must be projection params.
+
+```ts
+// @include: wake-streams
+// @filename: index.ts
+// ---cut---
+import { Schema } from "effect";
+import { Projection } from "@streamsy/projection";
+import { Files, UserWake } from "./wake.ts";
+
+export const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: Schema.String, folderId: Schema.String },
+  input: Files,
+  output: UserWake,
+});
+```
+
+Each unit of the binding appends one upsert of the row for its source, with the tail that the unit read up to as `offset`. The append uses `Commit.producer`, so the source writes in one unit give one row, and a retried append answers `Duplicate`. Only the projection writes rows, so a row lags its source by one projection pass. When the source is removed or expires, the binding appends a State delete for its row and forgets itself.
+
+The binding creates a missing wake stream when the wake stream is on the same storage owner as its checkpoints. A wake stream on another owner must exist before the first append, so that owner creates it when it starts. Otherwise the pass fails with a `ProjectionFault` in phase `pin` with reason `invalid-output`.
+
+To run the binding after each local commit to a source, use `Projection.attach(filesWake)` on Bun or Node. See [Attach](/docs/projections/run#attach). On a Cloudflare Durable Object, use `ProjectionWakeup.attach(filesWake)`. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
+
+## Consume
+
+`Streamsy.followWake(Wake, params, { from, cursors })` follows the wake stream at `params` and gives one `WakeBatch` for each batch that it reads. It reads no source stream. You read the sources.
+
+| Option    | Meaning                                                                                 |
+| --------- | --------------------------------------------------------------------------------------- |
+| `from`    | The saved wake cursor. The default is `-1`, which reads the wake stream from the start  |
+| `cursors` | The saved source cursors, by stream id. `followWake` reads the map again for each batch |
+| `retry`   | The `Schedule` for retries, as for [`follow`](/docs/streams/read#follow)                |
+
+A `WakeBatch` has three fields. `items` holds the `Streamsy.WakeItem` actions of the batch, in write order. `offset` is the wake cursor after the batch. `upToDate` is `true` when the batch reached the tail of the wake stream. `followWake` collapses the rows of one source in a batch into one item. The exception is a delete and then an upsert of one source, which give `Removed`, then `Dirty` from `-1`.
+
+| `WakeItem` | Do this                                                                                                               |
+| ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `Dirty`    | Read `stream` from `from` up to at least `offset`, then save its cursor. `closed` is `true` when the source is closed |
+| `Removed`  | Drop the cursor and the local data of `stream`                                                                        |
+| `Reset`    | Drop every cursor. Each `Dirty` after it in the batch starts from `-1`                                                |
+| `Snapshot` | Drop each stream that `streams` does not hold                                                                         |
+
+An upsert gives `Dirty` only when its `offset` sorts after the saved cursor of the source, or when the source is closed. A source with no entry in `cursors` starts from `-1`.
+
+```ts
+// @include: wake-streams
+// @filename: source.ts
+import type { Effect } from "effect";
+import type { StreamId } from "@streamsy/core";
+export declare const readSource: (stream: StreamId, from: string) => Effect.Effect<string>;
+// @filename: index.ts
+// ---cut---
+import { Effect, Stream } from "effect";
+import { Streamsy, type StreamId } from "@streamsy/core";
+import { readSource } from "./source.ts"; // Reads one source stream, returns the tail it reached
+import { UserWake } from "./wake.ts";
+
+const cursors = new Map<StreamId, string>();
+let wakeCursor = "-1";
+
+const handle = Streamsy.WakeItem.$match({
+  Dirty: ({ stream, from }) =>
+    Effect.map(readSource(stream, from), (tail) => {
+      cursors.set(stream, tail);
+    }),
+  Removed: ({ stream }) =>
+    Effect.sync(() => {
+      cursors.delete(stream);
+    }),
+  Reset: () => Effect.sync(() => cursors.clear()),
+  Snapshot: ({ streams }) =>
+    Effect.sync(() => {
+      for (const stream of cursors.keys()) if (!streams.has(stream)) cursors.delete(stream);
+    }),
+});
+
+const sync = Streamsy.followWake(UserWake, { user: "ann" }, { from: wakeCursor, cursors }).pipe(
+  Stream.runForEach((batch) =>
+    Effect.forEach(batch.items, handle, { discard: true }).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          wakeCursor = batch.offset;
+        }),
+      ),
+    ),
+  ),
+);
+```
+
+Save each source cursor first and the wake cursor last. When the process stops between the two, the next run reads the same rows again, and `followWake` skips each source whose saved cursor already reaches the row offset.
+
+`followWake` fails with the errors of `follow`. See [Errors](/docs/streams/read#errors).
+
+`followWake` compares each row offset with a saved cursor, so it assumes that the offsets of a source only grow. Do not create a source stream again under the id of a removed or expired stream. The new stream starts at a lower offset, and a client with a saved cursor for the old stream skips its items.
+
+## Raw clients
+
+A client with its own HTTP reader decodes each page with `Streamsy.WakeMessage`, then calls `Streamsy.wakeActions(events, { cursors, snapshot })`. `wakeActions` reads no stream and gives the same items as `followWake`. It returns `{ items, snapshot }`. Pass `snapshot` to the call for the next page, because a snapshot can span pages.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy, type StreamId } from "@streamsy/core";
+
+const decodePage = Schema.decodeUnknownEffect(Schema.Array(Streamsy.WakeMessage));
+
+const actionsOf = (
+  body: unknown,
+  cursors: ReadonlyMap<StreamId, string>,
+  snapshot: ReadonlySet<StreamId> | undefined,
+) => Effect.map(decodePage(body), (events) => Streamsy.wakeActions(events, { cursors, snapshot }));
+```
+
+The cursor rule is the same. Save the `stream-next-offset` of a page as the wake cursor after you handle its items. Serve a wake stream as any State stream. See [State routes](/docs/servers/serve#state-routes). The sync CLI of the [folder sync example](/docs/examples/folder-sync#browser-and-sync-cli) follows one wake stream this way.
+
+For every signature and the full rules of `wakeActions`, see [Wake streams](/docs/reference/core/wake) in the reference.

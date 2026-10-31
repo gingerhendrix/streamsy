@@ -101,11 +101,11 @@ The value contract header is `x-streamsy-value-contract` (`VALUE_CONTRACT_HEADER
 in `/contract`), and `Serve.value` options are `ValueOptions`. A projection's
 served state comes from `Projection.read(declaration.at(params))`.
 
-Guides: [Serve routes](https://streamsy.dev/docs/http/serve),
-[Protocol routes](https://streamsy.dev/docs/http/routes),
-[Cloudflare](https://streamsy.dev/docs/hosting/cloudflare),
-[Host contract](https://streamsy.dev/docs/hosting/host-contract),
-[Alchemy](https://streamsy.dev/docs/hosting/cloudflare#alchemy).
+Guides: [Serve application reads](https://streamsy.dev/docs/servers/serve),
+[Expose the stream protocol](https://streamsy.dev/docs/servers/protocol),
+[Run on Cloudflare](https://streamsy.dev/docs/servers/cloudflare),
+[Run a process server](https://streamsy.dev/docs/servers/process),
+[Alchemy](https://streamsy.dev/docs/servers/cloudflare#alchemy).
 
 ## Object links and projection wakeups
 
@@ -140,4 +140,4 @@ writes a durable pending mark in the same transaction. Alarms drain bounded
 passes. After an eviction, acquisition reads the marks and arms the alarm.
 Retry options take an Effect `Schedule`; finite schedules stop on exhaustion.
 `Wakeups.status` reports each wakeup's deferred bindings.
-See the [projection host reference](https://streamsy.dev/docs/hosting/cloudflare#projections).
+See the [projections on Cloudflare guide](https://streamsy.dev/docs/servers/cloudflare/alarms#projections).

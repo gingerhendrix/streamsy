@@ -9,7 +9,7 @@ import type { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type { Layer } from "effect";
 ```
 
-`MemoryStorage` keeps streams in the memory of the process, and the data is gone when the scope of the Layer closes. Each mutation copies the whole store, so the time of an append grows with the size of the store. Use it for development and tests. See [Memory](/docs/hosting#memory).
+`MemoryStorage` keeps streams in the memory of the process, and the data is gone when the scope of the Layer closes. Each mutation copies the whole store, so the time of an append grows with the size of the store. Use it for development and tests. See [Memory](/docs/storage#memory).
 
 ## `MemoryStorage.layer`
 

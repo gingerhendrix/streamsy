@@ -1,4 +1,3 @@
-import { Array } from "effect";
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestUrl } from "@tanstack/react-start/server";
@@ -41,71 +40,25 @@ function Home() {
   return (
     <HomeLayout {...baseOptions()}>
       <main className="mx-auto w-full max-w-5xl px-6 py-16 sm:py-24">
-        <p className="font-mono text-sm text-fd-muted-foreground">First release · 0.4.0</p>
         <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight sm:text-6xl">
-          Effect streams, from server to browser.
+          Build Effect applications with Durable Streams
         </h1>
         <p className="mt-6 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
-          Streamsy is an Effect server and toolkit for Durable Streams. Create typed event streams,
-          follow their changes, and serve them to official Durable Streams browser clients.
+          Streamsy is an Effect server and toolkit for Durable Streams. Create typed streams, append
+          data, follow their changes, build projections and serve them over the official HTTP
+          protocol.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
           <a
             className="rounded-lg bg-fd-primary px-5 py-3 text-fd-primary-foreground"
-            href={withBasePath("/docs/tutorial")}
+            href={withBasePath("/docs")}
           >
-            Start with typed streams
+            Get Started
           </a>
-          <a
-            className="rounded-lg border px-5 py-3"
-            href={withBasePath("/docs/demos/hackernews-newest-stream")}
-          >
-            Explore the Hacker News demo
+          <a className="rounded-lg border px-5 py-3" href={withBasePath("/articles")}>
+            Read the blog
           </a>
         </div>
-        <section className="mt-16 grid gap-6 sm:grid-cols-3" aria-label="Packages">
-          {Array.map(
-            [
-              [
-                "@streamsy/core",
-                "Typed stream declarations, HTTP routes, storage contract and memory Layer.",
-              ],
-              ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
-              ["@streamsy/projection", "Checkpointed projections over one or more streams."],
-              [
-                "@streamsy/serve",
-                "HttpRouter routes, Bun and Cloudflare hosts, and action delivery.",
-              ],
-            ],
-            ([name, detail]) => (
-              <div key={name} className="rounded-xl border p-6">
-                <h2 className="font-mono text-lg font-semibold">{name}</h2>
-                <p className="mt-3 leading-7 text-fd-muted-foreground">{detail}</p>
-              </div>
-            ),
-          )}
-        </section>
-        <section className="mt-12 max-w-3xl border-t pt-8">
-          <h2 className="text-2xl font-semibold">Start locally, with explicit lifetimes.</h2>
-          <p className="mt-4 leading-7 text-fd-muted-foreground">
-            The Hacker News demo shares one SQLite Layer across its streams and projection
-            checkpoint, and resumes after a process restart. A Durable Object host exists, and the
-            conformance suite exercises it on local workerd. Live deployment remains a preview
-            pending a hosted evidence run. Effect 4.0.5 powers the server and toolkit. Browsers use
-            official Durable Streams client and State packages.
-          </p>
-          <p className="mt-4 leading-7">
-            Read the{" "}
-            <a className="underline" href={withBasePath("/docs/streams/declare")}>
-              Streams guide
-            </a>{" "}
-            or the{" "}
-            <a className="underline" href={withBasePath("/docs/hosting")}>
-              Hosting guide
-            </a>
-            .
-          </p>
-        </section>
       </main>
     </HomeLayout>
   );

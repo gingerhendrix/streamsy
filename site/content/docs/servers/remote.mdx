@@ -1,0 +1,91 @@
+---
+title: Connect to a remote server
+description: Run an Effect program against the streams of an existing server with RemoteStreams.layer, and know which operations the server must allow.
+---
+
+`RemoteStreams.layer(group, options)` provides the stream services of a group from a server that serves the Durable Streams protocol. A program that runs over a storage Layer runs over the remote Layer with no change.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { MemoryStorage } from "@streamsy/core";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { Orders, shop } from "./streams.ts";
+
+const program = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  yield* orders.append({}, [{ orderId: "o-17", amount: 40 }]);
+  return yield* orders.head({});
+});
+
+// In a test, against local memory.
+const local = MemoryStorage.layer(shop);
+
+// In production, against the server.
+const remote = RemoteStreams.layer(shop, {
+  baseUrl: "https://streams.example.com/streams",
+  headers: { authorization: "Bearer <token>" },
+}).pipe(Layer.provide(FetchHttpClient.layer));
+
+const head = await Effect.runPromise(program.pipe(Effect.provide(remote)));
+```
+
+Each operation becomes one or more HTTP requests to `baseUrl`. `orders` maps to `https://streams.example.com/streams/orders`. The server must serve the protocol routes for these streams under that prefix. See [Expose the stream protocol](/docs/servers/protocol).
+
+The remote Layer needs an `HttpClient`. `FetchHttpClient.layer` uses the global `fetch`. Any Effect `HttpClient` works, so tests and proxies can replace it.
+
+## Options
+
+| Option                        | Value                                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| `baseUrl`                     | The protocol prefix on the server. HTTP or HTTPS, with no query, fragment, or credentials |
+| `headers`                     | Headers for each request, such as `authorization`                                         |
+| `capabilities.expectedOffset` | The server accepts `Stream-Expected-Offset`                                               |
+| `capabilities.producer`       | The server accepts the producer headers                                                   |
+
+An invalid `baseUrl` fails the Layer build with a `TransportFault` whose `reason` is `"configuration"`. A stream id that is not a canonical, URL-safe path fails its call with the same fault, before any request. A network failure is a `TransportFault` with `reason` `"request"`.
+
+## Capabilities
+
+The capabilities are statements that you make about the server. The Layer does not discover them, and both default to `false`.
+
+Without `capabilities.expectedOffset`, an append with `expectedOffset` fails with `NotSupported` before any request. Without `capabilities.producer`, an append with `producer` fails in the same way. A Streamsy server supports both. Declare them only when the server does. An upstream server that ignores the headers would append without the condition.
+
+## Host access
+
+The protocol routes allow methods by the `access` of each stream. The remote Layer needs these:
+
+| Operation                        | Method      | Access on the server |
+| -------------------------------- | ----------- | -------------------- |
+| `read`, `follow`, `head`, `fold` | GET, HEAD   | Any                  |
+| `append`, `close`                | POST        | `append` or `full`   |
+| `create`, `fork`, `remove`       | PUT, DELETE | `full`               |
+
+A method that the server does not allow answers 405, and the operation fails. The server sets the size of a catch-up page and the long-poll timeout, not the client. Its errors map to the same typed errors as local storage. See [`RemoteStreams`](/docs/reference/core/remote-streams) for the status mapping.
+
+## Projections
+
+A projection can read its inputs over the remote Layer.
+
+| Feature             | Over the remote Layer                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `Projection.run`    | Works. It reads pages only                                                                                        |
+| `Projection.follow` | Works. It waits with long polls and replaces a parked poll every `repairIntervalMs` (default 30 s)                |
+| `Projection.attach` | Does not see remote writes. It needs the `Storage` of a local Layer                                               |
+| Outputs             | Existing remote outputs work with `Commit.producer`. `Commit.transaction` needs every output on its own SQL owner |
+| Checkpoints         | The remote Layer has no `CommitBoundary`. Provide a standalone store, such as `CheckpointStore.layerMemory`       |
+
+See [Triggers](/docs/projections/run#triggers) and [Several backends](/docs/projections/checkpoints#several-backends).
+
+## Browsers
+
+Browser applications use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client) and `@durable-streams/state`, not the remote Layer. They read the same protocol routes, or the [Serve routes](/docs/servers/serve), with the server's CORS policy. The browser does not get the typed codecs of the stream classes, so it decodes the wire format itself.
+
+`RemoteStreams.layerProtocol(options)` gives the generic reader and writer, with no stream classes, for protocol tools.
+
+Between Durable Objects, use an object link instead of the network. See [Connect Durable Objects](/docs/servers/cloudflare/objects).

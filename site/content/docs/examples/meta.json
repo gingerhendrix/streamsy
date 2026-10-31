@@ -1,0 +1,14 @@
+{
+  "title": "Examples",
+  "pages": [
+    "index",
+    "memory-server",
+    "todo",
+    "hackernews-newest-stream",
+    "issue-tracker",
+    "fold-agent",
+    "hex-board",
+    "bugsy",
+    "folder-sync"
+  ]
+}

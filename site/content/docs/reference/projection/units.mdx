@@ -26,7 +26,7 @@ import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Schedule } from "effect";
 ```
 
-A runner reads one page of each input after its checkpoint offset. The pages make one unit: the handler sees them as `Slices`, and the Commit saves the unit with its `Range` values. See [Handler](/docs/projections/define#handler) and [Running](/docs/projections/define#running).
+A runner reads one page of each input after its checkpoint offset. The pages make one unit: the handler sees them as `Slices`, and the Commit saves the unit with its `Range` values. See [Handler](/docs/projections/define#handler) and [Running](/docs/projections/run).
 
 ## Batches
 

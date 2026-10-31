@@ -1,9 +1,13 @@
 ---
 title: Create and fork
-description: Create a stream with an optional lifecycle, fork a child stream from a source, and remove a stream.
+description: Create a stream with an optional expiry, fork a child stream from a source, and remove a stream.
 ---
 
+A stream service creates, forks, and removes the streams of its class. Each call takes the params of one stream. For the full signatures, see [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) and [`CreateOptions`](/docs/reference/core/options-and-results#createoptions).
+
 ## Create
+
+`create(params, options?)` creates the stream with the content type of its stream class.
 
 ```ts
 // @filename: streams.ts
@@ -20,31 +24,45 @@ const ensure = Effect.gen(function* () {
 });
 ```
 
-| Result    | Meaning                                                    |
-| --------- | ---------------------------------------------------------- |
-| `Created` | The stream is new                                          |
-| `Exists`  | A stream with this id and the same configuration was there |
+| Result    | Meaning                                                                              |
+| --------- | ------------------------------------------------------------------------------------ |
+| `Created` | `create` made a new stream                                                           |
+| `Exists`  | A stream with this id and the same options was already there. `create` wrote nothing |
 
-Both results carry `nextOffset`, `contentType`, and `closed`. A different configuration on the same id fails with `CreateConflict`.
+Both results have `nextOffset`, `contentType`, and `closed`. `nextOffset` is the tail of the stream. Because an equal call succeeds with `Exists`, you can call `create` each time a program starts.
 
-| Option        | Effect                                              |
-| ------------- | --------------------------------------------------- |
-| `ttlSeconds`  | Time to live. Each append and each read restarts it |
-| `expiresAt`   | A fixed expiry date                                 |
-| `closed`      | Creates the stream closed                           |
-| `initialData` | Writes the first messages in the same operation     |
+| Option        | Effect                                                                        |
+| ------------- | ----------------------------------------------------------------------------- |
+| `ttlSeconds`  | The time to live, in seconds. Each append and each read restarts it           |
+| `expiresAt`   | A fixed expiry time, as a date string such as `2026-11-01T00:00:00Z`          |
+| `closed`      | `true` creates the stream closed. Every append then fails with `StreamClosed` |
+| `initialData` | The bytes of the first messages, written in the same operation as the create  |
 
-Set `ttlSeconds` or `expiresAt`, not both.
+The options type also has the fork fields `forkedFrom`, `forkOffset`, and `forkSubOffset`. To fork a stream, call [`fork`](#fork).
+
+`initialData` takes raw bytes and skips the codec of the stream class. For a JSON stream, pass the bytes of a JSON array, and each element becomes one message. A JSON value that is not an array becomes one message. Streamsy does not check the elements against `schema`, so a later read fails with `DecodeFault` at the first element that does not decode. When a new JSON stream has invalid `initialData`, `create` fails with [`InvalidCreateRequest`](/docs/reference/core/errors#invalidcreaterequest). For a byte stream, the bytes become one message.
+
+`Exists` needs the same `ttlSeconds`, `expiresAt`, `closed`, and fork fields as the stored stream. A missing option counts as a different option, so `create(params)` on a stream that has a TTL fails. `create` does not compare `initialData`, and an `Exists` result writes none of it.
+
+`create` fails with `CreateConflict` when the id holds a stream with other options. Its `reason` is then `"config-mismatch"`. It also fails with `CreateConflict` when the id holds a removed stream that forks still use, and the `reason` is then `"soft-deleted"`.
+
+A call can also fail with a fault, such as `StorageFault`. See [Results and errors](/docs/streams/declare#results-and-errors).
 
 ## Expiry
 
-An expired stream answers `StreamNotFound` on the next access. On Cloudflare, the object alarm also sweeps expired streams. The Bun host has no sweeper.
+A stream with `ttlSeconds` expires `ttlSeconds` after its create, its last append, or its last read. `head` does not restart the TTL. A stream with `expiresAt` expires at that time, whatever its traffic. A stream with neither option does not expire.
 
-A projection that stops reading can lose an expired input. It then stops with `history-unavailable`. See [Faults](/docs/projections/state#faults).
+Set `ttlSeconds` or `expiresAt`, not both. `create` and `fork` fail with `InvalidCreateRequest` when both are set, including when `ttlSeconds` is 0. They also fail with `InvalidCreateRequest` when `DateTime.make` cannot parse `expiresAt`. The local protocol checks these options before storage access. The remote Layer checks them before sending a request.
+
+The protocol checks expiry on each call that reaches the id, and deletes an expired stream before the call runs. `head`, `read`, `append`, and `remove` then fail with `StreamNotFound`, and `create` makes a new stream. Calls on an expired stream that forks still use fail with `StreamGone`, as calls on a removed one do. See [Remove](#remove).
+
+On Cloudflare, the object alarm deletes expired streams at their deadline. Other hosts have no sweeper. An expired stream stays in storage until a call reaches its id, or until the app runs `Protocol.expireDue()`. See [Run a process server](/docs/servers/process).
+
+A projection that stops reading an input no longer restarts its TTL, so the input can expire. The projection then stops with `history-unavailable` on its next read. See [Faults](/docs/projections/checkpoints#faults).
 
 ## Fork
 
-A fork is a child stream that starts with a prefix of a source stream. Appends to the child do not change the source.
+A fork is a child stream that starts with a prefix of a source stream. Appends to the child do not change the source. Appends to the source after the fork do not reach the child.
 
 ```ts
 // @filename: streams.ts
@@ -52,50 +70,98 @@ export * from "./notes-streams.ts";
 // @filename: index.ts
 // ---cut---
 import { Effect } from "effect";
+import { ZERO_OFFSET } from "@streamsy/core";
 import { Drafts } from "./streams.ts";
 
 const branch = Effect.gen(function* () {
   const drafts = yield* Drafts;
-  const head = yield* drafts.head({ draftId: "main" });
-  return yield* drafts.fork(
-    { draftId: "copy" },
+  const copy = yield* drafts.fork({ draftId: "copy" }, { draftId: "main" });
+  const empty = yield* drafts.fork(
+    { draftId: "empty" },
     { draftId: "main" },
-    { forkOffset: head.nextOffset },
+    { forkOffset: ZERO_OFFSET },
   );
+  return [copy.nextOffset, empty.nextOffset];
 });
 ```
 
-`fork(params, source, options?)` takes the child parameters, then the source parameters. Both are addresses of one stream class. The child gets every source message up to and including `forkOffset`. With no `forkOffset`, the child starts empty.
+`fork(params, source, options?)` takes the params of the child, then the params of the source. Both are params of the same stream class, and the child has the content type of the source. The child gets every source message up to and including the message at `forkOffset`. Without `forkOffset`, the child gets every message of the source up to its tail when the fork runs. With `ZERO_OFFSET`, the child starts empty.
 
-| Backend            | Fork                                |
-| ------------------ | ----------------------------------- |
-| Memory             | Shares the prefix                   |
-| Constrained memory | Copies the prefix                   |
-| SQLite             | Shares the prefix                   |
-| Cloudflare         | Source and child on the same object |
+| Option          | Effect                                                                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `forkOffset`    | The last source offset that the child gets. The default is the tail of the source                                                                   |
+| `forkSubOffset` | The child also gets the start of the next source message. For a JSON stream it counts messages, otherwise bytes. A value above 0 needs `forkOffset` |
+| `ttlSeconds`    | As for `create`. A fork that sets neither `ttlSeconds` nor `expiresAt` takes the expiry option of its source                                        |
+| `expiresAt`     | As for `create`                                                                                                                                     |
+| `closed`        | As for `create`                                                                                                                                     |
+| `initialData`   | Messages written after the prefix, as for `create`                                                                                                  |
 
-A fork never crosses two storage Layers.
+`fork` returns a `CreateResult`. A second `fork` with the same child, source, and options succeeds with `Exists`.
 
-| Error                | When                                              |
-| -------------------- | ------------------------------------------------- |
-| `ForkSourceNotFound` | The source is missing or outside the stream class |
-| `CreateConflict`     | The child id has a different configuration        |
-| `NotSupported`       | The backend has no fork support                   |
+| Storage                                                                   | Fork                                      |
+| ------------------------------------------------------------------------- | ----------------------------------------- |
+| `MemoryStorage.layer`                                                     | The child shares the prefix of the source |
+| `MemoryStorage.layer` with `constrained: true`                            | The child gets a copy of the prefix       |
+| `@streamsy/storage` (SQLite, Postgres, MySQL, and Durable Object storage) | The child shares the prefix of the source |
+| A storage adapter with `fork: "none"`                                     | `fork` fails with `NotSupported`          |
 
-See the upstream [fork page](https://durablestreams.com/fork).
+A fork never crosses two storage Layers. On Cloudflare, each Durable Object has its own storage, so the source and the child must be on the same object. A fork whose source is on another object fails with `ForkSourceNotFound`.
+
+| Error                  | When                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidCreateRequest` | Both expiry options are set, or `expiresAt` cannot be parsed by `DateTime.make`                                                                                           |
+| `ForkSourceNotFound`   | The source does not exist or has expired                                                                                                                                  |
+| `InvalidForkRequest`   | `forkOffset` is not a valid offset or is past the tail of the source, or `forkSubOffset` is past the next source message, or JSON `initialData` for a new fork is invalid |
+| `CreateConflict`       | The child id holds a stream with other options, or the source is a removed stream that forks still use (`reason` is `"fork-source-soft-deleted"`)                         |
+| `NotSupported`         | The storage has no fork support                                                                                                                                           |
+
+See [Fork](https://durablestreams.com/fork) in the Durable Streams docs.
 
 ## Remove
 
-`remove(params)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is kept until its last child is removed.
+`remove(params)` deletes the stream and its messages. Later calls on the id fail with `StreamNotFound`, and `create` makes a new, empty stream.
 
-Never reuse a stream id. A stream is append-only: its offsets only go up, and a reader keeps its offset as a cursor. Do not create a stream again under the id of a removed or expired stream. A stream with a reused id starts again at a lower offset, so readers, projections and wake streams that saved an offset for the old stream skip or misread the new one. Streamsy does not detect a reused id. Give each new stream a new id.
+A stream that forks still use stays in storage after `remove`, so the forks keep their prefix. Calls on its id fail with `StreamGone`, and `create` fails with `CreateConflict` with `reason` `"soft-deleted"`. Storage deletes the stream when its last fork is removed. With `constrained: true`, each fork has a copy of its prefix, so `remove` deletes the source at once.
+
+| Error            | When                                                                 |
+| ---------------- | -------------------------------------------------------------------- |
+| `StreamNotFound` | No stream has the id                                                 |
+| `StreamGone`     | The stream was removed, and forks still use it                       |
+| `StreamBusy`     | Over the remote Layer only. The server answered 503. Try again later |
+
+Do not reuse a stream id. Readers, projections, and wake streams keep an offset as a cursor into one stream. After `remove` or expiry, `create` on the same id makes a new stream that starts again at `ZERO_OFFSET`, and Streamsy does not detect the reuse. A reader with a saved offset skips the messages of the new stream up to that offset. A projection stops with `history-unavailable` while the tail of the new stream is below its saved offset. Give each new stream a new id.
 
 ## Over HTTP
 
-| Method                          | Operation | Access |
-| ------------------------------- | --------- | ------ |
-| `PUT`                           | Create    | `full` |
-| `PUT` with `Stream-Forked-From` | Fork      | `full` |
-| `DELETE`                        | Remove    | `full` |
+`Http.routes` serves create, fork, and remove for a stream only when its `access` is `"full"`. With `"read"` or `"append"`, the server answers 405 with an `allow` header. See [Expose the stream protocol](/docs/servers/protocol).
 
-See [Protocol routes](/docs/http/routes).
+| Request                         | Operation | Success                                                                  |
+| ------------------------------- | --------- | ------------------------------------------------------------------------ |
+| `PUT`                           | Create    | 201 with `location`, or 200 when the stream exists with the same options |
+| `PUT` with `Stream-Forked-From` | Fork      | 201 with `location`, or 200 when the fork exists with the same options   |
+| `DELETE`                        | Remove    | 204                                                                      |
+
+A `PUT` reads these request headers. The body, when it is not empty, is `initialData`.
+
+| Header                   | Value                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `Content-Type`           | The content type of the stream. The default is `application/octet-stream`, or the content type of the source for a fork |
+| `Stream-TTL`             | `ttlSeconds`, as a whole number                                                                                         |
+| `Stream-Expires-At`      | `expiresAt`                                                                                                             |
+| `Stream-Closed`          | `true` creates the stream closed                                                                                        |
+| `Stream-Forked-From`     | The source of a fork, as a path under the prefix or as a stream id                                                      |
+| `Stream-Fork-Offset`     | `forkOffset`. Needs `Stream-Forked-From`                                                                                |
+| `Stream-Fork-Sub-Offset` | `forkSubOffset`. Needs `Stream-Forked-From`                                                                             |
+
+A successful `PUT` answers with `content-type` and `stream-next-offset`, and with `stream-closed: true` when the stream is closed.
+
+`Http.routes` does not apply the content type of the stream class. A `PUT` without `Content-Type` creates an `application/octet-stream` stream, and a typed `create` on that id then fails with `CreateConflict`. See [What the server checks](/docs/servers/protocol#what-the-server-checks).
+
+| Status | When                                                                                                                                                                                                                                                                                         |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | A header is invalid, a `PUT` has both `Stream-TTL` and `Stream-Expires-At`, `Stream-Expires-At` cannot be parsed, a JSON body does not parse, or the fork is invalid (`InvalidForkRequest`). A fork that the storage does not support also answers 400, with a `stream-not-supported` header |
+| 404    | No stream in the group matches the id, a `DELETE` finds no stream, or the fork source does not exist                                                                                                                                                                                         |
+| 409    | `CreateConflict`                                                                                                                                                                                                                                                                             |
+| 410    | A `DELETE` on a removed stream that forks still use                                                                                                                                                                                                                                          |
+
+The remote Layer maps a 400 response to `InvalidCreateRequest` for a plain create and `InvalidForkRequest` for a fork. A 400 response with `stream-not-supported` becomes `NotSupported` instead. See [Protocol errors](/docs/reference/core/errors).

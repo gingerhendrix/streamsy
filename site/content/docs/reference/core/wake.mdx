@@ -11,7 +11,7 @@ import type { Context, Data, Schema, Stream } from "effect";
 
 A wake stream is a Durable State stream with one row for each source stream in a family. Each row holds the tail of its source after the last write, so a client follows one wake stream and reads only the sources that moved past its saved cursors. These members belong to the [`Streamsy`](/docs/reference/core/streamsy) namespace.
 
-A wake declaration names no sources. `Projection.wake` from `@streamsy/projection` writes the rows: it links one source stream to one wake stream. For a host that runs `Projection.wake`, see [Cloudflare](/docs/hosting/cloudflare).
+A wake declaration names no sources. `Projection.wake` from `@streamsy/projection` writes the rows: it links one source stream to one wake stream. For a host that runs `Projection.wake`, see [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
 
 ## Functions
 

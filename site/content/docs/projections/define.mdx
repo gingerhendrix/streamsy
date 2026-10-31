@@ -1,7 +1,9 @@
 ---
-title: Define and run
-description: Declare a projection over one or more inputs, choose a Commit, and run it with a trigger.
+title: Define a projection
+description: Declare the inputs, outputs, parameters, and handler of a projection, then bind its parameters.
 ---
+
+A projection declaration names the inputs, the outputs, the parameters, the Commit, and the handler of a projection. For the full signatures, see [Constructors](/docs/reference/projection/constructors) and [`Declaration`](/docs/reference/projection/declarations#declaration).
 
 ## Declare
 
@@ -24,67 +26,42 @@ export const orderTotals = Projection.emit({
 export const orderTotalsProjection = orderTotals.at({});
 ```
 
-A declaration is inert. `declaration.at(params)` binds it. A runner executes the bound projection.
+A declaration is inert. It reads and writes nothing. `orderTotals.at({})` binds the parameters and returns a bound projection, and a runner takes the bound projection. See [Run a projection](/docs/projections/run).
 
-| Field        | Value                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------- |
-| `id`         | The projection name                                                                                        |
-| `version`    | Default 1                                                                                                  |
-| `generation` | Default 1. See [generations](/docs/projections/state#checkpoints-and-generations)                          |
-| `params`     | Parameter codecs. `{}` for none                                                                            |
-| `inputs`     | A record of stream classes or fixed addresses                                                              |
-| `commit`     | The commit guarantee                                                                                       |
-| `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. See [State and checkpoints](/docs/projections/state) |
+| Field        | Value                                                                                                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | The projection name. It is part of the checkpoint record key                                                                                                                                       |
+| `version`    | A whole number, default 1. It is part of the record key and of the producer id of the outputs, so a new version starts a new record from the start of each input                                   |
+| `generation` | A whole number, default 1. It is part of the record key and is the producer epoch of the outputs. See [Checkpoints and generations](/docs/projections/checkpoints)                                 |
+| `params`     | The parameter codecs, keyed by parameter name. `{}` for none. See [Parameters and binding](#parameters-and-binding)                                                                                |
+| `inputs`     | A record of stream classes or fixed addresses. See [Inputs](#inputs)                                                                                                                               |
+| `outputs`    | Required for `emit`, `mapAccum`, and `mapAccumBatch`, and not accepted by the others. A record of JSON or State stream classes or fixed addresses. See [Output streams](/docs/projections/outputs) |
+| `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                                 |
+| `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)               |
+| `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                        |
+| The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                                 |
 
-With one input, use `inputs: { input: Orders }`. An entry handler reads `entry.item`; a batch handler reads `batch.input.items`. With more inputs, give each one a name, for example `inputs: { orders: Orders, refunds: Refunds }`.
+`Projection.wake` takes `input` and `output` in place of `inputs`, `outputs`, `commit`, and a handler. See [Wake streams](/docs/streams/wake#write-rows).
 
-## Handler
+A declaration that the compiler accepts can still throw a `RangeError`:
 
-Each constructor names its handler after itself. `process(batch, unit, prepared)` returns an Effect; the other handlers can return a value or an Effect. Handler services must be supplied by the host or the Commit.
+- The constructor throws `prepare requires Commit.transaction` when `prepare` has another Commit.
+- `at` throws when a parameter value does not encode with its codec.
+- `at` throws when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
 
-| Argument | Contents                                                                               |
-| -------- | -------------------------------------------------------------------------------------- |
-| `batch`  | One slice for each input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed` |
-| `unit`   | `projectionId`, `version`, `generation`, `params`, the non-empty `ranges`, and a `key` |
+## Inputs
 
-| Helper                    | Does                                                                     |
-| ------------------------- | ------------------------------------------------------------------------ |
-| `Projection.items(batch)` | Flattens a batch into `{ input, item, index }` entries                   |
-| `Projection.each(handle)` | Makes a handler that runs `handle(entry, unit)` for each entry, in order |
+The examples name a single input `input`: `inputs: { input: Orders }`. An entry handler then reads `entry.item`, and a batch handler reads `batch.input.items`.
 
-A runner needs the handler services, each input stream service, and the Commit's required services.
+With more inputs, give each one a name, for example `inputs: { orders: Orders, refunds: Refunds }`. `entry.input` is the name of the input that an entry came from, and a batch has one slice for each name.
 
-## Commits
+The order of the record is the declaration order. A pass reads the inputs in declaration order, and the entries of a unit come in declaration order, then in stream order within each input. Append order across two inputs is not kept.
 
-| Commit               | `fold`         | `process`      | `emit`         | `mapAccum`, `mapAccumBatch` | Guarantee                               | Host services                    |
-| -------------------- | -------------- | -------------- | -------------- | --------------------------- | --------------------------------------- | -------------------------------- |
-| `Commit.checkpoint`  | Yes (default)  |                |                |                             | Exactly once for the saved value        | `CheckpointStore`                |
-| `Commit.transaction` | Yes            | Yes            | Yes            | Yes                         | Exactly once within the SQL transaction | `CheckpointStore`, `Transaction` |
-| `Commit.producer`    |                |                | Yes            | Yes                         | Effectively once for outputs            | `CheckpointStore`, output routes |
-| `Commit.atLeastOnce` |                | Yes            |                |                             | At least once                           | `CheckpointStore`                |
-| `Commit.make`        | By result type | By result type | By result type | By result type              | The author's                            | The author's                     |
+An input is a stream class, such as `Orders`, or a fixed address. `at` binds a stream class with the projection parameters, and leaves a fixed address as it is.
 
-Only `fold` has a default Commit. A wrong constructor/Commit pair fails at the `commit:` field.
+The checkpoint record stores the name, stream id, and content type of each input. A change to any of them makes the next pass fail with `identity-mismatch`. See [Checkpoints and generations](/docs/projections/checkpoints).
 
-`Commit.transaction` provides the host's `SqlClient`. SQL on that client, declared outputs, and the checkpoint commit or roll back together. Declared outputs must share the transaction owner. Hand-written stream appends keep the owner check. External calls are at least once.
-
-Memory hosts provide no `Transaction`. Use `Commit.checkpoint` for folds, `Commit.producer` for outputs, and `Commit.atLeastOnce` for processing on memory.
-
-`Commit.atLeastOnce` saves the input range before running the handler. Retries keep the same `unit.key`. Use an [outbox](/docs/projections/actions) for durable delivery of retried external effects.
-
-`Commit.withCompensation(f)` wraps a Commit, directly or through `.pipe`. It calls `f(result, cause, unit)` if the handler succeeded but the commit failed. Compensation does not make external effects atomic.
-
-### Prepare
-
-`Projection.process` with `Commit.transaction` accepts `prepare(batch, unit)`. It runs outside the transaction, at least once. Its result is the third argument of `process(batch, unit, prepared)`.
-
-A transaction retry reads the inputs again. With unchanged ranges, `unit.key` is unchanged. If new input extends the range, the key changes. Do not use it as a stable external idempotency key across all retries.
-
-A Commit plus its host Layer plays a similar role to Effect `Workflow` plus `WorkflowEngine`: the declaration chooses behavior and the host supplies persistence. `Commit.atLeastOnce` has the retry behavior of an `Activity`; it does not provide workflow orchestration.
-
-## Output projections
-
-`Projection.emit` declares routes as outputs and returns items for each entry. A JSON route takes its item type. A state route takes `DurableState.Entry` for its collections: a row change or a State control such as `StreamAddress.reset()`.
+## Parameters and binding
 
 ```ts
 // @filename: streams.ts
@@ -94,381 +71,74 @@ export * from "./shop-streams.ts";
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Orders } from "./streams.ts";
-
-export class Amounts extends Streamsy.json<Amounts>()("Shop/Amounts", "amounts", {
-  params: {},
-  schema: Schema.Finite,
-}) {}
-
-export const amounts = Projection.emit({
-  id: "amounts",
-  params: {},
-  inputs: { input: Orders },
-  outputs: { output: Amounts },
-  commit: Commit.producer,
-  emit: ({ item }) => ({ output: [item.amount] }),
-});
-```
-
-The runner pins the unit input ranges in the checkpoint, then appends each output with its own producer position. A retry sends the same positions, so the server drops duplicates. The handler must be deterministic on its inputs.
-
-| Producer field | Value                                 |
-| -------------- | ------------------------------------- |
-| id             | `id/v<version>[/canonicalParamsJson]` |
-| epoch          | The generation                        |
-| sequence       | The pinned sequence of that output    |
-
-Several outputs, with row changes and state:
-
-```ts
-import { Schema } from "effect";
-import { DurableState, Streamsy } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-
-class Numbers extends Streamsy.json<Numbers>()("Tracker/Numbers", "numbers", {
-  params: {},
-  schema: Schema.Finite,
-}) {}
-const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
-class Board extends Streamsy.state<Board>()("Tracker/Board", "board", {
-  params: {},
-  collections: { card: { schema: Card, key: "issueId" } },
-}) {}
-class Transitions extends Streamsy.json<Transitions>()("Tracker/Transitions", "transitions", {
-  params: {},
-  schema: Schema.Finite,
-}) {}
-
-const tracker = Projection.mapAccumBatch({
-  id: "tracker",
-  params: {},
-  inputs: { numbers: Numbers },
-  outputs: { board: Board, transitions: Transitions },
-  commit: Commit.producer,
-  state: { schema: Schema.Finite, initial: 0 },
-  mapAccumBatch: (state, batch) => {
-    const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-    return [
-      next,
-      {
-        board: [
-          DurableState.upsert("card", { issueId: "total", total: next }),
-          DurableState.remove("card", "old"),
-        ],
-        transitions: [next],
-      },
-    ] as const;
-  },
-});
-```
-
-Output rules:
-
-- Routes and fixed addresses carry the output codecs. Their parameters must be a subset of the projection parameters.
-- `DurableState.upsert("card", row)` and `DurableState.remove("card", key)` make row changes. Each change names its collection.
-- `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()` make State controls. The output writes them unchanged, in order with the row changes.
-- A missing output key emits nothing. An empty output uses no producer sequence.
-- Two outputs cannot name the same stream or an input stream.
-- `Commit.producer` can write across owners, but foreign output streams must already exist. It can create absent outputs on its checkpoint owner.
-- Producer outputs do not commit atomically with each other. A gone or closed output fails with `pin / invalid-output`.
-
-One Commit controls one projection. To combine SQL writes and an independently committed output or external sink, chain projections through a stream. A single producer projection can declare several output routes.
-
-## Running
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-// ---cut---
-import { Effect, Layer } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { shop } from "./streams.ts";
-
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
-const program = Projection.run(orderTotalsProjection, { limit: 10 });
-
-await Effect.runPromise(program.pipe(Effect.provide(host)));
-```
-
-| Runner              | Does                                                                      |
-| ------------------- | ------------------------------------------------------------------------- |
-| `Projection.pass`   | Runs one unit                                                             |
-| `Projection.run`    | Runs units until caught up, closed, or at the limit                       |
-| `Projection.follow` | Runs to caught up, then waits for a change. Returns a `Stream` of cycles  |
-| `Projection.attach` | A Layer that runs the binding of each input id that a local commit writes |
-
-`run` and each `follow` element give a `Progress`. It has the `state` and `offsets` that the last pass of the cycle left, and the `status`, `units`, and `items` of the cycle. `state` is `undefined` when the projection has no `state:`. `pass` gives `status`, `units`, `items`, and `offsets`.
-
-| Status          | Meaning                                |
-| --------------- | -------------------------------------- |
-| `progress`      | `pass` only: the pass processed a unit |
-| `caught-up`     | The last pass was empty                |
-| `source-closed` | Every input is closed and read         |
-| `limit-reached` | The cycle processed `limit` units      |
-
-`limit` has no default. A bad `limit` or `repairIntervalMs` fails with `load / invalid-options`. For `follow`, the stream fails at its first pull.
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-// ---cut---
-import { Effect, Stream } from "effect";
-import { Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-
-const serve = Projection.follow(orderTotalsProjection, { repairIntervalMs: 30000 }).pipe(
-  Stream.runForEach(({ state, offsets }) => Effect.log("committed", state, offsets)),
-);
-```
-
-The stream emits after the first cycle, also when it commits nothing. After that it emits after each cycle that commits a unit or reaches `limit`, and after the last cycle when every input is closed. Then it ends. A wake that finds no input emits nothing.
-
-The stream is pull based. The next cycle runs only when the consumer pulls, so a slow consumer gets one element for all the input that arrived while it worked. The consumer's pace sets the follower's pace. Add `Stream.buffer({ capacity: 1, strategy: "sliding" })` to decouple them. A consumer failure stops the follower, so catch render errors in the consumer.
-
-`follow` retries `storage-failure`. It uses `options.retry`, then the `ProjectionRetry` context reference, then its default jittered exponential schedule from 200 ms, capped at 30 s. Both overrides take a `Schedule`. Other faults fail the stream. Interrupt the consumer to stop the follower. Each wait is bounded by `repairIntervalMs`, which defaults to 30 000 ms. Create every input before starting the follower.
-
-## Terminal inputs and wake streams
-
-A closed input with no new items still makes one unit with `slice.closed`.
-The checkpoint records that close, so another run does not repeat the empty
-unit. Batch handlers can react to it; per-item handlers have no entries.
-A confirmed gone input with a checkpoint makes one final unit with
-`slice.gone: true`, then the kernel forgets the binding by default. The last
-`run` result or `follow` element holds the state and offsets that the final
-unit committed. `Projection.read` gives the initial state after that, because
-the record is gone. A missing
-input without a checkpoint still fails with `history-unavailable`. Missing
-history on a live input and storage failures remain faults.
-
-A pending unit replays its pinned ranges. If an input is removed between the
-pin and the settle, the replay fails with `range-unreproducible` and the pin
-stays. The final gone unit does not run for that binding. Retain history until
-pending work settles, or forget the binding after you clean up its outputs.
-
-`Projection.follow` ends when all inputs close. A later removal needs an
-attached projection or another explicit run.
-
-`Streamsy.wake` is the normal State service with fixed `Streamsy.wakeCollections`.
-`Projection.wake({ id, params, input, output })` emits one keyed row
-`{ stream, offset, closed? }` per source and deletes it when the source is gone.
-The producer creates a missing wake stream on its own owner. A wake stream on
-another owner must exist before the first append, so its owner calls the State
-service's `create` at start.
-
-On Bun or Node, build `Projection.attach(filesWake)` beside the API and over
-the same storage and checkpoint layers, before writes begin. Each input id
-must supply every projection parameter. Its local `Storage.committed`
-subscription selects bindings; remote inputs do not trigger it. By default the
-pending set lives in memory, so a crash before processing waits for another
-source commit. With `durable: true`, each commit also writes a pending mark in
-its transaction, and the layer runs marked bindings when it starts. Retry takes
-a `Schedule`; the default is capped, jittered exponential backoff. Use one writer per binding. Cloudflare uses scoped
-[`ProjectionWakeup.attach`](/docs/hosting/cloudflare#projections).
-
-## Triggers
-
-A process-lifetime loop:
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-import { Effect, Layer, Schema, Stream } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { Orders, shop } from "./streams.ts";
-// ---cut---
-Effect.gen(function* () {
-  const fiber = yield* Projection.follow(orderTotalsProjection).pipe(
-    Stream.runDrain,
-    Effect.forkScoped,
-  );
-});
-```
-
-Bounded work before a request answers:
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-import { Effect, Layer, Schema } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { Orders, shop } from "./streams.ts";
-declare const readOrderTotals: () => Effect.Effect<number>;
-// ---cut---
-Effect.gen(function* () {
-  yield* Projection.run(orderTotalsProjection, { limit: 5 });
-  return yield* readOrderTotals();
-});
-```
-
-Follow input changes. Changes during a run join into one more run:
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-import { Effect, Layer, Schema, Stream } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { Orders, shop } from "./streams.ts";
-import { Streamsy } from "@streamsy/core";
-class Facts extends Streamsy.json<Facts>()("Shop/Facts", "facts/:workspaceId", {
-  params: { workspaceId: Schema.String },
-  schema: Schema.Finite,
-}) {}
-class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId", {
-  params: { workspaceId: Schema.String },
-  schema: Schema.Finite,
-}) {}
-const ordersByWorkspace = Projection.emit({
-  id: "order-totals",
-  params: { workspaceId: Schema.String },
-  inputs: { facts: Facts },
-  outputs: { output: Totals },
-  commit: Commit.producer,
-  emit: ({ item }) => ({ output: [item] }),
-});
-// ---cut---
-Effect.gen(function* () {
-  const projectionFiber = yield* Projection.follow(orderTotalsProjection, { limit: 5 }).pipe(
-    Stream.runDrain,
-    Effect.forkScoped,
-  );
-  const workspaceFiber = yield* Projection.follow(ordersByWorkspace.at({ workspaceId: "ws-42" }), {
-    limit: 5,
-  }).pipe(Stream.runDrain, Effect.forkScoped);
-});
-```
-
-A Durable Object alarm:
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-import { Effect, Layer, Schema } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { Orders, shop } from "./streams.ts";
-// ---cut---
-const alarm = Effect.gen(function* () {
-  return yield* Projection.run(orderTotalsProjection, { limit: 10 });
-});
-```
-
-A CLI:
-
-```ts
-// @include: define-order-totals
-// @filename: index.ts
-import { Effect, Layer, Schema } from "effect";
-import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
-import { orderTotalsProjection } from "./order-totals.ts";
-import { Orders, shop } from "./streams.ts";
-const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
-// ---cut---
-const hand = Effect.gen(function* () {
-  return yield* Projection.run(orderTotalsProjection);
-});
-
-await Effect.runPromise(hand.pipe(Effect.provide(host)));
-```
-
-| Trigger  | Needs                              |
-| -------- | ---------------------------------- |
-| `follow` | Any stream Layer, including remote |
-| `run`    | Any stream Layer                   |
-
-Use one writer for each projection key: one running `follow` stream, or one `run` at a time. Each run of a `follow` stream value is a new writer. `Stream.share` gives one follower to several consumers, and stops it after the last consumer exits. To keep a projection up with no consumer, drain it and publish each element to a `SubscriptionRef`. A schedule must not overlap itself. A second writer is a deployment fault detected by the checkpoint token when it moves. Concurrent `current` and `decide` calls fold in memory and do not write checkpoints.
-
-The [Bugsy demo](/docs/demos/bugsy) uses request and change triggers on one key.
-
-## Parameters
-
-```ts
-import { Schema as S } from "effect";
-const orderSchema = S.Struct({ orderId: S.String, amount: S.Finite });
-const totalSchema = S.Struct({ orderId: S.String, total: S.Finite });
-declare const toTotals: (
-  items: ReadonlyArray<typeof orderSchema.Type>,
-) => ReadonlyArray<typeof totalSchema.Type>;
-// ---cut---
-import { Effect, Schema, Stream } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
+import { OrderEvent, OrderRow } from "./streams.ts";
 
 class Facts extends Streamsy.json<Facts>()("Shop/Facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
-  schema: orderSchema,
+  schema: OrderEvent,
 }) {}
 class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId", {
   params: { workspaceId: Schema.String },
-  schema: totalSchema,
+  schema: OrderRow,
 }) {}
 
-const ordersByWorkspace = Projection.emit({
-  id: "order-totals",
+const workspaceTotals = Projection.emit({
+  id: "workspace-totals",
   params: { workspaceId: Schema.String },
   inputs: { facts: Facts },
-  outputs: { output: Totals },
+  outputs: { totals: Totals },
   commit: Commit.producer,
-  emit: ({ item }) => ({ output: toTotals([item]) }),
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
 });
 
-const bound = ordersByWorkspace.at({ workspaceId: "ws-42" });
-const params = ordersByWorkspace.parse("facts/ws-42");
-const follow = Effect.gen(function* () {
-  const fibers = yield* Effect.forEach([{ workspaceId: "ws-42" }], (params) =>
-    Stream.runDrain(Projection.follow(ordersByWorkspace.at(params))).pipe(Effect.forkScoped),
-  );
-});
+const bound = workspaceTotals.at({ workspaceId: "ws-42" });
+// Option.some({ workspaceId: "ws-42" })
+const params = workspaceTotals.parse("facts/ws-42");
 ```
+
+`at(params)` encodes each parameter with its codec and binds every stream class of the declaration with the parameters that the stream class declares. `bound` reads `facts/ws-42` and writes `totals/ws-42`.
 
 Parameter rules:
 
-- Each input and output stream declares a subset of the projection parameter names, with the same types.
-- A stream with fewer parameters is shared by every binding.
-- `parse` tries the input streams in order and gives the decoded subset from the first match.
-- The package keeps no list of bound parameters. Bind and trigger each one.
+- Each input and output stream class declares a subset of the projection parameter names, with the same types. The compiler checks this.
+- A stream class that declares fewer parameters is shared by every binding with the same values for those parameters. A stream class with no parameters is shared by every binding.
+- `parse(id)` tries the input stream classes in declaration order and skips fixed addresses. It returns `Option.some` with the decoded parameters of the first stream class that matches the id, or `Option.none()`. A shared input gives only the parameters that it declares.
+- `Projection.pass`, `Projection.run`, and `Projection.follow` take one bound projection. The package keeps no list of bindings for them, so bind and trigger each one.
+- `Projection.attach` takes the declaration. It binds the stream id of each local commit to an input with `parse`, so each input must declare every projection parameter. See [Run a projection](/docs/projections/run).
 
-To keep a dynamic set, keep a registry stream of parameter records. A projection over that stream can start and stop triggers.
+To keep a set of bindings that changes, keep a registry stream of parameter records. A projection over that stream can start and stop the triggers. See [Triggers](/docs/projections/run#triggers).
 
-## Constructors
+## Handler
 
-See the [Commit fit table](#commits) for compatible guarantees.
+Each constructor takes its handler in a field with the name of the constructor.
 
-### fold
+| Constructor     | Handler                             | Runs                | Returns                           |
+| --------------- | ----------------------------------- | ------------------- | --------------------------------- |
+| `fold`          | `fold(state, entry, unit)`          | Once for each entry | The next value                    |
+| `emit`          | `emit(entry, unit)`                 | Once for each entry | The output items, keyed by output |
+| `mapAccum`      | `mapAccum(state, entry, unit)`      | Once for each entry | `[value, outputs]`                |
+| `mapAccumBatch` | `mapAccumBatch(state, batch, unit)` | Once for each unit  | `[value, outputs]`                |
+| `process`       | `process(batch, unit, prepared)`    | Once for each unit  | An Effect of `void`               |
 
-One entry updates a value. The default `Commit.checkpoint` saves the encoded value and offsets in one compare-and-set. Keep the step free of external effects.
+`process` must return an Effect. The other handlers return the result, or an Effect of it. An entry handler runs over the entries of the unit in order, and each call gets the value that the call before it returned.
 
-```ts
-// @filename: streams.ts
-export * from "./shop-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Schema } from "effect";
-import { Projection } from "@streamsy/projection";
-import { Orders } from "./streams.ts";
+| Argument   | Contents                                                                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entry`    | `{ input, item, index }`. `input` is the input name, `item` is the decoded item, and `index` is the position of the entry in the whole unit    |
+| `batch`    | One slice for each input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. A slice of an input that is gone also has `gone: true` |
+| `unit`     | `projectionId`, `version`, `generation`, `params`, `ranges`, and `key`                                                                         |
+| `state`    | The current value. The first call of a unit gets the stored value, or `initial` when no value is stored                                        |
+| `prepared` | The result of `prepare`. See [Tables and effects](/docs/projections/process)                                                                   |
 
-const total = Projection.fold({
-  id: "total",
-  params: {},
-  inputs: { orders: Orders },
-  state: { schema: Schema.Finite, initial: 0 },
-  fold: (sum, { item }) => sum + item.amount,
-});
-```
+`unit.params` holds the decoded parameter values. `unit.ranges` has a `{ from, nextOffset }` range for each input that gave items, closed, or is gone in this unit. Inputs with nothing new have no range.
 
-### process
+`unit.key` is a string built from the projection id, the generation, the parameters, and the ranges. A unit with the same ranges has the same key. `Commit.producer` and `Commit.atLeastOnce` retry a unit with its saved ranges, so a retry keeps the key. A `Commit.transaction` retry reads the inputs again, so a longer range gives a new key. See [Commits](/docs/projections/commits).
 
-One batch runs effects. `Projection.each` adapts an entry handler and preserves input declaration order.
+When the handler fails, the runner fails with the error of the handler, and the Commit saves no offsets. The next pass reads the same items again.
+
+The host provides the services that the handler needs. `Commit.transaction` also provides `SqlClient` to the handler. A runner needs the handler services, the services of the Commit, and the services of each input and output stream.
+
+### Helpers
 
 ```ts
 // @filename: streams.ts
@@ -476,59 +146,32 @@ export * from "./shop-streams.ts";
 // @filename: index.ts
 // ---cut---
 import { Effect } from "effect";
-import { SqlClient } from "effect/sql";
-import { Commit, Projection } from "@streamsy/projection";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { Orders } from "./streams.ts";
 
-const rows = Projection.process({
-  id: "order-rows",
+const logOrders = Projection.process({
+  id: "log-orders",
   params: {},
-  inputs: { orders: Orders },
-  commit: Commit.transaction,
-  process: Projection.each(({ item }) =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO order_totals (order_id, total) VALUES (${item.orderId}, ${item.amount})`;
-    }),
-  ),
+  inputs: { input: Orders },
+  commit: Commit.atLeastOnce,
+  process: Projection.each(({ item }, unit) => Effect.log(`${item.orderId} in ${unit.key}`)),
+}).at({});
+
+const token = Effect.gen(function* () {
+  const store = yield* CheckpointStore;
+  const loaded = yield* store.load(Projection.key(logOrders));
+  return loaded.token;
 });
 ```
 
-The application creates and migrates `order_totals`.
+| Helper                    | Does                                                                                                                                    |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `Projection.items(batch)` | Returns the entries of a batch as `{ input, item, index }`, in declaration order, then in stream order within each input                |
+| `Projection.each(handle)` | Makes a `process` handler that runs `handle(entry, unit)` for each entry, one at a time and in order. It stops at the first failure     |
+| `Projection.key(bound)`   | Returns `{ id, version, generation, params }` of a bound projection, with the encoded parameters. `CheckpointStore` takes it as the key |
 
-### emit
+Use `Projection.key` to load or remove the checkpoint record of a binding, or to name the binding in logs. It is not `unit.key`. See [`Projection.key`](/docs/reference/projection/runners#projectionkey) and [`Unit`](/docs/reference/projection/units#unit).
 
-One entry returns output items. See [Output projections](#output-projections). The step returns a value or an Effect. It does not carry state.
+## Next
 
-### mapAccum
-
-One entry updates state and returns output items as `[state, emits]`. It is like `Stream.mapAccum`, with a checkpoint and declared output routes.
-
-```ts
-// @filename: streams.ts
-export * from "./shop-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Schema } from "effect";
-import { Commit, Projection } from "@streamsy/projection";
-import { Orders, OrderTotals } from "./streams.ts";
-
-const running = Projection.mapAccum({
-  id: "running",
-  params: {},
-  inputs: { orders: Orders },
-  outputs: { totals: OrderTotals },
-  commit: Commit.producer,
-  state: { schema: Schema.Finite, initial: 0 },
-  mapAccum: (sum, { item }) => {
-    const next = sum + item.amount;
-    return [next, { totals: [{ orderId: item.orderId, total: next }] }] as const;
-  },
-});
-```
-
-### mapAccumBatch
-
-One batch updates state and returns `[state, emits]`. See the tracker above. It can coalesce row updates within a unit. Batch handlers must produce the same final rows for any unit size; emitted history can differ.
-
-`fold`, `emit`, `mapAccum`, and `mapAccumBatch` return a value or an Effect. In per-entry steps, use `unit` for parameters and offsets only; its ranges describe the whole unit.
+[Run a projection](/docs/projections/run), and choose a Commit on [Commits](/docs/projections/commits).

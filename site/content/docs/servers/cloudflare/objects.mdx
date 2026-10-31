@@ -1,0 +1,161 @@
+---
+title: Connect Durable Objects
+description: Let one Durable Object use streams that another object owns, through an object link or an existing mount, without going to the network.
+---
+
+An object can use a stream that another object owns. The caller sends the request through the owner's object stub, so it never goes to the network. The owner serves the stream on a mount, and the caller gets the stream's service as if it were local.
+
+`ObjectLink.make` declares both sides of an internal mount with one value. In this example, each user has a `UserObject` that owns the user's wake stream. Each folder has a `FolderObject` that owns its files, and its attached projection writes to the user's wake stream:
+
+```ts
+// @filename: wake-streams.ts
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { Schema } from "effect";
+export class Files extends Streamsy.json<Files>()(
+  "Docs/Files",
+  "users/:user/folders/:folderId/files",
+  {
+    params: { user: Schema.String, folderId: Schema.String },
+    schema: Schema.String,
+  },
+) {}
+export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+export const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: Schema.String, folderId: Schema.String },
+  input: Files,
+  output: UserWake,
+});
+// @filename: links.ts
+import { Layer } from "effect";
+import type { DurableObjectNamespace, DurableObjectState } from "@cloudflare/workers-types";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { CheckpointStore, ProjectionWakeup } from "@streamsy/projection";
+import { Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { Files, UserWake, filesWake } from "./wake-streams.ts";
+interface Env {
+  readonly USERS: DurableObjectNamespace;
+}
+const userLayer = (state: DurableObjectState) =>
+  DurableObjectStorage.layer(Streamsy.group(UserWake), { client: { storage: state.storage } });
+const folderLayer = (state: DurableObjectState) =>
+  CheckpointStore.layer.pipe(
+    Layer.provideMerge(
+      DurableObjectStorage.layer(Streamsy.group(Files), {
+        client: { storage: state.storage },
+      }),
+    ),
+  );
+const app = Layer.empty;
+// ---cut---
+import { ObjectLink, Placement, rule, StreamsyObject } from "@streamsy/serve/cloudflare";
+
+const wakeLink = ObjectLink.make({
+  group: Streamsy.group(UserWake),
+  prefix: "/__wake",
+  placement: Placement.byRoute([rule({ stream: UserWake, owner: ({ user }) => user })]),
+  access: "full",
+});
+
+// The owner serves the mount.
+export class UserObject extends StreamsyObject.make<Env, UserWake>({
+  app: Layer.mergeAll(wakeLink.routes, Serve.mount(UserWake, "/users/:user/wake")),
+  layer: userLayer,
+}) {}
+
+// The caller gets `UserWake` from the link.
+export class FolderObject extends StreamsyObject.make<Env, Files | CheckpointStore, UserWake>({
+  app,
+  layer: folderLayer,
+  links: (env) => [wakeLink.client(env.USERS)],
+  wakeups: [ProjectionWakeup.attach(filesWake)],
+}) {}
+```
+
+`userLayer` stores `UserWake` on the user object. `folderLayer` stores `Files` and the checkpoints on the folder object. Neither storage group holds the other object's stream.
+
+## Owner and caller
+
+| Part              | Does                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| `group`           | The streams that the owner serves to other objects                                                         |
+| `prefix`          | The mount path on the owner. It must start with `/__`. Otherwise `ObjectLink.make` throws a `RangeError`   |
+| `placement`       | Names the owner object of each stream id. Use the same rules as the public router                          |
+| `access`          | `read`, `append`, or `full`, for every stream of the link, including wake streams                          |
+| `routes`          | The owner side, an `Http.routes` mount. Add it to the owner's `app`                                        |
+| `client(objects)` | The caller side. `objects` is the owner namespace or an `ObjectFetch`. Return it from the caller's `links` |
+
+The third type parameter of `StreamsyObject.make` is the services that the links provide. The host builds the links under the object's `layer` and beside it, so a service in `layer` can use a linked stream when it starts.
+
+The caller client sends a request only for a stream in the group, under the prefix. It answers other paths with 404 and calls no object. It declares producer and expected-offset support, because the owner is always a Streamsy mount.
+
+Use `full` for a wake stream with params, because the producer creates it with `PUT` when its first append answers 404. Use `append` when the owner creates each stream when it starts.
+
+## Trust
+
+The public router answers 404 for every path whose first segment starts with `__`, and calls no object. A client on the network cannot reach a link mount through it. Keep those paths out of your own Worker forwarding too.
+
+The owner does not authenticate a link request. It trusts every caller that holds a stub for its namespace. Every Worker that binds the namespace holds one, including a Worker in another script that binds it with `script_name`. Treat each such Worker as trusted.
+
+## Conflicting providers
+
+A linked stream must come from the link only. When the caller's `layer` also provides a linked stream, for example because its storage group holds it, the object does not start. Each request answers 503, and the log names the stream. Without this check, rows would go to a local stream that no client reads.
+
+## Limits across owners
+
+A link is a protocol client. A write through it is a separate request to the owner, so it does not join the caller's transaction:
+
+- `CommitBoundary.withTransaction` and `Commit.transaction` cover the caller's own storage only.
+- A projection that writes to a linked output uses `Commit.producer`. A retry sends the same producer positions, and the owner answers `Duplicate` for an append that it already has. The output must exist before the first append, except for a wake stream that the link lets the producer create. See [Commits](/docs/projections/commits#producer).
+- A fork source and its child must be on the same object.
+- Commits on the owner do not choose bindings of a wakeup on the caller. See [Projections](/docs/servers/cloudflare/alarms#projections).
+
+## Existing mounts
+
+To read a stream that another object already serves on a public mount, use `ObjectStreams.layer` without a link:
+
+```ts
+// @filename: wake-streams.ts
+import { Streamsy } from "@streamsy/core";
+import { Schema } from "effect";
+export class Files extends Streamsy.json<Files>()(
+  "Docs/Files",
+  "users/:user/folders/:folderId/files",
+  {
+    params: { user: Schema.String, folderId: Schema.String },
+    schema: Schema.String,
+  },
+) {}
+// @filename: client.ts
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Streamsy } from "@streamsy/core";
+import { ObjectStreams, Placement, rule } from "@streamsy/serve/cloudflare";
+import { Files } from "./wake-streams.ts";
+interface Env {
+  readonly FOLDERS: DurableObjectNamespace;
+}
+const placement = Placement.byRoute([rule({ stream: Files, owner: ({ folderId }) => folderId })]);
+// ---cut---
+const folderFiles = (env: Env) =>
+  ObjectStreams.layer(Streamsy.group(Files), {
+    objects: env.FOLDERS,
+    placement,
+    prefix: "/streams",
+  });
+```
+
+Use the same `placement` and `prefix` that the public router uses for these streams. `ObjectStreams.layer` takes `headers` for each request too. The owner's `access` rules apply, as for any protocol client.
+
+## Alchemy transport
+
+On Alchemy, a Durable Object binding answers with an `Effect`, not a `Promise`. Wrap the binding with `Host.objectFetch(objects)` from `@streamsy/serve/alchemy` before you pass it to `link.client` or `ObjectStreams.layer`. `objectHandlers` takes `links` as a plain array:
+
+```ts no-twoslash
+links: [wakeLink.client(Host.objectFetch(users))],
+```
+
+`ObjectFetch` returns `Effect<Response, HttpClientError>`. `ObjectStreams` uses `HttpClient.make`, so the caller's context, tracing, and cancellation reach the stub. Both hosts use the same `ObjectLink` and `LinkClient` values.

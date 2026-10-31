@@ -1,4 +1,15 @@
 {
   "title": "Projections",
-  "pages": ["index", "define", "state", "actions"]
+  "pages": [
+    "index",
+    "define",
+    "run",
+    "commits",
+    "checkpoints",
+    "---Kinds of projection---",
+    "state",
+    "outputs",
+    "process",
+    "actions"
+  ]
 }

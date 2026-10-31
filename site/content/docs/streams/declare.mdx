@@ -1,9 +1,9 @@
 ---
 title: Declare streams
-description: Declare a stream class with an id template and a codec, and list stream classes in a group.
+description: Declare a stream class with a service name, an id template and a codec, and collect stream classes in a group.
 ---
 
-A stream is an ordered, append-only sequence of messages under one id. A stream class declares a set of streams with one id template and one codec. The protocol model is on [durablestreams.com/concepts](https://durablestreams.com/concepts).
+A stream is an ordered, append-only sequence of messages under one id. A stream class declares a set of streams with a service name, an id template, and a codec for the items. Each kind of stream has its own factory.
 
 ```ts include declare-streams
 // @filename: streams.ts
@@ -23,81 +23,100 @@ export class Blobs extends Streamsy.bytes<Blobs>()("Notes/Blobs", "blobs/:blobId
 }) {}
 ```
 
-The first argument is the service name. Names are global, so give each one an application namespace.
+The first argument is the service name. It is a global Effect service key, so two classes with the same name are the same service. Prefix each name with an application namespace, as in `Notes/Notes`. The second argument is the id template, which maps a set of params to the id of one stream. The third argument holds the params and the options of the factory.
 
 ## Factories
 
-| Factory                                                           | Items                                           | Upstream                                                  |
-| ----------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `Streamsy.json<Self>()(name, template, { params, schema })`       | One message for each item                       | [JSON mode](https://durablestreams.com/json-mode)         |
-| `Streamsy.bytes<Self>()(name, template, { params })`              | All items of one append in one message          | [Byte stream](https://durablestreams.com/concepts)        |
-| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change and control events         | [Durable State](https://durablestreams.com/durable-state) |
-| `Streamsy.custom<Self>()(name, { parse, address })`               | The items of the address that `address` returns | An id grammar that a template cannot express              |
+| Factory           | Items                                    | Page                                                 |
+| ----------------- | ---------------------------------------- | ---------------------------------------------------- |
+| `Streamsy.bytes`  | `Uint8Array`                             | [Byte streams](#byte-streams)                        |
+| `Streamsy.json`   | One schema value in each message         | [JSON streams](#json-streams)                        |
+| `Streamsy.state`  | Durable State change events and controls | [Durable State streams](/docs/streams/durable-state) |
+| `Streamsy.wake`   | `WakeRow` change events and controls     | [Wake streams](/docs/streams/wake)                   |
+| `Streamsy.custom` | The items of the address that it returns | [Custom streams](/docs/streams/custom)               |
+
+### Byte streams
+
+`Streamsy.bytes<Self>()(name, template, { params, contentType? })`
+
+A byte stream is a plain Durable Stream, and its items are `Uint8Array`. `contentType` sets the content type that `create`, `append`, and `fork` send. The default is `application/octet-stream`.
+
+`append` concatenates the items of one call into one request body, and the server stores that body as one message. The protocol does not frame byte streams. An HTTP read concatenates every message in the batch into one response body, so a remote reader gets one `Uint8Array` for each response and sees no append boundaries. If a reader needs record boundaries, encode them in the bytes, for example as newline-delimited records.
+
+See [Core Concepts](https://durablestreams.com/concepts) in the Durable Streams docs.
+
+### JSON streams
+
+`Streamsy.json<Self>()(name, template, { params, schema })`
+
+A JSON stream holds one JSON value in each message. Its content type is always `application/json`. `schema` gives the item type. The typed API encodes each item with `schema` before an append, and an item that fails to encode fails the append with `EncodeFault` before anything is written. A read decodes each message with `schema`, and the first message that fails to decode fails the read with `DecodeFault`.
+
+`append` sends the items as one JSON array, and the server stores each array element as a separate message. A read returns the same items with the same boundaries.
+
+See [JSON mode](https://durablestreams.com/json-mode) in the Durable Streams docs.
+
+### Durable State streams
+
+`Streamsy.state<Self>()(name, template, { params, collections })`
+
+A Durable State stream is a JSON stream of change events and control messages for keyed rows. Each key of `collections` is a collection type with a value schema and a key field. See [Durable State streams](/docs/streams/durable-state).
+
+### Wake streams
+
+`Streamsy.wake<Self>()(name, template, { params })`
+
+A wake stream is a Durable State stream with one `stream` collection, and each row holds the tail of one source stream. See [Wake streams](/docs/streams/wake).
+
+### Custom streams
+
+`Streamsy.custom<Self>()(name, { parse, address })`
+
+A custom stream is for an id grammar that a template cannot express. See [Custom streams](/docs/streams/custom).
 
 ## Templates and addresses
 
-Each `:name` in a template is one path segment. The `:name` parameters and the keys of `params` must agree. The compiler checks this.
+A template is a relative path. Each segment is a literal or a `:name` param. Every `:name` must be a key of `params`, and every key of `params` must appear in the template, or the declaration does not compile.
+
+Each value in `params` is a codec that decodes from a string, so a param can have a type other than `string`. `parse` returns `None` when an id does not match the template or a param fails to decode.
 
 ```ts
-import { Option, Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-
-const OrderEvent = Schema.Struct({ type: Schema.String, orderId: Schema.String });
-
-export class OrderEvents extends Streamsy.json<OrderEvents>()(
-  "Shop/OrderEvents",
-  "orders/:orderId/events",
-  { params: { orderId: Schema.String }, schema: OrderEvent },
-) {}
-
-const address = OrderEvents.at({ orderId: "o-17" }); // address.id === "orders/o-17/events"
-const params = OrderEvents.parse("orders/o-17/events"); // Option.some({ orderId: "o-17" })
-const owns = OrderEvents.match("notes"); // false
-```
-
-| Method       | Returns                              |
-| ------------ | ------------------------------------ |
-| `at(params)` | The `StreamAddress` of one stream    |
-| `parse(id)`  | The decoded parameters, or `None`    |
-| `match(id)`  | `true` when the template owns the id |
-
-A template with no parameters has one address, `at({})`. Projection inputs, `DurableState.changes`, and Serve routes take addresses.
-
-Id rules:
-
-- Segments are separated by `/`.
-- A segment cannot be empty, `.`, or `..`.
-- An id cannot contain `%`, `?`, `#`, or `\`.
-
-## Durable State streams
-
-A state stream holds several collections. The record key is the collection type. Each entry gives the value schema and the key field.
-
-```ts
+// @include: declare-streams
+// @filename: index.ts
+// ---cut---
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
+import { Note } from "./streams.ts";
 
-const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
-const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
-
-export class Workspace extends Streamsy.state<Workspace>()(
-  "Tracker/Workspace",
-  "workspaces/:workspaceId",
-  {
-    params: { workspaceId: Schema.String },
-    collections: {
-      project: { schema: Project, key: "id" },
-      issue: { schema: Issue, key: "id" },
-    },
-  },
+export class Versions extends Streamsy.json<Versions>()(
+  "Notes/Versions",
+  "notes/:noteId/versions/:version",
+  { params: { noteId: Schema.String, version: Schema.FiniteFromString }, schema: Note },
 ) {}
+
+const address = Versions.at({ noteId: "n1", version: 3 }); // address.id === "notes/n1/versions/3"
+const params = Versions.parse("notes/n1/versions/3"); // Option.some({ noteId: "n1", version: 3 })
+const invalid = Versions.parse("notes/n1/versions/three"); // Option.none()
+const owns = Versions.match("notes"); // false
 ```
 
-The stream reads and writes change events as a union discriminated by `type`. It also reads and writes the State control messages `snapshot-start`, `snapshot-end` and `reset`, which have no `type`. Narrow an item with `StreamAddress.isChange` or `StreamAddress.isControl` before you read its `type` or `key`. To make changes and controls, see [Durable State changes](/docs/streams/write#durable-state-changes).
+| Method       | Returns                                  |
+| ------------ | ---------------------------------------- |
+| `at(params)` | The `StreamAddress` of one stream        |
+| `parse(id)`  | The decoded params, or `None`            |
+| `match(id)`  | `true` when the stream class owns the id |
+
+A template with no params has one address, `at({})`. Projection inputs, `DurableState.changes`, and `Serve` routes take addresses.
+
+Every id and template follows these rules:
+
+- `/` separates segments.
+- A segment cannot be empty, `.`, or `..`.
+- An id cannot contain `%`, `?`, `#`, or `\`.
+- A template cannot start with `/` or contain `*`.
 
 ## Groups
 
-`Streamsy.group(...streams)` lists the streams that one host keeps and serves. Storage Layers, `Http.routes`, and `RemoteStreams.layer` take a group.
+`Streamsy.group(...streams)` collects stream classes. Pass the group to a storage Layer, `Http.routes`, or `RemoteStreams.layer`.
 
 ```ts
 // @include: declare-streams
@@ -109,32 +128,39 @@ import { Blobs, Notes } from "./streams.ts";
 export const notesApp = Streamsy.group(Notes, Blobs);
 ```
 
-A group refuses two streams with the same name, or two templates that can match one id. `Streamsy.Wildcard` owns every id. Put it last in a group. `Streamsy.custom` streams are not checked for overlap. The first match wins.
+`group` throws a `RangeError` when two streams have the same name or the same template, or when two templates can match one id. The overlap check treats a param as a match for any segment, so `notes/:noteId` and `notes/latest` overlap even when the codec of `noteId` rejects `latest`. The check skips custom streams. `Streamsy.Wildcard` is a custom stream that matches every id, and `group` throws unless it is last. See [Custom streams in groups](/docs/streams/custom#groups).
+
+Over HTTP, `Http.routes` does not run the codec. See [What the server checks](/docs/servers/protocol#what-the-server-checks).
 
 ## Methods
 
-Get the service with `yield* Notes`, then call:
+To get the service of a stream class, `yield*` the class, as in `yield* Notes`. The service has these methods:
 
-| Method                            | Does                                   | Page                                    |
-| --------------------------------- | -------------------------------------- | --------------------------------------- |
-| `create(params, options?)`        | Makes the stream                       | [Create and fork](/docs/streams/create) |
-| `fork(params, source, options?)`  | Makes a child stream from a source     | [Create and fork](/docs/streams/create) |
-| `remove(params)`                  | Deletes the stream                     | [Create and fork](/docs/streams/create) |
-| `append(params, items, options?)` | Writes items as one atomic append      | [Write](/docs/streams/write)            |
-| `read(params, options?)`          | Reads stored batches after an offset   | [Read](/docs/streams/read)              |
-| `follow(params, options?)`        | Reads, then waits for more             | [Read](/docs/streams/read)              |
-| `session(params, { offset })`     | One raw long-poll wait                 | [Read](/docs/streams/read)              |
-| `head(params)`                    | Returns the tail and the configuration | [Read](/docs/streams/read)              |
+| Method                               | Does                                                                     | Page                                           |
+| ------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| `create(params, options?)`           | Creates the stream                                                       | [Create and fork](/docs/streams/create)        |
+| `fork(params, source, options?)`     | Creates a child stream that starts with a prefix of `source`             | [Create and fork](/docs/streams/create#fork)   |
+| `remove(params)`                     | Deletes the stream                                                       | [Create and fork](/docs/streams/create#remove) |
+| `append(params, items, options?)`    | Writes the items as one atomic append                                    | [Write](/docs/streams/write)                   |
+| `decide(params, spec)`               | Folds the stream, then appends with the tail it read as `expectedOffset` | [Write](/docs/streams/write#read-fold-append)  |
+| `read(params, options?)`             | Streams the batches after an offset, up to the current tail              | [Read](/docs/streams/read)                     |
+| `collect(params, options?)`          | Reads to the current tail and returns the items                          | [Read](/docs/streams/read)                     |
+| `fold(params, initial, f, options?)` | Reads to the current tail and folds the items into a value               | [Read](/docs/streams/read#fold)                |
+| `follow(params, options?)`           | Reads, then waits for new messages until the stream closes               | [Read](/docs/streams/read#follow)              |
+| `session(params, { offset })`        | Makes one raw long-poll read                                             | [Read](/docs/streams/read#session)             |
+| `head(params)`                       | Returns the tail and the configuration of the stream                     | [Read](/docs/streams/read#head)                |
 
-A stream service reaches only the ids of its own template.
+Every method takes params, so a service reaches only the streams of its own class. `fork` takes `source` as params of the same class.
 
 ## Offsets
 
-Each message has an offset. An offset is an opaque string that sorts within one stream. `ZERO_OFFSET` is the position before the first message. Do not compare offsets from two different streams.
+Each message has an offset. An offset is an opaque string, and the offsets of one stream sort as strings in write order. `ZERO_OFFSET` is the offset before the first message. Do not compare offsets from two different streams.
 
 ## Results and errors
 
-`create` succeeds with `Created` or `Exists`. `append` succeeds with `Appended` or `Duplicate`. All other outcomes are typed errors with a `_tag` and the stream `id`.
+`create` succeeds with `Created` or `Exists`. `append` succeeds with `Appended` or `Duplicate`. A protocol rejection, such as `StreamNotFound` or `StreamClosed`, fails the effect with a typed error that has a `_tag` and the stream `id`. The error type of each call lists only the rejections that its options allow. For example, `append` can fail with `OffsetMismatch` only when you pass `expectedOffset`.
+
+To handle a rejection, catch it by its tag:
 
 ```ts
 // @include: declare-streams
@@ -153,13 +179,15 @@ const tolerant = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-| Fault            | Source                |
-| ---------------- | --------------------- |
-| `StorageFault`   | A local store         |
-| `TransportFault` | The remote Layer      |
-| `EncodeFault`    | The codec, on a write |
-| `DecodeFault`    | The codec, on a read  |
+A call can also fail with a fault. A fault has a `_tag` and a `message`, and no stream `id`.
+
+| Fault            | Cause                                                          |
+| ---------------- | -------------------------------------------------------------- |
+| `StorageFault`   | A local store failed                                           |
+| `TransportFault` | The remote Layer could not send a request or read the response |
+| `EncodeFault`    | The codec could not encode an item for an append               |
+| `DecodeFault`    | The codec could not decode a message on a read                 |
 
 ## Protocol services
 
-`@streamsy/core/protocol` has the generic `StreamsReader` and `StreamsWriter` services, the `Streams` functions over a raw `StreamAddress`, and `Protocol.layer`. Storage adapters, protocol tests, and HTTP internals use them. An application uses stream classes.
+`@streamsy/core/protocol` exports the `StreamsReader` and `StreamsWriter` services, the `Streams` functions that take a raw `StreamAddress`, and `Protocol.layer`. Storage adapters, protocol tests, and the HTTP code use them. Applications use stream classes.

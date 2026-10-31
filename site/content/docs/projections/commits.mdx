@@ -1,0 +1,222 @@
+---
+title: Commits
+description: Choose how a projection saves each unit, what a retry can repeat, and how to write a custom Commit.
+---
+
+The `commit` field of a projection names its Commit. The Commit decides which writes of a unit commit together, and so what a retry can run again. For the full signatures, see [`Commit`](/docs/reference/projection/commit).
+
+## What a Commit does
+
+A runner works through the inputs one unit at a time. For each unit it does these steps:
+
+1. It calls the `load` of the Commit. `load` returns the checkpoint record and its compare-and-set token.
+2. It reads the next items of each input after the saved offsets.
+3. It calls the `apply` of the Commit with a `Pending` value. `pending.run` runs the handler, and `pending.next` is the record with the new offsets.
+
+`apply` decides when the handler runs and which writes commit together. When `apply` fails, the record keeps its old offsets, and the next pass works on the unit again.
+
+What the next pass reads depends on the Commit:
+
+- `Commit.producer` and `Commit.atLeastOnce` pin the unit. They save its input ranges in the record before the first write that a retry could repeat. `Commit.atLeastOnce` saves them before it runs the handler, and `Commit.producer` saves them before it appends outputs. A retry reads the same items and gets the same `unit.key`. When a pinned range cannot be read again, the unit fails with reason `range-unreproducible`.
+- `Commit.checkpoint`, `Commit.transaction` and every Commit from `Commit.make` read again from the saved offsets. When new items arrived, a retry reads a longer range, and `unit.key` changes.
+
+## Fit table
+
+The result type of the handler decides which Commit fits a constructor.
+
+| Commit               | Constructors                                           | Guarantee                           | Host services                    |
+| -------------------- | ------------------------------------------------------ | ----------------------------------- | -------------------------------- |
+| `Commit.checkpoint`  | `fold`, as its default                                 | Exactly once for the saved value    | `CheckpointStore`                |
+| `Commit.transaction` | `fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch` | Exactly once in the SQL transaction | `CheckpointStore`, `Transaction` |
+| `Commit.producer`    | `emit`, `mapAccum`, `mapAccumBatch`                    | Effectively once for the outputs    | `CheckpointStore`                |
+| `Commit.atLeastOnce` | `process`                                              | At least once                       | `CheckpointStore`                |
+| `Commit.make`        | By the result type of its `apply`                      | The `guarantee` that it declares    | What its `load` and `apply` need |
+
+`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `process`, `emit`, `mapAccum` and `mapAccumBatch` require `commit`. `wake` always uses `Commit.producer` and accepts no `commit`. A Commit whose result type does not fit the constructor is a type error at the `commit` field. Every Commit names its guarantee in its `guarantee` field: `"exactly-once"`, `"effectively-once"` or `"at-least-once"`.
+
+## `checkpoint`
+
+`Commit.checkpoint` runs the handler, then saves the encoded state and the new offsets in one compare-and-set write. When the write fails, the next pass runs the steps again. Keep the steps free of external effects, because they can run more than once.
+
+## `transaction`
+
+`Commit.transaction` opens one SQL transaction on the storage owner of the checkpoint. In that transaction it checks that the record token has not moved, runs the handler, appends the items of the declared outputs, and saves the checkpoint. The handler gets the `SqlClient` of the transaction, so its SQL commits or rolls back with the checkpoint. See [SQL tables](/docs/projections/process#sql-tables).
+
+Every stream write of the unit must be on the storage owner of the transaction. The writes on that owner commit or roll back with the checkpoint. The rule covers the declared outputs, and the `append`, `create`, `fork` and `remove` calls of the handler, through a stream service or through its `wire`.
+
+| Case                                                            | Phase        | Reason                    |
+| --------------------------------------------------------------- | ------------ | ------------------------- |
+| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition` |
+| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition` |
+| An output append fails                                          | `process`    | `invalid-output`          |
+| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`          |
+| The SQL transaction fails                                       | `checkpoint` | `storage-failure`         |
+
+In each case the transaction rolls back, with the earlier writes of the unit. External calls in the handler, such as HTTP requests, are outside the transaction and run at least once.
+
+`Commit.transaction` requires the `Transaction` service. `Transaction.layer` builds it on a SQL host. A memory host has no `SqlClient`, so it cannot run `Commit.transaction`. On a memory host, use `Commit.checkpoint` for a fold, `Commit.producer` for outputs, and `Commit.atLeastOnce` for `process`. See [Layers](/docs/projections/checkpoints#layers).
+
+### Prepare
+
+`Projection.process` with `Commit.transaction` accepts `prepare(batch, unit)`. `Commit.transaction` runs `prepare` before it opens the transaction, so `prepare` runs at least once. Its result is the third argument of `process(batch, unit, prepared)`. For an example, see [Tables and effects](/docs/projections/process).
+
+When the transaction fails, the next pass runs `prepare` again on a new read of the inputs. With the same range, `unit.key` is the same. When new items arrived, the range is longer and `unit.key` changes. Do not use `unit.key` as an idempotency key that must hold across every retry.
+
+Only `Commit.transaction` accepts `prepare`, alone or wrapped by `Commit.withCompensation`. With any other Commit, the constructor throws a `RangeError` with the message `prepare requires Commit.transaction`.
+
+## `producer`
+
+`Commit.producer` appends the items of each output with a producer position, so a retry does not append a unit twice. It fits `emit`, `mapAccum` and `mapAccumBatch`.
+
+`Commit.producer` runs the handler first. When an output has items, it pins the input ranges and the next producer sequence of each output in the record. It then appends each output under its position, and saves the state and the new offsets last. A retry runs the handler on the pinned range and sends the same positions. The stream answers `Duplicate` for an append that it already has, and writes nothing. The handler must therefore give the same items for the same unit.
+
+The appends to several outputs do not commit together. Each output receives the items of a unit once. `Commit.producer` creates a missing output on the storage owner of the checkpoint. An output on another owner must exist before the first append.
+
+For the producer position of each output and the output rules, see [Output streams](/docs/projections/outputs). For the step list, see [`Commit.producer`](/docs/reference/projection/commit#commitproducer).
+
+## `atLeastOnce`
+
+`Commit.atLeastOnce` pins the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last save fails, the next pass runs the same items again with the same `unit.key`.
+
+Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. For durable delivery of external effects, use an [outbox](/docs/projections/actions).
+
+## Compensation
+
+`Commit.withCompensation(commit, f)` wraps a Commit. When the handler succeeded and the Commit then failed, the wrapper calls `f(result, cause, unit)` and fails with the same `cause`. When the handler failed, `f` does not run. The error type of `f` is `never`, so `f` must handle its own failures.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders } from "./streams.ts";
+
+const commit = Commit.withCompensation(Commit.atLeastOnce, (_result, cause, unit) =>
+  Effect.logWarning(`Unit ${unit.key} ran but its offsets were not saved`, cause),
+);
+
+export const notify = Projection.process({
+  id: "notify-orders",
+  params: {},
+  inputs: { orders: Orders },
+  commit,
+  process: Projection.each(({ item }) => Effect.log(`Order ${item.orderId}`)),
+});
+```
+
+The wrapped Commit keeps its name, its guarantee, its pinning and its `prepare` support. The pipe form is `commit.pipe(Commit.withCompensation(f))`. Compensation does not make an external effect atomic with the save. Use it to undo or report an effect after a failed save.
+
+## Custom Commits
+
+`Commit.make(options)` returns a Commit from a `name`, a `guarantee`, `load`, `apply` and an optional `remove`. The result type of `apply` decides the constructors that the Commit fits:
+
+| Result              | Constructor                 |
+| ------------------- | --------------------------- |
+| `Folded<S>`         | `fold`                      |
+| `void`              | `process`                   |
+| `Emitted<O>`        | `emit`                      |
+| `Accumulated<S, O>` | `mapAccum`, `mapAccumBatch` |
+
+`load(key)` returns `{ record, token }` for a [`ProjectionKey`](/docs/reference/projection/checkpoint-store#projectionkey). `apply(pending)` receives `key`, `unit`, `loaded`, `next` and `run`. `run` runs the handler. It returns the result, or fails with `HandlerFailed`. Let `HandlerFailed` pass through `apply`. The runner unwraps it and fails with the error of the handler. The `outputs` of an `Emitted` or `Accumulated` result hold the resolved address and the encoded items of each output. A custom Commit must append them itself.
+
+A custom Commit must follow these rules:
+
+1. Never store `next` when `run` fails.
+2. Make the write conditional on `loaded.token`. When the token moved, fail with phase `checkpoint` and reason `token-conflict`.
+3. Return the token `"0"` from `load` when no record exists.
+4. Return the stored `state` from `load`, so that `Projection.read` can read it.
+5. Declare the guarantee of the actual write. When `run` and the write are not atomic, declare `"at-least-once"`.
+
+A custom Commit reads the inputs again from the saved offsets on a retry. Pinning is internal to the built-in Commits. A custom Commit does not accept `prepare`. It cannot finish a unit that a pinned Commit left in the record, and the pass fails with phase `load` and reason `invalid-record`.
+
+This bucket Commit stores the value and offsets of a pure fold in one conditional object write. The bucket adapter must make `put` atomic, treat the token `"0"` as create-if-absent, and fail with phase `checkpoint` and reason `token-conflict` when the precondition fails.
+
+```ts
+import { Context, Effect, Option, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import {
+  CheckpointRecord,
+  Commit,
+  Projection,
+  ProjectionFault,
+  type Folded,
+} from "@streamsy/projection";
+import { recordKey } from "@streamsy/projection/checkpoint";
+
+class Input extends Streamsy.json<Input>()("bucket/Input", "bucket/input", {
+  params: {},
+  schema: Schema.Number,
+}) {}
+class Bucket extends Context.Service<
+  Bucket,
+  {
+    readonly get: (
+      key: string,
+    ) => Effect.Effect<{ readonly body: string; readonly etag: string } | undefined>;
+    readonly put: (
+      key: string,
+      body: string,
+      ifMatch: string,
+    ) => Effect.Effect<void, ProjectionFault>;
+  }
+>()("bucket/Bucket") {}
+const json = Schema.fromJsonString(CheckpointRecord);
+const bucket = Commit.make({
+  name: "bucketSnapshot",
+  guarantee: "exactly-once",
+  load: (key) =>
+    Effect.gen(function* () {
+      const found = yield* (yield* Bucket).get(recordKey(key));
+      if (found === undefined) return { record: Option.none<CheckpointRecord>(), token: "0" };
+      const record = yield* Schema.decodeEffect(json)(found.body).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "load",
+              reason: "invalid-record",
+              message: "Bad bucket snapshot",
+              cause,
+            }),
+        ),
+      );
+      return { record: Option.some(record), token: found.etag };
+    }),
+  apply: (pending: Commit.Pending<Folded<unknown>>) =>
+    Effect.gen(function* () {
+      const result = yield* pending.run;
+      const body = yield* Schema.encodeEffect(json)({
+        ...pending.next,
+        state: result.encoded,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "checkpoint",
+              reason: "invalid-record",
+              message: "Bad snapshot encoding",
+              cause,
+            }),
+        ),
+      );
+      yield* (yield* Bucket).put(recordKey(pending.key), body, pending.loaded.token);
+    }),
+});
+const declaration = Projection.fold({
+  id: "bucket",
+  commit: bucket,
+  params: {},
+  inputs: { input: Input },
+  state: { schema: Schema.Number, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+});
+```
+
+`Commit.make` infers the result and the required services from `apply` and `load`. The bucket Commit requires `Bucket`, not `CheckpointStore`. When a Commit provides services to the handler, as `Commit.transaction` provides `SqlClient`, write the `Result`, `Provides` and `Requires` type arguments.
+
+The subpath `@streamsy/projection/checkpoint` exports the parts for storage authors. `recordKey(key)` gives the storage key of a record, as the bucket Commit uses it. To build a `CheckpointStore` Layer for another store, implement an [`EncodedStore`](/docs/reference/projection/checkpoint-store#encodedstore) and pass it to [`fromStore`](/docs/reference/projection/checkpoint-store#fromstore). Both shipped Layers use `fromStore`.
+
+## Workflow comparison
+
+A Commit with its host Layer has a role like an Effect `Workflow` with its `WorkflowEngine`. The declaration picks the behavior, and the host Layer supplies the storage. A handler under `Commit.atLeastOnce` retries like an `Activity`, but a Commit does not orchestrate workflows.

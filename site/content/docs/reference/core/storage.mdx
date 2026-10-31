@@ -24,7 +24,7 @@ import type { Data, Effect, Option, PubSub, Scope, Stream } from "effect";
 import type { SqlError } from "effect/sql";
 ```
 
-`Storage` is the one service that a storage adapter implements. The protocol, HTTP, forks, expiry, and producer fencing run on top of it, so an application does not call it. For a worked adapter and its contract tests, see [Write a storage adapter](/docs/hosting/storage-adapter).
+`Storage` is the one service that a storage adapter implements. The protocol, HTTP, forks, expiry, and producer fencing run on top of it, so an application does not call it. For a worked adapter and its contract tests, see [Write a storage adapter](/docs/storage/adapter).
 
 The stream records that these types carry, such as `StreamRecord` and `StoredMessage`, are on the [Stream records](/docs/reference/core/records) page. `ProducerPrecondition`, `Operation`, `Mutation`, `OperationResult`, and `MutationApplied` each export a type and an Effect `Schema` with the same name.
 

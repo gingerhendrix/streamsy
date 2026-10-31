@@ -12,7 +12,7 @@ import type { Reactivity } from "effect/reactivity";
 import type { SqlClient } from "effect/sql";
 ```
 
-`SqlStorage` keeps streams in a SQL database through a `SqlClient` that you provide. The root entry point imports no SQL driver, so add the driver that you use. See [SQLite on Node and Deno](/docs/hosting/host-contract#sqlite-on-node-and-deno).
+`SqlStorage` keeps streams in a SQL database through a `SqlClient` that you provide. The root entry point imports no SQL driver, so add the driver that you use. See [SQLite on Node and Deno](/docs/storage/sqlite#sqlite-on-node-and-deno).
 
 The [`BunStorage`](/docs/reference/storage/bun-storage) and [`DurableObjectStorage`](/docs/reference/storage/durable-object-storage) Layers build the client for you, and run `SqlStorage` over it. The [Storage contract](/docs/reference/core/storage) page describes the services that all three provide.
 
@@ -96,7 +96,7 @@ The store follows these rules:
 - On Postgres and MySQL, each mutation transaction first locks the rows of the streams that it writes with `SELECT ... FOR UPDATE`, in id order, so writers on several connections commit one after the other
 - A create fails with a `StorageFault` with operation `mutate.stream-id` when the stream id has more than 512 code points. An append fails with operation `mutate.producer-id` when its producer id has more than 255 code points. Every dialect applies these limits, which come from the key columns of the MySQL schema
 - On MySQL, an owner record key over 512 code points is stored as its first 447 code points, `#`, and the SHA-256 hex of the full key, so two long keys that share their first 512 code points stay apart. A key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
-- To run your SQL and a mutation in one transaction, use [`CommitBoundary.withTransaction`](/docs/reference/core/storage#commitboundaryapi). Inside a transaction that you open with `sql.withTransaction`, a mutation dies, and so does `CommitBoundary.withTransaction`. See [Commit with your own tables](/docs/hosting#commit-with-your-own-tables)
+- To run your SQL and a mutation in one transaction, use [`CommitBoundary.withTransaction`](/docs/reference/core/storage#commitboundaryapi). Inside a transaction that you open with `sql.withTransaction`, a mutation dies, and so does `CommitBoundary.withTransaction`. See [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables)
 
 ### `SqlStorage.layerProtocol`
 

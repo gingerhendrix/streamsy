@@ -1,8 +1,9 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": [
+    "test/lib/moved-pages.test.ts",
     "test/scripts/check-excerpts.test.ts",
-    "test/scripts/check-demo-excerpts.test.ts",
+    "test/scripts/check-example-excerpts.test.ts",
     "test/scripts/docs-deployment-targets.test.ts",
     "test/twoslash.test.ts"
   ],

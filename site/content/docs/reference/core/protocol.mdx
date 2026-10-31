@@ -17,7 +17,7 @@ import type { Effect, Layer } from "effect";
 import type { HttpRouter } from "effect/http";
 ```
 
-The protocol tier reads and writes any stream id, with no codec and no stream class. Storage adapters, protocol tests, and HTTP internals use it. See [Protocol tier](/docs/hosting#protocol-tier).
+The protocol tier reads and writes any stream id, with no codec and no stream class. Storage adapters, protocol tests, and HTTP internals use it. See [Protocol tier](/docs/storage/adapter#protocol-tier).
 
 This entry point also exports the `Streams` and `StreamRoute` namespaces. They are on the [Streams](/docs/reference/core/streams) and [StreamRoute](/docs/reference/core/stream-route) pages.
 
@@ -82,7 +82,7 @@ declare function bind<A, E, R, const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof bind, typeof Protocol.bind>(true);
 ```
 
-`bind` returns a Layer with the service of each stream class in `streams`, over the reader and writer that `graph` provides. Each storage host builds its `layer` this way. See [Bind streams](/docs/hosting/storage-adapter#bind-streams).
+`bind` returns a Layer with the service of each stream class in `streams`, over the reader and writer that `graph` provides. Each storage host builds its `layer` this way. See [Bind streams](/docs/storage/adapter#bind-streams).
 
 ```ts
 // @filename: streams.ts

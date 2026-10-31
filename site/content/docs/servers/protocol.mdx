@@ -1,0 +1,193 @@
+---
+title: Expose the stream protocol
+description: Serve the Durable Streams protocol for a group of streams with Http.routes, choose the methods each stream allows, and protect the routes.
+---
+
+`Http.routes(group, options)` serves the Durable Streams protocol for every stream in a group, under one path prefix. It returns an Effect `HttpRouter` route Layer.
+
+```ts include routes-app
+// @filename: app.ts
+// ---cut---
+import { Layer, Schema } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+
+export class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+export class Scores extends Streamsy.json<Scores>()("Game/Scores", "scores", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export const game = Streamsy.group(Events, Scores);
+
+export const App = Layer.mergeAll(
+  Http.routes(game, {
+    prefix: "/streams",
+    access: (stream) => (stream === Events ? "append" : "read"),
+  }),
+);
+```
+
+A client appends to `/streams/events/1` and reads `/streams/scores`. The route Layer needs the service of each stream in the group, so provide a storage Layer for `game`. See [Choose storage](/docs/storage). To run it, see [Run a process server](/docs/servers/process) or [Run on Cloudflare](/docs/servers/cloudflare).
+
+## Options
+
+| Option            | Default    | Value                                                                 |
+| ----------------- | ---------- | --------------------------------------------------------------------- |
+| `access`          | (required) | One rule for the group, or a function from a stream class to its rule |
+| `prefix`          | `/`        | The path under which stream ids are served                            |
+| `maxMessageSize`  | 1 MiB      | The largest request body. A larger body answers 413                   |
+| `cacheVisibility` | `private`  | `private` or `public` in cache headers                                |
+| `sseDeadlineMs`   | 60,000     | The lifetime of one SSE response                                      |
+
+The prefix must be a literal absolute path, with no `:`, `*`, `?`, or `#`. Otherwise `Http.routes` throws a `RangeError`. `/streams/` is the same as `/streams`.
+
+The path after the prefix is the stream id. The first stream in the group whose template matches the id serves it. An id that no stream in the group matches answers 404. A request for the bare prefix has an empty id. With a `Wildcard` group it answers 400, and with a typed group it answers 404.
+
+To serve every id, use `Streamsy.group(Streamsy.Wildcard)`, usually with `access: "full"`. The [memory server example](/docs/examples/memory-server) does this.
+
+## Access
+
+| Access   | Methods                               |
+| -------- | ------------------------------------- |
+| `read`   | GET, HEAD, OPTIONS                    |
+| `append` | GET, HEAD, POST, OPTIONS              |
+| `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
+
+A method that the rule does not allow answers 405 with an `allow` header, and the server discards the request body. Every rule allows reads.
+
+`access` limits methods only. It does not identify the caller, and it does not check that the caller may use the stream. Anyone who reaches a `full` route can create and remove streams. To protect the routes, see [Protect the routes](#protect-the-routes).
+
+## What the server checks
+
+The typed API sends the content type of the stream class on `create`, `append`, and `fork`, and it encodes each item with the stream's codec. `Http.routes` does neither. It checks the format of a request, not the items in it. Its checks include these:
+
+- The id matches a stream in the group, and `access` allows the method.
+- The body is not larger than `maxMessageSize`.
+- A `PUT` has valid create headers. `Stream-TTL` is a whole number, `Stream-Expires-At` parses as a date, the two are not both present, and the fork headers are consistent. A failure answers 400.
+- A `PUT` or `POST` body with a JSON content type parses as JSON. A failure answers 400.
+- A `POST` has a body, unless it closes the stream with `Stream-Closed: true`. A `POST` with a body has a `Content-Type`. A failure answers 400.
+- A `POST` has a `Content-Type` that matches the content type the stream was created with. A mismatch answers 409.
+- An existing stream accepts a `PUT` only with the same configuration. A different configuration answers 409.
+
+The server does not decode JSON items with the stream's schema. A raw HTTP client can create a stream with another content type, or append JSON that the schema rejects. On a stream with another content type, a typed `create` fails with `CreateConflict` and a typed `append` fails with `AppendConflict`. On a stream that holds JSON the schema rejects, a typed read fails with `DecodeFault` at the first message that does not decode.
+
+To make every write go through the codec, set `access` to `"read"` for the stream, and write through the typed API on the server. See [Declare streams](/docs/streams/declare) for the content type and codec of each factory, and [Over HTTP](/docs/streams/create#over-http) for create status codes.
+
+## Protect the routes
+
+Authenticate a request before the protocol routes handle it. A route Layer accepts `HttpRouter` middleware:
+
+```ts
+// @include: routes-app
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Http } from "@streamsy/core";
+import { game } from "./app.ts";
+
+declare const tokenIsValid: (token: string) => Effect.Effect<boolean>;
+
+const RequireToken = HttpRouter.middleware()((handler) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const token = request.headers["authorization"]?.replace(/^Bearer /, "");
+    if (token === undefined || !(yield* tokenIsValid(token)))
+      return HttpServerResponse.empty({ status: 401 });
+    return yield* handler;
+  }),
+);
+
+export const Protected = Http.routes(game, { prefix: "/streams", access: "full" }).pipe(
+  Layer.provide(RequireToken.layer),
+);
+```
+
+`tokenIsValid` stands for your own check. The middleware runs before each request to these routes, and a request without a valid token gets 401 and touches no stream. Protect [Serve routes](/docs/servers/serve#auth-and-request-parameters) that read private data in the same way. On Cloudflare, authenticate before the Worker forwards the request. See [Forward requests](/docs/servers/cloudflare#forward-requests).
+
+## Browsers and CORS
+
+A browser on another origin first sends an `OPTIONS` preflight. The protocol routes answer it with 204, `access-control-allow-origin: *`, the methods that `access` allows, and the protocol request headers. Their other responses carry no CORS headers, so a browser on another origin cannot read them.
+
+To serve browsers on another origin, add `HttpRouter.cors` beside the routes:
+
+```ts
+// @include: routes-app
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { HttpRouter } from "effect/http";
+import { App } from "./app.ts";
+
+const Cors = HttpRouter.cors({
+  allowedOrigins: ["https://app.example.com"],
+  allowedMethods: ["GET", "HEAD", "POST"],
+  allowedHeaders: [
+    "authorization",
+    "content-type",
+    "if-none-match",
+    "producer-id",
+    "producer-epoch",
+    "producer-seq",
+    "stream-closed",
+    "stream-expected-offset",
+    "stream-seq",
+  ],
+  exposedHeaders: [
+    "stream-next-offset",
+    "stream-cursor",
+    "stream-up-to-date",
+    "stream-closed",
+    "etag",
+    "producer-epoch",
+    "producer-expected-seq",
+    "producer-received-seq",
+  ],
+});
+
+const BrowserApp = Layer.mergeAll(App, Cors);
+```
+
+`HttpRouter.cors` is global middleware. It answers every preflight with its own policy, in place of the protocol answer, and adds the CORS headers to each response. List the request headers that your clients send and the response headers that they read. A Durable Streams client reads the offset, cursor, and up-to-date headers.
+
+## Protocol
+
+| Method  | Operation                                          |
+| ------- | -------------------------------------------------- |
+| PUT     | Create, or fork with `Stream-Forked-From`          |
+| POST    | Append                                             |
+| GET     | Read. Add `live=long-poll` or `live=sse` to follow |
+| HEAD    | Metadata                                           |
+| DELETE  | Remove                                             |
+| OPTIONS | Preflight                                          |
+
+A long poll that times out answers 204 with a cursor. An SSE response ends at `sseDeadlineMs`, and the client reconnects from its last offset. The request headers, status codes, and response headers are in [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). The Streams pages describe each operation over HTTP: [create](/docs/streams/create#over-http), [read](/docs/streams/read#over-http), and [write](/docs/streams/write#over-http).
+
+## Extensions
+
+`Stream-Expected-Offset` on POST is a Streamsy extension. The append runs only when the tail equals the header value. A miss writes nothing and answers 409, with the tail in `stream-next-offset`.
+
+## Web handler
+
+To serve the routes from a host that takes a web `fetch` handler, convert the route Layer with `HttpRouter.toWebHandler`:
+
+```ts
+// @include: routes-app
+// @filename: index.ts
+// ---cut---
+import { HttpRouter } from "effect/http";
+import { BunStorage } from "@streamsy/storage/bun";
+import { App, game } from "./app.ts";
+
+const storage = BunStorage.layer(game, { client: { filename: "./streams.sqlite" } });
+
+const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage)));
+// const response = await web.handler(request)
+// await web.dispose() at shutdown
+```
+
+`web.handler` takes a `Request` and returns a `Response`. `HttpRouter.provideRequest` builds `storage` once and gives its services to each request. Call `web.dispose()` when the host stops, also after a failure, to close the storage. A web handler has no shutdown drain for live reads. For a long-running process, use `Serve.layer` instead. See [Run a process server](/docs/servers/process).
+
+`Http.app` is the underlying `HttpEffect` over the generic protocol services, for protocol tools. See [`Http`](/docs/reference/core/http).

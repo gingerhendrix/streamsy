@@ -17,7 +17,7 @@ import type { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/prot
 import type { Context, Effect, Layer } from "effect";
 ```
 
-The exports of `@streamsy/core/testing` test storage adapters and protocol code. `StorageContract` and `expectFailureTag` call Vitest, so import this entry point only in test files that Vitest runs. Application tests provide `MemoryStorage.layer(group)` instead. See [Testing](/docs/hosting#testing).
+The exports of `@streamsy/core/testing` test storage adapters and protocol code. `StorageContract` and `expectFailureTag` call Vitest, so import this entry point only in test files that Vitest runs. Application tests provide `MemoryStorage.layer(group)` instead. See [Testing](/docs/storage#testing).
 
 ## Storage contract
 
@@ -38,7 +38,7 @@ declare const StorageContract: {
 same<typeof StorageContract, typeof T.StorageContract>(true);
 ```
 
-`StorageContract` holds the contract tests that every storage adapter must pass. See [Contract tests](/docs/hosting/storage-adapter#contract-tests).
+`StorageContract` holds the contract tests that every storage adapter must pass. See [Contract tests](/docs/storage/adapter#contract-tests).
 
 `run` registers a Vitest `describe` block named `options.name`, with one test for each rule of the contract.
 

@@ -230,7 +230,9 @@ interface InvalidCreateRequest {
 same<InvalidCreateRequest, Fields<Core.InvalidCreateRequest>>(true);
 ```
 
-`create` and `fork` fail with `InvalidCreateRequest` when both `ttlSeconds` and `expiresAt` are set, or when `expiresAt` cannot be parsed by `DateTime.make`. A plain `create` also fails with `InvalidCreateRequest` when JSON `initialData` is invalid. The remote client returns `InvalidCreateRequest` for a plain create HTTP 400 response without `stream-not-supported`. `message` says why. Typed stream `create` methods surface this as a typed failure.
+`create` and `fork` fail with `InvalidCreateRequest` when both `ttlSeconds` and `expiresAt` are set, including when `ttlSeconds` is 0. They also fail when `DateTime.make` cannot parse `expiresAt`. The local protocol checks these options before storage access. The remote client checks them before sending a request.
+
+A plain `create` also fails with `InvalidCreateRequest` when a new JSON stream has invalid `initialData`. The remote client returns `InvalidCreateRequest` for a plain create HTTP 400 response without `stream-not-supported`. `message` says why. Typed stream `create` and `fork` methods surface `InvalidCreateRequest` as a typed failure.
 
 ### `CreateConflict`
 
@@ -287,7 +289,7 @@ interface InvalidForkRequest {
 same<InvalidForkRequest, Fields<Core.InvalidForkRequest>>(true);
 ```
 
-A `fork` fails with `InvalidForkRequest` when its fork offset is not a valid offset, when the offset is past the tail of the source, or when its JSON `initialData` is invalid. The remote client also returns this error for a fork HTTP 400 response without `stream-not-supported`. `message` says why.
+A `fork` fails with `InvalidForkRequest` when its fork offset is not a valid offset, when the offset is past the tail of the source, or when a new JSON fork has invalid `initialData`. The remote client also returns this error for a fork HTTP 400 response without `stream-not-supported`. `message` says why.
 
 ### `NotSupported`
 

@@ -28,7 +28,7 @@ import type { AppendFailure, Decided, Storage } from "@streamsy/core";
 import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
 ```
 
-A runner takes the bound projection that [`declaration.at(params)`](/docs/reference/projection/declarations#declaration) returns. It reads each input after its checkpoint offset, runs the handler over the unit, and lets the Commit write the checkpoint. See [Running](/docs/projections/define#running) and [Read, decide, append](/docs/projections/state#read-decide-append).
+A runner takes the bound projection that [`declaration.at(params)`](/docs/reference/projection/declarations#declaration) returns. It reads each input after its checkpoint offset, runs the handler over the unit, and lets the Commit write the checkpoint. See [Running](/docs/projections/run) and [Read, decide, append](/docs/projections/state#read-decide-append).
 
 The signatures use types that have no exported name, such as `Executable`. [Types with no exported name](#types-with-no-exported-name) shows each one. Use one writer for each projection key: one `follow` stream, one attached runner, or one `run` at a time. A second writer fails with a `ProjectionFault` with reason `token-conflict`.
 
@@ -500,7 +500,7 @@ declare const ProjectionWakeup: {
 same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 ```
 
-`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections](/docs/hosting/cloudflare#projections) on Cloudflare.
+`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections) on Cloudflare.
 
 | Field      | Meaning                                                                                                                                              |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -17,7 +17,7 @@ import type { CommitBoundary, Streamsy } from "@streamsy/core";
 import type { Effect, Layer, Option } from "effect";
 ```
 
-`CheckpointStore` keeps one record for each projection key: the input offsets, the encoded state, and a pinned unit. The built-in Commits need it. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations) and [Projection storage](/docs/hosting/storage-adapter#projection-storage).
+`CheckpointStore` keeps one record for each projection key: the input offsets, the encoded state, and a pinned unit. The built-in Commits need it. See [Checkpoints and generations](/docs/projections/checkpoints) and [Projection storage](/docs/storage/adapter#projection-storage).
 
 `@streamsy/projection/checkpoint` is the entry point for the author of a checkpoint Layer or a custom Commit. Each export has one section on this page:
 

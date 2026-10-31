@@ -1,32 +1,47 @@
 ---
 title: How projections work
-description: A projection reads input streams in checkpointed units and writes derived streams or state.
+description: A projection reads input streams in checkpointed units and writes derived streams, values, or rows.
 ---
 
-A projection reads one or more input streams and writes derived data. It works in units. Each unit reads a slice of each input, runs a handler, and commits a checkpoint. A restart continues from the last checkpoint.
+A projection reads one or more input streams and writes data derived from them. It works in units. Each unit holds the new items of each input, and a Commit runs the handler over the unit and saves the new input offsets as a checkpoint. A restart continues from the last checkpoint.
 
-One pass:
+One pass of a projection makes at most one unit:
 
-1. Load the checkpoint.
-2. Read each input after its checkpoint offset, in declaration order.
-3. Run the handler over the unit.
-4. Commit the checkpoint.
+1. The Commit loads the checkpoint record of the projection.
+2. The runner reads one page of each input after its checkpoint offset, in declaration order. When the record holds the saved ranges of an unfinished unit, the runner reads those ranges again.
+3. When no input has new items, and no input has newly closed or gone, the pass ends. The handler does not run.
+4. Otherwise the Commit runs the handler over the unit and saves the new offsets with the handler result.
 
-## Constructors
+To declare a projection and its handler, see [Define a projection](/docs/projections/define). To run passes, see [Run a projection](/docs/projections/run).
 
-| Constructor                                             | One step  | Keeps a value | Emits to routes |
-| ------------------------------------------------------- | --------- | ------------- | --------------- |
-| [fold](/docs/projections/define#fold)                   | One entry | Yes           |                 |
-| [process](/docs/projections/define#process)             | One batch |               | Runs effects    |
-| [emit](/docs/projections/define#emit)                   | One entry |               | Yes             |
-| [mapAccum](/docs/projections/define#mapaccum)           | One entry | Yes           | Yes             |
-| [mapAccumBatch](/docs/projections/define#mapaccumbatch) | One batch | Yes           | Yes             |
+## Choose a constructor
 
-Choose the guarantee with [a Commit](/docs/projections/define#commits). `fold` defaults to `Commit.checkpoint`; other constructors require `commit:`.
+The constructor sets what the projection writes and the shape of its handler.
 
-## Transactional outputs
+| You want                                      | Constructor                 | Page                                                                           |
+| --------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| A value, such as a total or a small set       | `fold`                      | [Values](/docs/projections/state)                                              |
+| New stream items for each input entry         | `emit`                      | [Output streams](/docs/projections/outputs)                                    |
+| A value and output items                      | `mapAccum`, `mapAccumBatch` | [Values](/docs/projections/state), [Output streams](/docs/projections/outputs) |
+| Rows in your own SQL tables, or other effects | `process`                   | [Tables and effects](/docs/projections/process)                                |
+| A wake row for each source stream             | `wake`                      | [Wake streams](/docs/streams/wake#write-rows)                                  |
 
-`Projection.emit` maps each entry to output items. With `Commit.transaction`, the handler runs inside a SQL transaction. Appends to streams on the same storage, and SQL through the same client, commit or roll back with the checkpoint.
+For the full signatures, see [Constructors](/docs/reference/projection/constructors).
+
+## Choose a Commit
+
+The Commit sets the delivery guarantee of a unit.
+
+| Commit               | What it does                                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Commit.checkpoint`  | Saves the encoded value and the offsets in one compare-and-set                                                                                     |
+| `Commit.transaction` | Commits the SQL writes of the handler, the output appends, and the checkpoint in one transaction on the SQL storage owner                          |
+| `Commit.producer`    | Saves the input ranges and the output positions, then appends the outputs at those positions. A retry answers `Duplicate` and writes nothing twice |
+| `Commit.atLeastOnce` | Saves the input ranges before the handler runs, and the offsets after it. After a crash, the handler runs again on the same ranges                 |
+
+`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `wake` always uses `Commit.producer`. The other constructors require `commit`, and the compiler rejects a Commit that does not fit the constructor. See [Commits](/docs/projections/commits) for which Commit fits which constructor, and for custom Commits.
+
+## One example
 
 ```ts include projections-minimal
 // @filename: minimal.ts
@@ -64,110 +79,10 @@ export const minimal = Effect.gen(function* () {
 });
 ```
 
-One run writes `[2, 4, 6]` to `doubled`. The source is `packages/projection/src/examples/minimal.ts`.
+`Projection.emit` declares the projection, `.at({})` binds it, and `Projection.run` runs passes until the input is caught up. `limit: 10` caps the run at 10 units. One unit reads `[1, 2, 3]` and appends `[2, 4, 6]` to `doubled` in the same transaction as the checkpoint. The run returns `status: "caught-up"`, `units: 1`, and `items: 3`.
 
-## Output projections
-
-`Commit.producer` pins input ranges and output positions. The handler returns items for each route, and the runner appends them.
-
-```ts include projections-tripled
-// @include: projections-minimal
-// @filename: tripled.ts
-// ---cut---
-import { Schema } from "effect";
-import { Streamsy } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
-import { Numbers } from "./minimal.ts";
-
-export class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
-  params: {},
-  schema: Schema.Finite,
-}) {}
-
-export const tripled = Projection.emit({
-  id: "tripled",
-  params: {},
-  inputs: { input: Numbers },
-  outputs: { output: Tripled },
-  commit: Commit.producer,
-  emit: ({ item }) => ({ output: [item * 3] }),
-});
-```
-
-| Output           | Items                     |
-| ---------------- | ------------------------- |
-| `Streamsy.json`  | Typed items               |
-| `Streamsy.state` | Durable State row changes |
-
-Each output append has its own producer position, so a retry does not write a unit twice.
-
-## State
-
-`fold`, `mapAccum`, and `mapAccumBatch` declare `state: { schema, initial }`. The value is saved with the checkpoint. `Projection.read` gives the value and the input offsets it is at. See [State and checkpoints](/docs/projections/state).
+`Commit.transaction` needs a SQL storage Layer with `CheckpointStore.layer` and `Transaction.layer`. A memory host has no `Transaction`. See [Layers](/docs/projections/checkpoints#layers). The source is `packages/projection/src/examples/minimal.ts`, and a test in `packages/projection/test/run.test.ts` runs it on SQLite.
 
 ## Fact streams and state streams
 
-A fact stream records what happened. Each message is a domain event, appended once. Declare it with `Streamsy.json`.
-
-A state stream carries the current value of keyed rows as Durable State change events. Declare it with `Streamsy.state`. A browser reads it with `@durable-streams/state`.
-
-```json
-{
-  "type": "order",
-  "key": "o-17",
-  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
-  "headers": { "operation": "upsert" }
-}
-```
-
-A projection can rebuild a state stream from the facts.
-
-## Hosts
-
-Built-in Commits need `CheckpointStore`. `Commit.transaction` also needs `Transaction`, supplied only by SQL hosts. Provide the services over the storage Layer:
-
-| Storage                  | Projection Layers                               |
-| ------------------------ | ----------------------------------------------- |
-| `MemoryStorage.layer`    | `CheckpointStore.layer`                         |
-| SQLite storage (Bun, DO) | `CheckpointStore.layer` and `Transaction.layer` |
-
-```ts
-// @include: projections-tripled
-// @filename: index.ts
-// ---cut---
-import { Layer } from "effect";
-import { MemoryStorage, Streamsy } from "@streamsy/core";
-import { CheckpointStore } from "@streamsy/projection";
-import { Numbers } from "./minimal.ts";
-import { Tripled } from "./tripled.ts";
-
-export const host = CheckpointStore.layer.pipe(
-  Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Numbers, Tripled))),
-);
-// ---cut-after---
-// The memory host runs `tripled`, and a SQL host runs `minimal`, with nothing left to provide.
-import { Effect } from "effect";
-import { Projection, Transaction } from "@streamsy/projection";
-import { BunStorage } from "@streamsy/storage/bun";
-import { Doubled, minimal } from "./minimal.ts";
-import { tripled } from "./tripled.ts";
-const memory: Effect.Effect<unknown, unknown, never> = Projection.run(tripled.at({})).pipe(
-  Effect.provide(host),
-);
-const sqlHost = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(
-    BunStorage.layer(Streamsy.group(Numbers, Doubled), { client: { filename: ":memory:" } }),
-  ),
-);
-const sql: Effect.Effect<unknown, unknown, never> = minimal.pipe(Effect.provide(sqlHost));
-```
-
-The memory host runs `tripled` with `Commit.producer`. The `minimal` transaction example needs a SQL host. See [Layers](/docs/projections/state#checkpoints-and-generations).
-
-## Pages
-
-| Page                                             | Contents                                              |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| [Define and run](/docs/projections/define)       | Declarations, handlers, guarantees, runners, triggers |
-| [State and checkpoints](/docs/projections/state) | State, read, decide, append, generations, faults      |
-| [Actions](/docs/projections/actions)             | External effects through a durable outbox             |
+A fact stream records domain events, declared with `Streamsy.json`. A state stream holds keyed rows as [Durable State](/docs/streams/durable-state) change events, declared with `Streamsy.state`. To write rows to a state stream from a projection, see [State outputs](/docs/projections/outputs#state-outputs).

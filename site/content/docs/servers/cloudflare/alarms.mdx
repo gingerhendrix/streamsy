@@ -1,0 +1,142 @@
+---
+title: Schedule work with alarms
+description: Run bounded work on a Durable Object when no request is in flight, with wakeups that share the object's one alarm, retry on failure, and recover after eviction.
+---
+
+A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn, with no request in flight.
+
+```ts
+import { Effect, Option } from "effect";
+import type { StorageFault } from "@streamsy/core";
+declare const nextDeadline: Effect.Effect<Option.Option<number>, StorageFault>;
+declare const runDueWork: Effect.Effect<void>;
+// ---cut---
+import { Wakeup } from "@streamsy/serve/cloudflare";
+
+const catchUp = Wakeup.make({
+  name: "app/catch-up",
+  next: nextDeadline,
+  run: runDueWork,
+});
+// Add wakeups: [catchUp] to the object's configuration.
+```
+
+`next` returns the time in milliseconds when work is due, or `Option.none()` when there is no work. `run` does a bounded amount of that work. Pass the wakeups as `wakeups` to `StreamsyObject.make`, or to `objectHandlers` on Alchemy.
+
+The host always adds the stream expiry wakeup, `streamsy/expiry`, and runs it first. Names must be unique within the object, including `streamsy/expiry`. A duplicate name fails the acquisition, and the object answers 503.
+
+## Deadlines
+
+The earliest deadline of all wakeups owns the alarm. The host reconciles the alarm at these points:
+
+| When                                | Reconcile                           |
+| ----------------------------------- | ----------------------------------- |
+| The object acquires its storage     | Once, before it serves              |
+| A PUT, POST, or DELETE request ends | Always, also when the request fails |
+| A request called `Wakeups.touch`    | When the request ends               |
+| An alarm turn ends                  | Always                              |
+| Code calls `Wakeups.reconcile`      | At once                             |
+
+Reconciling reads every `next`, arms the alarm at the earliest deadline, and clears it when no wakeup has work. A due deadline arms the alarm at `now + 1`, so the work runs in an alarm turn, not in the request.
+
+Writes arm the alarm on their own. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before its handler returns. A streamed response body that queues work after the handler returned, and work outside a request, call `Wakeups.use((wakeups) => wakeups.reconcile)`.
+
+## Alarm turns
+
+An alarm turn runs in this order:
+
+1. It arms a recovery alarm 30 s ahead, so a turn that the platform cuts short runs again.
+2. It visits each wakeup in turn. A wakeup whose `next` is due runs once.
+3. It reconciles the alarm from the new deadlines.
+
+Delivery is at least once. A turn that stops after `run` changed state and before the turn ended runs the same work again. Make `run` idempotent.
+
+Each wakeup has one permit, so its `run` executes once at a time. A request that calls the same `run` waits for the alarm turn, and the other way round. The permit is not reentrant, so `run` must not call its own wakeup's `run`.
+
+## Failures
+
+A failure in one wakeup does not stop the others. The host logs it and backs off that wakeup only.
+
+| Result of a run                                            | Next step                                  |
+| ---------------------------------------------------------- | ------------------------------------------ |
+| Fails                                                      | Back off, then retry                       |
+| Succeeds, and work that was due before it is still due     | Back off, as for a failure                 |
+| Returns `{ more: true }`, because it stopped at its bound  | Run again at once, with no failure counted |
+| Succeeds, and the next deadline is in the future or absent | Reset the failure count                    |
+
+A `next` that fails also backs off, and the other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change it. A finite schedule stops the retries of that wakeup when it is exhausted.
+
+`Wakeups.status` returns each wakeup's `next`, `failures`, `retryAt` floor, and `deferred` count. The backoff lives in memory and resets when the object is evicted.
+
+## Recovery
+
+An alarm survives eviction, so work that a request scheduled still runs. One gap remains. When the object stops after a commit and before the host arms the alarm, no alarm is set for that work.
+
+The reconcile at acquisition closes the gap. It reads the deadlines from committed state and arms the alarm. That recovery needs the object to be acquired again, by a request or by an alarm that is still set. A wakeup whose deadline lives only in memory loses it at eviction. Derive `next` from storage when the work must survive.
+
+## Projections
+
+`ProjectionWakeup.attach(projection)` from `@streamsy/projection` returns the wakeup of an attached projection. It runs the same runner as `Projection.attach` on a process host. The object's own commits choose the bindings, and each alarm turn runs `Projection.run(binding, { limit })` for each binding with work:
+
+```ts include cloudflare-wake
+// @filename: wake-streams.ts
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { Schema } from "effect";
+export class Files extends Streamsy.json<Files>()(
+  "Docs/Files",
+  "users/:user/folders/:folderId/files",
+  {
+    params: { user: Schema.String, folderId: Schema.String },
+    schema: Schema.String,
+  },
+) {}
+export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+export const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: Schema.String, folderId: Schema.String },
+  input: Files,
+  output: UserWake,
+});
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, ProjectionWakeup } from "@streamsy/projection";
+import { StreamsyObject } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { Files, UserWake, filesWake } from "./wake-streams.ts";
+
+export class FilesObject extends StreamsyObject.make({
+  app: Layer.empty,
+  layer: (state) =>
+    CheckpointStore.layer.pipe(
+      Layer.provideMerge(
+        DurableObjectStorage.layer(Streamsy.group(Files, UserWake), {
+          client: { storage: state.storage },
+        }),
+      ),
+    ),
+  wakeups: [ProjectionWakeup.attach(filesWake)],
+}) {}
+```
+
+The host acquires the wakeup in the object's layer scope, before any request writes. Put the checkpoint Layer and the input streams in `layer`, so the projection reads and commits on the object's own storage.
+
+The wakeup is durable by default. Each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and the next turn runs those bindings. A binding that catches up deletes its mark. A binding that fails waits alone, from 1 s doubling to 1 hour, while the other bindings run, and `Wakeups.status` counts it as `deferred`.
+
+Pass `durable: false` to keep only an in-memory set of bindings. Then a binding whose run did not happen before the object stopped stays late until its source gets its next write.
+
+Only commits through this object's storage choose bindings. A projection with inputs on another object does not see their writes. To write a wake stream on another object, link that stream. See [Connect Durable Objects](/docs/servers/cloudflare/objects). For the projection itself, see [Attach](/docs/projections/run#attach) and [Commits](/docs/projections/commits).
+
+## Action outbox
+
+`OutboxWakeup.make(sink, handler, options)` from `@streamsy/serve/action/runtime` drains an action outbox in alarm turns. Its `next` is the due time of the next outbox entry. Its `run` is one `drain` pass in the same acquired context as requests. The object's `layer` must provide the `OutboxStore`.
+
+A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind an entry that waits on a retry. With `partitionId`, the wakeup drains that lane only, the order applies within it, and the wakeup's name is `streamsy/outbox/<sink>/<partition>`. Without it, the name is `streamsy/outbox/<sink>` and the order applies to the whole sink. A delivery handler must not drain its own sink. See [Schedule delivery](/docs/projections/actions#schedule-delivery) and [`OutboxWakeup`](/docs/reference/serve/action-runtime#outboxwakeup).
+
+## Wake streams and alarms
+
+A wake stream and the alarm are different mechanisms. A [wake stream](/docs/streams/wake) is a Durable State stream that tells readers which source streams changed. The alarm is the host's scheduler for this object. Under `ProjectionWakeup.attach`, a `Projection.wake` binding writes its wake rows in an alarm turn. A reader of the wake stream reads it as any State stream, on any host.

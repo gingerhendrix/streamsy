@@ -1,0 +1,105 @@
+---
+title: Tables and effects
+description: Write each unit of input to your own SQL tables in the checkpoint transaction, or run external effects at least once.
+---
+
+`Projection.process` runs an Effect once for each unit. Use it to write rows to your own SQL tables, or to call another system. For the full signature, see [`Projection.process`](/docs/reference/projection/constructors#projectionprocess).
+
+## Process
+
+`process(batch, unit, prepared)` gets the whole unit and returns an `Effect` of `void`. `batch` has one `Slice` for each input, with its `items` in stream order. `prepared` is the result of `prepare`, or `undefined` when the declaration has none. See [Prepare](#prepare).
+
+To handle one entry at a time, wrap an entry handler in `Projection.each`. It runs the handler for every entry in order, one after another: all entries of the first declared input, then those of the next. It discards the results.
+
+`process` has no default Commit. Choose one by what the handler writes:
+
+| Commit               | Use it for                                     | Guarantee                                     |
+| -------------------- | ---------------------------------------------- | --------------------------------------------- |
+| `Commit.transaction` | SQL rows on the same storage as the checkpoint | The rows and the checkpoint commit together   |
+| `Commit.atLeastOnce` | Calls to other systems                         | The handler can run more than once for a unit |
+
+`Commit.checkpoint` and `Commit.producer` do not fit `process`, and the compiler rejects them. See [Commits](/docs/projections/commits).
+
+## SQL tables
+
+With `Commit.transaction`, the handler runs inside the SQL transaction that saves the checkpoint. The Commit provides the transaction's `SqlClient`, so the rows and the new offsets commit together or roll back together.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { SqlClient } from "effect/sql";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders } from "./streams.ts";
+
+const rows = Projection.process({
+  id: "order-rows",
+  params: {},
+  inputs: { orders: Orders },
+  commit: Commit.transaction,
+  process: Projection.each(({ item }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO order_rows (order_id, amount) VALUES (${item.orderId}, ${item.amount})`;
+    }),
+  ),
+});
+```
+
+The application creates and migrates its tables. Streamsy does not create them.
+
+To write rows and also keep a value, use a `fold` step under `Commit.transaction`. The step can return an Effect that uses the `SqlClient`:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+import { Effect, Schema } from "effect";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders } from "./streams.ts";
+// ---cut---
+import { SqlClient } from "effect/sql";
+
+const orderTotals = Projection.fold({
+  id: "order-totals",
+  commit: Commit.transaction,
+  params: {},
+  inputs: { input: Orders },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO order_totals (order_id, total)
+        VALUES (${item.orderId}, ${item.amount})
+        ON CONFLICT (order_id) DO UPDATE SET total = excluded.total`;
+      return sum + item.amount;
+    }),
+});
+```
+
+`Commit.transaction` needs a SQL host with the `CheckpointStore` and `Transaction` services. A memory host has no `Transaction`. See [Layers](/docs/projections/checkpoints#layers).
+
+Before the handler runs, the Commit loads the record again inside the transaction. When another writer changed the record after the unit was read, the unit fails with a `ProjectionFault` with phase `checkpoint` and reason `token-conflict`, and nothing commits. A failed handler rolls back its rows.
+
+An append that the handler makes to a stream on the same storage commits with the rows. An append to a stream on other storage fails with phase `process` and reason `unsupported-composition`. To write declared output streams in the same transaction, see [Transaction outputs](/docs/projections/outputs#transaction-outputs).
+
+## Prepare
+
+`prepare(batch, unit)` runs before the transaction opens. Use it for work that must not hold the transaction open, such as a slow read from another system. Its result is the third argument of `process(batch, unit, prepared)`.
+
+- `prepare` needs `Commit.transaction`, or `Commit.transaction` wrapped with `Commit.withCompensation`. With any other Commit, `Projection.process` throws a `RangeError` with the message `prepare requires Commit.transaction`.
+- `prepare` runs at least once for each unit. A retry runs it again. It must not make effects that a second run would repeat.
+- When `prepare` fails, the run fails with its error and the transaction does not open.
+- The runner's caller provides the services that `prepare` needs.
+
+`prepare` and `process` see the same `unit.key` in one attempt. A transaction retry reads the inputs again, and the key changes when new input extends a range. Do not use `unit.key` as an idempotency key that must hold across retries of `Commit.transaction`.
+
+## External effects
+
+`Commit.atLeastOnce` saves the input ranges of the unit in the checkpoint record, then runs the handler, then saves the new offsets. When a pass stops between the two saves, the next pass reads the same ranges again and runs the handler again with the same `unit.key`. Pass `unit.key` to the other system as an idempotency key, so that it can drop the repeated call.
+
+`Commit.atLeastOnce` needs only the `CheckpointStore` service, so it works on a memory host.
+
+When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. For a durable outbox with a bounded retry policy, see [Actions](/docs/projections/actions).

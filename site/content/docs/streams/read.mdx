@@ -3,7 +3,7 @@ title: Read
 description: Read stored batches after an offset, follow a stream for new messages, and fold a stream into a value.
 ---
 
-A read starts after an offset and gives batches of decoded items.
+A stream service reads the streams of its class. Each read starts after an offset and gives batches of items that the codec of the stream class decoded. For the full signatures, see [`Streamsy.Api`](/docs/reference/core/streamsy#streamsyapi) and [`Streams`](/docs/reference/core/streams).
 
 ```ts
 interface Batch<A> {
@@ -14,18 +14,35 @@ interface Batch<A> {
 }
 ```
 
-Reads do not include the message at the given offset. Omit the offset to read from the start. Keep `nextOffset` to continue later.
+| Field        | Meaning                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------- |
+| `items`      | The decoded items of the stored messages in the batch                                   |
+| `nextOffset` | The offset of the last message in the batch, or the tail when the batch has no messages |
+| `upToDate`   | `true` when `nextOffset` is the tail of the stream                                      |
+| `closed`     | `true` when the stream is closed and the batch reached the tail                         |
 
-| Method                                  | Ends                              |
-| --------------------------------------- | --------------------------------- |
-| `read(params, { offset?, limit? })`     | At the current tail               |
-| `collect(params, { offset? })`          | At the current tail               |
-| `fold(params, initial, f, { offset? })` | At the current tail               |
-| `follow(params, { offset? })`           | When the stream closes            |
-| `session(params, { offset, cursor? })`  | After one long-poll wait          |
-| `head(params)`                          | Returns the tail with no messages |
+Keep `nextOffset` to continue later. A read never includes the message at the offset that it starts from.
 
-`head` does not restart a TTL.
+| Method                                  | Ends                                       |
+| --------------------------------------- | ------------------------------------------ |
+| `read(params, { offset? })`             | At the current tail                        |
+| `collect(params, { offset? })`          | At the current tail                        |
+| `fold(params, initial, f, { offset? })` | At the current tail                        |
+| `follow(params, { offset?, retry? })`   | When the stream closes                     |
+| `session(params, { offset, cursor? })`  | After one long-poll wait                   |
+| `head(params)`                          | At once. It returns the tail, not messages |
+
+## Start offset
+
+The `offset` option sets where a read starts.
+
+| `offset`         | Reads from                    |
+| ---------------- | ----------------------------- |
+| Not set, or `-1` | The start of the stream       |
+| `now`            | The current tail              |
+| An offset        | The message after this offset |
+
+Any other value fails the read with `InvalidReadRequest`. See [Offsets](/docs/streams/declare#offsets) for what an offset is.
 
 ## Read
 
@@ -53,9 +70,13 @@ const provided: Effect.Effect<unknown, unknown, never> = Effect.all([sizes, ever
 );
 ```
 
-`read` is an Effect `Stream` of batches. It does nothing until a sink runs it. `limit` sets the maximum number of stored messages in one batch.
+`read` is an Effect `Stream` of batches. It does nothing until a sink runs it. It reads one page at a time and ends after the first batch whose `upToDate` is `true`. A stream with no messages gives one empty batch.
 
-`collect` reads to the current tail and returns `{ items, offset }`. `offset` is the tail it read up to. Pass it as `expectedOffset` for a [conditional write](/docs/streams/write#conditional-writes), or as `offset` to read on from there.
+The storage Layer sets the size of a page with its `readLimit` option. The default is 1000 messages. Over the remote Layer, the server sets the page size. See [Choose storage](/docs/storage).
+
+`collect` reads to the current tail and returns `{ items, offset }`. `offset` is the tail that it read up to. Pass it as `expectedOffset` for a [conditional write](/docs/streams/write#conditional-writes), or as `offset` to read on from there.
+
+Every read restarts the TTL of a stream that has one. See [Expiry](/docs/streams/create#expiry).
 
 ## Follow
 
@@ -80,7 +101,18 @@ const consumer = Effect.gen(function* () {
 });
 ```
 
-`follow` catches up, then waits. It does not give empty batches. A closed batch ends the stream. Interrupt the fiber to release a parked wait. Use `Stream.take` to stop after a number of batches.
+`follow` reads pages to the tail, as `read` does. It then makes one long-poll wait at a time, and sends the `cursor` of each wait in the next one. A wait returns every message after the offset, with no page limit.
+
+`follow` gives no empty batch, except the last batch of a closed stream. The stream of batches ends after a batch whose `closed` is `true`. To stop earlier, interrupt the fiber, which also ends a parked wait, or use `Stream.take` to stop after a number of batches.
+
+When a read fails with a retryable `StorageFault` or `TransportFault`, `follow` logs a warning and retries the read from the same offset, so it gives each item once. A `TransportFault` is retryable when the request failed or the server answered 429 or 5xx. A `StorageFault` is retryable when its `retryable` field is `true`. Any other failure ends the stream.
+
+| Option   | Effect                                                                                                                        |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `offset` | Where the read starts. See [Start offset](#start-offset)                                                                      |
+| `retry`  | The `Schedule` for retries. The default is exponential from 200 ms, jittered, with each wait capped at 30 s, and has no limit |
+
+`read`, `collect`, and `fold` do not retry. See [`Streams.FollowOptions`](/docs/reference/core/streams#streamsfollowoptions).
 
 ## Session
 
@@ -90,12 +122,20 @@ export * from "./notes-streams.ts";
 // @filename: index.ts
 // ---cut---
 import { Effect } from "effect";
+import type { ReadNextResult } from "@streamsy/core";
 import { Notes } from "./streams.ts";
 
-const once = (offset: string) => Effect.flatMap(Notes, (notes) => notes.session({}, { offset }));
+const first = Effect.flatMap(Notes, (notes) => notes.session({}, { offset: "-1" }));
+
+const next = (previous: ReadNextResult) =>
+  Effect.flatMap(Notes, (notes) =>
+    notes.session({}, { offset: previous.nextOffset, cursor: previous.cursor }),
+  );
 ```
 
-`session` is one long-poll wait, for an application with its own poll loop. The result has raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
+`session` makes one long-poll wait, for an application with its own poll loop. `offset` is required. When messages follow `offset`, or the stream is closed, `session` returns at once. Otherwise it waits for an append, a close, or the long-poll timeout. The storage Layer sets the timeout with `longPollTimeoutMs`. The default is 30 s, and 25 s on Durable Object storage.
+
+`session` returns a [`ReadNextResult`](/docs/reference/core/options-and-results#readnextresult) with `messages`, `nextOffset`, `upToDate`, `closed`, `cursor`, and `timedOut`. The messages are raw bytes. `session` does not decode them and does not retry. `timedOut` is `true` when the wait ended with no new messages. Pass `nextOffset` and `cursor` to the next call.
 
 ## Fold
 
@@ -116,7 +156,7 @@ const count = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-`fold` reads to the current tail and returns `{ state, offset }`, like `collect`. The initial value is a function, so each fold starts from a new value and a mutable accumulator is safe. To fold only new items, pass the earlier `offset` and start from the earlier `state`.
+`fold` reads to the current tail and returns `{ state, offset }`, as `collect` returns `{ items, offset }`. The initial value is a function, so each fold starts from a new value and a mutable accumulator is safe. To fold only new items, pass the earlier `offset` and start from the earlier `state`.
 
 To keep folding while the stream grows, fold over `follow`:
 
@@ -141,24 +181,88 @@ const live = Effect.flatMap(Notes, (notes) =>
 
 A fold over `follow` completes when the stream closes.
 
+## Head
+
+`head(params)` returns the tail and the configuration of the stream, and no messages. The result has `contentType`, `nextOffset`, `closed`, and the `ttlSeconds` or `expiresAt` that the stream was created with. `head` does not restart a TTL. See [`HeadResult`](/docs/reference/core/options-and-results#headresult).
+
 ## Errors
 
-`read`, `fold`, and `collect` use `ReadFailure`. `follow` uses `FollowFailure`, which also includes `NotSupported`. `head` uses `HeadFailure`. Import these types from `@streamsy/core`.
+| Method                    | Error type                            |
+| ------------------------- | ------------------------------------- |
+| `read`, `collect`, `fold` | `ReadFailure`                         |
+| `follow`                  | `FollowFailure`                       |
+| `session`                 | `FollowFailure` without `DecodeFault` |
+| `head`                    | `HeadFailure`                         |
 
-`follow` retries only a `StreamsFault` with `retryable: true`, from the same offset. A failed transport request, HTTP 429, or HTTP 5xx is retryable. Other failures end the stream. The default retry is exponential from 200 ms, jittered and capped at 30 s; `retry` sets another schedule.
+Import these types from `@streamsy/core`. Each failure has a `_tag`.
 
-| Error            | When                               |
-| ---------------- | ---------------------------------- |
-| `StreamNotFound` | The stream does not exist          |
-| `StreamGone`     | The stream was removed             |
-| `DecodeFault`    | A message does not match the codec |
+| `_tag`               | When                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `StreamNotFound`     | No stream has the id, or the stream expired                                                                                    |
+| `StreamGone`         | The stream was removed, and forks still use it                                                                                 |
+| `InvalidReadRequest` | `offset` is not `-1`, `now`, or a valid offset. Not for `head`                                                                 |
+| `NotSupported`       | `follow` and `session` only, over the remote Layer, when the server refuses the long poll with a `stream-not-supported` header |
+| `DecodeFault`        | A message does not match the codec. Not for `session` or `head`                                                                |
+| `StorageFault`       | A local store failed                                                                                                           |
+| `TransportFault`     | The remote Layer could not send a request or read the response                                                                 |
 
-A `DecodeFault` stops the read. The application selects the offset to continue from.
+A `DecodeFault` fails the whole batch and stops the read. The read does not skip the message, so the application selects the offset to continue from. Its `message` names the stream and the index of the message in the batch. See [`DecodeFault`](/docs/reference/core/faults#decodefault).
 
-A Durable State read gives `insert` and `update` operations from other producers as `upsert`.
-
-A Durable State read also gives the control messages that the stream holds. A control has `headers.control` set to `snapshot-start`, `snapshot-end` or `reset`, and it has no `type` or `key`. A reader that folds rows should clear them at a `reset` and apply the items after it. `StreamAddress.isControl` and `StreamAddress.isChange` narrow an item.
+To read and fold the rows of a Durable State stream, see [Read and fold rows](/docs/streams/durable-state#read-and-fold-rows).
 
 ## Over HTTP
 
-`GET` on the stream path with `offset` reads one batch. Add `live=long-poll` or `live=sse` to follow. All access rules allow reads. See [Protocol routes](/docs/http/routes).
+Every `access` rule allows `GET` and `HEAD`, so `Http.routes` serves reads for every stream in the group. See [Expose the stream protocol](/docs/servers/protocol).
+
+| Request                                  | Read                                              |
+| ---------------------------------------- | ------------------------------------------------- |
+| `GET`, with or without `offset`          | One page, from the start when `offset` is not set |
+| `GET` with `offset` and `live=long-poll` | One long-poll wait                                |
+| `GET` with `offset` and `live=sse`       | A Server-Sent Events response                     |
+| `HEAD`                                   | The tail and the configuration                    |
+
+`offset` takes the values in [Start offset](#start-offset). A live mode needs `offset`.
+
+A read answers with these headers:
+
+| Header               | Value                                                                            |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `stream-next-offset` | The `nextOffset` of the batch. Send it as `offset` on the next request           |
+| `stream-up-to-date`  | `true` when the batch reached the tail. Always `true` on a long poll             |
+| `stream-closed`      | `true` when the stream is closed and the batch reached the tail                  |
+| `stream-cursor`      | On a long poll of an open stream only. Send it as `cursor` on the next long poll |
+
+A JSON stream answers with one JSON array of its messages. Another stream answers with the bytes of its messages, concatenated. The remote Layer splits a JSON array back into messages. See [Byte streams](/docs/streams/declare#byte-streams).
+
+### Catch-up reads
+
+A `GET` without `live` answers 200 with one page, also when the page is empty. The response has an `etag`, and a request whose `If-None-Match` equals it answers 304. `cache-control` is `private, max-age=60, stale-while-revalidate=300`, or `public` in place of `private` when `cacheVisibility` is `"public"`. With `offset=now`, the response has an empty body (`[]` for JSON), `stream-up-to-date: true`, and `cache-control: no-store`.
+
+### Long poll
+
+With `live=long-poll`, the server answers at once when messages follow `offset` or the stream is closed. Otherwise it waits for an append, a close, or `longPollTimeoutMs`. A wait that ends with messages answers 200 with every message after `offset`. A wait that ends with none answers 204 with `cache-control: no-store`.
+
+The cursor is a number. The server sends a new one with each long poll, and it changes at least every 20 s. A client sends the last cursor back, so that a CDN can collapse the long polls of many readers into one request to the origin. A `cursor` that is not a non-negative whole number answers 400. See [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md).
+
+`follow` and `session` over the remote Layer use long polls. The remote Layer does not use SSE.
+
+### SSE
+
+With `live=sse`, the server answers with `content-type: text/event-stream`. It sends a `data` event for each batch with messages, then a `control` event with `streamNextOffset`. While the stream is open, the `control` event also has `streamCursor`, and `upToDate: true` once the reader reaches the tail. At the close, it has `streamClosed: true`, and the response ends.
+
+A JSON stream sends each `data` event as a JSON array, and a `text/*` stream sends its text. Other streams send base64 and add the `stream-sse-data-encoding: base64` response header.
+
+A response ends after `sseDeadlineMs`, 60 s by default, scaled by a random factor from 0.9 to 1.1. It also ends when the stream is removed. It ends only between batches. To continue, the client reconnects with the last `streamNextOffset`.
+
+### Status codes
+
+| Status | When                                                            |
+| ------ | --------------------------------------------------------------- |
+| 200    | A read, a long poll with messages, an SSE response, or a `HEAD` |
+| 204    | A long poll that ended with no messages                         |
+| 304    | A catch-up read whose `If-None-Match` matches the `etag`        |
+| 400    | `offset` or `cursor` is invalid, or a live mode has no `offset` |
+| 404    | No stream in the group matches the id, or no stream has the id  |
+| 410    | The stream was removed, and forks still use it                  |
+
+A `HEAD` answers with `content-type`, `stream-next-offset`, and `cache-control: no-store`. It adds `stream-closed`, `stream-ttl`, and `stream-expires-at` when they apply.

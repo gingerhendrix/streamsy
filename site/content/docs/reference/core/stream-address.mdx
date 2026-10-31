@@ -383,7 +383,7 @@ declare function reset(options?: { readonly offset?: string }): StreamAddress.St
 same<typeof reset, typeof StreamAddress.reset>(true);
 ```
 
-`reset` returns a `reset` control message. A reader that receives it clears its materialized state, then applies the items that follow. See [Control messages](/docs/streams/write#control-messages).
+`reset` returns a `reset` control message. A reader that receives it clears its materialized state, then applies the items that follow. See [Control messages](/docs/streams/durable-state#control-messages).
 
 ### `StreamAddress.snapshotStart`
 

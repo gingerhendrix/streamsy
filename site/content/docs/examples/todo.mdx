@@ -1,0 +1,302 @@
+---
+title: Todo
+description: A todo API in one file. Each list is a stream of events, and the API serves the current list built from those events.
+---
+
+This example is a JSON API for todo lists. All of its code is in one file, `server.ts`. It is the smallest event-sourced app in the repository, so read it first.
+
+The app does not store the todos directly. It stores what happened to them. Each list is a Streamsy stream: an append-only log of events such as "todo added" or "status changed". To answer a read, the app replays a list's events into the current list. That replay is a projection.
+
+The source is in [`examples/todo`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/todo). Titled excerpts below come from that example. `// ...` marks omitted lines.
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/todo start
+```
+
+The API listens on http://localhost:3000 and keeps its data in memory. Set `PORT` to change the port. Set `TODO_DB` to a SQLite file path to keep the data across restarts.
+
+Add a todo, then read the list:
+
+```bash
+curl -s -X POST localhost:3000/lists/groceries/todos \
+  -H 'content-type: application/json' -d '{"title":"Buy milk"}'
+# {"todo":{"id":"58fb65cc","title":"Buy milk","status":"todo",...},"offset":"0000000000000001_0000000000000000"}
+
+curl -s localhost:3000/lists/groceries
+# {"listId":"groceries","offset":"0000000000000001_0000000000000000","todos":[...]}
+```
+
+The example's README has a curl command for every route.
+
+## Routes
+
+| Method  | Path                                  | Body                                        | Answer                                                       |
+| ------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| `POST`  | `/lists/:listId/todos`                | `{ "title": string }`                       | 201 `{ todo, offset }`                                       |
+| `PATCH` | `/lists/:listId/todos/:todoId`        | `{ "title": string }`                       | 200 `{ todo, offset, appended }`, 404 for an unknown todo    |
+| `PUT`   | `/lists/:listId/todos/:todoId/status` | `{ "status": "todo" \| "doing" \| "done" }` | 200 `{ todo, offset, appended }`, 404 for an unknown todo    |
+| `GET`   | `/lists/:listId`                      |                                             | 200 `{ listId, offset, todos }`, 404 for an unknown list     |
+| `GET`   | `/lists/:listId/todos/:todoId`        |                                             | 200 `{ todo }`, 404 for an unknown todo                      |
+| `GET`   | `/lists/:listId/checkpoint`           |                                             | 200 `{ offset, todos }` from the saved checkpoint only       |
+| `GET`   | `/streams/todo-lists/:listId`         |                                             | The raw event stream, read with the Durable Streams protocol |
+
+An offset is a position in a list's stream. `offset` is the position after the write, or the position that a read includes. `appended` is `false` when a command changed nothing, for example an edit to the same title. A bad body or path answers 400.
+
+## How it works
+
+1. A write route runs a command. The command builds the current list from the stream, checks the request against it, and appends new events.
+2. After each append, the server saves the list and its offset as a checkpoint.
+3. A read route loads the checkpoint and applies any events after it. The answer includes every earlier write.
+
+The sections below follow this path through `server.ts`.
+
+## 1. Events and the stream
+
+`TodoEvent` defines the three events. Each event carries the time that the server stamped on it, so a replay always gives the same list.
+
+`TodoEvents` declares the stream class. Each `listId` has its own stream at `todo-lists/:listId`.
+
+```ts title="server.ts"
+export const TodoStatus = Schema.Literals(["todo", "doing", "done"]);
+
+export type TodoStatus = typeof TodoStatus.Type;
+
+/** The server stamps `at`, so a replay of the stream gives the same list. */
+export const TodoEvent = Schema.TaggedUnion({
+  TodoAdded: { todoId: Schema.String, title: Title, at: Schema.String },
+  TodoEdited: { todoId: Schema.String, title: Title, at: Schema.String },
+  TodoStatusChanged: { todoId: Schema.String, status: TodoStatus, at: Schema.String },
+});
+
+export type TodoEvent = typeof TodoEvent.Type;
+
+const { TodoAdded, TodoEdited, TodoStatusChanged } = TodoEvent.cases;
+
+/** One event stream for each list. The first add creates it. */
+export class TodoEvents extends Streamsy.json<TodoEvents>()(
+  "Todo/TodoEvents",
+  "todo-lists/:listId",
+  {
+    params: { listId: Id },
+    schema: TodoEvent,
+  },
+) {}
+```
+
+## 2. The projection
+
+`todoList` is a fold projection. It starts from an empty list and applies each event in order. `todoList.at({ listId })` picks the list for one `listId`.
+
+```ts title="server.ts"
+/** One materialized list for each `listId`. `todoList.at({ listId })` binds one list. */
+export const todoList = Projection.fold({
+  id: "todo-list",
+  params: { listId: Id },
+  inputs: { events: TodoEvents },
+  state: { schema: TodoList, initial: ({ listId }) => ({ listId, todos: [] }) },
+  fold: (list, { item }) => applyEvent(list, item),
+});
+```
+
+`applyEvent` applies one event to the list. It has no side effects, because Streamsy can apply the same events again after a retry.
+
+```ts title="server.ts"
+function applyEvent(list: TodoList, event: TodoEvent): TodoList {
+  const update = (todoId: string, change: (todo: Todo) => Todo): TodoList => ({
+    ...list,
+    todos: Array.map(list.todos, (todo) => (todo.id === todoId ? change(todo) : todo)),
+  });
+
+  return Match.valueTags(event, {
+    TodoAdded: (added) => ({ ...list, todos: [...list.todos, addedTodo(added)] }),
+    TodoEdited: ({ todoId, title, at }) =>
+      update(todoId, (todo) => ({ ...todo, title, updatedAt: at })),
+    TodoStatusChanged: ({ todoId, status, at }) =>
+      update(todoId, (todo) => ({ ...todo, status, updatedAt: at })),
+  });
+}
+```
+
+See [Fold a value](/docs/projections/state#fold-a-value) and [Parameters and binding](/docs/projections/define#parameters-and-binding).
+
+## 3. Commands decide, then append
+
+Every command goes through one `decide` helper. It calls `Projection.decide`, which does three things:
+
+1. It builds the current list.
+2. It passes the list to the command's decision. The decision returns the todo to answer with and the events to append.
+3. It appends the events, but only if no other write reached the stream first. If another write did, it rebuilds the list and decides again. After four lost races in a row, the route answers 409.
+
+```ts title="server.ts"
+const decide = <E>(
+  listId: string,
+  decision: (list: TodoList) => Effect.Effect<{ todo: Todo; events: ReadonlyArray<TodoEvent> }, E>,
+) =>
+  Projection.decide(todoList.at({ listId }), {
+    input: "events",
+    decide: ({ state }) =>
+      Effect.map(decision(state), ({ todo, events }) => ({ value: todo, items: events })),
+  });
+```
+
+A decision that fails, or that returns no events, appends nothing.
+
+The add command creates the list's stream if it does not exist yet. There is no separate route to create a list.
+
+```ts title="server.ts"
+const addTodo = Effect.fn("Todo.add")(function* (listId: string, title: string) {
+  const events = yield* TodoEvents;
+  const crypto = yield* Crypto.Crypto;
+  const todoId = (yield* crypto.randomUUIDv4()).slice(0, 8);
+  const at = yield* now;
+
+  // The first add creates the list's stream. A second create of the same stream succeeds.
+  yield* events.create({ listId });
+
+  const added = TodoAdded.make({ todoId, title, at });
+
+  // An add has no rule to check, so it always appends.
+  return yield* decide(listId, () => Effect.succeed({ todo: addedTodo(added), events: [added] }));
+});
+```
+
+The edit and status commands first check that the list exists. Then the decision looks up the todo. An unknown todo answers 404 and appends nothing. An edit to the same title also appends nothing.
+
+```ts title="server.ts"
+const editTodo = Effect.fn("Todo.edit")(function* (listId: string, todoId: string, title: string) {
+  yield* requireList(listId);
+  const at = yield* now;
+
+  return yield* decide(listId, (list) =>
+    Effect.map(findTodo(list, todoId), (todo) =>
+      // The same title is no change, so nothing is appended.
+      todo.title === title
+        ? { todo, events: [] }
+        : {
+            todo: { ...todo, title, updatedAt: at },
+            events: [TodoEdited.make({ todoId, title, at })],
+          },
+    ),
+  );
+});
+```
+
+The status command has the same shape as the edit.
+
+See [Read, decide, append](/docs/projections/state#read-decide-append).
+
+## 4. Reads serve the projection
+
+`GET /lists/:listId` checks that the list exists, then answers with `Projection.current`. `Projection.current` loads the checkpoint and applies the events after it, so the answer includes every earlier write. `Serve.value` encodes the answer as JSON.
+
+```ts title="server.ts"
+const getList = Effect.gen(function* () {
+  const { listId } = yield* HttpRouter.schemaPathParams(ListParams);
+  yield* requireList(listId);
+
+  return yield* Serve.value(
+    ListResponse,
+    Effect.map(Projection.current(todoList.at({ listId })), ({ state, offsets }) => ({
+      ...state,
+      offset: offsets.events,
+    })),
+  );
+}).pipe(Effect.catchTags({ SchemaError: badRequest, StreamNotFound: listNotFound }));
+```
+
+`GET /lists/:listId/checkpoint` uses `Projection.read`, which returns only the saved checkpoint. Use it to see that the checkpoint moves after each write.
+
+See [Values](/docs/servers/serve#values).
+
+## 5. Routes and errors
+
+Each handler decodes the path and body, calls one command, and maps each expected failure to a status code with `Effect.catchTags`. Any other failure answers 500.
+
+```ts title="server.ts"
+const patchTodo = Effect.gen(function* () {
+  const { listId, todoId } = yield* HttpRouter.schemaPathParams(TodoParams);
+  const { title } = yield* HttpServerRequest.schemaBodyJson(EditBody);
+  const { value, offset, appended } = yield* editTodo(listId, todoId, title);
+
+  return json({ todo: value, offset, appended });
+}).pipe(
+  Effect.catchTags({
+    SchemaError: badRequest,
+    HttpServerError: badRequest,
+    StreamNotFound: listNotFound,
+    TodoNotFound: todoNotFound,
+    OffsetMismatch: conflict,
+  }),
+);
+```
+
+`Routes` registers the commands, the reads, and a read-only mount of each list's event stream. A [Durable Streams](https://durablestreams.com/) client can read the raw events from that mount.
+
+```ts title="server.ts"
+export const Routes = Layer.mergeAll(
+  HttpRouter.add("POST", "/lists/:listId/todos", postTodo),
+  HttpRouter.add("PATCH", "/lists/:listId/todos/:todoId", patchTodo),
+  HttpRouter.add("PUT", "/lists/:listId/todos/:todoId/status", putStatus),
+  HttpRouter.add("GET", "/lists/:listId", getList),
+  HttpRouter.add("GET", "/lists/:listId/todos/:todoId", getTodo),
+  HttpRouter.add("GET", "/lists/:listId/checkpoint", getCheckpoint),
+  // The raw event stream of a list, read-only, over the Durable Streams protocol.
+  Serve.mount(TodoEvents, "/streams/todo-lists/:listId"),
+);
+```
+
+## 6. Storage and checkpoints
+
+The app has two storage layers. `MemoryHost` keeps everything in memory. `sqliteHost` keeps it in a SQLite file. Both store the checkpoints beside the streams. The server uses SQLite when `TODO_DB` is set.
+
+```ts title="server.ts"
+/** A memory store. Checkpoints live on the same owner as the streams. */
+export const MemoryHost = CheckpointStore.layer.pipe(
+  Layer.provideMerge(MemoryStorage.layer(streams)),
+);
+
+/** A Bun SQLite store in `filename`. A restart resumes each checkpoint. */
+export const sqliteHost = (filename: string) =>
+  CheckpointStore.layer.pipe(
+    Layer.provideMerge(BunStorage.layer(streams, { client: { filename } })),
+  );
+```
+
+`app(host)` connects the routes to a storage layer. It also adds `Projection.attach`, which updates a list's checkpoint after each append to that list. With `durable: true`, a list that missed its update before a restart catches up after the restart.
+
+```ts title="server.ts"
+export const app = <E>(host: Layer.Layer<Layer.Success<typeof MemoryHost>, E>) =>
+  Routes.pipe(
+    // The handlers read the stream and checkpoint services for each request.
+    HttpRouter.provideRequest(
+      Layer.effectContext(Effect.context<TodoEvents | CheckpointStore | Crypto.Crypto>()),
+    ),
+    Layer.provide(Projection.attach(todoList, { durable: true })),
+    Layer.provide([host, BunCrypto.layer]),
+  );
+```
+
+Because the checkpoint stays current, a read usually has few or no events to apply.
+
+See [Attach](/docs/projections/run#attach) and [Generations](/docs/projections/checkpoints#generations).
+
+## Test it
+
+```bash
+bun run --cwd examples/todo typecheck
+bun run --cwd examples/todo test
+```
+
+The test runs `app(MemoryHost)` in process, so it uses the same routes and storage as the server. It covers each command, the 404 and 400 answers, and the checkpoint.
+
+## Limits
+
+- There is no delete command. The API cannot list all lists.
+- A todo id is the first 8 hex characters of a random UUID. The add command does not check for a collision inside a list.
+- There is no browser UI.

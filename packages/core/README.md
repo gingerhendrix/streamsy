@@ -283,10 +283,10 @@ read notification source. Custom storage adapters must provide `committed`.
 ## Documentation
 
 - [Declare streams](https://streamsy.dev/docs/streams/declare)
-- [Layers and storage](https://streamsy.dev/docs/hosting)
-- [Protocol routes](https://streamsy.dev/docs/http/routes)
-- [Remote client](https://streamsy.dev/docs/http/remote)
-- [Write a storage adapter](https://streamsy.dev/docs/hosting/storage-adapter)
+- [Choose storage](https://streamsy.dev/docs/storage)
+- [Expose the stream protocol](https://streamsy.dev/docs/servers/protocol)
+- [Connect to a remote server](https://streamsy.dev/docs/servers/remote)
+- [Write a storage adapter](https://streamsy.dev/docs/storage/adapter)
 
 Source: https://github.com/gingerhendrix/streamsy
 

@@ -1,0 +1,194 @@
+---
+title: Run a process server
+description: Launch Streamsy routes as a long-running server on Bun, Node, or Deno, run background work in the same scope, and shut down cleanly.
+---
+
+A process server is one Effect main. `Serve.layer` serves the routes. The routes get their stream services from a storage Layer, and the listener binds the port. The runtime's `runMain` launches the whole Layer and stops it on a signal.
+
+## Bun
+
+```ts
+import { Layer, Schema } from "effect";
+import { BunRuntime } from "@effect/platform-bun";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
+import { BunStorage } from "@streamsy/storage/bun";
+
+export class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+export const game = Streamsy.group(Events);
+
+export const App = Layer.mergeAll(
+  Http.routes(game, { prefix: "/streams", access: "full" }),
+  Serve.mount(Events, "/feed/:seat"),
+);
+
+const storage = BunStorage.layer(game, { client: { filename: "./data/streams.sqlite" } });
+
+const Server = Serve.layer(App, { drainTimeout: "2 seconds" }).pipe(
+  Layer.provide(storage),
+  Layer.provide(listener({ port: 3000 })),
+);
+
+BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
+```
+
+Run it with `bun main.ts`. The server listens on `127.0.0.1:3000`. A client creates `events/1` with `PUT /streams/events/1`, appends with `POST`, and reads the feed with `GET /feed/1`. `access: "full"` lets any caller create and remove streams. Choose the access for each stream before you deploy. See [Access](/docs/servers/protocol#access). Stop the server with Ctrl-C, and the process exits 0.
+
+`Layer.launch` builds `Server` and keeps it open until the main is interrupted. For the storage options, see [Use SQLite](/docs/storage/sqlite).
+
+## Node
+
+Add `@effect/platform-node` and `@effect/sql-sqlite-node`. The routes are the same. Only the runtime, the listener, and the storage Layer change:
+
+```ts no-twoslash
+import { Layer } from "effect";
+import { NodeRuntime } from "@effect/platform-node";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/node";
+import { SqlStorage } from "@streamsy/storage";
+import { App, game } from "./app.ts";
+
+const storage = SqlStorage.layer(game).pipe(
+  Layer.provide(SqlStorage.clientLayer(SqliteClient.make({ filename: "./data/streams.sqlite" }))),
+);
+
+const Server = Serve.layer(App).pipe(
+  Layer.provide(storage),
+  Layer.provide(listener({ port: 3000 })),
+);
+
+NodeRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
+```
+
+Move `Events`, `game`, and `App` from the Bun example into `app.ts`, and import them from there. Run the compiled main, or the TypeScript file with a loader, on a Node version that has `node:sqlite`.
+
+## Deno
+
+Add `@effect/platform-deno` and `@effect/sql-sqlite-node`. Run `nodeSqliteCompat` before the SQLite client opens:
+
+```ts no-twoslash
+import { Effect, Layer } from "effect";
+import { DenoRuntime } from "@effect/platform-deno";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { Serve } from "@streamsy/serve";
+import { listener, nodeSqliteCompat } from "@streamsy/serve/deno";
+import { SqlStorage } from "@streamsy/storage";
+import { App, game } from "./app.ts";
+
+const client = SqlStorage.clientLayer(
+  nodeSqliteCompat.pipe(Effect.andThen(SqliteClient.make({ filename: "./data/streams.sqlite" }))),
+);
+
+const Server = Serve.layer(App).pipe(
+  Layer.provide(SqlStorage.layer(game).pipe(Layer.provide(client))),
+  Layer.provide(listener({ port: 3000 })),
+);
+
+DenoRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
+```
+
+Run it with permissions for the network and the database file, for example `deno run -A main.ts`. See [SQLite on Node and Deno](/docs/storage/sqlite#sqlite-on-node-and-deno).
+
+## Listener
+
+Each runtime module exports a `listener(options)` Layer:
+
+| Option                    | Default     | Runtimes | Value                                                 |
+| ------------------------- | ----------- | -------- | ----------------------------------------------------- |
+| `port`                    | 3000        | All      | The port                                              |
+| `hostname`                | `127.0.0.1` | All      | The bind address. Use `0.0.0.0` to accept other hosts |
+| `gracefulShutdownTimeout` | None        | All      | A bound on the wait for in-flight requests at stop    |
+| `idleTimeout`             | 0           | Bun      | 0 keeps parked long polls open                        |
+| `server`                  | `{}`        | Node     | The options of `createServer` from `node:http`        |
+
+The listener binds the port when its Layer builds. A bind failure, such as a port in use, fails the main with a `ServeError`. Before the routes attach and after they detach, the Node listener answers each request with 503 and `Retry-After: 1`. See the [Bun](/docs/reference/serve/bun), [Node](/docs/reference/serve/node), and [Deno](/docs/reference/serve/deno) listener references.
+
+## Background work
+
+The launched Layer owns one scope. The listener, the storage, and every fiber that a Layer forks in that scope live until shutdown. Add background work as one more Layer:
+
+```ts
+// @filename: app.ts
+import { Layer, Schema } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+export class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+export const game = Streamsy.group(Events);
+export const App = Layer.mergeAll(
+  Http.routes(game, { prefix: "/streams", access: "full" }),
+  Serve.mount(Events, "/feed/:seat"),
+);
+// @filename: main.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
+import { BunStorage } from "@streamsy/storage/bun";
+import { App, game } from "./app.ts";
+
+declare const deliverForever: Effect.Effect<never>;
+
+const storage = BunStorage.layer(game, { client: { filename: "./data/streams.sqlite" } });
+
+const Background = Layer.effectDiscard(Effect.forkScoped(deliverForever));
+
+const Server = Layer.mergeAll(Serve.layer(App), Background).pipe(
+  Layer.provide(storage),
+  Layer.provide(listener({ port: 3000 })),
+);
+```
+
+`deliverForever` stands for a loop such as an outbox drain. The fiber runs beside the routes and shares their storage. Shutdown interrupts it. For the work itself, see [Schedule delivery](/docs/projections/actions#schedule-delivery) for an outbox, and [Attach](/docs/projections/run#attach) and [Follow](/docs/projections/run#follow) for projections. `Projection.attach` returns a Layer, so it goes beside `Serve.layer` in the same way.
+
+## Clean shutdown
+
+On `SIGINT` or `SIGTERM`, `runMain` interrupts the main, and the scope closes in this order:
+
+1. `Serve.layer` signals every live read. A parked long poll answers 204 with its offset and cursor, as after a long-poll timeout. An SSE body ends after its last whole batch.
+2. The drain waits until no live read runs, or until `drainTimeout` passes. The default is 2 s. A live read that arrives in this window gets the same reply at once.
+3. The serve Layer closes and interrupts the handlers that still run.
+4. In the Bun example, the storage closes, then the listener stops.
+
+Clients take their normal reconnect path after step 1, so a restart loses no data.
+
+| Exit                                 | Code with `Serve.teardown` |
+| ------------------------------------ | -------------------------- |
+| Interrupted by `SIGINT` or `SIGTERM` | 0                          |
+| Success                              | 0                          |
+| Failure, such as a port in use       | Not 0 (1 by default)       |
+
+Without `Serve.teardown`, `runMain` exits 130 after a signal. `Serve.teardown` maps every exit that holds only interrupts to 0, and leaves other exits to the default teardown. Use it with a main that ends only by failure or signal, such as `Layer.launch`.
+
+`Serve.layer(routes, options)` takes the options of `HttpRouter.serve`, plus `drainTimeout`. A host with no stop signal, such as a Durable Object, uses `HttpRouter.toWebHandler` and neither `Serve.layer` nor `Serve.teardown`. See [Run on Cloudflare](/docs/servers/cloudflare).
+
+## Timeouts
+
+Live reads keep a request open. A long poll parks for the storage Layer's `longPollTimeoutMs`, 30 s by default, and then answers 204. An SSE response lasts `sseDeadlineMs`, 60 s by default, and the client reconnects.
+
+| Runtime | Live reads                                                                                           |
+| ------- | ---------------------------------------------------------------------------------------------------- |
+| Bun     | Keep `idleTimeout` at 0, the default. Bun otherwise closes an idle connection after 10 s             |
+| Node    | The `node:http` defaults hold live reads. `requestTimeout` bounds only the time to receive a request |
+| Deno    | `Deno.serve` has no response timeout                                                                 |
+
+A proxy or load balancer in front of the server needs an idle timeout above both values, and it must not buffer SSE responses. A client abort interrupts a parked long poll and releases its subscription.
+
+## Hosts
+
+| Runtime | Main                  | Listener               | SQLite storage                                    | Processes for each file |
+| ------- | --------------------- | ---------------------- | ------------------------------------------------- | ----------------------- |
+| Bun     | `BunRuntime.runMain`  | `@streamsy/serve/bun`  | `BunStorage.layer`                                | Several                 |
+| Node    | `NodeRuntime.runMain` | `@streamsy/serve/node` | `SqlStorage.layer` over `@effect/sql-sqlite-node` | One                     |
+| Deno    | `DenoRuntime.runMain` | `@streamsy/serve/deno` | As Node, after `nodeSqliteCompat`                 | One                     |
+
+On every process host, expired streams are removed when a call reaches them. A process host runs no expiry sweep. An application can sweep with `Protocol.expireDue()`. A commit wakes followers in the same process at once, and followers in another process on the same file within `repairIntervalMs`. See [Several processes](/docs/storage/sqlite#several-processes).
+
+This guide covers the process. Backups, replication, TLS, and high availability belong to your deployment.

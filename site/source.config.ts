@@ -23,7 +23,7 @@ export const docs = defineDocs({
 });
 
 // Content images live in `assets/`, outside the Vite public directory. An image
-// link such as `/docs/demos/x.png` resolves to `assets/docs/demos/x.png`, and
+// link such as `/docs/examples/x.png` resolves to `assets/docs/examples/x.png`, and
 // fumadocs imports it as a bundled asset. Imports from `public/` make Vite warn.
 //
 // Twoslash type-checks each `ts` code block when the page compiles. See `twoslash.ts`.

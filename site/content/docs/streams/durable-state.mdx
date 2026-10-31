@@ -1,0 +1,139 @@
+---
+title: Durable State streams
+description: Declare a stream of keyed rows, write change events and control messages, and fold the rows on a read.
+---
+
+A Durable State stream holds keyed rows in collections. A writer appends change events, and each event sets or deletes one row. A reader folds the events into the current rows. The format is the [Durable State](https://durablestreams.com/durable-state) protocol from the Durable Streams docs, so a browser can read the stream with `@durable-streams/state`.
+
+## Declare
+
+`Streamsy.state<Self>()(name, template, { params, collections })`
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
+const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
+
+export class Workspace extends Streamsy.state<Workspace>()(
+  "Tracker/Workspace",
+  "workspaces/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    collections: {
+      project: { schema: Project, key: "id" },
+      issue: { schema: Issue, key: "id" },
+    },
+  },
+) {}
+```
+
+Each key of `collections` is a collection type. Its entry gives the value schema and the key field of that collection. The compiler checks that the key field is a string or number field of the schema. The service name, template, and params work as for every stream class. See [Declare streams](/docs/streams/declare). For the full signature, see [`Streamsy.state`](/docs/reference/core/streamsy#streamsystate).
+
+## Items
+
+The item type is a union of change events and control messages.
+
+| Item    | Fields                                                                                                             |
+| ------- | ------------------------------------------------------------------------------------------------------------------ |
+| Upsert  | `type`, `key`, `value`, and `headers` with `operation: "upsert"`                                                   |
+| Delete  | `type`, `key`, an optional `old_value`, and `headers` with `operation: "delete"`                                   |
+| Control | `headers` with `control` set to `snapshot-start`, `snapshot-end`, or `reset`. A control has no `type` and no `key` |
+
+`type` is the collection type and `key` is the row key as a string. The headers of a change can also hold `offset`, `txid`, `timestamp`, and `from`. The headers of a control can hold `offset`.
+
+Narrow an item with `StreamAddress.isChange`, `StreamAddress.isUpsert`, or `StreamAddress.isControl` before you read its `type` or `key`. A read decodes the `insert` and `update` operations of other producers as `upsert`. See [Changes and controls](/docs/reference/core/stream-address#changes-and-controls) for the types.
+
+## Write changes
+
+`DurableState.changes` makes the change events for one address of a `Streamsy.state` stream.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { DurableState } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
+
+const createIssue = (offset: string, issue: { id: string; projectId: string; title: string }) =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace;
+    const params = { workspaceId: "main" };
+    const facts = DurableState.changes(Workspace.at(params), { offset }, [
+      DurableState.upsert("issue", issue),
+    ]);
+    yield* workspace.append(params, facts);
+  });
+```
+
+| Field    | Value                                                                       |
+| -------- | --------------------------------------------------------------------------- |
+| `key`    | The collection key field of an upserted value, or the key given to `remove` |
+| `offset` | The source offset you give                                                  |
+| `txid`   | `${offset}:${index}`, unless the change sets it                             |
+
+`DurableState.remove("issue", id)` deletes by key. Add `{ oldValue }` to also write `old_value`. If you give no `offset`, the events have no `offset` and no default `txid`. An upsert or delete can also set `timestamp` or `from`. A change to an undeclared collection, or a value that does not match its schema, does not compile. See [`DurableState`](/docs/reference/core/durable-state) for the full signatures.
+
+### Control messages
+
+`DurableState.changes` also takes the State control messages. Make them with `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()`. Each takes an optional `{ offset }`.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { DurableState, StreamAddress } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
+
+const replaceIssues = (issues: ReadonlyArray<{ id: string; projectId: string; title: string }>) =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace;
+    const params = { workspaceId: "main" };
+    const facts = DurableState.changes(Workspace.at(params), {}, [
+      StreamAddress.reset(),
+      ...issues.map((issue) => DurableState.upsert("issue", issue)),
+    ]);
+    yield* workspace.append(params, facts);
+  });
+```
+
+A control passes through `changes` unchanged. With an `offset`, a control that has no offset of its own gets that offset. Controls do not take a `txid`, but they count in the `index` of the default `txid` of the changes after them.
+
+## Conditional writes
+
+A State stream takes `expectedOffset` and `decide` like any other stream. See [Conditional writes](/docs/streams/write#conditional-writes). Pass the offset to `DurableState.changes` as well, so each change records the offset that the append checks. The [issue tracker](/docs/examples/issue-tracker#5-read-fold-append) does this in `IssueTracker.mutate`.
+
+## Read and fold rows
+
+A Durable State read gives the change events and the control messages that the stream holds, in order. To fold the rows yourself, clear them at a `reset` and apply the items after it.
+
+`DurableState.materialize` folds items into rows with the rules of the protocol. Start it from `DurableState.materialized`, which gives one empty map for each collection.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { DurableState } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
+
+const issues = Effect.gen(function* () {
+  const workspace = yield* Workspace;
+  const { items } = yield* workspace.collect({ workspaceId: "main" });
+  return DurableState.materialize(DurableState.materialized(Workspace), items).rows.issue;
+});
+```
+
+`rows.issue` is a `ReadonlyMap` from key to value. A `snapshot-end` removes each row that no upsert named since the `snapshot-start` before it. See [`DurableState.materialize`](/docs/reference/core/durable-state#durablestatematerialize) for every rule.
+
+## Serve and project
+
+- To serve a State stream to a browser, see [State routes](/docs/servers/serve#state-routes).
+- To write a State stream from a projection, see [Output projections](/docs/projections/outputs) and [Fact streams and state streams](/docs/projections#fact-streams-and-state-streams).
+- The [issue tracker](/docs/examples/issue-tracker) writes, serves, and follows a State stream from end to end.

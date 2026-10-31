@@ -52,7 +52,7 @@ export const snippetTwoslashOptions = () => ({
 /**
  * True when Twoslash checks this fence: a `ts` fence without a `title`, and without
  * `no-twoslash` in the meta. A fence with a `title` quotes an example file, and
- * `check:demos` checks it against that file.
+ * `check:examples` checks it against that file.
  */
 export const isCheckedFence = (lang: string, meta: string, title?: string): boolean =>
   lang === "ts" &&

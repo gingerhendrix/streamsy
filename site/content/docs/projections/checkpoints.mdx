@@ -1,0 +1,155 @@
+---
+title: Checkpoints and generations
+description: Where a projection stores its progress, which Layer stores it, how to start again with a new generation, and what each fault means.
+---
+
+A checkpoint is the stored progress of one projection binding. Its record holds the accepted offset of each input, the encoded state, the producer positions of the outputs, and a pinned unit while one is in progress. A `CheckpointStore` holds the records, and the [Commit](/docs/projections/commits) of the projection writes them. For the full signatures, see [`CheckpointStore`](/docs/reference/projection/checkpoint-store#checkpointstore) and [`CheckpointRecord`](/docs/reference/projection/checkpoint-store#checkpointrecord).
+
+## Records
+
+The record key has four parts: the projection `id`, its `version`, its `generation`, and the canonical JSON of the bound `params`. `recordKey` from `@streamsy/projection/checkpoint` builds the key. A change to any part names another record, so the projection starts again from zero offsets.
+
+The record also stores the identity of the inputs, which is the stream id and content type of each input, by input name. Each pass compares the stored identity with the declaration. When an input was added, removed or renamed, or its stream id or content type changed, the pass fails with phase `load` and reason `identity-mismatch`. Declare a new [generation](#generations) to start again.
+
+The runner does not detect a codec change that keeps the content type. Declare a new generation for that change too.
+
+## Layers
+
+`CheckpointStore` holds the records. `Transaction` gives `Commit.transaction` its SQL client and its transaction. Three Layers build them:
+
+| Layer                         | Provides          | Requires                                           |
+| ----------------------------- | ----------------- | -------------------------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore` | The `CommitBoundary` of a local storage host       |
+| `Transaction.layer`           | `Transaction`     | The `CommitBoundary` and `SqlClient` of a SQL host |
+| `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                            |
+
+`CheckpointStore.layer` stores the records on the storage owner of the streams. Every local storage host provides that owner: `MemoryStorage.layer`, `BunStorage.layer`, `DurableObjectStorage.layer` and `SqlStorage.layer`. A record write then commits in the same transaction as the stream writes of that owner. With this Layer, `Commit.producer` creates a missing output on the owner.
+
+On a SQL host, add `Transaction.layer` for `Commit.transaction`:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+export const orderTotalsProjection = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.transaction,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+}).at({});
+// @filename: run.ts
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+export const program = Projection.run(orderTotalsProjection, { limit: 10 });
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { program } from "./run.ts";
+import { shop } from "./streams.ts";
+
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(BunStorage.layer(shop, { client: { filename: "./streams.sqlite" } })),
+);
+
+await Effect.runPromise(program.pipe(Effect.provide(host)));
+```
+
+A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. Use `CheckpointStore.layer` alone, with `Commit.producer` for outputs:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+export const orderTotalsProjection = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+}).at({});
+// @filename: run.ts
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
+export const program = Projection.run(orderTotalsProjection, { limit: 10 });
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { CheckpointStore } from "@streamsy/projection";
+import { program } from "./run.ts";
+import { shop } from "./streams.ts";
+
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
+
+await Effect.runPromise(program.pipe(Effect.provide(host)));
+```
+
+`CheckpointStore.layerMemory` keeps the records in a `Map` in the process. It shares no owner with the streams, so a record write does not commit with the stream writes, and `Commit.producer` does not create missing outputs. A restart loses the records, and the projection starts again from zero offsets. Use it for tests, for values that you rebuild at start, and over a remote host such as `RemoteStreams.layer`, which has no storage owner.
+
+SQL storage keeps the records in the `streamsy_owner_records` table, beside the streams. There is no separate state table. The runner does not read the tables of earlier projection releases, such as `streamsy_projection_v1_records`, so a projection from such a release starts again from zero offsets.
+
+Build the host Layer once for each host lifetime. Each build of `CheckpointStore.layerMemory` starts with no records.
+
+## Generations
+
+A projection has no reset. To start again from zero offsets, raise `generation` in the declaration. The default is 1. The new generation has its own record, so it reads every input from the start.
+
+For the outputs of `Commit.producer`, the generation is the producer epoch. The first append of the new generation starts a higher epoch on each output. After that, an append of an older generation fails with phase `pin` and reason `stale-epoch`, so a runner left on the old declaration cannot write to the outputs. The new generation appends after the items that the old one wrote. To rebuild an output from empty, delete the output stream first.
+
+The outputs of `Commit.transaction` have no producer position, so a new generation does not fence them. Stop the old runners before you start the new generation.
+
+A new `version` also names a new record. `Commit.producer` then appends under a new producer id, because the producer id contains the version. The old version keeps its own producer id, so a new version does not fence it.
+
+## One writer
+
+Each record write is a compare-and-set on the token that the runner loaded. Run one writer for each record key, either the follower or one `run` at a time. When a second writer saves first, the slower writer fails with reason `token-conflict`. The phase is `checkpoint`, or `pin` when the pin write of `Commit.producer` lost.
+
+`token-conflict` is a deployment fault, and a retry does not fix it. The handler of the slower writer may already have run its external effects. Stop the second writer.
+
+## Forget
+
+`Projection.forget(bound)` deletes the record of a bound projection through the `remove` of its Commit. The built-in Commits delete the whole record, with the state and the offsets, and the next pass starts again from zero offsets. `forget` does not delete streams. With a Commit that has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`.
+
+Before you call it, do these steps:
+
+1. Stop the follower for that key.
+2. Wait for other runs, including direct `Projection.pass` calls.
+3. For an output projection, delete the output streams first, or use a new generation. The producer sequences start again at 0 after `forget`. An output that keeps its producer state answers `Duplicate` to those appends and drops their items.
+
+## Several backends
+
+A projection can read its inputs from any storage, including a remote Layer. Where its outputs can live depends on the Commit:
+
+- `Commit.transaction` requires every declared output on its SQL owner.
+- `Commit.producer` accepts an output on another owner when that stream already exists.
+
+To write to sinks with different guarantees, use one projection for each sink.
+
+## Faults
+
+A pass fails with a `ProjectionFault`, or with the error of the handler. The runner does not wrap handler errors. A `ProjectionFault` has a `phase`, a `reason`, an optional `input`, a `message` and the underlying failure in `cause`. `phase` says where the pass stopped. A fault in phase `checkpoint` means that the handler already ran. For the phase table, see [`ProjectionFault`](/docs/reference/projection/faults#projectionfault).
+
+| Reason                    | Cause                                                                                                              | What to do                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `storage-failure`         | Storage, transport or SQL failed                                                                                   | Retry. `follow` retries it when `retryable` is `true`                                                |
+| `token-conflict`          | Another writer saved the record first                                                                              | Run one writer for each key. See [One writer](#one-writer)                                           |
+| `identity-mismatch`       | An input changed its name, stream id or content type                                                               | Declare a new generation                                                                             |
+| `history-unavailable`     | An input stream does not exist, or was removed before the first checkpoint                                         | Create the input. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)         |
+| `range-unreproducible`    | A pinned range cannot be read again                                                                                | Declare a new generation                                                                             |
+| `stale-epoch`             | A newer generation has appended to an output                                                                       | Stop this runner                                                                                     |
+| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                                       | Fix the option                                                                                       |
+| `invalid-record`          | The stored record or state does not decode, a pinned unit does not fit the Commit, or an output sequence has a gap |                                                                                                      |
+| `invalid-source`          | An input read is invalid, does not advance, or has an item that does not decode                                    |                                                                                                      |
+| `invalid-output`          | An output item or the state does not encode, or an output is missing, closed, or refused the append                |                                                                                                      |
+| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                       | See [`transaction`](/docs/projections/commits#transaction) and [Several backends](#several-backends) |
+
+`run` retries no fault. `follow` and the attached runners retry a fault whose `retryable` is `true`. `retryable` is `true` for `storage-failure`, unless its `cause` is a stream fault that is not retryable. See [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).

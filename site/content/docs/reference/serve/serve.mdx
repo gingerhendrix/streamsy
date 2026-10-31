@@ -13,7 +13,7 @@ import type { StreamRoute } from "@streamsy/core/protocol";
 import type { CanonicalValue } from "@streamsy/serve/contract";
 ```
 
-`Serve` builds the HTTP read routes for streams and Durable State, and the responses for computed JSON values. `Serve.layer` serves the routes and drains live reads when the host stops. See [Serve handlers](/docs/http/serve) and [Long-running hosts](/docs/http/serve#long-running-hosts).
+`Serve` builds the HTTP read routes for streams and Durable State, and the responses for computed JSON values. `Serve.layer` serves the routes and drains live reads when the host stops. See [Serve application reads](/docs/servers/serve) and [Clean shutdown](/docs/servers/process#clean-shutdown).
 
 The error classes and `ServeError` are on the [Serve errors](/docs/reference/serve/serve-errors) page.
 
@@ -321,7 +321,7 @@ same<typeof state, typeof Serve.state>(true);
 
 `state` serves the change stream of a Durable State address with the state version and contract headers. It follows the version, resume, and fault rules of [`stream`](#servestream).
 
-`state` sends stored control messages in order with the changes. It does not create snapshots, and it answers a request with `x-streamsy-state-reset: snapshot` with 400. See [State routes](/docs/http/serve#state-routes).
+`state` sends stored control messages in order with the changes. It does not create snapshots, and it answers a request with `x-streamsy-state-reset: snapshot` with 400. See [State routes](/docs/servers/serve#state-routes).
 
 The contract fingerprint of `state` includes the collection names and their key fields. When the collection metadata of the address does not decode, `state` fails with `Serve.WireEncodeFailed`.
 
@@ -388,7 +388,7 @@ same<typeof layer, typeof Serve.layer>(true);
 
 When the Layer closes, it drains live reads first. A parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The Layer waits until no live read runs or until `drainTimeout` passes, and then interrupts any handler that still runs. The default `drainTimeout` is 2 seconds.
 
-See [Long-running hosts](/docs/http/serve#long-running-hosts) for the Layer and runtime setup.
+See [Run a process server](/docs/servers/process) for the Layer and runtime setup.
 
 ## `Serve.teardown`
 

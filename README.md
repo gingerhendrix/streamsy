@@ -41,8 +41,8 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Events)))));
 ```
 
-Read the [tutorial](https://streamsy.dev/docs/tutorial) for the path
-from a typed stream address to a served projection.
+Read the [docs](https://streamsy.dev/docs) for the full guide. The examples
+below show complete applications, from a plain HTTP host to served projections.
 
 ## Examples
 

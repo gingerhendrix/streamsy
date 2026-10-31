@@ -11,7 +11,7 @@ import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/
 import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
 ```
 
-The Cloudflare host sends each protocol request to the Durable Object that owns the stream. Each object has its own storage, routes, and alarm. See [Cloudflare hosting](/docs/hosting/cloudflare).
+The Cloudflare host sends each protocol request to the Durable Object that owns the stream. Each object has its own storage, routes, and alarm. See [Run on Cloudflare](/docs/servers/cloudflare).
 
 ## Object host
 
@@ -495,7 +495,7 @@ same<typeof ObjectLink, typeof Cloudflare.ObjectLink>(true);
 
 `make` throws a `RangeError` unless the prefix starts with `/__` followed by a character other than `/`. The usual protocol prefix checks also apply. The public routers of the package reject a reserved path before they call an object.
 
-`access` applies to every stream of the link, Durable State wake streams included. Use `full` when the producer must create a missing wake stream with PUT. A link trusts any caller that holds a stub of the object. See [Streams on other objects](/docs/hosting/cloudflare#streams-on-other-objects).
+`access` applies to every stream of the link, Durable State wake streams included. Use `full` when the producer must create a missing wake stream with PUT. A link trusts any caller that holds a stub of the object. See [Connect Durable Objects](/docs/servers/cloudflare/objects).
 
 ### `Cloudflare.ObjectFetch`
 

@@ -11,7 +11,7 @@ import type { Layer } from "effect";
 import type { HttpClient } from "effect/http";
 ```
 
-`RemoteStreams` sends the stream operations to a remote Durable Streams host over HTTP, so a program that uses stream classes runs against the host with no change. The Layers need an Effect `HttpClient`. See [Remote client](/docs/http/remote).
+`RemoteStreams` sends the stream operations to a remote Durable Streams host over HTTP, so a program that uses stream classes runs against the host with no change. The Layers need an Effect `HttpClient`. See [Connect to a remote server](/docs/servers/remote).
 
 ## `RemoteStreams.layer`
 
@@ -35,7 +35,7 @@ declare function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof layer, typeof RemoteStreams.layer>(true);
 ```
 
-`layer` returns a Layer with the service of each stream class in `group`, over `layerProtocol(options)`. It provides no `Storage` and no local change feed. For what a remote Layer cannot do, see [Limits](/docs/http/remote#limits).
+`layer` returns a Layer with the service of each stream class in `group`, over `layerProtocol(options)`. It provides no `Storage` and no local change feed. For the host access that each operation needs and the limits for projections, see [Connect to a remote server](/docs/servers/remote#host-access).
 
 ```ts
 // @filename: streams.ts
@@ -76,7 +76,10 @@ same<typeof layerProtocol, typeof RemoteStreams.layerProtocol>(true);
 - Building the Layer fails with a `TransportFault` whose `reason` is `configuration` when `baseUrl` is not an HTTP or HTTPS URL, or has a query, a fragment, or credentials.
 - An operation fails with a `TransportFault` whose `reason` is `configuration` when the stream id is not a canonical relative path, for example when it has an empty segment, `..`, `%`, `?`, `#`, or `\`.
 - An operation fails with a `TransportFault` whose `reason` is `request` when the HTTP request fails.
+- A `create` or `fork` fails with [`InvalidCreateRequest`](/docs/reference/core/errors#invalidcreaterequest) before sending a request when both expiry options are set, or when `DateTime.make` cannot parse `expiresAt`. A `ttlSeconds` of 0 still counts as set.
 - An append with `expectedOffset` fails with `NotSupported` unless `capabilities.expectedOffset` is `true`. An append with `producer` fails with `NotSupported` unless `capabilities.producer` is `true`. The writer sends no request in these cases.
+
+A create HTTP 400 response without `stream-not-supported` becomes `InvalidCreateRequest` for a plain create and [`InvalidForkRequest`](/docs/reference/core/errors#invalidforkrequest) for a fork. A 400 response with `stream-not-supported` becomes `NotSupported` instead.
 
 Each request has the headers of `options.headers` and `cache-control: no-cache`. The `HttpClient` and the calling fiber own the lifetime of each request, so an interrupted call cancels its request.
 

@@ -1,0 +1,222 @@
+---
+title: Output streams
+description: Write derived stream items from a projection, keep a value while you write them, and choose how the outputs commit.
+---
+
+An output projection appends derived items to its output streams. `Projection.emit` returns items for each input entry. `Projection.mapAccum` and `Projection.mapAccumBatch` also keep a value, as `fold` does. For the full signatures, see [Constructors](/docs/reference/projection/constructors).
+
+## Emit
+
+```ts include projections-tripled
+// @filename: minimal.ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "doubled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const minimal = Effect.gen(function* () {
+  const numbers = yield* Numbers;
+  const doubled = yield* Doubled;
+  yield* numbers.create({});
+  yield* doubled.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  return yield* Projection.run(
+    Projection.emit({
+      id: "doubled",
+      params: {},
+      inputs: { input: Numbers },
+      outputs: { output: Doubled },
+      commit: Commit.transaction,
+      emit: ({ item }) => ({ output: [item * 2] }),
+    }).at({}),
+    { limit: 10 },
+  );
+});
+// @filename: tripled.ts
+// ---cut---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+import { Numbers } from "./minimal.ts";
+
+export class Tripled extends Streamsy.json<Tripled>()("Minimal/Tripled", "tripled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+export const tripled = Projection.emit({
+  id: "tripled",
+  params: {},
+  inputs: { input: Numbers },
+  outputs: { output: Tripled },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ output: [item * 3] }),
+});
+```
+
+`outputs` maps a route name to a stream class or a fixed address. `emit(entry, unit)` returns an object with an array of items for each route that gets items. It can return the object, or an Effect of it. The runner collects the items of every entry in the unit, in entry order, and the Commit appends them.
+
+| Output class     | Items                                                                             |
+| ---------------- | --------------------------------------------------------------------------------- |
+| `Streamsy.json`  | Items of the stream's schema                                                      |
+| `Streamsy.state` | Durable State row changes and State controls. See [State outputs](#state-outputs) |
+
+An output projection has no default Commit. Set `commit` to `Commit.producer` or `Commit.transaction`, or to a custom Commit. See [Commits](/docs/projections/commits).
+
+| Commit               | Outputs                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
+| `Commit.producer`    | Appends each output with a producer position, so a retry writes nothing twice. Works on any host |
+| `Commit.transaction` | Appends the outputs in the SQL transaction of the checkpoint. Needs a SQL host                   |
+
+## Producer positions
+
+`Commit.producer` gives each output its own producer position. The output stream drops an append whose position it has already accepted, so a retried unit writes its items once.
+
+| Producer field  | Value                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `producerId`    | `<id>/v<version>`, then `/` and the parameters as JSON with sorted keys when the projection has parameters |
+| `producerEpoch` | The `generation` of the declaration                                                                        |
+| `producerSeq`   | Starts at 0 for each output and increases by one for each unit that has items for that output              |
+
+A `producerId` longer than 255 code points becomes `<id>/v<version>/`, cut to fit, then `#` and the SHA-256 hex digest of the full id. The result is at most 255 code points. Each version therefore writes under a new `producerId`, and each generation writes under a new epoch. See [Producer retries](/docs/streams/write#producer-retries) for the checks that the stream runs.
+
+`Commit.producer` commits one unit in these steps:
+
+1. It runs the handler. A unit with no items for any output saves the checkpoint and the value, and writes nothing else.
+2. It reads the head of each output that gets items. It creates the output first when the output is missing on the checkpoint's storage.
+3. It pins the unit. One compare-and-set saves the input ranges of the unit and the `producerSeq` of each output that gets items.
+4. It appends the items of each output with its position.
+5. It saves the new offsets, the new value and the next `producerSeq` of each output in one compare-and-set.
+
+When a pass stops after step 3, the next pass reads the same input ranges again, runs the handler, and appends with the same positions. An output that already has the append answers `Duplicate` and writes nothing.
+
+The handler must give the same outputs for the same entries. A retry that has items for another set of outputs fails with a `ProjectionFault` with phase `process` and reason `invalid-output`. A retry with other items for the same output writes nothing, because the stream compares positions and not items. When a pinned range cannot be read again in full, the pass fails with phase `pin` and reason `range-unreproducible`.
+
+## State outputs
+
+A `Streamsy.state` output takes `DurableState.Entry` items for its collections:
+
+- `DurableState.upsert("card", row)` and `DurableState.remove("card", key)` make row changes. Each change names its collection.
+- `StreamAddress.reset()`, `StreamAddress.snapshotStart()` and `StreamAddress.snapshotEnd()` make State controls. The output writes them unchanged, in order with the row changes.
+
+A row that does not fit its collection fails the unit with phase `process` and reason `invalid-output`. To declare, read and fold a State stream, see [Durable State](/docs/streams/durable-state).
+
+## Keep state while emitting
+
+`mapAccum` and `mapAccumBatch` declare `state` as `fold` does, and return `[state, emits]`. The Commit saves the value with the offsets and appends the items. `Projection.read`, `Projection.current` and `Projection.decide` work on them as on a `fold`. See [Values](/docs/projections/state).
+
+### mapAccum
+
+`mapAccum(state, entry, unit)` runs once for each entry. It works like `Stream.mapAccum`, with a checkpoint and declared output routes.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Schema } from "effect";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+const running = Projection.mapAccum({
+  id: "running",
+  params: {},
+  inputs: { orders: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  state: { schema: Schema.Finite, initial: 0 },
+  mapAccum: (sum, { item }) => {
+    const next = sum + item.amount;
+    return [next, { totals: [{ orderId: item.orderId, total: next }] }] as const;
+  },
+});
+```
+
+### mapAccumBatch
+
+`mapAccumBatch(state, batch, unit)` runs once for the whole unit. `batch` has one `Slice` for each input, with its `items`. One call can coalesce the row changes of a unit, for example one upsert for a row that many entries change.
+
+```ts
+import { Schema } from "effect";
+import { DurableState, Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+class Numbers extends Streamsy.json<Numbers>()("Tracker/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
+class Board extends Streamsy.state<Board>()("Tracker/Board", "board", {
+  params: {},
+  collections: { card: { schema: Card, key: "issueId" } },
+}) {}
+class Transitions extends Streamsy.json<Transitions>()("Tracker/Transitions", "transitions", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+const tracker = Projection.mapAccumBatch({
+  id: "tracker",
+  params: {},
+  inputs: { numbers: Numbers },
+  outputs: { board: Board, transitions: Transitions },
+  commit: Commit.producer,
+  state: { schema: Schema.Finite, initial: 0 },
+  mapAccumBatch: (state, batch) => {
+    const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+    return [
+      next,
+      {
+        board: [
+          DurableState.upsert("card", { issueId: "total", total: next }),
+          DurableState.remove("card", "old"),
+        ],
+        transitions: [next],
+      },
+    ] as const;
+  },
+});
+```
+
+The size of a unit depends on the page size of each read and on retries. A `mapAccumBatch` handler must give the same final value and rows for any split of the entries into units. The items that it emits can differ. In this example, `transitions` gets one item for each unit, so a different split gives other transition items.
+
+In the per-entry steps `fold`, `emit` and `mapAccum`, read the parameters from `unit.params`. `unit.ranges` and `unit.key` describe the whole unit, not the entry.
+
+## Output rules
+
+- The parameters of each output route must be parameters of the projection, with the same type. The compiler checks this.
+- An output must be a `Streamsy.json` or `Streamsy.state` stream. Two outputs cannot name the same stream, and an output cannot name an input stream. `at(params)` throws a `RangeError` for each of these.
+- A route name that the handler leaves out gets no items. An output with no items in a unit uses no `producerSeq`.
+- A route name that `outputs` does not declare is a compile error. At run time it fails the unit with phase `process` and reason `invalid-output`.
+- An item that does not encode with the output's schema fails with reason `invalid-output`.
+
+These rules apply to `Commit.producer`:
+
+- It can write to outputs on other storage than its checkpoint. It creates a missing output only on its checkpoint's storage. A missing output elsewhere fails with phase `pin` and reason `invalid-output`.
+- A closed or gone output fails with phase `pin` and reason `invalid-output`.
+- An output whose producer state has a higher epoch fails with phase `pin` and reason `stale-epoch`. A newer generation wrote to it.
+- The outputs do not commit atomically with each other or with the checkpoint. A reader can see the items of one output before the items of another. To keep SQL writes and outputs together, use `Commit.transaction`.
+
+One Commit controls one projection. To combine SQL writes with outputs that commit on their own, chain two projections through a stream. One producer projection can declare several outputs.
+
+## Transaction outputs
+
+With `Commit.transaction`, the Commit appends the items of each output in the SQL transaction that saves the checkpoint and the value. SQL through the provided `SqlClient`, the appends and the checkpoint commit together or roll back together. The appends carry no producer position.
+
+- Every output must use the same storage as the `Transaction` service. Before it runs the handler, the Commit checks each output and fails with phase `load` and reason `unsupported-composition` for an output on other storage.
+- The Commit does not create outputs. Create each output first. An append that fails, for example to a missing or closed output, fails the unit with phase `process` and reason `invalid-output`, and the transaction rolls back.
+- An append that the handler makes itself, to a stream on other storage, fails with phase `process` and reason `unsupported-composition`.
+
+For the host Layers, see [Layers](/docs/projections/checkpoints#layers).
+
+## Serve outputs
+
+To serve output streams and values over HTTP, see [Projection outputs](/docs/servers/serve#projection-outputs).

@@ -1,0 +1,167 @@
+---
+title: Choose storage
+description: Pick the Layer that provides the stream services of a group, and decide where its data lives.
+---
+
+A Streamsy program is an Effect that needs stream services. A storage Layer provides them for a group, and it decides where the data lives. The program does not change when the Layer changes.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { Orders, shop } from "./streams.ts";
+
+const program = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  yield* orders.append({}, [{ orderId: "o-17", amount: 40 }]);
+  return yield* orders.head({});
+});
+
+const head = await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(shop))));
+```
+
+`program` needs the `Orders` service. `shop` is a group, `Streamsy.group(Orders, OrderTotals, OrderEvents)`. A group only declares which streams belong together. `MemoryStorage.layer(shop)` provides the service of each stream in the group. A missing service is a type error.
+
+## Layers
+
+| Layer                                        | Data lives in                            | Persists            | Guide                                              |
+| -------------------------------------------- | ---------------------------------------- | ------------------- | -------------------------------------------------- |
+| `MemoryStorage.layer(group, options)`        | The memory of the process                | No                  | [Memory](#memory)                                  |
+| `BunStorage.layer(group, options)`           | One SQLite file, through Bun             | Yes                 | [Use SQLite](/docs/storage/sqlite)                 |
+| `SqlStorage.layer(group, options)`           | The database of a `SqlClient`            | Yes                 | [Use SQLite](/docs/storage/sqlite)                 |
+| `DurableObjectStorage.layer(group, options)` | The SQLite storage of one Durable Object | Yes, on that object | [Use SQLite](/docs/storage/sqlite#durable-objects) |
+
+Each Layer also provides `Storage` and `CommitBoundary`. Projection checkpoints and Commits use them. `Streamsy.Host<typeof group>` names the stream services of a group, so one type fits every Layer.
+
+A server that already holds the streams is not storage. To use its streams, see [Already have a server](#already-have-a-server).
+
+## Swap the Layer
+
+Provide another Layer to run the same program against SQLite:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: program.ts
+import { Effect } from "effect";
+import { Orders } from "./streams.ts";
+export const program = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  yield* orders.append({}, [{ orderId: "o-17", amount: 40 }]);
+  return yield* orders.head({});
+});
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { BunStorage } from "@streamsy/storage/bun";
+import { program } from "./program.ts";
+import { shop } from "./streams.ts";
+
+const storage = BunStorage.layer(shop, { client: { filename: "./shop.sqlite" } });
+
+const head = await Effect.runPromise(program.pipe(Effect.provide(storage)));
+```
+
+The second run of this script finds the stream that the first run created. `create` succeeds with `Exists`, and the append adds a second message. With memory, every run starts empty.
+
+## Lifetime
+
+A storage Layer holds its data and its connections in a scope. The data of a memory Layer is gone when the scope closes. A SQLite Layer closes its client.
+
+`Effect.provide` builds the Layer for one Effect and closes it when that Effect ends. To run several Effects over one Layer, use a `ManagedRuntime`, and dispose of it at the end:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: write.ts
+import { Effect } from "effect";
+import { Orders } from "./streams.ts";
+export const write = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  return (yield* orders.append({}, [{ orderId: "o-17", amount: 40 }])).offset;
+});
+// @filename: index.ts
+// ---cut---
+import { ManagedRuntime } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { shop } from "./streams.ts";
+import { write } from "./write.ts";
+
+const runtime = ManagedRuntime.make(MemoryStorage.layer(shop));
+try {
+  await runtime.runPromise(write);
+  await runtime.runPromise(write);
+} finally {
+  await runtime.dispose();
+}
+```
+
+Both calls see the same streams. A server keeps one scope open for its whole life. See [Run a process server](/docs/servers/process).
+
+## Memory
+
+`MemoryStorage.layer(group, options)` keeps streams in the memory of the process. Each mutation copies the whole store, so the time of an append grows with the size of the store. Use it for development and tests.
+
+| Option              | Effect                                                         |
+| ------------------- | -------------------------------------------------------------- |
+| `constrained`       | Copies fork prefixes, polls for wakes, and has no expiry index |
+| `pollIntervalMs`    | The poll interval in constrained mode. Default 25 ms           |
+| `readLimit`         | The largest catch-up page. Default 1000 messages               |
+| `longPollTimeoutMs` | The long-poll wait. Default 30 s                               |
+
+The default memory store has every capability: chained forks, writes across several streams in one mutation, wakes on commit, and an expiry index. `constrained: true` turns them down to the least that a store may have. Run a test once with `constrained: true` to check that the program does not depend on them. See [Capabilities](/docs/storage/adapter#capabilities) and [`MemoryStorage`](/docs/reference/core/memory-storage).
+
+## Testing
+
+An application test provides `MemoryStorage.layer(group)` to the same program that production runs. Each test builds a new Layer, so tests share no streams.
+
+`@streamsy/core/testing` holds the tools for protocol and adapter tests: `layerTest` and `StreamsTest` for protocol tests, and `StorageContract.run` for [adapter contract tests](/docs/storage/adapter#contract-tests). See [Testing](/docs/reference/core/testing).
+
+## Several backends
+
+Each stream can live in a different backend. Merge one Layer for each backend:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Drafts, Journal } from "./streams.ts";
+
+export const layer = Layer.merge(
+  MemoryStorage.layer(Streamsy.group(Drafts)),
+  BunStorage.layer(Streamsy.group(Journal), { client: { filename: "./journal.sqlite" } }),
+);
+// ---cut-after---
+// The merged layer provides both streams, with nothing left to provide.
+import { Effect, Stream } from "effect";
+const program = Effect.gen(function* () {
+  const drafts = yield* Drafts;
+  const journal = yield* Journal;
+  yield* drafts.create({ draftId: "a" });
+  yield* journal.append({}, ["x"]);
+  return yield* journal.read({}).pipe(Stream.runCollect);
+});
+const provided: Effect.Effect<unknown, unknown, never> = program.pipe(Effect.provide(layer));
+```
+
+`Drafts` lives in memory and `Journal` lives in `journal.sqlite`. Each backend is a separate storage owner:
+
+- A fork stays inside one storage Layer. Its source must be in the same Layer.
+- One mutation or transaction writes to one owner only.
+- A group checks that its stream templates do not overlap only among its own streams. Put every stream that one server serves in one group.
+
+For projections, the owner decides where outputs and checkpoints can live. `Commit.transaction` needs every output on its SQL owner. `Commit.producer` can write to an existing output on another owner. See [Several backends](/docs/projections/checkpoints#several-backends).
+
+## Already have a server
+
+`RemoteStreams.layer(group, options)` provides the same stream services from a Streamsy or Durable Streams server over HTTP. The program does not change. The remote Layer stores nothing locally, so it is not a storage choice. See [Connect to a remote server](/docs/servers/remote).

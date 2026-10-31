@@ -24,7 +24,7 @@ import type { Cause, Data, Effect, Layer, Pipeable } from "effect";
 import type { SqlClient } from "effect/sql";
 ```
 
-A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type decides which constructors it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/define#commits) and [Custom Commits](/docs/projections/state#custom-commits).
+A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type decides which constructors it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/commits) and [Custom Commits](/docs/projections/commits#custom-commits).
 
 | Commit               | Result                   | Guarantee                           | Needs                            |
 | -------------------- | ------------------------ | ----------------------------------- | -------------------------------- |
@@ -480,4 +480,4 @@ same<Transaction, Real.Transaction>(true);
 
 `Transaction` is the service of the SQL transaction that [`Commit.transaction`](#committransaction) uses. `owner` is the storage owner of the transaction, `sql` is the client that the handler gets, and `withTransaction` runs an Effect in the transaction.
 
-`Transaction.layer` builds the service from the `CommitBoundary` and the `SqlClient` of a SQL storage host. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/state#checkpoints-and-generations).
+`Transaction.layer` builds the service from the `CommitBoundary` and the `SqlClient` of a SQL storage host. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/checkpoints).

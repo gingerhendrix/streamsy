@@ -10,7 +10,7 @@ import { HttpServerRespondable, type HttpServerResponse } from "effect/http";
 import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contract";
 ```
 
-The Serve handlers fail with these errors when they reject a request or cannot encode a response. To declare them in an `HttpApi`, see [HttpApiBuilder](/docs/http/serve#httpapibuilder).
+The Serve handlers fail with these errors when they reject a request or cannot encode a response. To declare them in an `HttpApi`, see [HttpApiBuilder](/docs/servers/serve#httpapibuilder).
 
 Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. Each fence shows the fields of one class and its `HttpServerRespondable.symbol` method, which renders the error as a JSON response with `Http.securityHeaders` and `cache-control: no-store`. `responseHeaders` starts as `{}`. The `stream`, `state`, and `value` handlers set it to their version and contract headers. The response sends these headers, and the JSON body leaves them out.
 
@@ -282,4 +282,4 @@ same<typeof PublicErrorSchema, typeof Real.PublicErrorSchema>(true);
 
 `PublicErrorSchema` is the schema of the public error body. It validates and encodes the body, and its `cases` field holds one tagged schema for each error class. The body has the shape of [`PublicError`](/docs/reference/serve/contract#publicerror), without `responseHeaders`, `message`, or `stack`.
 
-When an `HttpApi` encodes a declared Serve error itself, the response leaves out the headers in `responseHeaders`. To keep them, convert the error with `HttpServerRespondable.toResponse`. See [HttpApiBuilder](/docs/http/serve#httpapibuilder).
+When an `HttpApi` encodes a declared Serve error itself, the response leaves out the headers in `responseHeaders`. To keep them, convert the error with `HttpServerRespondable.toResponse`. See [HttpApiBuilder](/docs/servers/serve#httpapibuilder).

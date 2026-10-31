@@ -5,7 +5,7 @@ reads the workspace stream from the beginning, folds it into Durable State,
 validates the mutation, and appends one conditional change. The browser replays
 that same stream into TanStack DB with `@durable-streams/state/db`.
 
-![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Serve.mount serves the stream read-only, and createStreamDB follows it in the browser.](../../site/assets/docs/demos/issue-tracker-demo-architecture.svg)
+![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Serve.mount serves the stream read-only, and createStreamDB follows it in the browser.](../../site/assets/docs/examples/issue-tracker-demo-architecture.svg)
 
 The [guide](https://streamsy.dev/docs/demos/issue-tracker) explains each
 numbered step with excerpts from this folder.

@@ -1,0 +1,42 @@
+---
+title: Custom streams
+description: Declare a stream class with your own id grammar, put it in a group in the right order, and serve it by address.
+---
+
+Use a custom stream for an id grammar that a template cannot express, such as a regular expression.
+
+## Declare
+
+`Streamsy.custom<Self>()(name, { parse, address })`
+
+`parse(id)` returns the params, or `None` when the stream does not own the id. `address(params)` returns the `StreamAddress` of one stream. `parse(address(params).id)` must return `Some(params)`, and Streamsy does not check this.
+
+```ts
+import { Option, Schema } from "effect";
+import { StreamAddress, Streamsy } from "@streamsy/core";
+
+const Entry = Schema.Struct({ at: Schema.String, text: Schema.String });
+
+export class DailyLogs extends Streamsy.custom<DailyLogs>()("Notes/DailyLogs", {
+  parse: (id: string) => (/^log-\d{4}-\d{2}-\d{2}$/.test(id) ? Option.some({ id }) : Option.none()),
+  address: ({ id }: { readonly id: string }) => StreamAddress.json(id, { schema: Entry }),
+}) {}
+```
+
+The service name works as for every stream class. See [Declare streams](/docs/streams/declare). For the full signature, see [`Streamsy.custom`](/docs/reference/core/streamsy#streamsycustom).
+
+## Items
+
+The address holds the codec, so the items of a custom stream are the items of the address that `address` returns. `StreamAddress.json`, `StreamAddress.state`, and `StreamAddress.bytes` build the same addresses as the `Streamsy.json`, `Streamsy.state`, and `Streamsy.bytes` factories. See [Addresses](/docs/reference/core/stream-address#addresses).
+
+## Groups
+
+`Streamsy.group` checks that no two templates can match one id. The check skips custom streams, so a custom stream can own ids that another stream in the group also matches.
+
+`Http.routes` sends each request to the first stream in the group that matches the id. Put a custom stream after the streams that should win an id that both match.
+
+`Streamsy.Wildcard` is a custom byte stream that matches every id. `group` throws a `RangeError` unless `Wildcard` is the last stream in the group. The [memory server example](/docs/examples/memory-server) serves every id with `Streamsy.group(Streamsy.Wildcard)`.
+
+## Serving
+
+A custom stream has no param schema, so `Serve.mount` does not accept it. Serve it with `Serve.stream(address)` or `Serve.state(address)` instead. See [Serve application reads](/docs/servers/serve).

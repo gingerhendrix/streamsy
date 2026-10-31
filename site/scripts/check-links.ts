@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- A plain Node-typed script outside Effect. Without Bun types, this is its only sleep that adds no new-promise or global-timers finding.
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import { movedPages } from "../src/lib/moved-pages.ts";
+import { movedPages, movedSections } from "../src/lib/moved-pages.ts";
 
 const site = new URL("..", import.meta.url).pathname;
 
@@ -167,6 +167,21 @@ try {
     await response.body?.cancel();
   }
 
+  for (const [from, to] of movedSections) {
+    const [fromPage = "", fromId = ""] = from.split("#");
+    const [toPage = "", toId = ""] = to.split("#");
+    const arrival = pages.get(`/docs/${fromPage}`.replace(/\/$/, ""));
+    const target = pages.get(`/docs/${toPage}`.replace(/\/$/, ""));
+
+    if (arrival === undefined) throw new Error(`Moved section ${from}: no page`);
+
+    if (attributes(arrival, "id").includes(fromId))
+      throw new Error(`Moved section ${from} still has a heading`);
+
+    if (target === undefined || (toId !== "" && !attributes(target, "id").includes(toId)))
+      throw new Error(`Moved section ${from} → ${to}: no section`);
+  }
+
   for (const [route, html] of pages) {
     const tags = html.match(/<(?:a|img)\b[^>]*>/g) ?? [];
 
@@ -208,7 +223,7 @@ try {
   }
 
   console.log(
-    `Site links: ${routes.size} rendered routes, ${checked} internal links/images and anchors checked, ${movedPages.size} moved pages redirect.`,
+    `Site links: ${routes.size} rendered routes, ${checked} internal links/images and anchors checked, ${movedPages.size} moved pages redirect, ${movedSections.size} moved sections forward.`,
   );
 } catch (error) {
   console.error(output);

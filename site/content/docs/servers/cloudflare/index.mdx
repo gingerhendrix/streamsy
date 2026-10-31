@@ -1,0 +1,190 @@
+---
+title: Run on Cloudflare
+description: Serve Streamsy from a Worker and Durable Objects, where each object owns its SQLite storage, its routes, and its alarm.
+---
+
+A Worker receives each request and forwards it to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app. `@streamsy/serve/cloudflare` provides the Worker router and the object class.
+
+```ts include cloudflare-app
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Layer } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { Events } from "./streams.ts";
+
+export const game = Streamsy.group(Events);
+
+export interface Env {
+  readonly STREAMS: DurableObjectNamespace;
+}
+
+export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof game>>({
+  app: Layer.mergeAll(
+    Http.routes(game, { prefix: "/streams", access: "append" }),
+    Serve.mount(Events, "/feed/:seat"),
+  ),
+  layer: (state) => DurableObjectStorage.layer(game, { client: { storage: state.storage } }),
+}) {}
+
+export const protocol = router<Env>({
+  prefix: "/streams",
+  namespace: (env) => env.STREAMS,
+  placement: Placement.byKey(() => "game"),
+});
+```
+
+Bind `StreamsObject` as the Durable Object class of the `STREAMS` namespace, with SQLite storage, in the Worker configuration. `protocol` forwards every path under `/streams` to the object named `"game"`. The Worker's own `fetch` decides what reaches it. See [Forward requests](#forward-requests).
+
+The second type parameter of `StreamsyObject.make` is the services that the app needs. `Streamsy.Services<typeof game>` is the stream services of the group. The object provides them from `layer`.
+
+## Storage
+
+`layer(state, env)` returns the storage Layer of one object. Pass the full `state.storage` handle to `DurableObjectStorage.layer`, because the driver needs its transaction API. The long-poll timeout is 25 s by default.
+
+The data of a stream lives on the object that owns it. A fork source and its child must be on the same object. A transaction cannot span objects. To deliver rows to a stream on another object, use a `Commit.producer` output or an [object link](/docs/servers/cloudflare/objects). For SQL transactions and checkpoints on the object, see [Use SQLite](/docs/storage/sqlite#durable-objects).
+
+## Placement
+
+The router names one object for each stream path. The same placement must name the same object for a stream as long as its data lives there.
+
+| Placement                                      | Object name                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `Placement.byStream()`                         | One object for each stream path. The default                           |
+| `Placement.byKey(fn)`                          | The key that `fn` returns for the stream path                          |
+| `Placement.byRoute([rule({ stream, owner })])` | `owner` of the decoded stream parameters. The first matching rule wins |
+
+| Result                          | Response |
+| ------------------------------- | -------- |
+| Empty name, or no rule matches  | 400      |
+| Placement function throws       | 500      |
+| First segment starts `__`       | 404      |
+| No stream path after the prefix | 400      |
+
+`byStream` puts each stream on its own object, so a fork across two paths fails. Use `byRoute` to keep a stream and its forks, or the streams of one tenant, on one object:
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Placement, rule } from "@streamsy/serve/cloudflare";
+import { Drafts, OrderEvents } from "./streams.ts";
+
+const placement = Placement.byRoute([
+  rule({ stream: OrderEvents, owner: ({ orderId }) => `order:${orderId}` }),
+  rule({ stream: Drafts, owner: ({ draftId }) => `draft:${draftId}` }),
+]);
+```
+
+`rule` types `owner` with the parameters of its stream. A rule whose stream does not decode the path does not own it, and the next rule tries.
+
+## Forward requests
+
+The router understands protocol paths only. It forwards nothing else, and it does not authenticate. Write the Worker's `fetch` yourself, check the caller first, and send each path to its owner:
+
+```ts
+// @include: cloudflare-app
+// @filename: worker.ts
+// The docs compile with the DOM lib. A Worker project has the Workers Response type.
+declare const Response: typeof import("@cloudflare/workers-types").Response;
+// ---cut---
+import type { ExportedHandler } from "@cloudflare/workers-types";
+import { type Env, protocol } from "./index.ts";
+
+declare const isAuthorized: (authorization: string | null) => Promise<boolean>;
+
+export default {
+  async fetch(request, env, ctx) {
+    if (!(await isAuthorized(request.headers.get("authorization"))))
+      return new Response(null, { status: 401 });
+
+    const { pathname } = new URL(request.url);
+
+    if (pathname.startsWith("/feed/"))
+      return env.STREAMS.get(env.STREAMS.idFromName("game")).fetch(request);
+
+    if (pathname.startsWith("/streams/") && protocol.fetch !== undefined)
+      return protocol.fetch(request, env, ctx);
+
+    return new Response(null, { status: 404 });
+  },
+} satisfies ExportedHandler<Env>;
+```
+
+`isAuthorized` stands for your own check. A request that fails it reaches no object. The Serve path `/feed/:seat` goes to the object that holds the `events` streams, which is `"game"` here. With `byRoute`, compute the same name that placement gives the stream.
+
+The router answers 404 for a path whose first segment starts with `__`, and calls no object. Those paths are reserved for internal mounts such as object links. Keep them out of your own forwarding too.
+
+## Object lifecycle
+
+An object acquires its storage on first access and keeps it until the platform evicts the object.
+
+| Event                                | Behavior                                                                                            |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| First access                         | Builds `layer`, reconciles alarm deadlines, and builds the handler once                             |
+| Acquisition fails                    | 503 with `retry-after: 1`. The next access tries again                                              |
+| PUT, POST, DELETE                    | Reconciles the alarm after the request, also when it fails                                          |
+| A request that calls `Wakeups.touch` | Reconciles the alarm when the request ends                                                          |
+| Alarm                                | Runs due wakeups, then reconciles. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) |
+| Defect in a handler                  | 500 with the security headers                                                                       |
+
+Only the platform starts an alarm turn. No URL or request header can.
+
+A Durable Object gets no stop signal, and the platform can evict it between requests. So the process pattern does not carry over. `Serve.layer`, `Serve.teardown`, and a long-lived `Projection.follow` fiber do not suit an object. The object serves through `HttpRouter.toWebHandler`, and it runs background work in alarm turns.
+
+The object expires streams in an alarm at their deadline. See [Expiry](/docs/streams/create#expiry).
+
+## Projections and deliveries
+
+Run work that must continue with no request in flight as a wakeup in an alarm turn. `ProjectionWakeup.attach` runs an attached projection, and `OutboxWakeup.make` drains an action outbox. Short work can also run with `Projection.run` in request middleware, before the response. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) and [Triggers](/docs/projections/run#triggers).
+
+## Alchemy
+
+`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack. The routes, storage, placement, wakeups, and links are the same. Only the wiring changes.
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { Effect, Layer } from "effect";
+import { Streamsy, Http } from "@streamsy/core";
+import * as Host from "@streamsy/serve/alchemy";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+export class Streams extends Cloudflare.DurableObject<Streams>()(
+  "Streams",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.suspend(() =>
+      Host.objectHandlers({
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
+        layer: Layer.mergeAll(
+          DurableObjectStorage.layer(streams, { client: { storage: state.raw.storage } }),
+          Host.alarmSlotLayer(state.raw.storage),
+        ),
+      }),
+    );
+  }),
+) {}
+```
+
+The outer generator declares resources. The inner Effect acquires storage for each instance. `objectHandlers` shares one acquisition across fetch and alarm, and releases it when the instance scope closes. Its `layer` must include `Host.alarmSlotLayer(storage)`, which `StreamsyObject.make` adds for you.
+
+The Worker gets the `Streams` namespace during construction. Its fetch uses `Host.router({ objects, prefix: "/streams", placement })`. The router is an `HttpEffect`, so authentication can run before it in the same Effect.
+
+| Command          | Does                                |
+| ---------------- | ----------------------------------- |
+| `alchemy dev`    | Runs the Worker and objects locally |
+| `alchemy deploy` | Deploys the stack                   |
+
+The docs examples use Alchemy `2.0.0-beta.83`. See [`@streamsy/serve/alchemy`](/docs/reference/serve/alchemy), and the [examples](/docs/examples) for complete stacks.
+
+## Remote clients
+
+A program outside Cloudflare uses [`RemoteStreams.layer`](/docs/servers/remote) with the Worker's protocol prefix as `baseUrl`. An object that uses a stream on another object uses an object link, which never goes to the network. See [Connect Durable Objects](/docs/servers/cloudflare/objects).

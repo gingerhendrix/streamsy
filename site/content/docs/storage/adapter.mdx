@@ -1,0 +1,167 @@
+---
+title: Write a storage adapter
+description: Implement the Storage service for a new backend, bind streams to it, and check it with the contract tests and the protocol conformance suite.
+---
+
+`Storage` is one Effect service. An adapter that implements it and passes the contract tests is a backend for the stream services, the protocol routes, and the remote client.
+
+The protocol, HTTP, forks, expiry, and producer fencing run above `Storage`. An adapter stores records and messages, applies mutations in order, and signals changes. To provide projection checkpoints and SQL transactions too, the adapter needs the services in [Commit boundary](#commit-boundary).
+
+## The contract
+
+```ts include storage-adapter
+// @filename: adapter.ts
+// ---cut---
+import { Effect, Layer, Option, Stream } from "effect";
+import { Storage, type StorageShape } from "@streamsy/core";
+
+const adapter: StorageShape = {
+  capabilities: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+  record: (id) => Effect.succeed(Option.none()),
+  messages: (id, window) => Effect.succeed([]),
+  producer: (id, producerId) => Effect.succeed(Option.none()),
+  mutate: (mutation) => Effect.die("not implemented"),
+  changes: (id) => Stream.empty,
+  committed: Effect.die("not implemented"),
+  nextExpiry: Effect.succeed(Option.none()),
+};
+
+export const layer = Layer.succeed(Storage, adapter);
+```
+
+| Member                     | Returns                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| `record(id)`               | The stream record, or `None`                                                          |
+| `messages(id, window)`     | Messages after `after` (exclusive), up to `until` (inclusive), with an optional limit |
+| `producer(id, producerId)` | The last accepted producer state                                                      |
+| `mutate(mutation)`         | Applies one ordered set of operations in one transaction                              |
+| `changes(id)`              | A level-triggered stream of change snapshots                                          |
+| `committed`                | A scoped PubSub subscription to stream-id arrays after successful local commits       |
+| `nextExpiry`               | The earliest indexed deadline                                                         |
+| `capabilities`             | What the adapter can do                                                               |
+
+Each read must return new values, so a caller cannot change the store through a returned object.
+
+## Bind streams
+
+```ts
+// @include: storage-adapter
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { Protocol } from "@streamsy/core/protocol";
+import { layer } from "./adapter.ts";
+import { shop } from "./streams.ts";
+
+export const shopStorage = Protocol.bind(Protocol.layer().pipe(Layer.provideMerge(layer)), shop);
+```
+
+`shopStorage` provides the stream services of `shop`, as `MemoryStorage.layer(shop)` does.
+
+### Protocol tier
+
+`Protocol.layer(options)` from `@streamsy/core/protocol` is the protocol tier. It provides `StreamsReader` and `StreamsWriter` over `Storage`. These read and write any stream id with no codec and no stream class. `Protocol.bind(graph, group)` then gives one typed service for each stream in the group. Each shipped storage Layer is built this way, and each storage module also exports `layerProtocol(options)` for the generic pair alone. See [Protocol](/docs/reference/core/protocol).
+
+## Capabilities
+
+| Capability    | Values                  | Effect                                                                                |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `fork`        | `none`, `copy`, `chain` | `none` refuses forks with `NotSupported`. `copy` copies the prefix. `chain` shares it |
+| `atomicScope` | `stream`, `store`       | `store` allows one mutation across several streams                                    |
+| `wake`        | `poll`, `push`          | `push` signals on commit. `poll` uses the repair pass                                 |
+| `expiryIndex` | `lazy`, `indexed`       | `indexed` answers `nextExpiry`, so a host can sweep. `lazy` expires on access         |
+
+## Mutations
+
+A mutation is a non-empty ordered list of `Create`, `Append`, and `Delete` operations.
+
+| Precondition          | On            |
+| --------------------- | ------------- |
+| `expectedOffset`      | Append        |
+| `expectedClosed`      | Append        |
+| `producer`            | Append        |
+| `expectedExpiresAtMs` | Expiry delete |
+
+Check every precondition before the mutation, in the same transaction. On the first failure, write nothing and answer `MutationRejected { index, reason, record }`.
+
+| Reason             | When                                                     |
+| ------------------ | -------------------------------------------------------- |
+| `offset`           | The tail is not `expectedOffset`                         |
+| `closed`           | The stream is closed, or `expectedClosed` does not match |
+| `producer`         | The stored producer state is not the expected one        |
+| `exists`           | A create found an existing stream                        |
+| `not-found`        | An append or delete named a missing stream               |
+| `gone`             | The stream was removed                                   |
+| `fork-source-gone` | A create named a removed fork source                     |
+| `expiry-mismatch`  | An expiry delete found a renewed deadline                |
+
+The protocol maps each reason to a typed error. An I/O failure is `StorageFault`, with `retryable`.
+
+## Wakes
+
+Each wake carries a `ChangeSnapshot` with `present`, `currentOffset`, `closed`, and `softDeleted`. A wake with no change is valid.
+
+- Register the subscriber before the first snapshot.
+- A `push` adapter keeps one pending wake for each subscriber.
+- Interrupting the subscriber, or closing the owner, releases the subscription.
+
+`committed` publishes once after the outer transaction commits, with every stream id that the transaction wrote. A rollback publishes nothing. Hold one scoped `PubSub` and set `committed` to `PubSub.subscribe(feed)`, so the subscription exists when the Effect returns. A caller that wants a `Stream` uses `Stream.fromSubscription`. Subscribers get no replay, and writes by other processes do not appear. Attached projections read `committed`. Readers read the coalesced `changes(id)`.
+
+## Forks and expiry
+
+A `chain` adapter stores the source id and fork offset, so a child read can join the source prefix. A removed source with live children is soft-deleted until the last child goes.
+
+An `indexed` adapter stores each deadline. An expiry delete carries the deadline it saw. After `expiry-mismatch`, the next `nextExpiry` must move past that deadline.
+
+## Commit boundary
+
+To offer `CommitBoundary.withTransaction`, an adapter needs one transaction owner, a way for `mutate` to join it, and wakes that publish after the outer commit. `CommitBoundary` comes from `@streamsy/core`.
+
+Projections need more services from the same owner. Each comes from `@streamsy/core/internal` and joins a surrounding `withTransaction`:
+
+| Service           | Used by                                                             | Does                                                                |
+| ----------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `OwnerRecords`    | `CheckpointStore.layer`                                             | Reads, writes, and removes encoded strings by key                   |
+| `CommitHooks`     | Durable attached projections                                        | Runs a hook at the end of each owned transaction, before it commits |
+| `ProjectionMarks` | `Projection.attach` with `durable: true`, `ProjectionWakeup.attach` | Keeps the pending mark of each binding with work                    |
+
+An adapter that supports projections provides all four services from its storage Layer.
+
+## Contract tests
+
+```ts
+// @include: storage-adapter
+// @filename: index.ts
+// ---cut---
+import { StorageContract } from "@streamsy/core/testing";
+import { layer } from "./adapter.ts";
+
+StorageContract.run({
+  name: "my adapter",
+  layer,
+  expected: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+});
+```
+
+Run it under Bun with Vitest. The kit builds a new Layer for each case, gives a `TestClock`, and skips the cases that `expected` rules out. Set `ownerRecords: true` when the Layer also provides `CommitBoundary`, `OwnerRecords`, `CommitHooks`, and `ProjectionMarks`. The records cases then check that records, marks, and stream writes commit and roll back together.
+
+Then serve `Http.routes(Streamsy.group(Streamsy.Wildcard), { access: "full" })` over the adapter, and run the upstream [server conformance suite](https://durablestreams.com/building-a-server) against it. That suite checks the HTTP behavior that clients see.
+
+### What the tests establish
+
+The contract tests check the `Storage` members against the capabilities that `expected` declares. With `ownerRecords: true`, they also check that owner records and projection marks share the transaction of stream writes. They do not check a SQL `Transaction` for `Commit.transaction`, the behavior of several processes on one database, or performance. Test those against your backend yourself.
+
+## Shipped adapters
+
+| Capability    | Memory    | Constrained memory | Bun SQLite         | Durable Object SQLite         |
+| ------------- | --------- | ------------------ | ------------------ | ----------------------------- |
+| `fork`        | `chain`   | `copy`             | `chain`            | `chain`                       |
+| `atomicScope` | `store`   | `stream`           | `store`            | `store`                       |
+| `wake`        | `push`    | `poll`             | `push` with repair | `push` with repair            |
+| `expiryIndex` | `indexed` | `lazy`             | `indexed`          | `indexed`, swept by the alarm |
+
+## Projection storage
+
+A custom checkpoint Layer can implement `EncodedStore` and call `fromStore` from `@streamsy/projection/checkpoint`. The record holds the encoded state and offsets. `Commit.transaction` also needs a SQL `Transaction`, which no storage capability provides. See [Custom Commits](/docs/projections/commits#custom-commits) and [`CheckpointStore`](/docs/reference/projection/checkpoint-store).

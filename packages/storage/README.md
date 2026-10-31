@@ -69,7 +69,7 @@ BunRuntime.runMain(Layer.launch(Server));
 `CommitBoundary.withTransaction` from `@streamsy/core` runs application SQL and Streamsy mutations
 in one transaction. Nested calls join the outer boundary. A rejected mutation
 fails with `MutationRejected` and rolls the transaction back; catch it outside
-the boundary. The [Layers and storage guide](https://streamsy.dev/docs/hosting)
+the boundary. The [Use SQLite guide](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables)
 shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation

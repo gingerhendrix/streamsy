@@ -1,0 +1,292 @@
+---
+title: Serve application reads
+description: Serve one stream, one Durable State change feed, or one computed value at an application URL, with request context and a browser recovery contract.
+---
+
+`@streamsy/serve` serves read-only endpoints at URLs that your application chooses. Each endpoint reads one stream or computes one value. Use it beside, or in place of, the [protocol routes](/docs/servers/protocol), when a browser needs one feed and not the whole group.
+
+```ts include serve-app
+// @filename: app.ts
+// ---cut---
+import { Layer, Schema } from "effect";
+import { Http, Streamsy } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+class Cards extends Streamsy.state<Cards>()("Game/Cards", "cards/:seat", {
+  params: { seat: Schema.String },
+  collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
+}) {}
+export const game = Streamsy.group(Events, Cards);
+
+export const App = Layer.mergeAll(
+  Http.routes(game, { prefix: "/streams", access: "read" }),
+  Serve.mount(Events, "/feed/:seat"),
+  Serve.mount(Cards, "/state/:seat"),
+);
+```
+
+`GET /feed/1` reads `events/1` and `GET /state/1` reads `cards/1`. The routes need the stream services of `game`. To run them, see [Run a process server](/docs/servers/process).
+
+## Choose a response
+
+| Handler                       | Serves                                                 | Response                              |
+| ----------------------------- | ------------------------------------------------------ | ------------------------------------- |
+| `Serve.stream(address)`       | The messages of one stream                             | Durable Streams read, with live modes |
+| `Serve.state(address)`        | The change feed of one Durable State stream            | Durable Streams read of the changes   |
+| `Serve.value(schema, effect)` | One JSON value that an Effect computes on each request | Canonical JSON with an ETag           |
+
+Each handler is an Effect that returns an `HttpServerResponse`. A Serve route reads only. It does not create a stream, run a projection, or write a checkpoint or a state row.
+
+## Mount a stream
+
+`Serve.mount(Stream, path)` decodes the path parameters with the stream's param codecs, builds the address, and serves it. A State stream gets `Serve.state`, and every other stream gets `Serve.stream`. The path must name exactly the stream's parameters. Otherwise the call is a type error.
+
+To build the address yourself, use `Serve.route(path, handler)`. `Serve.params(Stream)` decodes the matched parameters with that stream's codecs:
+
+```ts
+// @include: serve-app
+// @filename: index.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+// ---cut---
+import { Effect } from "effect";
+import { Serve } from "@streamsy/serve";
+
+const Opponent = Serve.route(
+  "/opponent/:seat",
+  Effect.flatMap(Serve.params(Events), ({ seat }) =>
+    Serve.stream(Events.at({ seat: seat === "1" ? "2" : "1" })),
+  ),
+);
+```
+
+| Request                   | Response                    |
+| ------------------------- | --------------------------- |
+| GET, HEAD                 | The data                    |
+| Other methods             | 405 with `allow: GET, HEAD` |
+| Parameter does not decode | 400                         |
+| Path does not match       | 404 from the router         |
+| Absent stream             | 404                         |
+| Removed stream            | 410                         |
+| Storage failure           | 503                         |
+
+Two routes with the same path shape fail the Layer build. Use URL-safe stream segments. Serve decodes path parameters, and the protocol routes match raw encoded ids.
+
+## State routes
+
+`Serve.state` serves the change feed of a State stream. It serves no snapshot. A new client reads from offset `-1` and applies every change.
+
+Stored control messages (`snapshot-start`, `snapshot-end`, and `reset`) are served as they are, in order with the changes. A client clears its rows at a `reset` and keeps reading forward. `Serve.state` makes no snapshots, so a request with the `x-streamsy-state-reset: snapshot` header answers 400. Serving a State stream over HTTP does not give it snapshots. See [Durable State](/docs/streams/durable-state).
+
+## Values
+
+`Serve.value(schema, effect)` runs `effect` on each request and encodes its result with `schema`. The encoded value must be JSON with finite numbers. Errors of `effect` stay in the Effect error channel, so the route can catch them.
+
+| Behavior      | Value                                                                      |
+| ------------- | -------------------------------------------------------------------------- |
+| Body          | Canonical JSON, with object keys sorted                                    |
+| ETag          | From the body bytes. `If-None-Match` with it answers 304                   |
+| Cache-Control | `private, max-age=0, must-revalidate`, unless `options.cache` sets another |
+| Contract      | The `x-streamsy-value-contract` header                                     |
+
+A value that cannot be encoded fails with `WireEncodeFailed`, which answers 500.
+
+## Projection outputs
+
+A projection writes output streams and keeps state in its checkpoint. Serve reads them. It does not run the projection, so something else must run it. See [Triggers](/docs/projections/run#triggers).
+
+```ts
+import { Effect, Layer, Schema } from "effect";
+import { DurableState, Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+import { Serve } from "@streamsy/serve";
+
+const params = { seat: Schema.FiniteFromString };
+class Numbers extends Streamsy.json<Numbers>()("Seats/Numbers", "numbers/:seat", {
+  params,
+  schema: Schema.Finite,
+}) {}
+const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+class Board extends Streamsy.state<Board>()("Seats/Board", "board/:seat", {
+  params,
+  collections: { card: { schema: Card, key: "id" } },
+}) {}
+class Transitions extends Streamsy.json<Transitions>()("Seats/Transitions", "transitions/:seat", {
+  params,
+  schema: Schema.FiniteFromString,
+}) {}
+const tracker = Projection.mapAccumBatch({
+  commit: Commit.producer,
+  id: "tracker",
+  params,
+  inputs: { numbers: Numbers },
+  outputs: {
+    board: Board,
+    transitions: Transitions,
+  },
+  state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
+  mapAccumBatch: (state, batch) =>
+    Effect.sync(() => {
+      const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return [
+        { total },
+        {
+          board: [
+            DurableState.upsert("card", { id: "total", total }),
+            DurableState.remove("card", "old"),
+          ],
+          transitions: [total],
+        },
+      ] as const;
+    }),
+});
+// ---cut---
+const OutputRoutes = Layer.mergeAll(
+  Serve.mount(Board, "/board/:seat"),
+  Serve.mount(Transitions, "/transitions/:seat"),
+  Serve.route(
+    "/summary/:seat",
+    Effect.flatMap(Serve.params(Board), (p) =>
+      Serve.value(
+        Schema.Struct({ total: Schema.FiniteFromString }),
+        Projection.read(tracker.at(p)).pipe(Effect.map(({ state }) => state)),
+      ),
+    ),
+  ),
+);
+```
+
+`tracker` is a `Projection.mapAccumBatch` declaration with the outputs `board` and `transitions`. See [Values](/docs/projections/state) for how to declare it.
+
+The output routes serve the output streams as any stream. An output stream that the projection has not created yet answers 404. `Projection.read` returns the declared initial value until the projection saves state, so `/summary/1` answers `{"total":"0"}` before the first run, not 404. `Schema.FiniteFromString` encodes the number as a string. The route app needs the output stream services, and the services that the Commit needs to read the checkpoint.
+
+## Auth and request parameters
+
+A handler can build its address from a service that middleware provides. Provide that service only after the middleware has checked the caller:
+
+```ts
+// @include: serve-app
+// @filename: index.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+// ---cut---
+import { Context, Effect, Layer, Option } from "effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Serve } from "@streamsy/serve";
+
+class CurrentSeat extends Context.Service<CurrentSeat, { readonly id: string }>()("CurrentSeat") {}
+
+declare const seatForToken: (token: string) => Effect.Effect<Option.Option<string>>;
+
+const SeatAuth = HttpRouter.middleware<{ provides: CurrentSeat }>()((handler) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const token = request.headers["authorization"]?.replace(/^Bearer /, "");
+    const seat = token === undefined ? Option.none() : yield* seatForToken(token);
+    if (Option.isNone(seat)) return HttpServerResponse.empty({ status: 401 });
+    return yield* Effect.provideService(handler, CurrentSeat, { id: seat.value });
+  }),
+);
+
+const Mine = Serve.route(
+  "/me",
+  Effect.flatMap(CurrentSeat, (seat) => Serve.stream(Events.at({ seat: seat.id }))),
+).pipe(Layer.provide(SeatAuth.layer));
+```
+
+`seatForToken` stands for your own token check. It returns the seat of a valid token. A request without a valid token gets 401 and reads nothing. Otherwise the handler reads the caller's own stream, so `/me` never takes a seat from the URL.
+
+Path decoding is not authorization. `Serve.mount(Events, "/feed/:seat")` serves any seat that a caller puts in the path. A response codec also does not validate historical messages. A message that a raw HTTP write stored is served as it is. Protect the [protocol routes](/docs/servers/protocol#protect-the-routes) too when they expose private data.
+
+## Browser clients and CORS
+
+`@streamsy/serve/contract` exports the header names, the canonical JSON encoding, and `decodePublicError` for browser code. It does not load Effect.
+
+A browser on another origin needs CORS on the Serve routes. Allow the contract request headers, and expose the read headers and the contract headers:
+
+```ts
+// @include: serve-app
+// @filename: index.ts
+import { Layer } from "effect";
+import { HttpRouter } from "effect/http";
+import { App } from "./app.ts";
+// ---cut---
+const Cors = HttpRouter.cors({
+  allowedOrigins: ["https://app.example.com"],
+  allowedMethods: ["GET", "HEAD", "OPTIONS"],
+  allowedHeaders: [
+    "authorization",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-value-contract",
+  ],
+  exposedHeaders: [
+    "stream-next-offset",
+    "stream-cursor",
+    "stream-up-to-date",
+    "etag",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-value-contract",
+  ],
+});
+const BrowserApp = Layer.mergeAll(App, Cors);
+```
+
+Each response carries a contract fingerprint. A client sends the fingerprint back with its next request. When the fingerprint differs, the route rejects the request with 409 and a recovery in the body:
+
+| Response kind | Rejection         | Client recovery                         |
+| ------------- | ----------------- | --------------------------------------- |
+| Stream, state | `ResumeRejected`  | Drop local data and replay from `-1`    |
+| Value         | `ContractChanged` | Fetch again without the old fingerprint |
+
+The fingerprint covers the route path, the stream address, and the State collection names and keys. It does not cover the item Schema or the computation. When either changes and the metadata does not, set `options.contract` to a new value, so that clients recover. A resume from an offset that no longer exists also answers `ResumeRejected`. See [`Serve` errors](/docs/reference/serve/serve-errors).
+
+## HttpApiBuilder
+
+An `HttpApiBuilder` group serves the same handlers with `handleRaw`. Convert Serve's errors to responses, so that they keep Serve's headers. Declared `HttpApi` errors use the encoder of `HttpApi` instead.
+
+```ts
+// @include: serve-app
+// @filename: index.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+class Events extends Streamsy.json<Events>()("Game/ApiEvents", "events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+}) {}
+// ---cut---
+import { Effect } from "effect";
+import { HttpServerRespondable } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import { Serve } from "@streamsy/serve";
+
+const Api = HttpApi.make("Game").add(
+  HttpApiGroup.make("feeds").add(
+    HttpApiEndpoint.get("feed", "/api/feed/:seat", { params: { seat: Schema.String } }),
+  ),
+);
+const Feeds = HttpApiBuilder.group(Api, "feeds", (handlers) =>
+  handlers.handleRaw("feed", ({ params }) =>
+    Serve.stream(Events.at(params)).pipe(Effect.catch(HttpServerRespondable.toResponse)),
+  ),
+);
+```
+
+To serve these routes in a process, with a drain for live reads at shutdown, see [Run a process server](/docs/servers/process).

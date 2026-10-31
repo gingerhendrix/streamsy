@@ -14,10 +14,10 @@
     "destroy": "alchemy destroy",
     "check:deploy-targets": "bun test test/scripts/docs-deployment-targets.test.ts",
     "check:og": "bun run scripts/check-og-image.ts",
-    "check:terms": "bun run scripts/check-stale-terms.ts",
     "check:links": "bun run scripts/check-links.ts",
     "check:twoslash": "bun test test/twoslash.test.ts",
-    "check:demos": "bun run scripts/check-demo-excerpts.ts && bun test test/scripts/check-demo-excerpts.test.ts",
+    "check:moved": "bun test test/lib/moved-pages.test.ts",
+    "check:examples": "bun run scripts/check-example-excerpts.ts && bun test test/scripts/check-example-excerpts.test.ts",
     "check:excerpts": "bun run --cwd ../packages/core build && bun run --cwd ../packages/storage build && bun run --cwd ../packages/serve build && bun run --cwd ../packages/core typecheck && bun run --cwd ../packages/storage typecheck && bun run --cwd ../packages/serve typecheck && bun run --cwd ../e2e typecheck && bun run scripts/check-excerpts.ts && bun test test/scripts/check-excerpts.test.ts"
   },
   "dependencies": {
