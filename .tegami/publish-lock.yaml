@@ -43,6 +43,8 @@ core:packages:
       - validate-create-requests.md
     id: npm:@streamsy/storage
     updated: true
+npm:mark-latest:
+  - id: npm:@streamsy/outbox
 npm:packages:
   - id: npm:folder-sync
   - id: npm:todo
