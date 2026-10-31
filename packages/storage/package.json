@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/storage",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Effect SQL storage for Streamsy on SQLite, Postgres and MySQL, with Bun and Durable Object SQLite host layers.",
   "license": "MIT",
   "repository": {
