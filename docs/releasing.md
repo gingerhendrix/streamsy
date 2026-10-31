@@ -23,7 +23,7 @@ packages:
 The remote client now resumes from the last offset it received.
 ```
 
-Use `patch`, `minor` or `major` in the frontmatter. The four packages share a version, so a note for one package bumps all four. Target `"group:streamsy"` when the note is about every package.
+Use `patch`, `minor` or `major` in the frontmatter. The five packages share a version, so a note for one package bumps all five. Target `"group:streamsy"` when the note is about every package.
 
 Do not edit package versions or create release tags by hand.
 
@@ -43,7 +43,7 @@ The private workspaces (examples, tools and `@streamsy/conformance-tests`) get a
 
 npm trusted publishing works only for a package that already exists on npm. Before you merge a Version Packages pull request that contains a new public package, create the package and its trusted publisher once from your own machine. `npm trust` needs npm 11.10.0 or newer, and your npm account needs two-factor authentication.
 
-Start after the push to `main` that adds the package has updated the pull request:
+Start after the push to `main` that adds the package has updated the pull request. Run these commands from the repository root, `repos/streamsy/`. If a `version-packages` worktree exists from an earlier release, remove it first with `git worktree remove version-packages`. Otherwise `git worktree add` fails, because that worktree has the branch checked out.
 
 ```bash
 npm login
@@ -53,8 +53,16 @@ cd version-packages
 bun install
 bun run tegami npm pretrust --dry-run
 bun run tegami npm pretrust
+git checkout -- .tegami/publish-lock.yaml
+git status --short
 ```
 
-For each new package, `pretrust` publishes `0.0.0-tegami-trusted-publish-setup` under the `temp` dist-tag and runs `npm trust github <package> --repo gingerhendrix/streamsy --file publish.yml`. It also writes `npm:mark-latest` entries into `.tegami/publish-lock.yaml`. Commit that change to the Version Packages branch, push it, then merge the pull request.
+The dry run lists the packages that are not on npm. If it lists a package that you did not add, stop and check it.
 
-For the 0.4.0 release, `@streamsy/storage`, `@streamsy/projection` and `@streamsy/serve` are new on npm. `@streamsy/core` exists already. Check on npmjs.com that its trusted publisher names `gingerhendrix/streamsy` and `publish.yml`.
+For each new package, `pretrust` publishes `0.0.0-tegami-trusted-publish-setup` under the `temp` dist-tag and runs `npm trust github <package> --repo gingerhendrix/streamsy --file publish.yml`. Check on npmjs.com that the trusted publisher names `gingerhendrix/streamsy` and `publish.yml`.
+
+`pretrust` also adds an `npm:mark-latest` entry for each new package to `.tegami/publish-lock.yaml`. Do not commit that entry. `git checkout` discards it, and `git status --short` then prints nothing. With the entry, Tegami 1.5.0 runs `npm dist-tag add <package>@<version> latest` after the publish. npm rejects that command with E401 on the Actions runner, because trusted publishing authorizes `npm publish` only. The release job then fails before it creates the GitHub release and deploys the docs. This happened in 0.4.0 and 0.8.0. The entry is not needed. The normal `npm publish` already sets `latest` on the new package.
+
+Pretrust leaves no change to commit, so merge the pull request next. Remove the worktree after the release with `git worktree remove version-packages`.
+
+If a release job fails with `Failed to mark <package> as latest`, the packages are already on npm. Rerun the failed job with `gh run rerun <run-id> --failed`. Tegami skips versions that are on npm, so the rerun skips the `dist-tag` step and finishes the GitHub release and the docs deploys.
