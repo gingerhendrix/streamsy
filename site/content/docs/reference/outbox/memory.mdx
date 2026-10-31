@@ -1,0 +1,39 @@
+---
+title: Memory store
+description: Reference for layerMemory in @streamsy/outbox/memory.
+---
+
+```ts
+import { layerMemory } from "@streamsy/outbox/memory";
+```
+
+## `layerMemory`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox/memory";
+import { same } from "./reference-check.ts";
+import type { Layer } from "effect";
+import type { OutboxStore } from "@streamsy/outbox";
+// ---cut-end---
+declare const layerMemory: Layer.Layer<OutboxStore>;
+// ---cut-after---
+same<typeof layerMemory, typeof Real.layerMemory>(true);
+```
+
+The layer provides an ephemeral `OutboxStore`. Entries and retained identities end with the process. Each build of the layer creates an independent store with its own drain permits.
+
+The memory store uses the same tuple identity, due selection, partition filtering, ordering, and settlement behavior as the SQL store. Duplicate enqueue retains the original payload and partition after delivery or dead-lettering.
+
+```ts
+import { Effect } from "effect";
+import { OutboxStore } from "@streamsy/outbox";
+import { layerMemory } from "@streamsy/outbox/memory";
+
+const entries = Effect.gen(function* () {
+  const store = yield* OutboxStore;
+  return yield* store.list({ name: "shop.receipt" });
+}).pipe(Effect.provide(layerMemory));
+```
+
+Build the layer once for drains that need a shared permit. The store provides no SQL transaction rollback. See [OutboxStore](/docs/reference/outbox/outbox#outboxstore) for its methods.

@@ -146,7 +146,7 @@ const Server = Layer.mergeAll(Serve.layer(App), Background).pipe(
 );
 ```
 
-`deliverForever` stands for a loop such as an outbox drain. The fiber runs beside the routes and shares their storage. Shutdown interrupts it. For the work itself, see [Schedule delivery](/docs/projections/actions#schedule-delivery) for an outbox, and [Attach](/docs/projections/run#attach) and [Follow](/docs/projections/run#follow) for projections. `Projection.attach` returns a Layer, so it goes beside `Serve.layer` in the same way.
+`deliverForever` stands for a loop such as an outbox drain. The fiber runs beside the routes and shares their storage. Shutdown interrupts it. For the work itself, see [Schedule the next pass](/docs/outbox#schedule-the-next-pass) for an outbox, and [Attach](/docs/projections/run#attach) and [Follow](/docs/projections/run#follow) for projections. `Projection.attach` returns a Layer, so it goes beside `Serve.layer` in the same way.
 
 ## Clean shutdown
 

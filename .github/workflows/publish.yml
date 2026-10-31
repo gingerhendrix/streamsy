@@ -2,7 +2,7 @@ name: Release
 
 # Every push to main runs the full gate, then `tegami ci`. When .tegami/ holds
 # release notes, Tegami opens or updates the Version Packages pull request.
-# When that pull request merges, Tegami publishes the four public packages
+# When that pull request merges, Tegami publishes the five public packages
 # through npm trusted publishing, creates the shared v<version> tag and the
 # GitHub release. A manual run (workflow_dispatch) does the same on main.
 #

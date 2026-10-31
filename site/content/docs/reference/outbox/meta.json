@@ -1,0 +1,4 @@
+{
+  "title": "@streamsy/outbox",
+  "pages": ["outbox", "sql", "memory", "errors"]
+}

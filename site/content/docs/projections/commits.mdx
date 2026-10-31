@@ -78,7 +78,7 @@ For the producer position of each output and the output rules, see [Output strea
 
 `Commit.atLeastOnce` pins the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last save fails, the next pass runs the same items again with the same `unit.key`.
 
-Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. For durable delivery of external effects, use an [outbox](/docs/projections/actions).
+Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. For durable delivery of external effects, use an [outbox](/docs/outbox).
 
 ## Compensation
 

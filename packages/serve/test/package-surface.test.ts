@@ -1,10 +1,23 @@
 /* oxlint-disable effecttsgo/async-function -- Bun file/package import boundary. */
 import { expect, test } from "vitest";
-import { Effect, Record } from "effect";
+import { Array, Effect, Order, Record } from "effect";
 import * as DenoHost from "@streamsy/serve/deno";
+import manifest from "../package.json";
 import { entryImports, matching } from "../../../examples/test-support/entry-imports.ts";
 
 const dist = (name: string) => new URL(`../dist/${name}`, import.meta.url).pathname;
+
+test("the package exposes only route, contract and host entries", () => {
+  expect(Array.sort(Record.keys(manifest.exports), Order.String)).toEqual([
+    ".",
+    "./alchemy",
+    "./bun",
+    "./cloudflare",
+    "./contract",
+    "./deno",
+    "./node",
+  ]);
+});
 
 test("the root entry reaches no @effect/platform-* module", () => {
   expect(matching(entryImports(dist("index.js")), ["@effect/platform-"])).toEqual([]);
@@ -32,15 +45,5 @@ test("Cloudflare entries expose wakeups and the slot layer without the raw slot 
   for (const name of ["Alarm", "AlarmSlot", "alarmLayer", "alarm", "reconcileAlarm"])
     expect(Record.keys(alchemy)).not.toContain(name);
 
-  for (const host of ["alchemy", "cloudflare"])
-    expect(
-      matching(entryImports(dist(`${host}.js`)), [
-        "action/runtime",
-        "action/contract",
-        "action/outbox",
-      ]),
-    ).toEqual([]);
-  const runtime = await import("@streamsy/serve/action/runtime");
-  expect(runtime.OutboxWakeup.make).toBeTypeOf("function");
-  expect(Record.keys(runtime)).not.toContain("Wakeup");
+  expect(alchemy.OutboxWakeup.make).toBeTypeOf("function");
 });

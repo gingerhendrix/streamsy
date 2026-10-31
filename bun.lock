@@ -338,6 +338,22 @@
         "vitest",
       ],
     },
+    "packages/outbox": {
+      "name": "@streamsy/outbox",
+      "version": "0.7.0",
+      "devDependencies": {
+        "@effect/sql-mysql2": "4.0.5",
+        "@effect/sql-pg": "4.0.5",
+        "@effect/sql-sqlite-bun": "4.0.5",
+        "@types/bun": "^1.4.3",
+        "effect": "4.0.5",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+      "peerDependencies": {
+        "effect": "^4.0.5",
+      },
+    },
     "packages/projection": {
       "name": "@streamsy/projection",
       "version": "0.7.0",
@@ -352,6 +368,7 @@
         "@effect/sql-sqlite-bun": "4.0.5",
         "@effect/sql-sqlite-do": "4.0.5",
         "@effect/vitest": "catalog:",
+        "@streamsy/outbox": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "@types/bun": "^1.4.3",
@@ -369,14 +386,13 @@
       "version": "0.7.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
+        "@streamsy/outbox": "workspace:^",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "4.20251228.0",
         "@effect/platform-bun": "4.0.5",
         "@effect/platform-deno": "4.0.5",
         "@effect/platform-node": "4.0.5",
-        "@effect/sql-mysql2": "4.0.5",
-        "@effect/sql-pg": "4.0.5",
         "@effect/sql-sqlite-do": "4.0.5",
         "@effect/vitest": "catalog:",
         "@streamsy/storage": "workspace:*",
@@ -441,6 +457,7 @@
         "@effect/platform-bun": "4.0.5",
         "@effect/sql-sqlite-bun": "4.0.5",
         "@streamsy/core": "workspace:*",
+        "@streamsy/outbox": "workspace:*",
         "@streamsy/projection": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
@@ -967,6 +984,8 @@
     "@streamsy/docs-snippets": ["@streamsy/docs-snippets@workspace:tools/docs-snippets"],
 
     "@streamsy/issue-tracker-demo-contract": ["@streamsy/issue-tracker-demo-contract@workspace:examples/issue-tracker-demo-contract"],
+
+    "@streamsy/outbox": ["@streamsy/outbox@workspace:packages/outbox"],
 
     "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 

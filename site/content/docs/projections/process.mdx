@@ -102,4 +102,4 @@ An append that the handler makes to a stream on the same storage commits with th
 
 `Commit.atLeastOnce` needs only the `CheckpointStore` service, so it works on a memory host.
 
-When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. For a durable outbox with a bounded retry policy, see [Actions](/docs/projections/actions).
+When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. For a durable outbox with a bounded retry policy, see [Outbox](/docs/outbox).

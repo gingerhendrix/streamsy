@@ -13,9 +13,10 @@ Documentation: [streamsy.dev](https://streamsy.dev)
 | [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, stream services, memory Layer, HTTP app, remote client |
 | [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                   |
 | [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
-| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, action delivery                 |
+| [`@streamsy/outbox`](packages/outbox/README.md)         | Transactional enqueue and bounded at-least-once delivery                     |
+| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, outbox wakeups                  |
 
-All four packages share one version. `effect` 4 is a peer dependency. See
+All five packages share one version. `effect` 4 is a peer dependency. See
 [docs/releasing.md](docs/releasing.md) for the release process.
 
 ## Quick start

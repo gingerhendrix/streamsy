@@ -1,19 +1,21 @@
-import type { SqlClient, SqlError } from "effect/sql";
-import { Array, Effect, Option, Predicate, Schema } from "effect";
-import type { DeadLetterReason } from "./errors.ts";
-import { OutboxUnavailable } from "./errors.ts";
-import type {
-  OutboxBacking,
-  OutboxDraft,
-  OutboxEnqueueReport,
-  OutboxEntry,
-  OutboxEntryState,
-} from "./outbox.ts";
+import { SqlClient, type SqlError } from "effect/sql";
+import { Array, Effect, Layer, Option, Predicate, Schema, SchemaTransformation } from "effect";
+import { InvalidStoredRecord, OutboxUnavailable, type StoreFailure } from "./errors.ts";
+import {
+  DeadLetterReason,
+  EntryState,
+  OutboxStore,
+  Settlement,
+  type OutboxBacking,
+  type OutboxDraft,
+  type EnqueueReport,
+  type OutboxEntry,
+} from "./store.ts";
 
-const TABLE = "streamsy_effect_outbox";
+const TABLE = "streamsy_outbox";
 
 /** MySQL key columns. Their sum fits the 3072-byte InnoDB index limit at 4 bytes a character. */
-const MYSQL_SINK_LENGTH = 255;
+const MYSQL_NAME_LENGTH = 255;
 
 const MYSQL_PARTITION_LENGTH = 255;
 
@@ -25,7 +27,7 @@ const MYSQL_KEY_TYPE = "CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL"
 const CREATE_TABLE = {
   sqlite: `CREATE TABLE IF NOT EXISTS ${TABLE} (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  sink               TEXT NOT NULL,
+  name               TEXT NOT NULL,
   partition_id       TEXT NOT NULL,
   idempotency_key    TEXT NOT NULL,
   payload            TEXT NOT NULL,
@@ -39,12 +41,12 @@ const CREATE_TABLE = {
 )`,
   pg: `CREATE TABLE IF NOT EXISTS ${TABLE} (
   id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  sink               TEXT NOT NULL,
+  name               TEXT NOT NULL,
   partition_id       TEXT NOT NULL,
   idempotency_key    TEXT NOT NULL,
   payload            TEXT NOT NULL,
   state              TEXT NOT NULL,
-  attempts           INTEGER NOT NULL DEFAULT 0,
+  attempts           BIGINT NOT NULL DEFAULT 0,
   next_attempt_at_ms BIGINT NOT NULL,
   last_error         TEXT,
   dead_letter_reason TEXT,
@@ -53,12 +55,12 @@ const CREATE_TABLE = {
 )`,
   mysql: `CREATE TABLE IF NOT EXISTS ${TABLE} (
   id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
-  sink               VARCHAR(${MYSQL_SINK_LENGTH}) ${MYSQL_KEY_TYPE},
+  name               VARCHAR(${MYSQL_NAME_LENGTH}) ${MYSQL_KEY_TYPE},
   partition_id       VARCHAR(${MYSQL_PARTITION_LENGTH}) ${MYSQL_KEY_TYPE},
   idempotency_key    VARCHAR(${MYSQL_KEY_LENGTH}) ${MYSQL_KEY_TYPE},
   payload            LONGTEXT NOT NULL,
   state              VARCHAR(16) NOT NULL,
-  attempts           INT NOT NULL DEFAULT 0,
+  attempts           BIGINT NOT NULL DEFAULT 0,
   next_attempt_at_ms BIGINT NOT NULL,
   last_error         LONGTEXT,
   dead_letter_reason VARCHAR(32),
@@ -68,10 +70,10 @@ const CREATE_TABLE = {
 } as const;
 
 const INDEXES = [
-  { name: `${TABLE}_identity`, unique: true, columns: "(sink, idempotency_key)" },
-  { name: `${TABLE}_due`, unique: false, columns: "(sink, state, next_attempt_at_ms, id)" },
+  { name: `${TABLE}_identity`, unique: true, columns: "(name, idempotency_key)" },
+  { name: `${TABLE}_due`, unique: false, columns: "(name, state, next_attempt_at_ms, id)" },
   // The due index sorts by retry time; ordered passes need the oldest pending id without a sort.
-  { name: `${TABLE}_order`, unique: false, columns: "(sink, state, id)" },
+  { name: `${TABLE}_order`, unique: false, columns: "(name, state, id)" },
 ] as const;
 
 type Index = (typeof INDEXES)[number];
@@ -83,12 +85,12 @@ const createIndex = (index: Index, ifNotExists: boolean) =>
 
 interface OutboxRow {
   readonly id: number | bigint;
-  readonly sink: string;
+  readonly name: string;
   readonly partition_id: string;
   readonly idempotency_key: string;
   readonly payload: string;
   readonly state: string;
-  readonly attempts: number;
+  readonly attempts: number | bigint;
   readonly next_attempt_at_ms: number | bigint;
   readonly last_error: string | null;
   readonly dead_letter_reason: string | null;
@@ -96,21 +98,13 @@ interface OutboxRow {
   readonly settled_at_ms: number | bigint | null;
 }
 
-const isOutboxUnavailable = Schema.is(OutboxUnavailable);
-
-const attempt = <A>(
+/** Map driver failures to the operational outbox error, keeping the operation label. */
+const unavailable = <A>(
   operation: string,
-  effect: Effect.Effect<A, OutboxUnavailable | SqlError.SqlError>,
-): Effect.Effect<A, OutboxUnavailable> =>
-  effect.pipe(
-    Effect.mapError((cause) =>
-      isOutboxUnavailable(cause)
-        ? cause
-        : new OutboxUnavailable({
-            operation,
-            detail: cause instanceof Error ? cause.message : String(cause),
-          }),
-    ),
+  effect: Effect.Effect<A, StoreFailure | SqlError.SqlError>,
+): Effect.Effect<A, StoreFailure> =>
+  Effect.catchTag(effect, "SqlError", (cause: SqlError.SqlError) =>
+    Effect.fail(new OutboxUnavailable({ operation, detail: cause.message })),
   );
 
 const unsupported = (operation: string) =>
@@ -159,7 +153,7 @@ const migrateMysql = (
     return undefined;
   });
 
-export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, OutboxUnavailable> {
+export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, StoreFailure> {
   const statements = (dialect: "sqlite" | "pg"): Effect.Effect<void, SqlError.SqlError> =>
     Effect.forEach(
       [CREATE_TABLE[dialect], ...Array.map(INDEXES, (index) => createIndex(index, true))],
@@ -167,7 +161,7 @@ export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, Out
       { discard: true },
     );
 
-  return attempt(
+  return unavailable(
     "migrateOutbox",
     sql.onDialectOrElse({
       sqlite: () => statements("sqlite"),
@@ -178,26 +172,10 @@ export function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, Out
   );
 }
 
-/**
- * MySQL readiness only reads the catalog. The backing may run inside a caller's
- * transaction, and DDL there would commit it early.
- */
-const mysqlReady = (sql: SqlClient.SqlClient) =>
-  Effect.flatMap(mysqlIndexes(sql), (names) =>
-    Array.every(INDEXES, (index) => names.has(index.name))
-      ? Effect.void
-      : Effect.fail(
-          new OutboxUnavailable({
-            operation: "ready",
-            detail: `${TABLE} is not migrated; on MySQL, run migrateOutbox at placement start`,
-          }),
-        ),
-  );
-
 /** MySQL `INSERT IGNORE` would truncate an over-long key, so refuse it first. */
 const mysqlKeyFault = (draft: OutboxDraft): OutboxUnavailable | undefined => {
   const limits = [
-    ["sink", draft.sink, MYSQL_SINK_LENGTH],
+    ["name", draft.name, MYSQL_NAME_LENGTH],
     ["partition id", draft.partitionId, MYSQL_PARTITION_LENGTH],
     ["idempotency key", draft.idempotencyKey, MYSQL_KEY_LENGTH],
   ] as const;
@@ -217,42 +195,42 @@ const mysqlKeyFault = (draft: OutboxDraft): OutboxUnavailable | undefined => {
   return undefined;
 };
 
-export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking {
-  // Readiness deliberately is not cached: on SQLite and Postgres, migration can
-  // run inside a caller's transaction, and publishing that transaction-local
-  // result after rollback would leave this backing unable to recover. The
-  // idempotent statements make a retry safe; placements may still migrate
-  // eagerly before publishing stores. MySQL only checks, so it must migrate eagerly.
-  const ready: Effect.Effect<void, OutboxUnavailable | SqlError.SqlError> = Effect.suspend(() =>
-    sql.onDialectOrElse({
-      mysql: () => mysqlReady(sql),
-      orElse: () => migrateOutbox(sql),
-    }),
+const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.SqlError>) =>
+  unavailable(operation, statement).pipe(Effect.asVoid);
+
+const rows = (
+  operation: string,
+  statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError.SqlError>,
+) =>
+  unavailable(operation, statement).pipe(
+    Effect.flatMap((found) => Effect.forEach(found, (row) => decodeRow(row))),
   );
 
-  const run = <A>(
-    operation: string,
-    statement: Effect.Effect<A, SqlError.SqlError | OutboxUnavailable>,
-  ) => attempt(operation, Effect.andThen(ready, statement));
+function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
+  /** The scope filter. An omitted partition selects every partition. */
+  const inScope = (name: string, partitionId: string | undefined) => [
+    sql`name = ${name}`,
+    ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
+  ];
 
-  const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.SqlError>) =>
-    run(operation, statement).pipe(Effect.asVoid);
+  const update = Settlement.$match({
+    Delivered: ({ attempts, atMs }) =>
+      sql`state = 'delivered', attempts = ${attempts}, last_error = NULL, settled_at_ms = ${atMs}`,
+    Retry: ({ attempts, nextAttemptAtMs, detail }) =>
+      sql`state = 'pending', attempts = ${attempts}, next_attempt_at_ms = ${nextAttemptAtMs},
+ last_error = ${detail}`,
+    Dead: ({ attempts, reason, detail, atMs }) =>
+      sql`state = 'dead', attempts = ${attempts}, dead_letter_reason = ${reason},
+ last_error = ${detail}, settled_at_ms = ${atMs}`,
+  });
 
-  const rows = (
-    operation: string,
-    statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError.SqlError>,
-  ) =>
-    run(operation, statement).pipe(
-      Effect.map((found) => Array.map(found, (row) => decodeRow(row))),
-    );
-
-  /** Whether the draft was new. A draft with a known sink and key changes nothing. */
+  /** Whether the draft was new. A draft with a known name and key changes nothing. */
   const insert = (draft: OutboxDraft) => {
     const row = sql.insert({
-      sink: draft.sink,
+      name: draft.name,
       partition_id: draft.partitionId,
       idempotency_key: draft.idempotencyKey,
-      payload: draft.payload,
+      payload: draft.encodedPayload,
       state: "pending",
       attempts: 0,
       next_attempt_at_ms: draft.enqueuedAtMs,
@@ -266,7 +244,7 @@ export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking 
 
         if (fault !== undefined) return Effect.fail(fault);
 
-        return sql`INSERT IGNORE INTO streamsy_effect_outbox ${row}`.raw.pipe(
+        return sql`INSERT IGNORE INTO streamsy_outbox ${row}`.raw.pipe(
           Effect.map(
             (result) =>
               Predicate.hasProperty(result, "affectedRows") && Number(result.affectedRows) > 0,
@@ -274,18 +252,16 @@ export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking 
         );
       },
       orElse: () =>
-        sql`INSERT INTO streamsy_effect_outbox ${row}
- ON CONFLICT (sink, idempotency_key) DO NOTHING RETURNING 1 AS inserted`.pipe(
+        sql`INSERT INTO streamsy_outbox ${row}
+ ON CONFLICT (name, idempotency_key) DO NOTHING RETURNING 1 AS inserted`.pipe(
           Effect.map((inserted) => inserted.length > 0),
         ),
     });
   };
 
   return {
-    enqueue: (
-      drafts: readonly OutboxDraft[],
-    ): Effect.Effect<OutboxEnqueueReport, OutboxUnavailable> =>
-      run(
+    enqueue: (drafts: readonly OutboxDraft[]): Effect.Effect<EnqueueReport, StoreFailure> =>
+      unavailable(
         "enqueue",
         Effect.gen(function* () {
           let enqueued = 0;
@@ -295,91 +271,117 @@ export function createSqlOutboxBacking(sql: SqlClient.SqlClient): OutboxBacking 
           return { enqueued, absorbed: drafts.length - enqueued };
         }),
       ),
-    nextDue: (sink, partitionId, ordered = false) =>
-      run(
+    nextDue: ({ name, partitionId, ordered = false }) =>
+      unavailable(
         "nextDue",
         sql<{ readonly at: number | bigint }>`SELECT next_attempt_at_ms AS at
- FROM streamsy_effect_outbox WHERE ${sql.and([
-   sql`sink = ${sink}`,
-   sql`state = 'pending'`,
-   ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
- ])} ORDER BY ${ordered ? sql`id` : sql`next_attempt_at_ms, id`} LIMIT 1`,
+ FROM streamsy_outbox WHERE ${sql.and([...inScope(name, partitionId), sql`state = 'pending'`])}
+ ORDER BY ${ordered ? sql`id` : sql`next_attempt_at_ms, id`} LIMIT 1`,
       ).pipe(
-        Effect.map((found) =>
-          Option.fromUndefinedOr(found[0]).pipe(Option.map((row) => Number(row.at))),
+        Effect.flatMap((found) =>
+          found[0] === undefined
+            ? Effect.succeed(Option.none<number>())
+            : Schema.decodeEffect(StoredInt)(found[0].at).pipe(
+                storedFailure("nextDue"),
+                Effect.asSome,
+              ),
         ),
       ),
-    claimDue: (sink, partitionId, nowMs, limit, ordered = false) =>
+    readDue: ({ name, partitionId, ordered = false }, nowMs, limit) =>
       rows(
-        "claimDue",
-        sql<OutboxRow>`SELECT * FROM streamsy_effect_outbox WHERE ${sql.and([
-          sql`sink = ${sink}`,
-          ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
+        "readDue",
+        sql<OutboxRow>`SELECT * FROM streamsy_outbox WHERE ${sql.and([
+          ...inScope(name, partitionId),
           sql`state = 'pending'`,
           ...(ordered ? [] : [sql`next_attempt_at_ms <= ${nowMs}`]),
         ])} ORDER BY id LIMIT ${limit}`,
       ),
-    markDelivered: (id, attempts, atMs) =>
-      execute(
-        "markDelivered",
-        sql`UPDATE streamsy_effect_outbox SET state = 'delivered', attempts = ${attempts},
- last_error = NULL, settled_at_ms = ${atMs} WHERE id = ${id}`,
-      ),
-    reschedule: (id, attempts, nextAttemptAtMs, detail) =>
-      execute(
-        "reschedule",
-        sql`UPDATE streamsy_effect_outbox SET state = 'pending', attempts = ${attempts},
- next_attempt_at_ms = ${nextAttemptAtMs}, last_error = ${detail} WHERE id = ${id}`,
-      ),
-    deadLetter: (id, attempts, reason, detail, atMs) =>
-      execute(
-        "deadLetter",
-        sql`UPDATE streamsy_effect_outbox SET state = 'dead', attempts = ${attempts},
- dead_letter_reason = ${reason}, last_error = ${detail}, settled_at_ms = ${atMs} WHERE id = ${id}`,
-      ),
-    list: (sink, partitionId) =>
+    settle: (id, settlement) =>
+      execute("settle", sql`UPDATE streamsy_outbox SET ${update(settlement)} WHERE id = ${id}`),
+    list: ({ name, partitionId }) =>
       rows(
         "list",
-        sql<OutboxRow>`SELECT * FROM streamsy_effect_outbox WHERE ${sql.and([
-          sql`sink = ${sink}`,
-          ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
-        ])} ORDER BY id`,
+        sql<OutboxRow>`SELECT * FROM streamsy_outbox WHERE ${sql.and(
+          inScope(name, partitionId),
+        )} ORDER BY id`,
       ),
   };
 }
 
-/** Postgres returns BIGINT as a `bigint`; SQLite and MySQL return a `number`. */
-const toNumber = (value: number | bigint): number => Number(value);
+/** A BIGINT may arrive as a number, a bigint or a digit string. Unsafe values are refused. */
+const StoredInt = Schema.Union([
+  Schema.Finite,
+  Schema.BigInt,
+  Schema.String.check(Schema.isPattern(/^-?\d+$/)),
+]).pipe(
+  Schema.decodeTo(
+    Schema.Int,
+    SchemaTransformation.transform<number, number | bigint | string>({
+      decode: Number,
+      encode: (value) => value,
+    }),
+  ),
+);
 
-function decodeRow(row: OutboxRow): OutboxEntry {
-  return {
-    id: toNumber(row.id),
-    sink: row.sink,
-    partitionId: row.partition_id,
-    idempotencyKey: row.idempotency_key,
-    payload: row.payload,
-    state: decodeState(row.state),
-    attempts: row.attempts,
-    nextAttemptAtMs: toNumber(row.next_attempt_at_ms),
-    lastError: row.last_error ?? undefined,
-    deadLetterReason: decodeReason(row.dead_letter_reason),
-    enqueuedAtMs: toNumber(row.enqueued_at_ms),
-    settledAtMs: row.settled_at_ms === null ? undefined : toNumber(row.settled_at_ms),
-  };
-}
+const StoredRow = Schema.Struct({
+  id: StoredInt,
+  name: Schema.String,
+  partition_id: Schema.String,
+  idempotency_key: Schema.String,
+  payload: Schema.String,
+  state: EntryState,
+  attempts: StoredInt,
+  next_attempt_at_ms: StoredInt,
+  last_error: Schema.NullOr(Schema.String),
+  dead_letter_reason: Schema.NullOr(DeadLetterReason),
+  enqueued_at_ms: StoredInt,
+  settled_at_ms: Schema.NullOr(StoredInt),
+});
 
-/** A stored state this build does not know is a schema fault, never a silent "pending". */
-function decodeState(value: string): OutboxEntryState {
-  if (value === "pending" || value === "delivered" || value === "dead") return value;
-  throw new TypeError(`unknown outbox state ${value}`);
-}
+const storedFailure = (operation: string) =>
+  Effect.mapError(
+    (cause: Schema.SchemaError) => new InvalidStoredRecord({ operation, detail: cause.message }),
+  );
 
-function decodeReason(value: string | null): DeadLetterReason | undefined {
-  if (value === null) return undefined;
+/** Decode structure independently of payload validity, then check state consistency. */
+const decodeRow = (input: OutboxRow): Effect.Effect<OutboxEntry, InvalidStoredRecord> =>
+  Effect.flatMap(
+    Schema.decodeUnknownEffect(StoredRow)(input).pipe(storedFailure("decodeRow")),
+    (row) => {
+      const settled = row.settled_at_ms !== null;
 
-  if (value === "attempts-exhausted" || value === "permanent" || value === "payload-poison") {
-    return value;
-  }
+      const consistent =
+        row.id > 0 &&
+        row.attempts >= 0 &&
+        (row.state === "pending" ? !settled : settled && row.attempts > 0) &&
+        (row.state === "dead") === (row.dead_letter_reason !== null);
 
-  throw new TypeError(`unknown outbox dead-letter reason ${value}`);
-}
+      return consistent
+        ? Effect.succeed({
+            id: row.id,
+            name: row.name,
+            partitionId: row.partition_id,
+            idempotencyKey: row.idempotency_key,
+            encodedPayload: row.payload,
+            state: row.state,
+            attempts: row.attempts,
+            nextAttemptAtMs: row.next_attempt_at_ms,
+            enqueuedAtMs: row.enqueued_at_ms,
+            settledAtMs: row.settled_at_ms ?? undefined,
+            lastError: row.last_error ?? undefined,
+            deadLetterReason: row.dead_letter_reason ?? undefined,
+          })
+        : Effect.fail(
+            new InvalidStoredRecord({ operation: "decodeRow", detail: "Inconsistent outbox row" }),
+          );
+    },
+  );
+
+/**
+ * The SQL store over the context's `SqlClient`. Run `migrateOutbox` at startup first.
+ * Operations use that client's active transaction, so enqueue commits with causal writes.
+ */
+export const layerSql: Layer.Layer<OutboxStore, never, SqlClient.SqlClient> = Layer.effect(
+  OutboxStore,
+  Effect.map(SqlClient.SqlClient, makeStore),
+);

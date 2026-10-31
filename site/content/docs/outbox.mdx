@@ -1,0 +1,208 @@
+---
+title: Outbox
+description: Enqueue external effects with your SQL writes, then deliver them in bounded passes with retries and dead letters.
+---
+
+Use `@streamsy/outbox` to store an email, webhook, or other external effect before you deliver it. Enqueue in the transaction that records the cause. Drain the outbox separately, after commit.
+
+The package runs without streams, projections, or a hosting framework. It provides memory, SQLite, Postgres, and MySQL stores.
+
+## Define an outbox
+
+Declare the payload Schema, a durable idempotency key, and a finite retry policy:
+
+```ts include outbox-definition
+// @filename: receipts.ts
+// ---cut---
+import { Schema } from "effect";
+import { Outbox } from "@streamsy/outbox";
+
+export const Receipt = Schema.Struct({ orderId: Schema.String, amount: Schema.Finite });
+export type Receipt = typeof Receipt.Type;
+
+export const receipts = Outbox.define({
+  name: "shop.receipt",
+  payload: Receipt,
+  idempotencyKey: (receipt) => `receipt/${receipt.orderId}`,
+  partitionBy: (receipt) => receipt.orderId,
+  retry: { maxAttempts: 5, initialDelayMs: 1_000, factor: 2, maxDelayMs: 60_000 },
+});
+```
+
+Derive the key from durable facts. A repeated enqueue with the same outbox name and key retains the original payload and partition. Delivered and dead-letter rows also retain that identity.
+
+Use a service-free Schema codec. `enqueue` encodes the decoded payload type as Schema JSON, and `drain` decodes it before delivery. Schema transformations apply in both directions.
+
+`define` does no I/O. It copies and freezes the retry policy, and throws `InvalidConfiguration` for invalid settings. `maxAttempts` must be a positive safe integer. Delays must be finite and nonnegative. `factor` must be finite and at least 1. `maxDelayMs` must be a safe integer and at least `initialDelayMs`.
+
+The policy above waits 1, 2, 4, and 8 seconds after successive retryable failures. The fifth failure dead-letters the entry. See [RetryPolicy](/docs/reference/outbox/outbox#retrypolicy) for the delay calculation.
+
+## Enqueue with your SQL writes
+
+Provide `layerSql` over your application's `SqlClient`. The store reads that client from context, so `Outbox.enqueue` inside a transaction writes in that transaction:
+
+```ts
+// @include: outbox-definition
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { SqlClient } from "effect/sql";
+import { Outbox } from "@streamsy/outbox";
+import { layerSql, migrateOutbox } from "@streamsy/outbox/sql";
+import { receipts, type Receipt } from "./receipts.ts";
+
+// Run once at startup, outside every transaction.
+const migrate = Effect.flatMap(SqlClient.SqlClient, migrateOutbox);
+
+const recordOrder = (receipt: Receipt) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO orders ${sql.insert(receipt)}`;
+        return yield* Outbox.enqueue(receipts, [receipt]);
+      }),
+    );
+  }).pipe(Effect.provide(layerSql));
+```
+
+Run `migrate` and create your application table before calling `recordOrder`. In an application, provide `layerSql` once at your entry point with the same `SqlClient` layer. The order and its outbox entry commit together, or neither does. Do not catch a failure inside the transaction when that failure must roll back the writes.
+
+`enqueue` returns `{ enqueued, absorbed }`. It encodes and validates the complete batch before the first insert. It does not open a transaction. Outside your transaction, an insert failure can leave earlier inserts committed.
+
+`migrateOutbox` creates `streamsy_outbox` and its three indexes. Run it once at startup, outside every transaction, on every dialect. Store operations run no DDL. On MySQL, DDL inside a transaction would commit it implicitly. See [SQL store](/docs/reference/outbox/sql) for key length limits.
+
+For an ephemeral test store, provide [`layerMemory`](/docs/reference/outbox/memory).
+
+## Drain after commit
+
+Pass an ordinary Effect-returning delivery function to `Outbox.drain`. Forward the supplied idempotency key to the receiver:
+
+```ts include outbox-delivery
+// @include: outbox-definition
+// @filename: delivery.ts
+// ---cut---
+import { Effect } from "effect";
+import { Outbox, RetryableDeliveryFailure } from "@streamsy/outbox";
+import { receipts, type Receipt } from "./receipts.ts";
+
+export const sendReceipt: Outbox.Deliver<Receipt> = ({ payload, idempotencyKey }) =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await fetch("https://receipts.example.com/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (!response.ok) throw new Error(`Receipt provider returned ${response.status}`);
+    },
+    catch: (cause) => new RetryableDeliveryFailure({ detail: String(cause) }),
+  });
+
+export const deliverOnce = Outbox.drain(receipts, sendReceipt, { limit: 100 });
+```
+
+Provide one `OutboxStore` layer at your host entry point and build it once. Drains of this outbox share a permit only through the same built store. The delivery function's service requirements propagate through `drain`. Use `PermanentDeliveryFailure` for a refusal that cannot recover.
+
+A pass attempts at most `limit` entries, one at a time, in enqueue order. The default limit is 100. It returns `{ name, attempted, delivered, retried, deadLettered, more }`. `more` is true when the pass stopped at its limit. Retry deadlines use the Effect clock and remain stored across restarts. A pass does not sleep while an entry waits for a retry.
+
+| Option        | Default        | Effect                                                        |
+| ------------- | -------------- | ------------------------------------------------------------- |
+| `partitionId` | All partitions | Filters to one partition when supplied                        |
+| `limit`       | 100            | Bounds the entries attempted. Must be a positive safe integer |
+| `ordered`     | `false`        | Blocks the selected scope behind its oldest pending retry     |
+
+Without ordering, later due entries can pass an entry whose retry is in the future. With `ordered: true`, a retry stops the pass. An omitted partition makes ordering cover the whole outbox name. A terminal dead letter allows later entries to proceed.
+
+| Delivery outcome                                                              | Stored result                                                     |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Success                                                                       | Delivered                                                         |
+| `RetryableDeliveryFailure`, synchronous throw, or non-interrupt Effect defect | Rescheduled, or dead as `attempts-exhausted` at the attempt limit |
+| `PermanentDeliveryFailure`                                                    | Dead as `permanent`                                               |
+| Stored JSON fails payload decoding                                            | Dead as `payload-poison`. Delivery does not run                   |
+| Interruption                                                                  | Current entry remains unsettled. The permit is released           |
+
+Use `store.list({ name: receipts.name })` to inspect pending, delivered, and dead entries. Structural row corruption fails the operation with `InvalidStoredRecord`. A structurally valid row whose payload fails decoding becomes a dead letter. See [Outbox errors](/docs/reference/outbox/errors).
+
+### Account for repeated delivery
+
+Delivery is at least once. If the external call succeeds and settlement fails, the next pass can repeat the call with the same key and attempt number. The receiver must deduplicate by the supplied key.
+
+`attempts` counts persisted outcomes, including payload poison. It does not count every external call that started. `maxAttempts` bounds persisted retry accounting. Interruption and failed settlement can leave the attempt count unchanged.
+
+Run one owner for each drained scope. Drains of one name through the same store object share a permit across all partitions, so a partition filter does not make partitions drain concurrently. Different store objects and processes share no permit. `readDue` acquires no distributed lease. A delivery function must not recursively drain its own outbox name because the permit is not reentrant.
+
+Set delivery timeouts in your application. A bounded entry count does not bound pass duration. The package has no replay API or retention policy.
+
+## Enqueue from a projection
+
+Use [`Commit.transaction`](/docs/projections/commits#transaction) to commit application SQL, enqueue, and the checkpoint together. The processor can enqueue directly:
+
+```ts
+// @include: outbox-definition
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { Commit, Projection } from "@streamsy/projection";
+import { Outbox } from "@streamsy/outbox";
+import { Orders } from "./streams.ts";
+import { receipts } from "./receipts.ts";
+
+const orderReceipts = Projection.process({
+  id: "order-receipts",
+  params: {},
+  inputs: { orders: Orders },
+  commit: Commit.transaction,
+  process: (batch) => Outbox.enqueue(receipts, batch.orders.items).pipe(Effect.asVoid),
+});
+```
+
+Provide `CheckpointStore.layer`, `Transaction.layer` and `layerSql` over the same SQL storage owner. `Transaction.layer` and `layerSql` both read that owner's `SqlClient`, so the enqueue joins the transaction that `Commit.transaction` opens. Do not substitute a second client connected to the same database. Migrate the outbox on the owner client before projection processing begins. See [Projection services](/docs/storage/sqlite#projection-services).
+
+A failed checkpoint settlement rolls back enqueue and application SQL with the checkpoint. The next projection pass enqueues again. Drain separately after commit.
+
+[`Commit.atLeastOnce`](/docs/reference/projection/commit#commitatleastonce) repeats the whole handler with the same pinned `unit.key` after a failure. Use the outbox when each external effect needs its own retry schedule and stored result.
+
+## Schedule the next pass
+
+On Bun or Node, run passes in a scoped fiber under one owner:
+
+```ts
+// @include: outbox-delivery
+// @filename: index.ts
+// ---cut---
+import { Effect, Schedule } from "effect";
+import { Outbox } from "@streamsy/outbox";
+import { receipts } from "./receipts.ts";
+import { sendReceipt } from "./delivery.ts";
+
+const deliveryFiber = Outbox.drain(receipts, sendReceipt).pipe(
+  Effect.repeat(Schedule.spaced("5 seconds")),
+  Effect.forkScoped,
+);
+```
+
+The repeat stops on an operational failure. Add your host's retry policy when the fiber must recover from a storage outage. To schedule from stored deadlines, use `store.nextDue({ name, partitionId, ordered })`. It returns `None` when the scope has no pending entries. See [Background work](/docs/servers/process#background-work) for a fiber beside the routes.
+
+On Cloudflare, register an `OutboxWakeup` in the object's `wakeups` array:
+
+```ts
+// @include: outbox-delivery
+// @filename: index.ts
+// ---cut---
+import { OutboxWakeup } from "@streamsy/serve/cloudflare";
+import { receipts } from "./receipts.ts";
+import { sendReceipt } from "./delivery.ts";
+
+const receiptWakeup = OutboxWakeup.make(receipts, sendReceipt, { limit: 100 });
+```
+
+Provide the store and delivery services in the object's storage Layer. Requests and alarm turns use that acquired context. After a request enqueues, call `Wakeups.touch` before it returns. For work outside a request, call `Wakeups.reconcile` after commit.
+
+The wakeup reads the next deadline and drains one pass. A pass that fills its limit reports `more: true`, so a backlog advances through successive alarm turns. Alchemy exports the same adapter from `@streamsy/serve/alchemy`.
+
+See [Outbox alarms](/docs/servers/cloudflare/alarms#outbox) for host setup and [OutboxWakeup](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup) for the adapter signature.

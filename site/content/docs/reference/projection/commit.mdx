@@ -136,7 +136,7 @@ declare const atLeastOnce: Commit.Commit<void, never, CheckpointStore>;
 same<typeof atLeastOnce, typeof Commit.atLeastOnce>(true);
 ```
 
-`atLeastOnce` saves the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last write fails, the next pass runs the same unit again, with the same `unit.key`. Use `unit.key` as the idempotency key of an external call, or deliver the effects through an [outbox](/docs/projections/actions).
+`atLeastOnce` saves the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last write fails, the next pass runs the same unit again, with the same `unit.key`. Use `unit.key` as the idempotency key of an external call, or deliver the effects through an [outbox](/docs/outbox).
 
 ### `Commit.make`
 

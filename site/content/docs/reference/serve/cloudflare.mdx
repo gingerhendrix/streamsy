@@ -309,6 +309,39 @@ The host runs stream expiry first, and then the other wakeups in declaration ord
 
 Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends, the host stops retrying. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
 
+### `Cloudflare.OutboxWakeup`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/serve/cloudflare";
+import { same } from "./reference-check.ts";
+import type { Outbox, OutboxStore } from "@streamsy/outbox";
+import type { Wakeup } from "@streamsy/serve/cloudflare";
+type Definition<Payload> = Outbox.Definition<Payload>;
+type Deliver<Payload, R> = Outbox.Deliver<Payload, R>;
+type DrainOptions = Outbox.DrainOptions;
+// ---cut-end---
+declare const OutboxWakeup: {
+  make: <Payload, R = never>(
+    definition: Definition<Payload>,
+    deliver: Deliver<Payload, R>,
+    options?: DrainOptions,
+  ) => Wakeup<OutboxStore | R>;
+};
+// ---cut-after---
+same<typeof OutboxWakeup, typeof Real.OutboxWakeup>(true);
+```
+
+`OutboxWakeup.make` adapts one outbox scope to the object's alarm scheduler. It is also exported from `@streamsy/serve/alchemy`. Register the result in the object's `wakeups` array. Provide `OutboxStore` and the delivery function's services in the acquired storage Layer.
+
+`next` calls `store.nextDue` with the definition name, partition, and ordering option. It maps every store failure to a retryable `StorageFault` with operation `outbox.nextDue`. `run` calls `Outbox.drain` once and passes on the report's `more` flag. An invalid `limit` fails `run` with `InvalidConfiguration`, not a storage fault. The host reads `next` again to decide whether to arm another alarm.
+
+The wakeup name is `streamsy/outbox/<encoded name>`, with `/<encoded partition>` when a partition is supplied. Each component uses `encodeURIComponent`. An empty partition adds a trailing slash. An omitted partition covers all partitions.
+
+The [`DrainOptions`](/docs/reference/outbox/outbox#drainoptions) select the scope and ordering. Drains of one name share a permit only through the same store object. Across store objects or processes, the host must ensure one owner for overlapping scopes. The outbox acquires no distributed leases. Delivery must not recursively drain its own name.
+
+After enqueue in a request, call `Wakeups.touch` before returning. Outside a request, call `Wakeups.reconcile` after commit. See [Schedule the next pass](/docs/outbox#schedule-the-next-pass).
+
 ### `Cloudflare.Wakeups`
 
 ```ts

@@ -9,7 +9,6 @@
     "---Kinds of projection---",
     "state",
     "outputs",
-    "process",
-    "actions"
+    "process"
   ]
 }

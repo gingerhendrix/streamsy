@@ -266,6 +266,21 @@ same<typeof Wakeup, typeof Alchemy.Wakeup>(true);
 
 `Alchemy.Wakeup` re-exports [`Cloudflare.Wakeup`](/docs/reference/serve/cloudflare#cloudflarewakeup) unchanged.
 
+### `Alchemy.OutboxWakeup`
+
+```ts
+// ---cut-start---
+import * as Alchemy from "@streamsy/serve/alchemy";
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const OutboxWakeup: typeof Cloudflare.OutboxWakeup;
+// ---cut-after---
+same<typeof OutboxWakeup, typeof Alchemy.OutboxWakeup>(true);
+```
+
+`Alchemy.OutboxWakeup` re-exports [`Cloudflare.OutboxWakeup`](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup) unchanged.
+
 ### `Alchemy.Wakeups`
 
 ```ts

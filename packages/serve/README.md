@@ -1,7 +1,7 @@
 # @streamsy/serve
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
-Node, Deno and Cloudflare host glue and durable action delivery. Requires Effect
+Node, Deno and Cloudflare host glue and outbox wakeups. Requires Effect
 `4.0.5`.
 
 ```ts
@@ -78,19 +78,18 @@ the listener.
 
 The Durable Object host does not get a stop signal and uses neither.
 
-| Entry                                                                | Exports                                                                                                                                                            |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.`                                                                  | `Serve.stream`, `Serve.state`, `Serve.value`, `Serve.params`, `Serve.route`, `Serve.mount`, `Serve.layer`, `Serve.teardown`; errors and types; `PublicErrorSchema` |
-| `/contract`                                                          | Effect-free headers, public errors/decoder, canonical JSON, fingerprints                                                                                           |
-| `/bun`                                                               | `listener`, its options and defaults                                                                                                                               |
-| `/node`                                                              | `listener`, its options and defaults                                                                                                                               |
-| `/deno`                                                              | `listener`, its options and defaults; `nodeSqliteCompat`                                                                                                           |
-| `/cloudflare`                                                        | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`                                                                             |
-| `/alchemy`                                                           | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`                                                                               |
-| `/action`                                                            | Unchanged action declarations                                                                                                                                      |
-| `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sql` | Action delivery and backing APIs; `createSqlOutboxBacking` runs on SQLite, Postgres and MySQL                                                                      |
+| Entry         | Exports                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.`           | `Serve.stream`, `Serve.state`, `Serve.value`, `Serve.params`, `Serve.route`, `Serve.mount`, `Serve.layer`, `Serve.teardown`; errors and types; `PublicErrorSchema` |
+| `/contract`   | Effect-free headers, public errors/decoder, canonical JSON, fingerprints                                                                                           |
+| `/bun`        | `listener`, its options and defaults                                                                                                                               |
+| `/node`       | `listener`, its options and defaults                                                                                                                               |
+| `/deno`       | `listener`, its options and defaults; `nodeSqliteCompat`                                                                                                           |
+| `/cloudflare` | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`, `OutboxWakeup`                                                             |
+| `/alchemy`    | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`, `OutboxWakeup`                                                               |
 
-Twelve physical entries form six groups. Action's existing Sink names remain.
+Seven physical entries expose the routes, contracts and runtime hosts.
+Outbox declarations, stores and delivery live in `@streamsy/outbox`.
 State/stream recovery is `replay-from-start`; state consumers clear their local
 collection before replay. Old sink headers and snapshot reset exports are gone.
 Fingerprints cover route/address metadata and an optional `contract` revision;

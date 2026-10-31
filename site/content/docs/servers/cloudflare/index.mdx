@@ -142,7 +142,7 @@ The object expires streams in an alarm at their deadline. See [Expiry](/docs/str
 
 ## Projections and deliveries
 
-Run work that must continue with no request in flight as a wakeup in an alarm turn. `ProjectionWakeup.attach` runs an attached projection, and `OutboxWakeup.make` drains an action outbox. Short work can also run with `Projection.run` in request middleware, before the response. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) and [Triggers](/docs/projections/run#triggers).
+Run work that must continue with no request in flight as a wakeup in an alarm turn. `ProjectionWakeup.attach` runs an attached projection, and `OutboxWakeup.make` drains an [outbox](/docs/outbox). Short work can also run with `Projection.run` in request middleware, before the response. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) and [Triggers](/docs/projections/run#triggers).
 
 ## Alchemy
 

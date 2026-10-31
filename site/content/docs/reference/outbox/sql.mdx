@@ -1,0 +1,66 @@
+---
+title: SQL store
+description: Reference for layerSql and migrateOutbox in @streamsy/outbox/sql.
+---
+
+```ts
+import { layerSql, migrateOutbox } from "@streamsy/outbox/sql";
+```
+
+The SQL store supports SQLite, Postgres, and MySQL. It stores entries in `streamsy_outbox`. It does not migrate or alter a legacy outbox table.
+
+## `layerSql`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox/sql";
+import { same } from "./reference-check.ts";
+import type { Layer } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { OutboxStore } from "@streamsy/outbox";
+// ---cut-end---
+declare const layerSql: Layer.Layer<OutboxStore, never, SqlClient.SqlClient>;
+// ---cut-after---
+same<typeof layerSql, typeof Real.layerSql>(true);
+```
+
+The layer builds an `OutboxStore` over the `SqlClient` in its context. It opens no connection. Operations use that client's active transaction at execution time. Provide it with the same `SqlClient` layer as your application, and causal SQL and enqueue commit together.
+
+Enqueue performs inserts serially and opens no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed. A unique index on `(name, idempotency_key)` retains the original payload and partition for every duplicate, including settled entries.
+
+SQL errors become `OutboxUnavailable`. Malformed row structure, inconsistent states, and unsafe numeric conversions become `InvalidStoredRecord`. A structurally valid row with an invalid payload reaches `drain`, which dead-letters it as `payload-poison`.
+
+## `migrateOutbox`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox/sql";
+import { same } from "./reference-check.ts";
+import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { StoreFailure } from "@streamsy/outbox";
+// ---cut-end---
+declare function migrateOutbox(sql: SqlClient.SqlClient): Effect.Effect<void, StoreFailure>;
+// ---cut-after---
+same<typeof migrateOutbox, typeof Real.migrateOutbox>(true);
+```
+
+`migrateOutbox` creates the table and three indexes. Repeated migration is safe. The unique identity index supports deduplication. The due and order indexes support pending reads.
+
+Run migration once at startup, outside a transaction, on every dialect. Store operations run no DDL. When the table is missing, the first statement fails and the store returns `OutboxUnavailable`.
+
+On MySQL, DDL commits the open transaction implicitly, so `migrateOutbox` refuses to run inside the supplied client's transaction.
+
+## MySQL keys
+
+| Field            | Maximum Unicode code points |
+| ---------------- | --------------------------- |
+| `name`           | 255                         |
+| `partitionId`    | 255                         |
+| `idempotencyKey` | 512                         |
+
+The store refuses overlong values before insertion. Keys compare case-sensitively and distinguish trailing spaces, as on SQLite and Postgres.
+
+The store converts numeric columns to public JavaScript numbers only when they are safe integers. Unsafe BIGINT values and invalid timestamps fail with `InvalidStoredRecord`.
+
+See [OutboxStore](/docs/reference/outbox/outbox#outboxstore) for the backing protocol and [Enqueue with your SQL writes](/docs/outbox#enqueue-with-your-sql-writes) for transaction setup.

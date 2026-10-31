@@ -41,6 +41,15 @@ The guides show how to use Streamsy. The reference describes each public export 
 | [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `@streamsy/projection`, `@streamsy/projection/checkpoint` | `CheckpointStore`, `CheckpointRecord`, `fromStore`, `recordKey`, and the key types |
 | [Faults and retry](/docs/reference/projection/faults)              | `@streamsy/projection`                                    | `ProjectionFault` and `ProjectionRetry`                                            |
 
+## `@streamsy/outbox`
+
+| Page                                           | Entry point               | Exports                                                             |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------- |
+| [Outbox API](/docs/reference/outbox/outbox)    | `@streamsy/outbox`        | Definitions, enqueue, drain, delivery types, and the store protocol |
+| [SQL store](/docs/reference/outbox/sql)        | `@streamsy/outbox/sql`    | `layerSql` and `migrateOutbox`                                      |
+| [Memory store](/docs/reference/outbox/memory)  | `@streamsy/outbox/memory` | `layerMemory`                                                       |
+| [Outbox errors](/docs/reference/outbox/errors) | `@streamsy/outbox`        | Operational failures, delivery failures, and dead-letter reasons    |
+
 ## `@streamsy/storage`
 
 | Page                                                                   | Entry point                        | Exports                                                                                     |
@@ -51,18 +60,13 @@ The guides show how to use Streamsy. The reference describes each public export 
 
 ## `@streamsy/serve`
 
-| Page                                                   | Entry point                      | Exports                                                                          |
-| ------------------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------- |
-| [Serve](/docs/reference/serve/serve)                   | `@streamsy/serve`                | The route and response functions, `layer`, `teardown`, and their options         |
-| [Serve errors](/docs/reference/serve/serve-errors)     | `@streamsy/serve`                | The Serve error classes, `ServeError`, and `PublicErrorSchema`                   |
-| [Contract](/docs/reference/serve/contract)             | `@streamsy/serve/contract`       | Canonical JSON, fingerprints and ETags, header names, and public error bodies    |
-| [Action sinks](/docs/reference/serve/action)           | `@streamsy/serve/action`         | Sink declarations, payload codecs, identity, and retry policy                    |
-| [Action errors](/docs/reference/serve/action-errors)   | `@streamsy/serve/action/errors`  | Storage failures, handler refusals, and dead-letter reasons                      |
-| [Action outbox](/docs/reference/serve/action-outbox)   | `@streamsy/serve/action/outbox`  | The store service, the backing contract, drafts, entries, and the memory backing |
-| [Action runtime](/docs/reference/serve/action-runtime) | `@streamsy/serve/action/runtime` | Drafts, handlers, drain passes, and `OutboxWakeup`                               |
-| [SQL action outbox](/docs/reference/serve/action-sql)  | `@streamsy/serve/action/sql`     | The migration and the SQL backing                                                |
-| [Bun](/docs/reference/serve/bun)                       | `@streamsy/serve/bun`            | The Bun listener, its options, and its defaults                                  |
-| [Node](/docs/reference/serve/node)                     | `@streamsy/serve/node`           | The Node listener, its options, and its defaults                                 |
-| [Deno](/docs/reference/serve/deno)                     | `@streamsy/serve/deno`           | The Deno listener, its options and defaults, and `nodeSqliteCompat`              |
-| [Cloudflare](/docs/reference/serve/cloudflare)         | `@streamsy/serve/cloudflare`     | Worker routing, Durable Object hosts, placement, wakeups, and object links       |
-| [Alchemy](/docs/reference/serve/alchemy)               | `@streamsy/serve/alchemy`        | Effect routing, object transports, handlers, and the shared Cloudflare exports   |
+| Page                                               | Entry point                  | Exports                                                                                             |
+| -------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| [Serve](/docs/reference/serve/serve)               | `@streamsy/serve`            | The route and response functions, `layer`, `teardown`, and their options                            |
+| [Serve errors](/docs/reference/serve/serve-errors) | `@streamsy/serve`            | The Serve error classes, `ServeError`, and `PublicErrorSchema`                                      |
+| [Contract](/docs/reference/serve/contract)         | `@streamsy/serve/contract`   | Canonical JSON, fingerprints and ETags, header names, and public error bodies                       |
+| [Bun](/docs/reference/serve/bun)                   | `@streamsy/serve/bun`        | The Bun listener, its options, and its defaults                                                     |
+| [Node](/docs/reference/serve/node)                 | `@streamsy/serve/node`       | The Node listener, its options, and its defaults                                                    |
+| [Deno](/docs/reference/serve/deno)                 | `@streamsy/serve/deno`       | The Deno listener, its options and defaults, and `nodeSqliteCompat`                                 |
+| [Cloudflare](/docs/reference/serve/cloudflare)     | `@streamsy/serve/cloudflare` | Worker routing, Durable Object hosts, placement, wakeups including `OutboxWakeup`, and object links |
+| [Alchemy](/docs/reference/serve/alchemy)           | `@streamsy/serve/alchemy`    | Effect routing, object transports, handlers, and the shared Cloudflare exports                      |

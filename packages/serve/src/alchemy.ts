@@ -27,6 +27,8 @@ export { Wakeup, Wakeups, type WakeupProgress, type WakeupSource } from "./cloud
 
 export { alarmSlotLayer } from "./cloudflare/alarm.ts";
 
+export { OutboxWakeup } from "./cloudflare/outbox.ts";
+
 export { Placement };
 
 export {

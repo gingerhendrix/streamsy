@@ -1,6 +1,6 @@
 # Releasing Streamsy
 
-Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its four public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection` and `@streamsy/serve`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
+Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its five public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection`, `@streamsy/outbox` and `@streamsy/serve`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
 
 ## Release notes
 

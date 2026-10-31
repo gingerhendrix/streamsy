@@ -1,0 +1,447 @@
+---
+title: Outbox API
+description: Reference for definitions, enqueue, drain, and the OutboxStore service in @streamsy/outbox.
+---
+
+```ts
+import {
+  Outbox,
+  OutboxStore,
+  Settlement,
+  type OutboxBacking,
+  type OutboxEntry,
+  type OutboxDraft,
+  type OutboxScope,
+  type DueScope,
+  type EnqueueReport,
+} from "@streamsy/outbox";
+```
+
+`Outbox` declares payloads, enqueues them, and drains one bounded pass. The definition and delivery types are members of the `Outbox` namespace, for example `Outbox.Definition` and `Outbox.Deliver`. The sections below use their short names. The package has no host, projection, or Cloudflare dependency. See the [Outbox guide](/docs/outbox) for transaction and scheduling setup.
+
+## Definitions
+
+### `Outbox.define`
+
+```ts
+// ---cut-start---
+import { same } from "./reference-check.ts";
+import type { Outbox } from "@streamsy/outbox";
+type Spec<Payload> = Outbox.Spec<Payload>;
+type Definition<Payload> = Outbox.Definition<Payload>;
+// ---cut-end---
+declare function define<Payload>(spec: Spec<Payload>): Definition<Payload>;
+// ---cut-after---
+same<typeof define, typeof Outbox.define>(true);
+```
+
+`define` returns an inert, branded `Definition<Payload>`. It validates the retry policy synchronously and throws `InvalidConfiguration` for an invalid value. The definition and a copy of its retry policy are frozen. Application closures are not frozen.
+
+### `Spec`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Schema } from "effect";
+type RetryPolicy = Real.Outbox.RetryPolicy;
+// ---cut-end---
+interface Spec<Payload> {
+  readonly name: string;
+  readonly payload: Schema.Codec<Payload, unknown>;
+  readonly idempotencyKey: (payload: Payload) => string;
+  readonly partitionBy?: (payload: Payload) => string;
+  readonly retry: RetryPolicy;
+}
+// ---cut-after---
+same<Spec<string>, Real.Outbox.Spec<string>>(true);
+```
+
+`name` identifies the outbox. `payload` is a service-free Schema codec. `idempotencyKey` derives a durable key from the decoded payload. `partitionBy` derives its partition, or defaults to `""` when omitted. Identity is `(name, idempotencyKey)` across all partitions.
+
+### `Definition` and `PayloadOf`
+
+`Definition<Payload>` extends `Spec<Payload>` with a private brand. Construct it through `Outbox.define`.
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+type Definition<Payload> = Real.Outbox.Definition<Payload>;
+// ---cut-end---
+type PayloadOf<D> = D extends Definition<infer Payload> ? Payload : never;
+// ---cut-after---
+same<PayloadOf<Definition<string>>, Real.Outbox.PayloadOf<Definition<string>>>(true);
+```
+
+`PayloadOf<D>` extracts the decoded payload type from a definition.
+
+### `RetryPolicy`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface RetryPolicy {
+  readonly maxAttempts: number;
+  readonly initialDelayMs: number;
+  readonly factor: number;
+  readonly maxDelayMs: number;
+}
+// ---cut-after---
+same<RetryPolicy, Real.Outbox.RetryPolicy>(true);
+```
+
+| Field            | Constraint                                                   |
+| ---------------- | ------------------------------------------------------------ |
+| `maxAttempts`    | Positive safe integer, including the first persisted outcome |
+| `initialDelayMs` | Finite and nonnegative                                       |
+| `factor`         | Finite and at least 1                                        |
+| `maxDelayMs`     | Safe integer and at least `initialDelayMs`                   |
+
+After retryable outcome `n`, the delay is `Math.round(Math.min(maxDelayMs, initialDelayMs * factor ** (n - 1)))`. A zero initial delay stays zero. The deadline adds that delay to the Effect clock after delivery. A deadline beyond `Number.MAX_SAFE_INTEGER` clamps to it.
+
+`attempts` counts persisted outcomes. Failed settlement or interruption can repeat an external call without advancing the count. `maxAttempts` does not bound the absolute number of external calls.
+
+## Enqueue
+
+### `Outbox.enqueue`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Effect } from "effect";
+import type {
+  EnqueueReport,
+  StoreFailure,
+  PayloadEncodingFailure,
+  OutboxStore,
+  Outbox,
+} from "@streamsy/outbox";
+type Definition<Payload> = Outbox.Definition<Payload>;
+// ---cut-end---
+declare const enqueue: <Payload>(
+  definition: Definition<Payload>,
+  payloads: readonly Payload[],
+) => Effect.Effect<EnqueueReport, StoreFailure | PayloadEncodingFailure, OutboxStore>;
+// ---cut-after---
+same<typeof enqueue, typeof Outbox.enqueue>(true);
+```
+
+`enqueue` uses Schema JSON encoding for every payload before inserting any entry. Codec failures and identity callback throws become `PayloadEncodingFailure`. New entries are pending and due at enqueue time.
+
+A duplicate name and key leaves the original payload and partition unchanged, including after delivery or dead-lettering. Enqueue starts no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed.
+
+### `EnqueueReport`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface EnqueueReport {
+  readonly enqueued: number;
+  readonly absorbed: number;
+}
+// ---cut-after---
+same<EnqueueReport, Real.EnqueueReport>(true);
+```
+
+`enqueued` counts new rows. `absorbed` counts duplicates that changed nothing.
+
+## Delivery
+
+### `Outbox.drain`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Effect } from "effect";
+import type { InvalidConfiguration, StoreFailure, OutboxStore, Outbox } from "@streamsy/outbox";
+type Definition<Payload> = Outbox.Definition<Payload>;
+type Deliver<Payload, Requirements> = Outbox.Deliver<Payload, Requirements>;
+type DrainOptions = Outbox.DrainOptions;
+type DrainReport = Outbox.DrainReport;
+// ---cut-end---
+declare const drain: <Payload, Requirements = never>(
+  definition: Definition<Payload>,
+  deliver: Deliver<Payload, Requirements>,
+  options?: DrainOptions,
+) => Effect.Effect<DrainReport, StoreFailure | InvalidConfiguration, OutboxStore | Requirements>;
+// ---cut-after---
+same<typeof drain, typeof Outbox.drain>(true);
+```
+
+`drain` reads pending entries in enqueue order and attempts them serially. It runs one pass without sleeping or retrying the whole Effect. It preserves the delivery function's service requirements.
+
+Success settles the entry as delivered. Retryable delivery failures, synchronous throws, and non-interrupt Effect defects reschedule it. At the attempt limit, they dead-letter it as `attempts-exhausted`. Permanent delivery failures dead-letter it as `permanent`. A payload that fails Schema JSON decoding dead-letters as `payload-poison` without calling delivery.
+
+Interruption leaves the current entry unsettled and interrupts the pass. Operational failures fail the pass. An invalid `limit` fails with `InvalidConfiguration` before the pass reads anything. Both release the permit. Earlier settlements in that pass remain recorded.
+
+All drains of one name through the same built store share one non-reentrant permit across partitions. A `partitionId` filters a pass. It does not let partitions drain concurrently. Delivery must not recursively drain that name. Hosts must keep one owner for overlapping scopes across store objects or processes. Reads acquire no distributed leases.
+
+Delivery is at least once. A successful external call followed by failed settlement can repeat with the same idempotency key and attempt number. Receivers must deduplicate. Applications own delivery timeouts. `limit` bounds entry count, not duration.
+
+### `Delivery`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Delivery<Payload> {
+  readonly name: string;
+  readonly partitionId: string;
+  readonly idempotencyKey: string;
+  readonly attempt: number;
+  readonly payload: Payload;
+}
+// ---cut-after---
+same<Delivery<string>, Real.Outbox.Delivery<string>>(true);
+```
+
+`attempt` is the stored attempt count plus one. The first attempt is 1. `payload` is the decoded value. `idempotencyKey` is the durable key for receiver deduplication.
+
+### `Deliver`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Effect } from "effect";
+import type { DeliveryFailure } from "@streamsy/outbox";
+type Delivery<Payload> = Real.Outbox.Delivery<Payload>;
+// ---cut-end---
+type Deliver<Payload, Requirements = never> = (
+  delivery: Delivery<Payload>,
+) => Effect.Effect<void, DeliveryFailure, Requirements>;
+// ---cut-after---
+same<Deliver<string>, Real.Outbox.Deliver<string>>(true);
+same<
+  Deliver<string, { readonly service: string }>,
+  Real.Outbox.Deliver<string, { readonly service: string }>
+>(true);
+```
+
+Fail with [`RetryableDeliveryFailure`](/docs/reference/outbox/errors#retryabledeliveryfailure) or [`PermanentDeliveryFailure`](/docs/reference/outbox/errors#permanentdeliveryfailure) for expected delivery outcomes. `drain` consumes these failures and records the result.
+
+### `DrainOptions`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface DrainOptions {
+  /** Filters the pass to one partition. Partitions of one name still drain one at a time. */
+  readonly partitionId?: string;
+  readonly limit?: number;
+  readonly ordered?: boolean;
+}
+// ---cut-after---
+same<DrainOptions, Real.Outbox.DrainOptions>(true);
+```
+
+| Field         | Default     | Meaning                                                                           |
+| ------------- | ----------- | --------------------------------------------------------------------------------- |
+| `partitionId` | `undefined` | All partitions. A string filters to exactly one partition, including `""`         |
+| `limit`       | 100         | Positive safe integer that bounds one pass                                        |
+| `ordered`     | `false`     | Blocks the selected scope behind its oldest pending entry until that entry is due |
+
+An ordered retry ends the pass. Delivered and dead entries do not block later work. Without ordering, future retries do not block later due entries.
+
+### `DrainReport`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface DrainReport {
+  readonly name: string;
+  readonly attempted: number;
+  readonly delivered: number;
+  readonly retried: number;
+  readonly deadLettered: number;
+  /** The pass stopped at its limit, so due work may remain. */
+  readonly more: boolean;
+}
+// ---cut-after---
+same<DrainReport, Real.Outbox.DrainReport>(true);
+```
+
+`attempted` counts entries processed, including payload poison. The other counts describe their stored outcomes. `more` is true when `attempted` reached the limit. A host scheduler uses it to run another pass at once. An operational failure returns an error instead of a partial report.
+
+## Store service
+
+### `OutboxStore`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import { Context } from "effect";
+import type { OutboxBacking } from "@streamsy/outbox";
+// ---cut-end---
+class OutboxStore extends Context.Service<OutboxStore, OutboxBacking>()(
+  "streamsy/outbox/OutboxStore",
+) {}
+// ---cut-after---
+same<typeof OutboxStore, typeof Real.OutboxStore>(true);
+same<OutboxStore, Real.OutboxStore>(true);
+```
+
+`OutboxStore` is the single store service. Provide it with [`layerSql`](/docs/reference/outbox/sql) or [`layerMemory`](/docs/reference/outbox/memory) at your host entry point. Each build of a layer creates one store object, and drain permits belong to that object.
+
+### `OutboxBacking`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Effect, Option } from "effect";
+import type {
+  OutboxEntry,
+  OutboxDraft,
+  OutboxScope,
+  DueScope,
+  EnqueueReport,
+  Settlement,
+  StoreFailure,
+} from "@streamsy/outbox";
+// ---cut-end---
+interface OutboxBacking {
+  readonly enqueue: (drafts: readonly OutboxDraft[]) => Effect.Effect<EnqueueReport, StoreFailure>;
+  readonly nextDue: (scope: DueScope) => Effect.Effect<Option.Option<number>, StoreFailure>;
+  /** Ordered reads include the future head. The runtime stops there. */
+  readonly readDue: (
+    scope: DueScope,
+    nowMs: number,
+    limit: number,
+  ) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+  readonly settle: (id: number, settlement: Settlement) => Effect.Effect<void, StoreFailure>;
+  readonly list: (scope: OutboxScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+}
+// ---cut-after---
+same<OutboxBacking, Real.OutboxBacking>(true);
+```
+
+| Method    | Behavior                                                                                                                                                 |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enqueue` | Inserts new drafts and absorbs retained identities                                                                                                       |
+| `nextDue` | Returns the earliest pending deadline, or the oldest pending entry's deadline when ordered. Returns `None` for an empty scope                            |
+| `readDue` | Reads at most `limit` pending entries by id. Unordered reads exclude future entries. Ordered reads include the future head so the runtime can stop there |
+| `settle`  | Records one attempt's outcome. See [`Settlement`](#settlement)                                                                                           |
+| `list`    | Returns all entries by id, including delivered and dead entries                                                                                          |
+
+`readDue` does not change rows or acquire ownership. These methods return `StoreFailure` on operational failure.
+
+`enqueue`, `readDue` and `settle` are the adapter protocol that `Outbox.enqueue` and `Outbox.drain` call. Applications must not call them directly. The runtime checks the drain limit, and the stores do not check their arguments again. Ids come from the store's own reads. Applications use `nextDue` to schedule passes and `list` to inspect entries.
+
+### `OutboxScope` and `DueScope`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxScope {
+  readonly name: string;
+  readonly partitionId?: string;
+}
+
+interface DueScope extends OutboxScope {
+  readonly ordered?: boolean;
+}
+// ---cut-after---
+same<OutboxScope, Real.OutboxScope>(true);
+same<DueScope, Real.DueScope>(true);
+```
+
+An omitted `partitionId` selects every partition of the name. `ordered` has the same meaning as in [`DrainOptions`](#drainoptions).
+
+### `Settlement`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Data } from "effect";
+import type { DeadLetterReason } from "@streamsy/outbox";
+// ---cut-end---
+type Settlement = Data.TaggedEnum<{
+  Delivered: { readonly attempts: number; readonly atMs: number };
+  Retry: { readonly attempts: number; readonly nextAttemptAtMs: number; readonly detail: string };
+  Dead: {
+    readonly attempts: number;
+    readonly reason: DeadLetterReason;
+    readonly detail: string;
+    readonly atMs: number;
+  };
+}>;
+// ---cut-after---
+same<Settlement, Real.Settlement>(true);
+```
+
+`Settlement` is a `Data.TaggedEnum`. Build a value with `Settlement.Delivered`, `Settlement.Retry` or `Settlement.Dead`, and handle all three with `Settlement.$match`. `attempts` is the new persisted count.
+
+| Case        | Stored result                                                         |
+| ----------- | --------------------------------------------------------------------- |
+| `Delivered` | State `delivered`, settlement time `atMs`, and no `lastError`         |
+| `Retry`     | State `pending`, deadline `nextAttemptAtMs`, and `lastError` `detail` |
+| `Dead`      | State `dead`, `deadLetterReason`, `lastError`, and settlement time    |
+
+### `OutboxDraft`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxDraft {
+  readonly name: string;
+  readonly partitionId: string;
+  readonly idempotencyKey: string;
+  readonly encodedPayload: string;
+  readonly enqueuedAtMs: number;
+}
+// ---cut-after---
+same<OutboxDraft, Real.OutboxDraft>(true);
+```
+
+A draft contains the name, partition, key, encoded JSON payload, and enqueue timestamp before storage assigns an id. `Outbox.enqueue` constructs drafts from decoded payloads.
+
+### `OutboxEntry`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { DeadLetterReason, EntryState } from "@streamsy/outbox";
+// ---cut-end---
+interface OutboxEntry {
+  readonly id: number;
+  readonly name: string;
+  readonly partitionId: string;
+  readonly idempotencyKey: string;
+  /** The stored JSON text. `Delivery.payload` is the decoded value. */
+  readonly encodedPayload: string;
+  readonly state: EntryState;
+  /** The count of persisted outcomes. */
+  readonly attempts: number;
+  readonly nextAttemptAtMs: number;
+  readonly lastError: string | undefined;
+  readonly deadLetterReason: DeadLetterReason | undefined;
+  readonly enqueuedAtMs: number;
+  readonly settledAtMs: number | undefined;
+}
+// ---cut-after---
+same<OutboxEntry, Real.OutboxEntry>(true);
+```
+
+`id` increases with enqueue order. `encodedPayload` is the stored JSON text, not the decoded value that delivery receives. `state` is `"pending"`, `"delivered"` or `"dead"`. `attempts` starts at zero and counts persisted outcomes. Timestamps are safe integer milliseconds. `settledAtMs` is undefined while pending. `lastError` holds the latest failure detail, and `deadLetterReason` is defined only for dead entries.
+
+Both stores retain delivered and dead entries for deduplication. There is no replay API or retention policy.

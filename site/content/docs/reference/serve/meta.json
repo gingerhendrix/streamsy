@@ -1,18 +1,4 @@
 {
   "title": "@streamsy/serve",
-  "pages": [
-    "serve",
-    "serve-errors",
-    "contract",
-    "action",
-    "action-errors",
-    "action-outbox",
-    "action-runtime",
-    "action-sql",
-    "bun",
-    "node",
-    "deno",
-    "cloudflare",
-    "alchemy"
-  ]
+  "pages": ["serve", "serve-errors", "contract", "bun", "node", "deno", "cloudflare", "alchemy"]
 }

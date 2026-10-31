@@ -77,7 +77,7 @@ outside the transaction. It runs at least once and passes its result to
 
 `Commit.withCompensation(f)` calls `f(result, cause, unit)` after successful
 processing if the commit fails. It is also available as a `.pipe` combinator.
-For durable external delivery, use the [action outbox](https://streamsy.dev/docs/projections/actions).
+For durable external delivery, use [`@streamsy/outbox`](https://streamsy.dev/docs/outbox).
 
 `Commit.make` defines `load`, `apply`, and optional `remove`. Custom Commits
 extend ranges on retry. Never save after a failed handler; compare-and-set on

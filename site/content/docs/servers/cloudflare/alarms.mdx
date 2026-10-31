@@ -131,11 +131,13 @@ Pass `durable: false` to keep only an in-memory set of bindings. Then a binding 
 
 Only commits through this object's storage choose bindings. A projection with inputs on another object does not see their writes. To write a wake stream on another object, link that stream. See [Connect Durable Objects](/docs/servers/cloudflare/objects). For the projection itself, see [Attach](/docs/projections/run#attach) and [Commits](/docs/projections/commits).
 
-## Action outbox
+## Outbox
 
-`OutboxWakeup.make(sink, handler, options)` from `@streamsy/serve/action/runtime` drains an action outbox in alarm turns. Its `next` is the due time of the next outbox entry. Its `run` is one `drain` pass in the same acquired context as requests. The object's `layer` must provide the `OutboxStore`.
+`OutboxWakeup.make(definition, deliver, options)` from `@streamsy/serve/cloudflare` drains an [outbox](/docs/outbox) in alarm turns. `@streamsy/serve/alchemy` exports the same adapter. Its `next` is the due time of the next outbox entry. Its `run` is one drain pass in the same acquired context as requests. The object's `layer` must provide `OutboxStore` and the services of the delivery function.
 
-A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind an entry that waits on a retry. With `partitionId`, the wakeup drains that lane only, the order applies within it, and the wakeup's name is `streamsy/outbox/<sink>/<partition>`. Without it, the name is `streamsy/outbox/<sink>` and the order applies to the whole sink. A delivery handler must not drain its own sink. See [Schedule delivery](/docs/projections/actions#schedule-delivery) and [`OutboxWakeup`](/docs/reference/serve/action-runtime#outboxwakeup).
+A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind the oldest pending retry in the selected scope. The default lets later due entries pass a future retry. With `partitionId`, the wakeup drains that partition only, and its name is `streamsy/outbox/<name>/<partition>`. Without it, the name is `streamsy/outbox/<name>` and the scope is the whole outbox name.
+
+Request drains and alarm drains share a permit when they use the same store object. A delivery function must not drain its own outbox name. Across store objects or processes, keep one owner for overlapping scopes, because the outbox acquires no distributed leases. See [Schedule the next pass](/docs/outbox#schedule-the-next-pass) and [`OutboxWakeup`](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup).
 
 ## Wake streams and alarms
 

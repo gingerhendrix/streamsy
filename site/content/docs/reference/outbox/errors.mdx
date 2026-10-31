@@ -1,0 +1,180 @@
+---
+title: Outbox errors
+description: Reference for operational failures, delivery failures, and dead-letter reasons exported from @streamsy/outbox.
+---
+
+```ts
+import {
+  OutboxUnavailable,
+  InvalidStoredRecord,
+  InvalidConfiguration,
+  PayloadEncodingFailure,
+  RetryableDeliveryFailure,
+  PermanentDeliveryFailure,
+  type StoreFailure,
+  type DeliveryFailure,
+  type DeadLetterReason,
+} from "@streamsy/outbox";
+```
+
+Each error class extends `Schema.TaggedError` with a nominal type brand. It has a `_tag`, the fields below, and the usual Error members. Constructors take an object with those fields.
+
+## Operational failures
+
+`StoreFailure` is what a store can fail with. `enqueue` fails with `StoreFailure | PayloadEncodingFailure`. `drain` fails with `StoreFailure | InvalidConfiguration`. SQL migration fails with `StoreFailure`. Operational failures stop the operation. They do not dead-letter an entry.
+
+### `OutboxUnavailable`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface OutboxUnavailable {
+  readonly _tag: "OutboxUnavailable";
+  readonly operation: string;
+  readonly detail: string;
+}
+// ---cut-after---
+same<OutboxUnavailable, Omit<Fields<Real.OutboxUnavailable>, "brand">>(true);
+```
+
+The store cannot read or write. `operation` names the failed operation. SQL errors and unsupported dialects become this failure.
+
+### `InvalidStoredRecord`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidStoredRecord {
+  readonly _tag: "InvalidStoredRecord";
+  readonly operation: string;
+  readonly detail: string;
+}
+// ---cut-after---
+same<InvalidStoredRecord, Omit<Fields<Real.InvalidStoredRecord>, "brand">>(true);
+```
+
+A stored row is malformed or inconsistent, or a numeric conversion is unsafe. This differs from a valid row whose JSON payload fails decoding. Payload decoding failure becomes a dead letter.
+
+### `InvalidConfiguration`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface InvalidConfiguration {
+  readonly _tag: "InvalidConfiguration";
+  readonly detail: string;
+}
+// ---cut-after---
+same<InvalidConfiguration, Omit<Fields<Real.InvalidConfiguration>, "brand">>(true);
+```
+
+A limit or attempt budget is invalid. `Outbox.define` throws this error synchronously for invalid retry settings. `Outbox.drain` returns it as a typed failure for an invalid limit.
+
+### `PayloadEncodingFailure`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface PayloadEncodingFailure {
+  readonly _tag: "PayloadEncodingFailure";
+  readonly outbox: string;
+  readonly detail: string;
+}
+// ---cut-after---
+same<PayloadEncodingFailure, Omit<Fields<Real.PayloadEncodingFailure>, "brand">>(true);
+```
+
+Schema JSON encoding failed, or an identity callback threw. `outbox` is the definition name. `enqueue` validates the complete batch before any insert.
+
+## Delivery failures
+
+`drain` consumes expected delivery failures and records their outcomes. They do not appear in its typed failure channel. Synchronous delivery throws and non-interrupt Effect defects also count as retryable outcomes. Interruption leaves the current entry unsettled.
+
+### `RetryableDeliveryFailure`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface RetryableDeliveryFailure {
+  readonly _tag: "RetryableDeliveryFailure";
+  readonly detail: string;
+}
+// ---cut-after---
+same<RetryableDeliveryFailure, Omit<Fields<Real.RetryableDeliveryFailure>, "brand">>(true);
+```
+
+Delivery refused temporarily. `drain` records the detail and reschedules the entry. At the attempt limit, it dead-letters the entry as `attempts-exhausted`.
+
+### `PermanentDeliveryFailure`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { Fields } from "./reference-check.ts";
+// ---cut-end---
+interface PermanentDeliveryFailure {
+  readonly _tag: "PermanentDeliveryFailure";
+  readonly detail: string;
+}
+// ---cut-after---
+same<PermanentDeliveryFailure, Omit<Fields<Real.PermanentDeliveryFailure>, "brand">>(true);
+```
+
+Delivery refused permanently. `drain` dead-letters the entry as `permanent`, even when the attempt budget is also exhausted.
+
+## Failure unions
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type {
+  OutboxUnavailable,
+  InvalidStoredRecord,
+  RetryableDeliveryFailure,
+  PermanentDeliveryFailure,
+} from "@streamsy/outbox";
+// ---cut-end---
+type StoreFailure = OutboxUnavailable | InvalidStoredRecord;
+
+type DeliveryFailure = RetryableDeliveryFailure | PermanentDeliveryFailure;
+// ---cut-after---
+same<StoreFailure, Real.StoreFailure>(true);
+same<DeliveryFailure, Real.DeliveryFailure>(true);
+```
+
+## `DeadLetterReason`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type DeadLetterReason = "attempts-exhausted" | "permanent" | "payload-poison";
+// ---cut-after---
+same<DeadLetterReason, Real.DeadLetterReason>(true);
+```
+
+| Reason               | Meaning                                              |
+| -------------------- | ---------------------------------------------------- |
+| `attempts-exhausted` | A retryable outcome reached the finite attempt limit |
+| `permanent`          | Delivery failed with `PermanentDeliveryFailure`      |
+| `payload-poison`     | Stored JSON failed Schema decoding before delivery   |
+
+Dead entries remain stored for inspection and deduplication. The package provides no replay or retention policy.

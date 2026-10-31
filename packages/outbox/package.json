@@ -1,0 +1,63 @@
+{
+  "name": "@streamsy/outbox",
+  "version": "0.7.0",
+  "description": "Transactional outbox enqueue and bounded at-least-once Effect delivery.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/outbox"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./sql": {
+      "types": "./dist/sql.d.ts",
+      "import": "./dist/sql.js",
+      "default": "./dist/sql.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js",
+      "default": "./dist/memory.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/sql.ts src/memory.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun --bun vitest run --dir test --exclude \"**/sql-dialects.test.ts\"",
+    "test:dialects": "bun --bun vitest run test/sql-dialects.test.ts",
+    "format": "oxfmt src test README.md package.json tsconfig.json tsconfig.build.json --write",
+    "format:check": "oxfmt src test README.md package.json tsconfig.json tsconfig.build.json --check"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@effect/sql-mysql2": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@types/bun": "^1.4.3",
+    "effect": "4.0.5",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.5"
+  },
+  "tsdown": {
+    "fixedExtension": false,
+    "tsconfig": "tsconfig.build.json"
+  }
+}

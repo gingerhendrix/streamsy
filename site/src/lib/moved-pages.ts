@@ -30,6 +30,12 @@ export const movedPages = new Map([
   ["hosting/host-contract", "servers/process"],
   ["hosting/storage-adapter", "storage/adapter"],
   ["tutorial", "examples"],
+  ["projections/actions", "outbox"],
+  ["reference/serve/action", "reference/outbox/outbox"],
+  ["reference/serve/action-outbox", "reference/outbox/outbox"],
+  ["reference/serve/action-runtime", "reference/outbox/outbox"],
+  ["reference/serve/action-sql", "reference/outbox/sql"],
+  ["reference/serve/action-errors", "reference/outbox/errors"],
 ]);
 
 /**
