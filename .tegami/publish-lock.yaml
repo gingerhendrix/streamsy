@@ -1,53 +1,49 @@
 core:changelogs:
-  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Durable pending marks for attached projections\n\n`Projection.attach` and `ProjectionWakeup.attach` take `durable` and `batch` options. In durable mode, the commit that writes an input also writes a pending mark for each binding it touches, in the same transaction. A binding that catches up deletes its mark by a `seq` compare, so a write during the run keeps it. After a restart, an eviction or a deploy, the runner finds the marks and runs those bindings. A failed binding defers its own mark (1 s doubling to 1 hour) and no longer puts its neighbours on backoff.\n\n`ProjectionWakeup.attach` is durable by default. `Projection.attach` stays in memory unless you pass `durable: true`. Durable mode needs a local memory or SQL storage layer and fails at acquisition over remote storage.\n\nStorage migration 2 adds the `streamsy_projection_pending` table. A database opened by this release cannot be opened by an older one. `Wakeups.status` reports a `deferred` count for each wakeup.\n"
-    filename: durable-attached-wakeups.md
+  - content: "---\npackages:\n  group:streamsy:\n    type: patch\n---\n\n## The Cloudflare object host logs requests\n\n`StreamsyObject.make` and `objectHandlers` built their web handler with `disableLogger: true`. A handler defect answered 500 and logged nothing, so the only sign of the failure was the status code.\n\n- The object host now logs each request at INFO level when it ends, with method, URL and status.\n- A failed request logs its full cause, stack included.\n- Each request adds one line to Workers logs.\n"
+    filename: cloudflare-object-request-log.md
     v: 0.0.0
-  - content: "---\npackages:\n  group:streamsy:\n    type: patch\n---\n\n## Long checkpoint keys save on MySQL\n\n`CheckpointStore.layer` keeps each checkpoint under a key that holds the projection id, version, generation and params JSON. MySQL stores that key in a `VARCHAR(512)` column. Before this release, a projection whose params made the key longer than 512 characters failed every checkpoint save on MySQL with `ER_DATA_TOO_LONG`, so it never advanced.\n\n- On MySQL, SQL storage now hashes an owner record key over 512 characters to the first 447 characters, `#` and the SHA-256 hex of the full key. Two long keys that share their first 512 characters stay apart.\n- A key of at most 512 characters does not change, so stored checkpoints stay readable.\n- SQLite, Durable Object storage and Postgres store the key as `TEXT` and keep every key as it is, so checkpoints they already hold under long keys stay readable.\n- `recordKey` from `@streamsy/projection/checkpoint` is unchanged. A custom Commit that stores records elsewhere still sees the full key and must fit it into its own store's key limit.\n"
-    filename: hash-mysql-owner-keys.md
-    v: 0.0.0
-  - content: "---\npackages:\n  group:streamsy:\n    type: patch\n---\n\n## Long projection producer ids are hashed\n\nA `Commit.producer` projection, such as `Projection.wake`, appends under the producer id `<id>/v<version>/<params JSON>`. Storage refuses a producer id over 255 code points. Before this release, a binding with long params, such as a hex folder id over 113 UTF-8 bytes, failed every append with a `mutate.producer-id` storage fault and never wrote its output.\n\n- A producer id of at most 255 code points does not change. Deployed outputs keep their producer state under it.\n- A longer producer id becomes `<id>/v<version>/#<sha256>`, where the SHA-256 is the hex digest of the full id. When the projection id itself is long, the part before `#` is cut so the whole id is 255 code points. The digest uses WebCrypto (`crypto.subtle`), which Bun, Node, workerd and browsers in a secure context provide.\n- A retry of a pinned unit sends the same hashed id, so the output still answers `Duplicate`.\n"
-    filename: hash-producer-ids.md
+  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Create rejects invalid options and JSON with typed errors\n\n`CreateError` gains `InvalidCreateRequest`, a minor change to the public error union. Code that exhaustively matches `CreateError` must handle the new member. The error carries `id` and `message`.\n\n- A remote plain create HTTP 400 response now fails with `InvalidCreateRequest` and the response message instead of `InvalidForkRequest`. Responses with `stream-not-supported` still fail with `NotSupported`, and fork HTTP 400 responses still fail with `InvalidForkRequest`.\n- Local and remote creates reject `ttlSeconds` combined with `expiresAt`, and reject an `expiresAt` value that `DateTime.make` cannot parse. Both fail with `InvalidCreateRequest` before storage access or an HTTP request. Local creates previously used the TTL when both were set and could create a stream that never expired for an invalid date. HTTP continues to return 400 with the same messages.\n- Invalid JSON `initialData` on a plain create, including typed toolkit create, now fails with `InvalidCreateRequest` and `Invalid JSON` instead of dying with `SyntaxError`. Fork initial data fails with `InvalidForkRequest` and the same message. Append framing and its invalid JSON behavior are unchanged.\n"
+    filename: validate-create-requests.md
     v: 0.0.0
 core:packages:
   - id: npm:folder-sync
     updated: false
+  - id: npm:todo
+    updated: false
   - changelogIds:
-      - durable-attached-wakeups.md
-      - hash-mysql-owner-keys.md
-      - hash-producer-ids.md
+      - cloudflare-object-request-log.md
+      - validate-create-requests.md
     id: npm:@streamsy/core
     updated: true
   - changelogIds:
-      - durable-attached-wakeups.md
-      - hash-mysql-owner-keys.md
-      - hash-producer-ids.md
-    id: npm:@streamsy/projection
-    updated: true
-  - changelogIds:
-      - durable-attached-wakeups.md
-      - hash-mysql-owner-keys.md
-      - hash-producer-ids.md
+      - cloudflare-object-request-log.md
+      - validate-create-requests.md
     id: npm:@streamsy/serve
     updated: true
   - changelogIds:
-      - durable-attached-wakeups.md
-      - hash-mysql-owner-keys.md
-      - hash-producer-ids.md
+      - cloudflare-object-request-log.md
+      - validate-create-requests.md
+    id: npm:@streamsy/projection
+    updated: true
+  - changelogIds:
+      - cloudflare-object-request-log.md
+      - validate-create-requests.md
     id: npm:@streamsy/storage
     updated: true
 npm:packages:
   - id: npm:folder-sync
+  - id: npm:todo
   - id: npm:@streamsy/core
-  - id: npm:@streamsy/projection
   - id: npm:@streamsy/serve
+  - id: npm:@streamsy/projection
   - id: npm:@streamsy/storage
   - id: npm:bugsy
   - id: npm:fold-agent-example
   - id: npm:hackernews-newest-stream
-  - id: npm:hex-board
   - id: npm:issue-tracker-demo
-  - id: npm:issue-tracker-demo-event-sourced
   - id: npm:issue-tracker-demo-foldkit
+  - id: npm:issue-tracker-demo-event-sourced
+  - id: npm:hex-board
   - id: npm:platform-matrix
   - id: npm:@streamsy/conformance-tests
   - id: npm:@streamsy/docs-snippets
