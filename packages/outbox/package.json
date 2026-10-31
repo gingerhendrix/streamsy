@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/outbox",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Transactional outbox enqueue and bounded at-least-once Effect delivery.",
   "license": "MIT",
   "repository": {

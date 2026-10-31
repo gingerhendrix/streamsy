@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/serve",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Effect HttpRouter routes and Bun, Node, Deno and Cloudflare hosts with outbox wakeups.",
   "license": "MIT",
   "repository": {
