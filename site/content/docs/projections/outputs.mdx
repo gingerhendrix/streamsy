@@ -92,7 +92,7 @@ A `producerId` longer than 255 code points becomes `<id>/v<version>/`, cut to fi
 
 1. It runs the handler. A unit with no items for any output saves the checkpoint and the value, and writes nothing else.
 2. It reads the head of each output that gets items. It creates the output first when the output is missing on the checkpoint's storage.
-3. It pins the unit. One compare-and-set saves the input ranges of the unit and the `producerSeq` of each output that gets items.
+3. It pins the unit. A single compare-and-set saves the input ranges of the unit and the `producerSeq` of each output that gets items.
 4. It appends the items of each output with its position.
 5. It saves the new offsets, the new value and the next `producerSeq` of each output in one compare-and-set.
 
@@ -142,7 +142,7 @@ const running = Projection.mapAccum({
 
 ### mapAccumBatch
 
-`mapAccumBatch(state, batch, unit)` runs once for the whole unit. `batch` has one `Slice` for each input, with its `items`. One call can coalesce the row changes of a unit, for example one upsert for a row that many entries change.
+`mapAccumBatch(state, batch, unit)` runs once for the whole unit. `batch` has one `Slice` for each input, with its `items`. That call can coalesce the row changes of a unit, for example one upsert for a row that many entries change.
 
 ```ts
 import { Schema } from "effect";
@@ -205,7 +205,7 @@ These rules apply to `Commit.producer`:
 - An output whose producer state has a higher epoch fails with phase `pin` and reason `stale-epoch`. A newer generation wrote to it.
 - The outputs do not commit atomically with each other or with the checkpoint. A reader can see the items of one output before the items of another. To keep SQL writes and outputs together, use `Commit.transaction`.
 
-One Commit controls one projection. To combine SQL writes with outputs that commit on their own, chain two projections through a stream. One producer projection can declare several outputs.
+A Commit controls one projection. To combine SQL writes with outputs that commit on their own, chain two projections through a stream. A producer projection can declare several outputs.
 
 ## Transaction outputs
 

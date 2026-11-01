@@ -21,7 +21,7 @@ Runtime → listener or Worker entry point + service lifetime + background work
 | `Http.routes(group, options)`                | `@streamsy/core`  | The Durable Streams protocol for every stream in a group: create, append, read, and remove                | [Expose the stream protocol](/docs/servers/protocol) |
 | `Serve.stream`, `Serve.state`, `Serve.value` | `@streamsy/serve` | Read-only endpoints at application URLs: one stream, one Durable State change feed, or one computed value | [Serve application reads](/docs/servers/serve)       |
 
-Both are Effect `HttpRouter` route Layers. One server can merge both with `Layer.mergeAll`, and each needs the stream services of the streams that it reads. Neither creates a stream, runs a projection, or authenticates a caller.
+Both are Effect `HttpRouter` route Layers. A server can merge both with `Layer.mergeAll`, and each needs the stream services of the streams that it reads. Neither creates a stream, runs a projection, or authenticates a caller.
 
 ## Clients
 

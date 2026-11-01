@@ -64,7 +64,7 @@ declare function state<const C extends StreamAddress.Collections>(
 same<typeof state, typeof StreamAddress.state>(true);
 ```
 
-`state` returns the address of a Durable State stream, which is a JSON address that also keeps `collections`. Each key of `collections` is the `type` of one collection on the wire. The codec encodes and decodes the changes of every collection and the three State control messages.
+`state` returns the address of a Durable State stream, which is a JSON address that also keeps `collections`. Each key of `collections` is the `type` of a collection on the wire. The codec encodes and decodes the changes of every collection and the three State control messages.
 
 ### `StreamAddress.StreamAddress`
 
@@ -149,7 +149,7 @@ same<
 >(true);
 ```
 
-A `Collection` describes one collection of a State stream. `schema` is the codec of its values, and `key` names the value field that gives each change its `key`.
+A `Collection` describes a collection of a State stream. `schema` is the codec of its values, and `key` names the value field that gives each change its `key`.
 
 ### `StreamAddress.Collections`
 
@@ -495,7 +495,7 @@ same<StateChange<number>, StreamAddress.StateChange<number>>(true);
 same<StateChange<number, "n">, StreamAddress.StateChange<number, "n">>(true);
 ```
 
-`StateChange` is an upsert or a delete in one collection. `headers.operation` discriminates the two.
+`StateChange` is an upsert or a delete in a collection. `headers.operation` discriminates the two.
 
 ### `StreamAddress.StateUpsert`
 

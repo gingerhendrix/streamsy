@@ -3,7 +3,7 @@ title: Write a storage adapter
 description: Implement the Storage service for a new backend, bind streams to it, and check it with the contract tests and the protocol conformance suite.
 ---
 
-`Storage` is one Effect service. An adapter that implements it and passes the contract tests is a backend for the stream services, the protocol routes, and the remote client.
+`Storage` is a single Effect service. An adapter that implements it and passes the contract tests is a backend for the stream services, the protocol routes, and the remote client.
 
 The protocol, HTTP, forks, expiry, and producer fencing run above `Storage`. An adapter stores records and messages, applies mutations in order, and signals changes. To provide projection checkpoints and SQL transactions too, the adapter needs the services in [Commit boundary](#commit-boundary).
 
@@ -34,7 +34,7 @@ export const layer = Layer.succeed(Storage, adapter);
 | `record(id)`               | The stream record, or `None`                                                          |
 | `messages(id, window)`     | Messages after `after` (exclusive), up to `until` (inclusive), with an optional limit |
 | `producer(id, producerId)` | The last accepted producer state                                                      |
-| `mutate(mutation)`         | Applies one ordered set of operations in one transaction                              |
+| `mutate(mutation)`         | Applies an ordered set of operations in one transaction                               |
 | `changes(id)`              | A level-triggered stream of change snapshots                                          |
 | `committed`                | A scoped PubSub subscription to stream-id arrays after successful local commits       |
 | `nextExpiry`               | The earliest indexed deadline                                                         |

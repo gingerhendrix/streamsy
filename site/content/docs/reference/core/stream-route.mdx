@@ -9,7 +9,7 @@ import type { StreamAddress } from "@streamsy/core";
 import type { Option, Schema } from "effect";
 ```
 
-A route owns one id grammar and builds the address of each id that it owns. Each stream class extends a route, so the class has `template`, `match`, `parse`, and `address`. Building a route acquires no service and no resource. The stream class factories on the [Streamsy](/docs/reference/core/streamsy) page call these functions. See [Declare streams](/docs/streams/declare).
+A route owns an id grammar and builds the address of each id that it owns. Each stream class extends a route, so the class has `template`, `match`, `parse`, and `address`. Building a route acquires no service and no resource. The stream class factories on the [Streamsy](/docs/reference/core/streamsy) page call these functions. See [Declare streams](/docs/streams/declare).
 
 ## Functions
 
@@ -159,7 +159,7 @@ same<
 >(true);
 ```
 
-A `StreamRoute` is the id grammar of one stream class, with the params type `RouteParams` and the item type `A`.
+A `StreamRoute` is the id grammar of a stream class, with the params type `RouteParams` and the item type `A`.
 
 | Member        | Meaning                                                                                                   |
 | ------------- | --------------------------------------------------------------------------------------------------------- |

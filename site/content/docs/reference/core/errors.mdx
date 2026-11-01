@@ -7,7 +7,7 @@ description: Reference for the protocol errors in @streamsy/core. Each error is 
 import { OffsetMismatch, StaleEpoch, isProtocolError, type AppendErrorFor } from "@streamsy/core";
 ```
 
-The stream operations fail with these errors when the protocol rejects a request. Each error is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*` in `Effect.gen`. To handle one error, catch it by its tag:
+The stream operations fail with these errors when the protocol rejects a request. Each error is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*` in `Effect.gen`. To handle a specific error, catch it by its tag:
 
 ```ts
 // @filename: streams.ts
@@ -22,7 +22,7 @@ const write = Effect.flatMap(Notes, (notes) =>
 ).pipe(Effect.catchTag("StreamClosed", (error) => Effect.succeed(error.offset)));
 ```
 
-Each block below shows the `_tag` and the fields of one error. Every error also has `message`, `name`, and `stack`. The `id` field is a [`StreamId`](/docs/reference/core/ids-and-offsets#streamid), which is a branded `string`.
+Each block below shows the `_tag` and the fields of an error. Every error also has `message`, `name`, and `stack`. The `id` field is a [`StreamId`](/docs/reference/core/ids-and-offsets#streamid), which is a branded `string`.
 
 Failures of the store, the network, or the codec are faults, such as `StorageFault` and `EncodeFault`. They are on the [Faults](/docs/reference/core/faults) page.
 

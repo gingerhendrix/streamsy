@@ -209,7 +209,7 @@ declare function run<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR 
 same<typeof run, typeof Projection.run>(true);
 ```
 
-`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state one time.
+`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state once.
 
 - With no `limit`, `run` continues until the inputs are caught up or closed.
 - When `limit` is not a positive safe integer, `run` fails with a `ProjectionFault` with phase `load` and reason `invalid-options`.
@@ -676,7 +676,7 @@ declare function current<Inputs extends InputMap, S, E, R, Q>(
 same<typeof current, typeof Projection.current>(true);
 ```
 
-`current` loads one checkpoint and folds the input tail in memory, so the result includes every entry appended before the call. It takes no lock and writes no checkpoint and no outputs. It needs a projection with `state:`. See [`CurrentProjection`](/docs/reference/projection/declarations#currentprojection).
+`current` loads the checkpoint and folds the input tail in memory, so the result includes every entry appended before the call. It takes no lock and writes no checkpoint and no outputs. It needs a projection with `state:`. See [`CurrentProjection`](/docs/reference/projection/declarations#currentprojection).
 
 - `current` reads pages until a page has no items. A growing input can delay the result.
 - A `mapAccum` or `mapAccumBatch` handler computes the state, and `current` drops the emitted items.

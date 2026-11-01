@@ -248,7 +248,7 @@ same<DrainOptions, Real.Outbox.DrainOptions>(true);
 | Field         | Default     | Meaning                                                                           |
 | ------------- | ----------- | --------------------------------------------------------------------------------- |
 | `partitionId` | `undefined` | All partitions. A string filters to exactly one partition, including `""`         |
-| `limit`       | 100         | Positive safe integer that bounds one pass                                        |
+| `limit`       | 100         | Positive safe integer that bounds a pass                                          |
 | `ordered`     | `false`     | Blocks the selected scope behind its oldest pending entry until that entry is due |
 
 An ordered retry ends the pass. Delivered and dead entries do not block later work. Without ordering, future retries do not block later due entries.
@@ -334,7 +334,7 @@ same<OutboxBacking, Real.OutboxBacking>(true);
 | `enqueue` | Inserts new drafts and absorbs retained identities                                                                                                       |
 | `nextDue` | Returns the earliest pending deadline, or the oldest pending entry's deadline when ordered. Returns `None` for an empty scope                            |
 | `readDue` | Reads at most `limit` pending entries by id. Unordered reads exclude future entries. Ordered reads include the future head so the runtime can stop there |
-| `settle`  | Records one attempt's outcome. See [`Settlement`](#settlement)                                                                                           |
+| `settle`  | Records the outcome of an attempt. See [`Settlement`](#settlement)                                                                                       |
 | `list`    | Returns all entries by id, including delivered and dead entries                                                                                          |
 
 `readDue` does not change rows or acquire ownership. These methods return `StoreFailure` on operational failure.

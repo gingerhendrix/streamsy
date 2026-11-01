@@ -179,7 +179,7 @@ same<Options, SqlStorage.Options>(true);
 | `repairIntervalMs`         | The interval of the repair pass, in ms. Each open `changes` subscription reads again at this interval. The default is 1000                         |
 | `transactionRetryAttempts` | The total attempts of a transaction that the store opens itself, including the first. The default is 16                                            |
 | `transactionRetryDelayMs`  | The wait between two of those attempts, in ms. The default is 25                                                                                   |
-| `readLimit`                | The largest number of messages in one catch-up page. See [`Protocol.ProtocolOptions`](/docs/reference/core/protocol#protocolprotocoloptions)       |
+| `readLimit`                | The largest number of messages in a catch-up page. See [`Protocol.ProtocolOptions`](/docs/reference/core/protocol#protocolprotocoloptions)         |
 | `longPollTimeoutMs`        | The longest wait of a long-poll read. The default is 30 s. See [`Protocol.ProtocolOptions`](/docs/reference/core/protocol#protocolprotocoloptions) |
 
 A commit in the same process wakes its readers at once. The repair pass finds the other commits: a commit from another process, and a commit that was interrupted before it woke its readers. The readers see such a commit within `repairIntervalMs`.

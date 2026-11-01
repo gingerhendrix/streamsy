@@ -5,7 +5,7 @@ description: A projection reads input streams in checkpointed units and writes d
 
 A projection reads one or more input streams and writes data derived from them. It works in units. Each unit holds the new items of each input, and a Commit runs the handler over the unit and saves the new input offsets as a checkpoint. A restart continues from the last checkpoint.
 
-One pass of a projection makes at most one unit:
+A pass of a projection makes at most one unit:
 
 1. The Commit loads the checkpoint record of the projection.
 2. The runner reads one page of each input after its checkpoint offset, in declaration order. When the record holds the saved ranges of an unfinished unit, the runner reads those ranges again.
@@ -41,7 +41,7 @@ The Commit sets the delivery guarantee of a unit.
 
 `fold` uses `Commit.checkpoint` when the declaration has no `commit`. `wake` always uses `Commit.producer`. The other constructors require `commit`, and the compiler rejects a Commit that does not fit the constructor. See [Commits](/docs/projections/commits) for which Commit fits which constructor, and for custom Commits.
 
-## One example
+## Example
 
 ```ts include projections-minimal
 // @filename: minimal.ts
@@ -79,7 +79,7 @@ export const minimal = Effect.gen(function* () {
 });
 ```
 
-`Projection.emit` declares the projection, `.at({})` binds it, and `Projection.run` runs passes until the input is caught up. `limit: 10` caps the run at 10 units. One unit reads `[1, 2, 3]` and appends `[2, 4, 6]` to `doubled` in the same transaction as the checkpoint. The run returns `status: "caught-up"`, `units: 1`, and `items: 3`.
+`Projection.emit` declares the projection, `.at({})` binds it, and `Projection.run` runs passes until the input is caught up. `limit: 10` caps the run at 10 units. A single unit reads `[1, 2, 3]` and appends `[2, 4, 6]` to `doubled` in the same transaction as the checkpoint. The run returns `status: "caught-up"`, `units: 1`, and `items: 3`.
 
 `Commit.transaction` needs a SQL storage Layer with `CheckpointStore.layer` and `Transaction.layer`. A memory host has no `Transaction`. See [Layers](/docs/projections/checkpoints#layers). The source is `packages/projection/src/examples/minimal.ts`, and a test in `packages/projection/test/run.test.ts` runs it on SQLite.
 

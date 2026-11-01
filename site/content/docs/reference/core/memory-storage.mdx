@@ -116,7 +116,7 @@ same<Options, MemoryStorage.Options>(true);
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `constrained`       | When `true`, the store has the smallest capabilities: `copy` forks, `stream` atomic scope, `poll` wakes, and a `lazy` expiry index |
 | `pollIntervalMs`    | The poll interval of `changes` in constrained mode. The default is 25 ms                                                           |
-| `readLimit`         | The largest number of messages in one catch-up page. The default is 1000                                                           |
+| `readLimit`         | The largest number of messages in a catch-up page. The default is 1000                                                             |
 | `longPollTimeoutMs` | The longest wait of a long-poll read. The default is 30 s                                                                          |
 
 Without `constrained`, the store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. Use `constrained: true` in tests to check that a program does not depend on these capabilities.

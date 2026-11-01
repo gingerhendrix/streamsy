@@ -39,7 +39,7 @@ A client appends to `/streams/events/1` and reads `/streams/scores`. The route L
 | `prefix`          | `/`        | The path under which stream ids are served                            |
 | `maxMessageSize`  | 1 MiB      | The largest request body. A larger body answers 413                   |
 | `cacheVisibility` | `private`  | `private` or `public` in cache headers                                |
-| `sseDeadlineMs`   | 60,000     | The lifetime of one SSE response                                      |
+| `sseDeadlineMs`   | 60,000     | The lifetime of an SSE response                                       |
 
 The prefix must be a literal absolute path, with no `:`, `*`, `?`, or `#`. Otherwise `Http.routes` throws a `RangeError`. `/streams/` is the same as `/streams`.
 

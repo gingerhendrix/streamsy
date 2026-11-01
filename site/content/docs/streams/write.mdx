@@ -63,7 +63,7 @@ After the close, an append with items fails with `StreamClosed`. The `offset` of
 
 ## Producer retries
 
-A producer position is `{ producerId, producerEpoch, producerSeq }`. It names one writer and counts its appends. `Producer.next` returns the position with `producerSeq` increased by one.
+A producer position is `{ producerId, producerEpoch, producerSeq }`. It names a writer and counts its appends. `Producer.next` returns the position with `producerSeq` increased by one.
 
 ```ts
 // @filename: streams.ts

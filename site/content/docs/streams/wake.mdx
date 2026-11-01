@@ -28,7 +28,7 @@ export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/
 
 `Streamsy.wake` calls `Streamsy.state` with `Streamsy.wakeCollections`, so a wake class has the normal State service and the item format of a [Durable State stream](/docs/streams/durable-state#items). The declaration takes no `collections` and names no sources. The service name, template, and params work as for every stream class. See [Declare streams](/docs/streams/declare).
 
-The one collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is the tail of the source after the write. `closed` is `true` when the source is closed, and a row for an open source leaves it out.
+The only collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is the tail of the source after the write. `closed` is `true` when the source is closed, and a row for an open source leaves it out.
 
 ## Write rows
 
@@ -66,7 +66,7 @@ To run the binding after each local commit to a source, use `Projection.attach(f
 | `cursors` | The saved source cursors, by stream id. `followWake` reads the map again for each batch |
 | `retry`   | The `Schedule` for retries, as for [`follow`](/docs/streams/read#follow)                |
 
-A `WakeBatch` has three fields. `items` holds the `Streamsy.WakeItem` actions of the batch, in write order. `offset` is the wake cursor after the batch. `upToDate` is `true` when the batch reached the tail of the wake stream. `followWake` collapses the rows of one source in a batch into one item. The exception is a delete and then an upsert of one source, which give `Removed`, then `Dirty` from `-1`.
+A `WakeBatch` has three fields. `items` holds the `Streamsy.WakeItem` actions of the batch, in write order. `offset` is the wake cursor after the batch. `upToDate` is `true` when the batch reached the tail of the wake stream. `followWake` collapses the rows of one source in a batch into one item. The exception is a delete and then an upsert of the same source, which give `Removed`, then `Dirty` from `-1`.
 
 | `WakeItem` | Do this                                                                                                               |
 | ---------- | --------------------------------------------------------------------------------------------------------------------- |

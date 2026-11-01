@@ -238,14 +238,14 @@ same<
 same<Commit<void>, Real.Commit<void>>(true);
 ```
 
-A `Commit` writes the units of one projection. `Result` is the handler result that it takes, `Provides` holds the services that it gives the handler, and `Requires` holds the services that it needs.
+A `Commit` writes the units of a projection. `Result` is the handler result that it takes, `Provides` holds the services that it gives the handler, and `Requires` holds the services that it needs.
 
 | Field       | Meaning                                                                                         |
 | ----------- | ----------------------------------------------------------------------------------------------- |
 | `name`      | A name for messages                                                                             |
-| `guarantee` | How often the effects of one unit happen                                                        |
+| `guarantee` | How often the effects of a unit happen                                                          |
 | `load`      | The function that loads the checkpoint record of a key, and its token                           |
-| `apply`     | The function that runs the handler of one unit and writes the result and the checkpoint         |
+| `apply`     | The function that runs the handler of a unit and writes the result and the checkpoint           |
 | `remove`    | The optional function that deletes the checkpoint record of a key. `Projection.forget` calls it |
 
 A Commit with a result type that does not fit a constructor fails at the `commit:` field of the definition.
@@ -278,7 +278,7 @@ same<Pending<Folded<number>, string>, Real.Pending<Folded<number>, string>>(true
 same<Pending<void>, Real.Pending<void>>(true);
 ```
 
-`apply` takes a `Pending`: one unit that is ready to commit.
+`apply` takes a `Pending`: a unit that is ready to commit.
 
 | Field    | Meaning                                                                                                           |
 | -------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -446,7 +446,7 @@ same<OutputBatch<O>, Real.OutputBatch<O>>(true);
 same<OutputBatch<O>, Commit.OutputBatch<O>>(true);
 ```
 
-An `OutputBatch` holds the items of one unit for each output: the address after `at` bound the params, and the items in entry order. The items of a State output are changes and State control messages. An output with no items has an empty array.
+An `OutputBatch` holds the items of a unit for each output: the address after `at` bound the params, and the items in entry order. The items of a State output are changes and State control messages. An output with no items has an empty array.
 
 ## Services
 

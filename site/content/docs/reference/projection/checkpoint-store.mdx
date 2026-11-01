@@ -181,7 +181,7 @@ same<ProjectionKey, Real.ProjectionKey>(true);
 same<ProjectionKey, Checkpoint.ProjectionKey>(true);
 ```
 
-A `ProjectionKey` names one checkpoint record: the `id`, `version`, and `generation` of a declaration, and the params that it was bound with, each encoded with its codec. [`Projection.key`](/docs/reference/projection/runners#projectionkey) returns the key of a bound projection.
+A `ProjectionKey` names a checkpoint record: the `id`, `version`, and `generation` of a declaration, and the params that it was bound with, each encoded with its codec. [`Projection.key`](/docs/reference/projection/runners#projectionkey) returns the key of a bound projection.
 
 ### `recordKey`
 
@@ -295,7 +295,7 @@ same<Flat<typeof Real.CheckpointRecord.Type>, Flat<CheckpointRecord>>(true);
 same<Flat<typeof Real.CheckpointRecord.Encoded>, Flat<CheckpointRecord>>(true);
 ```
 
-A `CheckpointRecord` is the stored progress of one projection key. `CheckpointRecord` is also the `Schema.Struct` of the record. Its encoded form is the same object, so `Schema.fromJsonString(CheckpointRecord)` gives its JSON codec.
+A `CheckpointRecord` is the stored progress of a projection key. `CheckpointRecord` is also the `Schema.Struct` of the record. Its encoded form is the same object, so `Schema.fromJsonString(CheckpointRecord)` gives its JSON codec.
 
 | Field      | Meaning                                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------------------------ |

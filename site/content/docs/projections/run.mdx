@@ -46,7 +46,7 @@ const program = Projection.run(orderTotalsProjection, { limit: 10 });
 const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-`limit` is the most units that one `run` call commits. With no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with a `ProjectionFault` with phase `load` and reason `invalid-options`. See [`RunOptions`](/docs/reference/projection/units#runoptions).
+`limit` is the most units that a `run` call commits. With no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with a `ProjectionFault` with phase `load` and reason `invalid-options`. See [`RunOptions`](/docs/reference/projection/units#runoptions).
 
 ### Results
 
@@ -156,12 +156,12 @@ Build the Layer before the application writes. A commit before the subscription 
 
 Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
 
-| Option    | Default           | Effect                                                                                |
-| --------- | ----------------- | ------------------------------------------------------------------------------------- |
-| `limit`   | `100`             | The most units for each binding in one run. A binding that reaches it runs again next |
-| `retry`   | `ProjectionRetry` | The schedule for a retry after a failed pass                                          |
-| `durable` | `false`           | Keep a pending mark for each binding with work in storage                             |
-| `batch`   | `25`              | With `durable`, the most due marks that one pass reads                                |
+| Option    | Default           | Effect                                                                              |
+| --------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `limit`   | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
+| `retry`   | `ProjectionRetry` | The schedule for a retry after a failed pass                                        |
+| `durable` | `false`           | Keep a pending mark for each binding with work in storage                           |
+| `batch`   | `25`              | With `durable`, the most due marks that a pass reads                                |
 
 By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`.
 

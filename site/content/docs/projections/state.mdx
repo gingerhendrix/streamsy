@@ -38,7 +38,7 @@ const program = Effect.gen(function* () {
 });
 ```
 
-`fold(state, entry, unit)` gets the current value and one input entry, and returns the next value. It can return the value, or an Effect of the value. A unit folds all entries of the first declared input, then those of the next input, and the Commit then saves the result.
+`fold(state, entry, unit)` gets the current value and an input entry, and returns the next value. It can return the value, or an Effect of the value. A unit folds all entries of the first declared input, then those of the next input, and the Commit then saves the result.
 
 `fold` uses `Commit.checkpoint` when the declaration has no `commit`. `Commit.checkpoint` writes the encoded value and the new offsets in one compare-and-set, so the value never counts an entry twice. Keep external effects out of the step. A retry runs the step again. To write SQL rows from the step, use `Commit.transaction`. See [SQL tables](/docs/projections/process#sql-tables).
 

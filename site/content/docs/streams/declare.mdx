@@ -128,7 +128,7 @@ import { Blobs, Notes } from "./streams.ts";
 export const notesApp = Streamsy.group(Notes, Blobs);
 ```
 
-`group` throws a `RangeError` when two streams have the same name or the same template, or when two templates can match one id. The overlap check treats a param as a match for any segment, so `notes/:noteId` and `notes/latest` overlap even when the codec of `noteId` rejects `latest`. The check skips custom streams. `Streamsy.Wildcard` is a custom stream that matches every id, and `group` throws unless it is last. See [Custom streams in groups](/docs/streams/custom#groups).
+`group` throws a `RangeError` when two streams have the same name or the same template, or when two templates can match the same id. The overlap check treats a param as a match for any segment, so `notes/:noteId` and `notes/latest` overlap even when the codec of `noteId` rejects `latest`. The check skips custom streams. `Streamsy.Wildcard` is a custom stream that matches every id, and `group` throws unless it is last. See [Custom streams in groups](/docs/streams/custom#groups).
 
 Over HTTP, `Http.routes` does not run the codec. See [What the server checks](/docs/servers/protocol#what-the-server-checks).
 

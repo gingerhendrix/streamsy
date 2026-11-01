@@ -237,7 +237,7 @@ type Tracker = { issue: StreamAddress.Collection<Issue, Issue, never, never, "id
 same<Entry<Tracker>, DurableState.Entry<Tracker>>(true);
 ```
 
-`Entry<C>` is one item of the `entries` list of `changes`: a change, or a State control message.
+`Entry<C>` is an item of the `entries` list of `changes`: a change, or a State control message.
 
 ## `DurableState.Materialized`
 

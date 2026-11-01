@@ -177,7 +177,7 @@ type ObjectHandlers = {
 same<ObjectHandlers, Alchemy.ObjectHandlers>(true);
 ```
 
-`Alchemy.ObjectHandlers` holds the handlers that `objectHandlers` returns. `fetch` answers the current HTTP request. `alarm()` runs one turn of the wakeup scheduler. The platform calls `alarm` on its own, never from a fetch.
+`Alchemy.ObjectHandlers` holds the handlers that `objectHandlers` returns. `fetch` answers the current HTTP request. `alarm()` runs a turn of the wakeup scheduler. The platform calls `alarm` on its own, never from a fetch.
 
 ## Shared Cloudflare exports
 

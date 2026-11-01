@@ -103,13 +103,13 @@ declare function wakeActions(
 same<typeof wakeActions, typeof Streamsy.wakeActions>(true);
 ```
 
-`wakeActions` returns the actions for one batch of wake events. It reads no stream and changes none of its inputs. A client with its own HTTP reader decodes each page with [`WakeMessage`](#streamsywakemessage) and calls `wakeActions` directly. Pass the returned `snapshot` to the call for the next page.
+`wakeActions` returns the actions for a batch of wake events. It reads no stream and changes none of its inputs. A client with its own HTTP reader decodes each page with [`WakeMessage`](#streamsywakemessage) and calls `wakeActions` directly. Pass the returned `snapshot` to the call for the next page.
 
 `wakeActions` applies these rules, in event order:
 
 - It collapses the rows of one stream in the batch to one item, at the position of the last row for that stream. The one exception is a delete and then an upsert, below.
 - An upsert gives `Dirty` when the row `offset` sorts after the saved cursor of the stream, or when the row has `closed`. The saved cursor is the entry in `cursors`, or `-1` when the map has none.
-- A delete gives `Removed`. A delete and then an upsert of one stream give `Removed`, then `Dirty` from `-1`.
+- A delete gives `Removed`. A delete and then an upsert of the same stream give `Removed`, then `Dirty` from `-1`.
 - A `reset` control message drops the items before it in the batch, closes an open snapshot, and gives `Reset`. Each later upsert in the batch gives `Dirty` from `-1`.
 - A `snapshot-start` control message opens a snapshot. The `snapshot-end` control message that closes it gives the items of the rows before it, then `Snapshot`. `Snapshot` holds each stream that an upsert named since `snapshot-start` and that no later delete removed.
 
@@ -133,7 +133,7 @@ type WakeRow = {
 same<WakeRow, Streamsy.WakeRow>(true);
 ```
 
-`WakeRow` is one row of a wake stream: the latest known state of one source stream. `Streamsy.WakeRow` is also the `Schema` of a row.
+`WakeRow` is a row of a wake stream: the latest known state of a source stream. `Streamsy.WakeRow` is also the `Schema` of a row.
 
 | Field    | Meaning                                                                         |
 | -------- | ------------------------------------------------------------------------------- |
@@ -157,7 +157,7 @@ declare const wakeCollections: {
 same<typeof wakeCollections, typeof Streamsy.wakeCollections>(true);
 ```
 
-`wakeCollections` holds the one collection of every wake stream. Its State `type` is `stream`, and its key is the `stream` field of the row. A class from [`Streamsy.wake`](#streamsywake) has `wakeCollections` as its `collections`.
+`wakeCollections` holds the only collection of every wake stream. Its State `type` is `stream`, and its key is the `stream` field of the row. A class from [`Streamsy.wake`](#streamsywake) has `wakeCollections` as its `collections`.
 
 ### `Streamsy.WakeCollections`
 
@@ -185,7 +185,7 @@ type WakeEvent = StreamAddress.CollectionsEvent<Streamsy.WakeCollections>;
 same<WakeEvent, Streamsy.WakeEvent>(true);
 ```
 
-`WakeEvent` is one item of a wake stream: a change to a `WakeRow`, or a State control message. See [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent).
+`WakeEvent` is an item of a wake stream: a change to a `WakeRow`, or a State control message. See [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent).
 
 ### `Streamsy.WakeMessage`
 
@@ -203,7 +203,7 @@ declare const WakeMessage: Schema.Codec<
 same<typeof WakeMessage, typeof Streamsy.WakeMessage>(true);
 ```
 
-`WakeMessage` is the codec of one wake stream message: a `stream` change or a State control message. A client that reads raw JSON pages decodes each message with it, in place of a typed service.
+`WakeMessage` is the codec of a wake stream message: a `stream` change or a State control message. A client that reads raw JSON pages decodes each message with it, in place of a typed service.
 
 ```ts
 import { Schema } from "effect";
@@ -240,7 +240,7 @@ same<WakeItem, Streamsy.WakeItem>(true);
 same<typeof WakeItem, typeof Streamsy.WakeItem>(true);
 ```
 
-`WakeItem` is one action for the consumer of a wake stream. The value `Streamsy.WakeItem` holds a constructor for each tag, and `$is` and `$match`.
+`WakeItem` is an action for the consumer of a wake stream. The value `Streamsy.WakeItem` holds a constructor for each tag, and `$is` and `$match`.
 
 | Tag        | Action                                                                   |
 | ---------- | ------------------------------------------------------------------------ |
@@ -267,7 +267,7 @@ interface WakeBatch {
 same<WakeBatch, Streamsy.WakeBatch>(true);
 ```
 
-`WakeBatch` holds the actions of one batch of the wake stream. [`followWake`](#streamsyfollowwake) emits one for each batch that it reads. `offset` is the `nextOffset` of that batch. Save it as the wake cursor after you handle every item. `upToDate` is `true` when the batch reached the tail of the wake stream.
+`WakeBatch` holds the actions of a batch of the wake stream. [`followWake`](#streamsyfollowwake) emits one for each batch that it reads. `offset` is the `nextOffset` of that batch. Save it as the wake cursor after you handle every item. `upToDate` is `true` when the batch reached the tail of the wake stream.
 
 ### `Streamsy.FollowWakeOptions`
 

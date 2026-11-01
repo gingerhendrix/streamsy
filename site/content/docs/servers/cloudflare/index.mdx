@@ -3,7 +3,7 @@ title: Run on Cloudflare
 description: Serve Streamsy from a Worker and Durable Objects, where each object owns its SQLite storage, its routes, and its alarm.
 ---
 
-A Worker receives each request and forwards it to one Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app. `@streamsy/serve/cloudflare` provides the Worker router and the object class.
+A Worker receives each request and forwards it to a Durable Object. The object owns its SQLite storage, its alarm, and its `HttpRouter` app. `@streamsy/serve/cloudflare` provides the Worker router and the object class.
 
 ```ts include cloudflare-app
 // @filename: streams.ts
@@ -45,7 +45,7 @@ The second type parameter of `StreamsyObject.make` is the services that the app 
 
 ## Storage
 
-`layer(state, env)` returns the storage Layer of one object. Pass the full `state.storage` handle to `DurableObjectStorage.layer`, because the driver needs its transaction API. The long-poll timeout is 25 s by default.
+`layer(state, env)` returns the storage Layer of an object. Pass the full `state.storage` handle to `DurableObjectStorage.layer`, because the driver needs its transaction API. The long-poll timeout is 25 s by default.
 
 The data of a stream lives on the object that owns it. A fork source and its child must be on the same object. A transaction cannot span objects. To deliver rows to a stream on another object, use a `Commit.producer` output or an [object link](/docs/servers/cloudflare/objects). For SQL transactions and checkpoints on the object, see [Use SQLite](/docs/storage/sqlite#durable-objects).
 

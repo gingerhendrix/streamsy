@@ -62,7 +62,7 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
 ) {}
 ```
 
-`Workspaces.at({ workspaceId })` gives the address of one workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `state-schema.ts` of the contract package. The browser uses the same schemas.
+`Workspaces.at({ workspaceId })` gives the address of a workspace stream. The typed collections on that address check every change that the server writes. `Project`, `Issue` and `Comment` are Effect schemas in `state-schema.ts` of the contract package. The browser uses the same schemas.
 
 See [Durable State streams](/docs/streams/declare#durable-state-streams).
 
@@ -467,7 +467,7 @@ const ListenerLive = Layer.unwrap(
 );
 ```
 
-One router holds the JSON API and the stream route. `Serve.mount` serves each workspace stream as Durable State at `/streams/workspace/:workspaceId`. The `Workspaces` codecs decode the path parameter. A `PUT`, `POST` or `DELETE` answers 405, so only the JSON API appends. A path that no route owns answers 404. Both parts use the same `Workspaces` service from the layer graph.
+A single router holds the JSON API and the stream route. `Serve.mount` serves each workspace stream as Durable State at `/streams/workspace/:workspaceId`. The `Workspaces` codecs decode the path parameter. A `PUT`, `POST` or `DELETE` answers 405, so only the JSON API appends. A path that no route owns answers 404. Both parts use the same `Workspaces` service from the layer graph.
 
 ```ts title="server/index.ts"
 const RoutesLive = Layer.mergeAll(

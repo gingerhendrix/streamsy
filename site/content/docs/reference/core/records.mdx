@@ -40,7 +40,7 @@ interface StreamRecord {
 same<StreamRecord, Core.StreamRecord>(true);
 ```
 
-`StreamRecord` is the stored state of one stream, without its messages. `currentOffset` is the tail of the stream. `StorageShape.record` returns it, and a `Create` operation stores it.
+`StreamRecord` is the stored state of a stream, without its messages. `currentOffset` is the tail of the stream. `StorageShape.record` returns it, and a `Create` operation stores it.
 
 ### `StreamConfig`
 
@@ -120,7 +120,7 @@ interface StoredMessage {
 same<StoredMessage, Core.StoredMessage>(true);
 ```
 
-`StoredMessage` is one stored message. `offset` is its position in the stream, `timestamp` is the time of its append in milliseconds since the Unix epoch, and `data` holds its bytes.
+`StoredMessage` is a stored message. `offset` is its position in the stream, `timestamp` is the time of its append in milliseconds since the Unix epoch, and `data` holds its bytes.
 
 ### `ProducerState`
 
@@ -137,7 +137,7 @@ interface ProducerState {
 same<ProducerState, Core.ProducerState>(true);
 ```
 
-`ProducerState` is the last producer position that a stream accepted for one `producerId`. `epoch` is the producer epoch, and `lastSeq` is the last `producerSeq` in that epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
+`ProducerState` is the last producer position that a stream accepted for a `producerId`. `epoch` is the producer epoch, and `lastSeq` is the last `producerSeq` in that epoch. See [`Producer.Position`](/docs/reference/core/producer#producerposition).
 
 ## Reads and changes
 
@@ -178,7 +178,7 @@ interface ChangeSnapshot {
 same<ChangeSnapshot, Core.ChangeSnapshot>(true);
 ```
 
-`ChangeSnapshot` is the state of one stream that `StorageShape.changes` emits. `present` is `false` when no record has the id. `currentOffset`, `closed`, and `softDeleted` copy the fields of the record. A reader compares a snapshot with the state it saw before, because a snapshot with no change is valid.
+`ChangeSnapshot` is the state of a stream that `StorageShape.changes` emits. `present` is `false` when no record has the id. `currentOffset`, `closed`, and `softDeleted` copy the fields of the record. A reader compares a snapshot with the state it saw before, because a snapshot with no change is valid.
 
 ## Writes
 

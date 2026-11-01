@@ -138,7 +138,7 @@ interface AppendOptions {
 same<AppendOptions, Core.AppendOptions>(true);
 ```
 
-`AppendOptions` holds the options of one append on the protocol writer.
+`AppendOptions` holds the options of an append on the protocol writer.
 
 | Option           | Meaning                                                                                             |
 | ---------------- | --------------------------------------------------------------------------------------------------- |
@@ -245,7 +245,7 @@ interface ReadNextOptions {
 same<ReadNextOptions, Core.ReadNextOptions>(true);
 ```
 
-`ReadNextOptions` holds the options of one long-poll wait, which `session` makes. `offset` takes the same values as in `ReadOptions`. Set `cursor` to the `cursor` of the previous `ReadNextResult`. The cursor lets a CDN collapse the waits of many readers into one request to the origin. See [Session](/docs/streams/read#session).
+`ReadNextOptions` holds the options of a long-poll wait, which `session` makes. `offset` takes the same values as in `ReadOptions`. Set `cursor` to the `cursor` of the previous `ReadNextResult`. The cursor lets a CDN collapse the waits of many readers into one request to the origin. See [Session](/docs/streams/read#session).
 
 ### `ReadResult`
 
@@ -266,7 +266,7 @@ interface ReadResult {
 same<ReadResult, Core.ReadResult>(true);
 ```
 
-`ReadResult` is one batch from the protocol reader, before the codec decodes it.
+`ReadResult` is a batch from the protocol reader, before the codec decodes it.
 
 | Field        | Meaning                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -293,7 +293,7 @@ interface ReadNextResult extends ReadResult {
 same<ReadNextResult, Core.ReadNextResult>(true);
 ```
 
-`ReadNextResult` is the result of one long-poll wait. `timedOut` is `true` when the wait ended without new messages. Pass `cursor` in the next `ReadNextOptions`.
+`ReadNextResult` is the result of a long-poll wait. `timedOut` is `true` when the wait ended without new messages. Pass `cursor` in the next `ReadNextOptions`.
 
 ### `ReadMessage`
 
@@ -309,7 +309,7 @@ interface ReadMessage {
 same<ReadMessage, Core.ReadMessage>(true);
 ```
 
-`ReadMessage` is one stored message, as bytes. Storage also keeps the offset and the write time of each message, but a read does not return them.
+`ReadMessage` is a stored message, as bytes. Storage also keeps the offset and the write time of each message, but a read does not return them.
 
 ### `HeadResult`
 

@@ -31,7 +31,7 @@ The address holds the codec, so the items of a custom stream are the items of th
 
 ## Groups
 
-`Streamsy.group` checks that no two templates can match one id. The check skips custom streams, so a custom stream can own ids that another stream in the group also matches.
+`Streamsy.group` checks that no two templates can match the same id. The check skips custom streams, so a custom stream can own ids that another stream in the group also matches.
 
 `Http.routes` sends each request to the first stream in the group that matches the id. Put a custom stream after the streams that should win an id that both match.
 

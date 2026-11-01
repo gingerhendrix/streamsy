@@ -94,7 +94,7 @@ An append that the handler makes to a stream on the same storage commits with th
 - When `prepare` fails, the run fails with its error and the transaction does not open.
 - The runner's caller provides the services that `prepare` needs.
 
-`prepare` and `process` see the same `unit.key` in one attempt. A transaction retry reads the inputs again, and the key changes when new input extends a range. Do not use `unit.key` as an idempotency key that must hold across retries of `Commit.transaction`.
+`prepare` and `process` see the same `unit.key` within an attempt. A transaction retry reads the inputs again, and the key changes when new input extends a range. Do not use `unit.key` as an idempotency key that must hold across retries of `Commit.transaction`.
 
 ## External effects
 

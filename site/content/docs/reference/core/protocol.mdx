@@ -60,10 +60,10 @@ same<ProtocolOptions, Protocol.ProtocolOptions>(true);
 
 `ProtocolOptions` holds the options of `Protocol.layer`.
 
-| Option              | Meaning                                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `readLimit`         | The largest number of messages in one catch-up page. A live read returns the whole tail. The default is 1000 |
-| `longPollTimeoutMs` | The longest wait of a long-poll read. The default is 30 s                                                    |
+| Option              | Meaning                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `readLimit`         | The largest number of messages in a catch-up page. A live read returns the whole tail. The default is 1000 |
+| `longPollTimeoutMs` | The longest wait of a long-poll read. The default is 30 s                                                  |
 
 ### `Protocol.bind`
 
@@ -113,7 +113,7 @@ declare const expireDue: () => Effect.Effect<void, StorageFault, Storage>;
 same<typeof expireDue, typeof Protocol.expireDue>(true);
 ```
 
-`expireDue` returns an Effect that runs one expiry sweep. The sweep reads `nextExpiry` from the store, deletes that stream, and repeats until the next deadline is later than the clock. The host decides when to run a sweep, and it can interrupt one.
+`expireDue` returns an Effect that runs an expiry sweep. The sweep reads `nextExpiry` from the store, deletes that stream, and repeats until the next deadline is later than the clock. The host decides when to run a sweep, and it can interrupt one.
 
 When a concurrent renewal or delete changes a stream first, the sweep skips that stream.
 

@@ -142,7 +142,7 @@ export const Message = defineMessageUnion({
 });
 ```
 
-`StateEvent` is the contract's schema for one change event on the workspace stream. The stream items in a Message are decoded values, so `update` never sees raw JSON.
+`StateEvent` is the contract's schema for a change event on the workspace stream. The stream items in a Message are decoded values, so `update` never sees raw JSON.
 
 ## 3. Start the runtime
 
@@ -172,7 +172,7 @@ const application = Runtime.makeApplication({
 Runtime.run(application, { flags });
 ```
 
-`resources` is one Effect Layer. The runtime builds it once and gives it to every Command. So a Command asks for `HttpClient` or `SecureRandom` and does not provide it.
+`resources` is an Effect Layer. The runtime builds it once and gives it to every Command. So a Command asks for `HttpClient` or `SecureRandom` and does not provide it.
 
 ```ts title="src/resources.ts"
 export const resources = Layer.mergeAll(

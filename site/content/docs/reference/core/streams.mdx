@@ -22,7 +22,7 @@ import type {
 import type { Array, Effect, Function, Schedule, Stream } from "effect";
 ```
 
-Each `Streams` function runs one stream operation on a [`StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress), and it needs `StreamsReader`, `StreamsWriter`, or both. The methods of a stream class run the same operations on the params of one stream. Protocol tools and tests use `Streams` on raw addresses. An application uses [stream classes](/docs/reference/core/streamsy#streamsyapi).
+Each `Streams` function runs a stream operation on a [`StreamAddress`](/docs/reference/core/stream-address#streamaddressstreamaddress), and it needs `StreamsReader`, `StreamsWriter`, or both. The methods of a stream class run the same operations on the params of one stream. Protocol tools and tests use `Streams` on raw addresses. An application uses [stream classes](/docs/reference/core/streamsy#streamsyapi).
 
 Most of the types of this namespace are also exported from the root of `@streamsy/core`. Their sections link to the [Toolkit types](/docs/reference/core/toolkit) page, which describes them.
 
@@ -273,7 +273,7 @@ same<AppendItems<string, {}>, Streams.AppendItems<string, {}>>(true);
 same<AppendItems<string, { close: true }>, Streams.AppendItems<string, { close: true }>>(true);
 ```
 
-`AppendItems<A, O>` is the list of items that one append takes. The list must have at least one item, unless the options `O` have `close: true`.
+`AppendItems<A, O>` is the list of items that an append takes. The list must have at least one item, unless the options `O` have `close: true`.
 
 ### `Streams.FollowOptions`
 

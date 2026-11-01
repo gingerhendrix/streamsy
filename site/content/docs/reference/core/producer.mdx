@@ -7,7 +7,7 @@ description: Reference for the Producer namespace in @streamsy/core. A producer 
 import { Producer } from "@streamsy/core";
 ```
 
-A producer position names one writer and counts the appends that it has sent. When you send a position with an append, the server accepts that position once and answers `Duplicate` to any repeat, so a retry cannot write the items twice. For the retry flow, see [Producer retries](/docs/streams/write#producer-retries).
+A producer position names a writer and counts the appends that it has sent. When you send a position with an append, the server accepts that position once and answers `Duplicate` to any repeat, so a retry cannot write the items twice. For the retry flow, see [Producer retries](/docs/streams/write#producer-retries).
 
 ## `Producer.Position`
 

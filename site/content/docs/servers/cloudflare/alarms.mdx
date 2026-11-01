@@ -1,6 +1,6 @@
 ---
 title: Schedule work with alarms
-description: Run bounded work on a Durable Object when no request is in flight, with wakeups that share the object's one alarm, retry on failure, and recover after eviction.
+description: Run bounded work on a Durable Object when no request is in flight, with wakeups that share the object's single alarm, retry on failure, and recover after eviction.
 ---
 
 A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn, with no request in flight.
@@ -133,7 +133,7 @@ Only commits through this object's storage choose bindings. A projection with in
 
 ## Outbox
 
-`OutboxWakeup.make(definition, deliver, options)` from `@streamsy/serve/cloudflare` drains an [outbox](/docs/outbox) in alarm turns. `@streamsy/serve/alchemy` exports the same adapter. Its `next` is the due time of the next outbox entry. Its `run` is one drain pass in the same acquired context as requests. The object's `layer` must provide `OutboxStore` and the services of the delivery function.
+`OutboxWakeup.make(definition, deliver, options)` from `@streamsy/serve/cloudflare` drains an [outbox](/docs/outbox) in alarm turns. `@streamsy/serve/alchemy` exports the same adapter. Its `next` is the due time of the next outbox entry. Its `run` is a drain pass in the same acquired context as requests. The object's `layer` must provide `OutboxStore` and the services of the delivery function.
 
 A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind the oldest pending retry in the selected scope. The default lets later due entries pass a future retry. With `partitionId`, the wakeup drains that partition only, and its name is `streamsy/outbox/<name>/<partition>`. Without it, the name is `streamsy/outbox/<name>` and the scope is the whole outbox name.
 

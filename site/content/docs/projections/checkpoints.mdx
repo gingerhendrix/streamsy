@@ -3,7 +3,7 @@ title: Checkpoints and generations
 description: Where a projection stores its progress, which Layer stores it, how to start again with a new generation, and what each fault means.
 ---
 
-A checkpoint is the stored progress of one projection binding. Its record holds the accepted offset of each input, the encoded state, the producer positions of the outputs, and a pinned unit while one is in progress. A `CheckpointStore` holds the records, and the [Commit](/docs/projections/commits) of the projection writes them. For the full signatures, see [`CheckpointStore`](/docs/reference/projection/checkpoint-store#checkpointstore) and [`CheckpointRecord`](/docs/reference/projection/checkpoint-store#checkpointrecord).
+A checkpoint is the stored progress of a projection binding. Its record holds the accepted offset of each input, the encoded state, the producer positions of the outputs, and a pinned unit while one is in progress. A `CheckpointStore` holds the records, and the [Commit](/docs/projections/commits) of the projection writes them. For the full signatures, see [`CheckpointStore`](/docs/reference/projection/checkpoint-store#checkpointstore) and [`CheckpointRecord`](/docs/reference/projection/checkpoint-store#checkpointrecord).
 
 ## Records
 

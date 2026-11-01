@@ -96,7 +96,7 @@ same<
 >(true);
 ```
 
-`Cloudflare.ObjectConfiguration` holds the routes, the local services, the wakeups, and the links of one object class.
+`Cloudflare.ObjectConfiguration` holds the routes, the local services, the wakeups, and the links of an object class.
 
 | Field     | Meaning                                                                                             |
 | --------- | --------------------------------------------------------------------------------------------------- |
@@ -295,7 +295,7 @@ same<Wakeup<{ readonly dependency: string }>, Cloudflare.Wakeup<{ readonly depen
 same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 ```
 
-`Cloudflare.Wakeup` is one kind of scheduled work in an object: a bounded, idempotent `run`, and a `next` that reads its due time from committed state. `Wakeup.make` runs `run` under the permit of the object for that name. The permit is not reentrant, so a `run` must not call its own `run`.
+`Cloudflare.Wakeup` is a kind of scheduled work in an object: a bounded, idempotent `run`, and a `next` that reads its due time from committed state. `Wakeup.make` runs `run` under the permit of the object for that name. The permit is not reentrant, so a `run` must not call its own `run`.
 
 | Field      | Meaning                                                                                                        |
 | ---------- | -------------------------------------------------------------------------------------------------------------- |
@@ -332,7 +332,7 @@ declare const OutboxWakeup: {
 same<typeof OutboxWakeup, typeof Real.OutboxWakeup>(true);
 ```
 
-`OutboxWakeup.make` adapts one outbox scope to the object's alarm scheduler. It is also exported from `@streamsy/serve/alchemy`. Register the result in the object's `wakeups` array. Provide `OutboxStore` and the delivery function's services in the acquired storage Layer.
+`OutboxWakeup.make` adapts an outbox scope to the object's alarm scheduler. It is also exported from `@streamsy/serve/alchemy`. Register the result in the object's `wakeups` array. Provide `OutboxStore` and the delivery function's services in the acquired storage Layer.
 
 `next` calls `store.nextDue` with the definition name, partition, and ordering option. It maps every store failure to a retryable `StorageFault` with operation `outbox.nextDue`. `run` calls `Outbox.drain` once and passes on the report's `more` flag. An invalid `limit` fails `run` with `InvalidConfiguration`, not a storage fault. The host reads `next` again to decide whether to arm another alarm.
 
@@ -549,7 +549,7 @@ type ObjectFetch = (
 same<ObjectFetch, Cloudflare.ObjectFetch>(true);
 ```
 
-`Cloudflare.ObjectFetch` is an Effect transport that sends one web request to the object with a given name. `ObjectStreams.layer` and `ObjectLink.client` take this transport or a native namespace. To build one from Alchemy stubs, use [`Alchemy.objectFetch`](/docs/reference/serve/alchemy#alchemyobjectfetch).
+`Cloudflare.ObjectFetch` is an Effect transport that sends a web request to the object with a given name. `ObjectStreams.layer` and `ObjectLink.client` take this transport or a native namespace. To build one from Alchemy stubs, use [`Alchemy.objectFetch`](/docs/reference/serve/alchemy#alchemyobjectfetch).
 
 ### `Cloudflare.ObjectStreamsOptions`
 

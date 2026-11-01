@@ -153,7 +153,7 @@ same<HttpOptions, Http.HttpOptions>(true);
 | Option            | Meaning                                                                                 |
 | ----------------- | --------------------------------------------------------------------------------------- |
 | `pathPrefix`      | The path before each stream id. The default is `/`                                      |
-| `sseDeadlineMs`   | The lifetime of one SSE response. The default is 60 s                                   |
+| `sseDeadlineMs`   | The lifetime of an SSE response. The default is 60 s                                    |
 | `maxMessageSize`  | The largest request body, in bytes. The default is 1 MiB                                |
 | `cacheVisibility` | `private` or `public` in the `cache-control` header of a read. The default is `private` |
 
@@ -230,7 +230,7 @@ declare function streamPath(pathPrefix?: string): {
 same<typeof streamPath, typeof Http.streamPath>(true);
 ```
 
-`streamPath` returns the path helpers of one prefix. It adds a trailing `/` to `pathPrefix` when it has none. The default prefix is `/`.
+`streamPath` returns the path helpers of a prefix. It adds a trailing `/` to `pathPrefix` when it has none. The default prefix is `/`.
 
 | Member                   | Returns                                                                                                            |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |

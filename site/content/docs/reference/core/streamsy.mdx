@@ -21,7 +21,7 @@ import type { Reader, StreamRoute, Streams, Writer } from "@streamsy/core/protoc
 import type { Context, Effect, Function, Option, Schema, Stream } from "effect";
 ```
 
-A stream class declares a set of streams with a service name, an id template, and a codec. A group lists the stream classes that one host stores and serves. For a worked example, see [Declare streams](/docs/streams/declare).
+A stream class declares a set of streams with a service name, an id template, and a codec. A group lists the stream classes that a host stores and serves. For a worked example, see [Declare streams](/docs/streams/declare).
 
 The signatures use `StreamRoute` from `@streamsy/core/protocol`. `StreamRoute.ParamCodecs` is a record with one `Schema.Codec<unknown, string>` for each template param. `StreamRoute.Params<C>` is the record of decoded params. `StreamRoute.ExactTemplateParams` makes the compiler check that the template and the record name the same params.
 
@@ -129,7 +129,7 @@ declare function state<Self>(): <
 same<typeof state, typeof Streamsy.state>(true);
 ```
 
-`state` declares a Durable State stream class. Each key of `collections` is the `type` of one collection on the wire. Each entry gives the value schema of the collection and the value field that becomes the `key` of each change. The items are [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent) values, which are changes to any collection and State control messages.
+`state` declares a Durable State stream class. Each key of `collections` is the `type` of a collection on the wire. Each entry gives the value schema of the collection and the value field that becomes the `key` of each change. The items are [`StreamAddress.CollectionsEvent`](/docs/reference/core/stream-address#streamaddresscollectionsevent) values, which are changes to any collection and State control messages.
 
 The rules for `name`, `template`, and `params` are the same as for [`Streamsy.json`](#streamsyjson). Each `key` must name a `string` or `number` field of its own collection, and the compiler reports a wrong `key` on that collection. To build changes, see [`DurableState`](/docs/reference/core/durable-state).
 
@@ -170,7 +170,7 @@ declare function group<const Keys extends ReadonlyArray<Streamsy.Any>>(
 same<typeof group, typeof Streamsy.group>(true);
 ```
 
-`group` lists the stream classes that one host stores and serves. The storage Layers, `Http.routes`, and `RemoteStreams.layer` take a group. `group` freezes the group object and its list.
+`group` lists the stream classes that a host stores and serves. The storage Layers, `Http.routes`, and `RemoteStreams.layer` take a group. `group` freezes the group object and its list.
 
 `group` throws a `RangeError` in each of these cases:
 

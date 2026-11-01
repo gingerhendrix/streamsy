@@ -8,7 +8,7 @@ import { Offset, ProducerId, StreamId, ZERO_OFFSET, compare } from "@streamsy/co
 import type { Brand } from "effect";
 ```
 
-A stream id names one stream, and an offset is a position in one stream. `StreamId`, `Offset`, and `ProducerId` each export a type and a value with the same name. The type is a branded `string`. The value is an Effect `Schema` that checks a string and brands it. See [Offsets](/docs/streams/declare#offsets).
+A stream id names a stream, and an offset is a position in a stream. `StreamId`, `Offset`, and `ProducerId` each export a type and a value with the same name. The type is a branded `string`. The value is an Effect `Schema` that checks a string and brands it. See [Offsets](/docs/streams/declare#offsets).
 
 ## `ZERO_OFFSET`
 
@@ -75,7 +75,7 @@ type Offset = string & Brand.Brand<"Offset">;
 same<Offset, Core.Offset>(true);
 ```
 
-`Offset` is a position in one stream. The `Offset` schema accepts 16 digits, an underscore, and 16 more digits. `Offset.make` throws for any other value.
+`Offset` is a position in a stream. The `Offset` schema accepts 16 digits, an underscore, and 16 more digits. `Offset.make` throws for any other value.
 
 Most results and options type an offset as a plain `string`, for example `Batch.nextOffset` and `expectedOffset`. Treat an offset as an opaque value. Pass on the offset that a result gave you, and do not build one from parts.
 

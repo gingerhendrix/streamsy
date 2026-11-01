@@ -12,7 +12,7 @@ import type { ReplayRecovery, ResumeRejectedReason } from "@streamsy/serve/contr
 
 The Serve handlers fail with these errors when they reject a request or cannot encode a response. To declare them in an `HttpApi`, see [HttpApiBuilder](/docs/servers/serve#httpapibuilder).
 
-Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. Each fence shows the fields of one class and its `HttpServerRespondable.symbol` method, which renders the error as a JSON response with `Http.securityHeaders` and `cache-control: no-store`. `responseHeaders` starts as `{}`. The `stream`, `state`, and `value` handlers set it to their version and contract headers. The response sends these headers, and the JSON body leaves them out.
+Each class is a `Schema.TaggedError`, so it is an `Error` with a `_tag` that you can `yield*`. Each fence shows the fields of a class and its `HttpServerRespondable.symbol` method, which renders the error as a JSON response with `Http.securityHeaders` and `cache-control: no-store`. `responseHeaders` starts as `{}`. The `stream`, `state`, and `value` handlers set it to their version and contract headers. The response sends these headers, and the JSON body leaves them out.
 
 ## `Serve.InvalidParams`
 
