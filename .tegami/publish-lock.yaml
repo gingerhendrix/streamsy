@@ -1,12 +1,6 @@
 core:changelogs:
-  - content: "---\npackages:\n  group:streamsy:\n    type: patch\n---\n\n## The Cloudflare object host logs requests\n\n`StreamsyObject.make` and `objectHandlers` built their web handler with `disableLogger: true`. A handler defect answered 500 and logged nothing, so the only sign of the failure was the status code.\n\n- The object host now logs each request at INFO level when it ends, with method, URL and status.\n- A failed request logs its full cause, stack included.\n- Each request adds one line to Workers logs.\n"
-    filename: cloudflare-object-request-log.md
-    v: 0.0.0
-  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## New @streamsy/outbox package replaces action delivery in serve\n\n**Breaking change:** `@streamsy/serve/action` and its sub-paths `/action/errors`, `/action/outbox`, `/action/runtime` and `/action/sql` are removed. Use `@streamsy/outbox`.\n\n`@streamsy/outbox` is a transactional outbox for Effect. `Outbox.enqueue` writes entries in the caller's transaction, and `Outbox.drain` delivers them at least once in bounded passes. The package has no host dependencies.\n\n- `@streamsy/outbox/memory` exports `layerMemory`. `@streamsy/outbox/sql` exports `layerSql` and `migrateOutbox` for SQLite, Postgres and MySQL. `layerSql` builds the store from the `SqlClient` in context, so `enqueue` joins the application's active transaction.\n- A drain pass delivers at most `limit` entries (default 100) and returns `{ name, attempted, delivered, retried, deadLettered, more }`. `more` is true when the pass stopped at its limit.\n- `OutboxBacking` is the adapter protocol behind `OutboxStore`. Its `settle(id, Settlement)` takes a `Settlement` with `Delivered`, `Retry` and `Dead` cases.\n- `@streamsy/serve/cloudflare` and `@streamsy/serve/alchemy` export `OutboxWakeup.make(definition, deliver, options)`, which drains an outbox scope from a host wakeup.\n\nSQL stores no longer create their table. Run `migrateOutbox(sql)` once at startup on every dialect, outside any transaction. Without it, store operations fail with `OutboxUnavailable`.\n\nThe new table is `streamsy_outbox`. This release does not migrate the old `streamsy_effect_outbox` table or change it. Entries still pending in that table are not delivered after the upgrade. Drain them with the previous release before you upgrade, or move them yourself.\n"
-    filename: outbox-package.md
-    v: 0.0.0
-  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Create rejects invalid options and JSON with typed errors\n\n`CreateError` gains `InvalidCreateRequest`, a minor change to the public error union. Code that exhaustively matches `CreateError` must handle the new member. The error carries `id` and `message`.\n\n- A remote plain create HTTP 400 response now fails with `InvalidCreateRequest` and the response message instead of `InvalidForkRequest`. Responses with `stream-not-supported` still fail with `NotSupported`, and fork HTTP 400 responses still fail with `InvalidForkRequest`.\n- Local and remote creates reject `ttlSeconds` combined with `expiresAt`, and reject an `expiresAt` value that `DateTime.make` cannot parse. Both fail with `InvalidCreateRequest` before storage access or an HTTP request. Local creates previously used the TTL when both were set and could create a stream that never expired for an invalid date. HTTP continues to return 400 with the same messages.\n- Invalid JSON `initialData` on a plain create, including typed toolkit create, now fails with `InvalidCreateRequest` and `Invalid JSON` instead of dying with `SyntaxError`. Fork initial data fails with `InvalidForkRequest` and the same message. Append framing and its invalid JSON behavior are unchanged.\n"
-    filename: validate-create-requests.md
+  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Require Effect 4.1.2 and Alchemy beta.85\n\n**Breaking change:** Streamsy now requires `effect` and any `@effect/*` peers at `^4.1.2`. Upgrade the Effect family together. Effect 4.0.x is no longer supported.\n\nThe optional Alchemy integration requires exactly `alchemy@2.0.0-beta.85` and `@alchemy.run/cloudflare@2.0.0-beta.85`. Install both when using `@streamsy/serve/alchemy`, and replace imports from `alchemy/Cloudflare` with `@alchemy.run/cloudflare`.\n\nExamples and tests use Effect's `SecureRandom` and `Digest` services with explicit crypto layers. Content hashes remain SHA-256 with the same bytes and lowercase hex encoding.\n\n`expiresAt` and `Stream-Expires-At` follow Effect 4.1 `DateTime.make`, which also accepts a trailing lowercase `z` or `gmt`, such as `2028-01-01T00:00:00z`.\n"
+    filename: alchemy-effect-4-1.md
     v: 0.0.0
 core:packages:
   - id: npm:folder-sync
@@ -14,37 +8,25 @@ core:packages:
   - id: npm:todo
     updated: false
   - changelogIds:
-      - cloudflare-object-request-log.md
-      - outbox-package.md
-      - validate-create-requests.md
+      - alchemy-effect-4-1.md
     id: npm:@streamsy/core
     updated: true
   - changelogIds:
-      - cloudflare-object-request-log.md
-      - outbox-package.md
-      - validate-create-requests.md
+      - alchemy-effect-4-1.md
     id: npm:@streamsy/outbox
     updated: true
   - changelogIds:
-      - cloudflare-object-request-log.md
-      - outbox-package.md
-      - validate-create-requests.md
+      - alchemy-effect-4-1.md
     id: npm:@streamsy/projection
     updated: true
   - changelogIds:
-      - cloudflare-object-request-log.md
-      - outbox-package.md
-      - validate-create-requests.md
+      - alchemy-effect-4-1.md
     id: npm:@streamsy/serve
     updated: true
   - changelogIds:
-      - cloudflare-object-request-log.md
-      - outbox-package.md
-      - validate-create-requests.md
+      - alchemy-effect-4-1.md
     id: npm:@streamsy/storage
     updated: true
-npm:mark-latest:
-  - id: npm:@streamsy/outbox
 npm:packages:
   - id: npm:folder-sync
   - id: npm:todo
