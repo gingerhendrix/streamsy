@@ -1,6 +1,5 @@
 /** Decode standard HTTP successes and fail with the protocol details carried by the wire. */
-import { isValidExpiresAt } from "../policy/expiry-policy.ts";
-import { Effect } from "effect";
+import { DateTime, Effect, Option } from "effect";
 import {
   AppendResult,
   CreateResult,
@@ -76,7 +75,7 @@ export const head = (
 
     const expiresAt = Wire.header(response, "stream-expires-at");
 
-    if (expiresAt !== undefined && !isValidExpiresAt(expiresAt))
+    if (expiresAt !== undefined && Option.isNone(DateTime.make(expiresAt)))
       return yield* Wire.failure(
         operation,
         "response",

@@ -1,5 +1,4 @@
-import { isValidExpiresAt } from "./expiry-policy.ts";
-import { Effect, Result } from "effect";
+import { DateTime, Effect, Option, Result } from "effect";
 import { InvalidCreateRequest } from "../protocol/errors.ts";
 import type { StreamId } from "../schema/index.ts";
 import type { CreateOptions } from "./options.ts";
@@ -16,7 +15,7 @@ export const validateCreateOptions = Effect.fn("Create.validateOptions")(functio
       message: "Cannot specify both Stream-TTL and Stream-Expires-At",
     });
 
-  if (options.expiresAt !== undefined && !isValidExpiresAt(options.expiresAt))
+  if (options.expiresAt !== undefined && Option.isNone(DateTime.make(options.expiresAt)))
     return yield* new InvalidCreateRequest({ id, message: "Invalid Stream-Expires-At format" });
 
   return undefined;

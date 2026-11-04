@@ -1572,24 +1572,27 @@
   "expiry: lowercase ISO zone": [
     {
       "label": "PUT",
-      "status": 400,
+      "status": 201,
       "statusText": "",
       "headers": {
+        "content-type": "application/octet-stream",
         "cross-origin-resource-policy": "cross-origin",
+        "location": "http://example.test/expiry",
+        "stream-next-offset": "0000000000000000_0000000000000000",
         "x-content-type-options": "nosniff"
       },
-      "bytes": [
-        73, 110, 118, 97, 108, 105, 100, 32, 83, 116, 114, 101, 97, 109, 45, 69, 120, 112, 105, 114,
-        101, 115, 45, 65, 116, 32, 102, 111, 114, 109, 97, 116
-      ]
+      "bytes": []
     },
     {
       "label": "HEAD",
-      "status": 404,
+      "status": 200,
       "statusText": "",
       "headers": {
         "cache-control": "no-store",
+        "content-type": "application/octet-stream",
         "cross-origin-resource-policy": "cross-origin",
+        "stream-expires-at": "2028-01-01t00:00:00z",
+        "stream-next-offset": "0000000000000000_0000000000000000",
         "x-content-type-options": "nosniff"
       },
       "bytes": []

@@ -5,13 +5,6 @@ export interface ExpiryConfig {
   readonly expiresAt?: string;
 }
 
-/** Preserve the expiry strings accepted before Effect 4.1 broadened zone parsing. */
-export function isValidExpiresAt(value: string): boolean {
-  const hasZone = /Z|GMT|[+-]\d{2}$|[+-]\d{2}:?\d{2}$|\]$/.test(value);
-
-  return !Number.isNaN(Date.parse(hasZone ? value : `${value}Z`));
-}
-
 /** Pure rules ported from ExpiryPolicy; touch and expiry execution belong to the protocol. */
 export function computeExpiresAtMs(config: ExpiryConfig, now: number): number | undefined {
   if (config.ttlSeconds !== undefined) return now + config.ttlSeconds * 1000;

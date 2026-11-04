@@ -464,7 +464,6 @@ const expiryCases: ReadonlyArray<{
     headers: { "stream-expires-at": "2028-01-01t00:00:00z" },
     put: 201,
     head: 200,
-    effectRejects: true,
   },
   {
     name: "RFC UTC zone",
