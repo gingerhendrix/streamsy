@@ -41,7 +41,20 @@ const writableOnBun = (
 
   if (response.status !== body.body.status) return response;
 
-  const web = body.body;
+  const original = body.body;
+
+  // Native headerless bodies carry an implicit MIME type in Bun. A stream copy loses it.
+  const preserveImplicitType = original.type === "default" && !original.headers.has("content-type");
+
+  // Clone before reading `body`: that getter materializes Bun's implicit string body as a stream.
+  const native = preserveImplicitType ? original.clone() : undefined;
+  const sourceBody = original.body;
+
+  const web =
+    native !== undefined && sourceBody !== null ? native : new Response(sourceBody, original);
+
+  // Release the unused tee branch without waiting for the response stream to finish.
+  if (native !== undefined) void sourceBody?.cancel().catch(() => undefined);
 
   for (const [key, value] of new Headers(response.headers)) web.headers.set(key, value);
 
