@@ -11,6 +11,7 @@
     "destroy": "node node_modules/alchemy/bin/cli.js destroy"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "@effect/platform-bun": "4.1.2",
     "@effect/platform-node": "4.1.2",
     "@effect/vitest": "4.1.2",
@@ -18,8 +19,7 @@
     "alchemy": "2.0.0-beta.85",
     "effect": "4.1.2",
     "typescript": "^7.0.2",
-    "vitest": "5.0.5",
-    "@alchemy.run/cloudflare": "2.0.0-beta.85"
+    "vitest": "5.0.5"
   },
   "overrides": {
     "@effect/sql-d1": "4.1.2",
