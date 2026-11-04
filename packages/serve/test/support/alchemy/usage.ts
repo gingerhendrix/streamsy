@@ -1,5 +1,5 @@
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { HttpEffect } from "alchemy/Http";
 import { Effect, Layer } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";

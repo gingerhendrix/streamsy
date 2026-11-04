@@ -1,3 +1,4 @@
+import { Digest, SecureRandom } from "effect/crypto";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Array, Console, Effect, Layer } from "effect";
 import { liveHttp, liveIdentity, liveOperations, livePaths, liveReports } from "./live.ts";
@@ -19,7 +20,9 @@ const usage = Array.join(
 const paths = livePaths(new URL("..", import.meta.url).pathname.replace(/\/$/, ""));
 
 const live = Layer.mergeAll(liveOperations(paths), liveReports(paths), liveHttp).pipe(
-  Layer.provideMerge(BunServices.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(BunServices.layer, SecureRandom.layerWebCrypto, Digest.layerWebCrypto),
+  ),
 );
 
 const program = process.argv.slice(2).includes("--help")

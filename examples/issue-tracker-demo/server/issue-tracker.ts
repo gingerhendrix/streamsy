@@ -1,3 +1,4 @@
+import { SecureRandom } from "effect/crypto";
 import { MaterializedState } from "@durable-streams/state";
 import {
   StreamAddress,
@@ -12,7 +13,6 @@ import {
 import {
   Array,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -129,13 +129,13 @@ export const IssueTrackerLive = Layer.effect(
   IssueTracker,
   Effect.gen(function* () {
     const workspaces = yield* Workspaces;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
 
     const stamp = Effect.fn("IssueTracker.stamp")(function* (prefix: string, txid?: string) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      const id = `${prefix}_${(yield* crypto.randomUUIDv4()).slice(0, 8)}`;
+      const id = `${prefix}_${(yield* crypto.uuidV4()).slice(0, 8)}`;
 
-      return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4()) };
+      return { id, now, txid: txid ?? (yield* crypto.uuidV4()) };
     }, Effect.orDie);
 
     // A seed or a new workspace appends at the head it read, and only lands if

@@ -10,7 +10,7 @@ import type { WakeupSource } from "./cloudflare/wakeup.ts";
 import { withLinks } from "./cloudflare/links.ts";
 import type { LinkClient } from "./cloudflare/object-link.ts";
 import { objectTransportError, type ObjectFetch } from "./cloudflare/object-streams.ts";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import { Effect, Option, type Layer, type Scope } from "effect";
 import {
   HttpRouter,

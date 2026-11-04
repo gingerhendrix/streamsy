@@ -1,4 +1,5 @@
-import { Array, Crypto, Effect, FileSystem, Order, Path, Schema, Semaphore } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { Array, Effect, FileSystem, Order, Path, Schema, Semaphore } from "effect";
 import { SyncRemote } from "./client.ts";
 import { folderDirectory, type SyncOptions } from "./decisions.ts";
 import { LocalFailure, skipWarnings, SkippedLocal } from "./local.ts";
@@ -13,7 +14,7 @@ export interface SyncContext {
   readonly options: SyncOptions;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: typeof SecureRandom.SecureRandom.Service;
   readonly state: typeof SyncState.Service;
   readonly remote: typeof SyncRemote.Service;
   /** The absolute mirror directory. */
@@ -27,7 +28,7 @@ export interface SyncContext {
 export const openContext = Effect.fn("Sync.context")(function* (options: SyncOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const state = yield* SyncState;
   const remote = yield* SyncRemote;
 

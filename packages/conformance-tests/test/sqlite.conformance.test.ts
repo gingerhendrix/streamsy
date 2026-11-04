@@ -1,8 +1,9 @@
 /** The official server suite exercises the SQLite protocol through a local Bun host. */
+import { SecureRandom } from "effect/crypto";
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { NodeCrypto } from "@effect/platform-node";
-import { Context, Crypto, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 import { BunStorage } from "@streamsy/storage/bun";
 
@@ -14,8 +15,12 @@ describe("Effect SQLite Bun host", () => {
   beforeAll(() =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const crypto = Context.get(yield* Layer.build(NodeCrypto.layer), Crypto.Crypto);
-        const id = yield* crypto.randomUUIDv4();
+        const crypto = Context.get(
+          yield* Layer.build(NodeCrypto.layerSecureRandom),
+          SecureRandom.SecureRandom,
+        );
+
+        const id = yield* crypto.uuidV4();
         const filename = `${scratch}/official-sqlite-conformance-${process.pid}-${id}.sqlite`;
         host = yield* testHost({
           layer: BunStorage.layerProtocol({

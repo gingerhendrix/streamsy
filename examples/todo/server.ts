@@ -1,3 +1,4 @@
+import { SecureRandom } from "effect/crypto";
 /**
  * A todo app in one file.
  *
@@ -18,7 +19,7 @@ import { CheckpointStore, Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Array, Config, Crypto, DateTime, Effect, Layer, Match, Option, Schema } from "effect";
+import { Array, Config, DateTime, Effect, Layer, Match, Option, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse, HttpServerError } from "effect/http";
 
 // ---------------------------------------------------------------------------
@@ -148,8 +149,8 @@ const requireList = (listId: string) =>
 
 const addTodo = Effect.fn("Todo.add")(function* (listId: string, title: string) {
   const events = yield* TodoEvents;
-  const crypto = yield* Crypto.Crypto;
-  const todoId = (yield* crypto.randomUUIDv4()).slice(0, 8);
+  const crypto = yield* SecureRandom.SecureRandom;
+  const todoId = (yield* crypto.uuidV4()).slice(0, 8);
   const at = yield* now;
 
   // The first add creates the list's stream. A second create of the same stream succeeds.
@@ -348,10 +349,12 @@ export const app = <E>(host: Layer.Layer<Layer.Success<typeof MemoryHost>, E>) =
   Routes.pipe(
     // The handlers read the stream and checkpoint services for each request.
     HttpRouter.provideRequest(
-      Layer.effectContext(Effect.context<TodoEvents | CheckpointStore | Crypto.Crypto>()),
+      Layer.effectContext(
+        Effect.context<TodoEvents | CheckpointStore | SecureRandom.SecureRandom>(),
+      ),
     ),
     Layer.provide(Projection.attach(todoList, { durable: true })),
-    Layer.provide([host, BunCrypto.layer]),
+    Layer.provide([host, BunCrypto.layerSecureRandom]),
   );
 
 const Host = Layer.unwrap(

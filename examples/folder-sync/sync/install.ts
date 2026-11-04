@@ -47,7 +47,7 @@ export const installer = (context: SyncContext) => {
       {
         folderId,
         path: normalized,
-        txid: yield* crypto.randomUUIDv4(),
+        txid: yield* crypto.uuidV4(),
         base: editBase(known),
         hash,
         size: local?.size ?? 0,
@@ -80,7 +80,7 @@ export const installer = (context: SyncContext) => {
       {
         folderId,
         path: file,
-        txid: yield* crypto.randomUUIDv4(),
+        txid: yield* crypto.uuidV4(),
         base: null,
         ...local,
         uploaded: 0,

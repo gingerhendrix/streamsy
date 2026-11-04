@@ -1,18 +1,7 @@
+import { SecureRandom } from "effect/crypto";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { spawnServer } from "@streamsy/test-support/server";
-import {
-  Clock,
-  Config,
-  Console,
-  Crypto,
-  Effect,
-  Fiber,
-  Layer,
-  Option,
-  Path,
-  Schema,
-  Stream,
-} from "effect";
+import { Clock, Config, Console, Effect, Fiber, Layer, Option, Path, Schema, Stream } from "effect";
 import {
   FetchHttpClient,
   Headers,
@@ -195,7 +184,7 @@ const spawned = Effect.fn("spawned")(function* (streamId: string) {
  */
 const smoke = Effect.gen(function* () {
   const baseUrl = yield* Config.String("BASE_URL").pipe(Config.option);
-  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* Crypto.Crypto).randomUUIDv4()}`;
+  const streamId = `smoke/${yield* Clock.currentTimeMillis}-${yield* (yield* SecureRandom.SecureRandom).uuidV4()}`;
   yield* Option.match(baseUrl, {
     onNone: () => spawned(streamId),
     onSome: (url) =>
@@ -208,6 +197,8 @@ const smoke = Effect.gen(function* () {
 smoke.pipe(
   Effect.scoped,
   // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This script is the entry point.
-  Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)),
+  Effect.provide(
+    Layer.mergeAll(BunServices.layer, SecureRandom.layerWebCrypto, FetchHttpClient.layer),
+  ),
   BunRuntime.runMain,
 );

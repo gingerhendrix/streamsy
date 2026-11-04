@@ -3,8 +3,9 @@
  * line that names its URL. Node and Deno run the built `@streamsy/*` packages
  * from the workspace `node_modules`, so run `bun run build` first.
  */
+import { SecureRandom } from "effect/crypto";
 import { NodeCrypto } from "@effect/platform-node";
-import { Context, Crypto, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -59,11 +60,11 @@ export const spawnHost = (
   const scratch = process.env.STREAMSY_STORAGE_SCRATCH ?? tmpdir();
 
   const crypto = Context.get(
-    Effect.runSync(Effect.scoped(Layer.build(NodeCrypto.layer))),
-    Crypto.Crypto,
+    Effect.runSync(Effect.scoped(Layer.build(NodeCrypto.layerSecureRandom))),
+    SecureRandom.SecureRandom,
   );
 
-  const filename = `${scratch}/${command[0]}-host-${process.pid}-${Effect.runSync(crypto.randomUUIDv4())}.sqlite`;
+  const filename = `${scratch}/${command[0]}-host-${process.pid}-${Effect.runSync(crypto.uuidV4())}.sqlite`;
   const [executable, ...args] = command;
 
   if (executable === undefined) throw new Error("Expected a host command");

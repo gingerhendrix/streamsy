@@ -1,3 +1,4 @@
+import { SecureRandom } from "effect/crypto";
 import type {
   AppendFailure,
   CreateFailure,
@@ -11,7 +12,6 @@ import { CheckpointStore, Projection, type ProjectionFault } from "@streamsy/pro
 import {
   Array,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -111,15 +111,15 @@ export const IssueTrackerLive = Layer.effect(
     const rows = yield* Workspaces;
     const registry = yield* WorkspaceRegistry;
     const watchers = yield* ProjectionWatchers;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     // The projection runners need the storage services at each call.
     const context = yield* Effect.context<CheckpointStore | WorkspaceEvents>();
 
     const stamp = Effect.fn("IssueTracker.stamp")(function* (prefix: string, txid?: string) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      const id = `${prefix}_${(yield* crypto.randomUUIDv4()).slice(0, 8)}`;
+      const id = `${prefix}_${(yield* crypto.uuidV4()).slice(0, 8)}`;
 
-      return { id, now, txid: txid ?? (yield* crypto.randomUUIDv4()) };
+      return { id, now, txid: txid ?? (yield* crypto.uuidV4()) };
     }, Effect.orDie);
 
     /** The event stream and the State stream of a workspace, and its projection watcher. */

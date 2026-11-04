@@ -8,7 +8,7 @@ import { Http } from "foldkit";
  */
 export const resources = Layer.mergeAll(
   Http.layer,
-  BrowserCrypto.layer,
+  BrowserCrypto.layerSecureRandom,
   BrowserKeyValueStore.layerLocalStorage,
   Clipboard.layer,
 );

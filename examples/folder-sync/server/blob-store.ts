@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, Layer, Schema, Stream } from "effect";
+import { Digest } from "effect/crypto";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { collectBytes } from "./bytes.ts";
 import { FILE_LIMIT, FileTooLarge, InvalidFile, sha256 } from "./domain.ts";
 
@@ -30,7 +31,7 @@ export class BlobStore extends Context.Service<
 export const memoryBlobs = Layer.effect(
   BlobStore,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const blobs = new Map<string, Uint8Array>();
 
     return BlobStore.of({
@@ -39,7 +40,7 @@ export const memoryBlobs = Layer.effect(
         const bytes = yield* collectBytes(body, FILE_LIMIT, (size) => new FileTooLarge({ size }));
 
         const actual = yield* sha256(bytes).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(Digest.Digest, crypto),
           Effect.mapError(() => new BlobFailure({ message: "Cannot hash blob" })),
         );
 

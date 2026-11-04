@@ -1,4 +1,5 @@
-import { Array, Crypto, Order } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { Array, Order } from "effect";
 import { Clock, Context, Effect, Result } from "effect";
 import {
   CONFORMANCE_LONG_POLL_TIMEOUT_MS,
@@ -314,7 +315,7 @@ export const measureThroughput = (
       (trial) =>
         Effect.gen(function* () {
           const http = yield* HttpOperation;
-          const streamPath = `/streams/throughput-${trial}-${yield* entropy.randomUUIDv4().pipe(Effect.orDie)}`;
+          const streamPath = `/streams/throughput-${trial}-${yield* entropy.uuidV4().pipe(Effect.orDie)}`;
           const errors: Array<string> = [];
 
           const created = yield* Effect.result(
@@ -386,10 +387,6 @@ export const measurementDefaults = {
   conformanceLongPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
 } as const;
 
-const entropy = Crypto.make({
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-  digest: (algorithm, data) =>
-    Effect.promise(() =>
-      globalThis.crypto.subtle.digest(algorithm, new Uint8Array(data).buffer),
-    ).pipe(Effect.map((buffer) => new Uint8Array(buffer))),
-});
+const entropy = SecureRandom.make((size) =>
+  globalThis.crypto.getRandomValues(new Uint8Array(size)),
+);

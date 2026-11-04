@@ -1,5 +1,6 @@
+import { SecureRandom } from "effect/crypto";
 import { Clipboard } from "@effect/platform-browser";
-import { Crypto, DateTime, Duration, Effect, Option, Schema } from "effect";
+import { DateTime, Duration, Effect, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
 import { Command, Dom, Navigation } from "foldkit";
@@ -39,9 +40,9 @@ export const GenerateStamp = Command.define("GenerateStamp", {
   messages: [Message.CompletedGenerateStamp],
   execute: ({ intent }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const entropy = yield* crypto.randomUUIDv4();
-      const txid = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const entropy = yield* crypto.uuidV4();
+      const txid = yield* crypto.uuidV4();
       const at = DateTime.formatIso(yield* DateTime.now);
 
       return Message.CompletedGenerateStamp({ intent, stamp: { entropy, txid, at } });

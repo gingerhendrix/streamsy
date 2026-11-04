@@ -16,7 +16,7 @@ const { handler, dispose } = HttpRouter.toWebHandler(
     Layer.provide(IssueTrackerLive),
     Layer.provide([
       MemoryStorage.layer(Streamsy.group(Workspaces)),
-      BunCrypto.layer,
+      BunCrypto.layerSecureRandom,
       BunHttpServer.layerHttpServices,
     ]),
   ),
@@ -245,7 +245,10 @@ baseIt.live("an operational failure is logged and answered as 500", () =>
         })),
       ).pipe(
         Layer.provide(IssueTrackerLive),
-        Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+        Layer.provide([
+          MemoryStorage.layer(Streamsy.group(Workspaces)),
+          BunCrypto.layerSecureRandom,
+        ]),
       );
 
       const failing = yield* Effect.acquireRelease(
@@ -296,7 +299,10 @@ baseIt.live("a typed workspace create failure answers 500", () =>
         })),
       ).pipe(
         Layer.provide(IssueTrackerLive),
-        Layer.provide([MemoryStorage.layer(Streamsy.group(Workspaces)), BunCrypto.layer]),
+        Layer.provide([
+          MemoryStorage.layer(Streamsy.group(Workspaces)),
+          BunCrypto.layerSecureRandom,
+        ]),
       );
 
       const failing = yield* Effect.acquireRelease(

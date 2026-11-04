@@ -98,7 +98,7 @@ const racingTracker = Effect.gen(function* () {
   });
 
   return yield* IssueTracker.pipe(
-    withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+    withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layerSecureRandom))),
     Effect.provideService(Workspaces, barrierReader),
   );
 });
@@ -201,7 +201,7 @@ baseIt.live("a writer that loses every race answers WriteConflict after three re
         const workspaces = yield* Workspaces;
 
         const tracker = yield* IssueTracker.pipe(
-          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layerSecureRandom))),
         );
 
         // Each attempt lets a rival writer append first, so the head the
@@ -235,7 +235,7 @@ baseIt.live("mutating an unknown workspace fails with WorkspaceNotFound", () =>
     const failure = yield* runWithStore(
       Effect.gen(function* () {
         const tracker = yield* IssueTracker.pipe(
-          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layerSecureRandom))),
         );
 
         return yield* Effect.flip(
@@ -257,7 +257,7 @@ baseIt.live("a domain failure is answered at once, not retried", () =>
         yield* seeded;
 
         const tracker = yield* IssueTracker.pipe(
-          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+          withLayer(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layerSecureRandom))),
         );
 
         return yield* Effect.flip(
@@ -293,7 +293,10 @@ baseIt.live("materialize and mutate preserve operational failures in the error c
           decide: () => Effect.fail(fault),
         });
 
-        const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
+        const trackerLayer = IssueTrackerLive.pipe(
+          Layer.provide([failing, BunCrypto.layerSecureRandom]),
+        );
+
         const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
         expect(yield* Effect.flip(tracker.materialize(workspaceId))).toBe(fault);
         expect(
@@ -321,7 +324,10 @@ baseIt.live("create and the seed layer expose typed storage failures", () =>
           create: () => Effect.fail(fault),
         });
 
-        const trackerLayer = IssueTrackerLive.pipe(Layer.provide([failing, BunCrypto.layer]));
+        const trackerLayer = IssueTrackerLive.pipe(
+          Layer.provide([failing, BunCrypto.layerSecureRandom]),
+        );
+
         const tracker = Context.get(yield* Layer.build(trackerLayer), IssueTracker);
         expect(yield* Effect.flip(tracker.create)).toBe(fault);
         const seed = SeedLive.pipe(Layer.provide(trackerLayer));

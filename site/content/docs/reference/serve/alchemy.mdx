@@ -7,7 +7,7 @@ description: Reference for the host exports in @streamsy/serve/alchemy. They ada
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -30,7 +30,7 @@ import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -66,7 +66,7 @@ same<typeof router, typeof Alchemy.router>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -94,7 +94,7 @@ When the stub fails, the transport fails with an `HttpClientError` whose reason 
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -153,7 +153,7 @@ The rules for acquisition, reconciliation, and link clashes are those of [`Strea
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -190,7 +190,7 @@ These exports are the same values and types as the exports of `@streamsy/serve/c
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -218,7 +218,7 @@ same<typeof Placement, typeof Alchemy.Placement>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -244,7 +244,7 @@ same<typeof rule, typeof Alchemy.rule>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -288,7 +288,7 @@ same<typeof OutboxWakeup, typeof Alchemy.OutboxWakeup>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -316,7 +316,7 @@ same<typeof Wakeups, typeof Alchemy.Wakeups>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -342,7 +342,7 @@ same<WakeupProgress, Alchemy.WakeupProgress>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -369,7 +369,7 @@ same<WakeupSource<Storage>, Alchemy.WakeupSource<Storage>>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -395,7 +395,7 @@ same<typeof alarmSlotLayer, typeof Alchemy.alarmSlotLayer>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -421,7 +421,7 @@ same<typeof ObjectStreams, typeof Alchemy.ObjectStreams>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -447,7 +447,7 @@ same<ObjectFetch, Alchemy.ObjectFetch>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -473,7 +473,7 @@ same<ObjectStreamsOptions, Alchemy.ObjectStreamsOptions>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -504,7 +504,7 @@ same<typeof ObjectLink, typeof Alchemy.ObjectLink>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -530,7 +530,7 @@ same<LinkAccess, Alchemy.LinkAccess>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -556,7 +556,7 @@ same<LinkClient<Storage>, Alchemy.LinkClient<Storage>>(true);
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,
@@ -583,7 +583,7 @@ same<LinkRoutes<Streamsy.Wildcard>, Alchemy.LinkRoutes<Streamsy.Wildcard>>(true)
 import * as Alchemy from "@streamsy/serve/alchemy";
 import type * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import type { DurableObject } from "alchemy/Cloudflare";
+import type { DurableObject } from "@alchemy.run/cloudflare";
 import type { Context, Effect, Layer, Option, Scope } from "effect";
 import type {
   HttpRouter,

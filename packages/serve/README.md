@@ -2,7 +2,7 @@
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
 Node, Deno and Cloudflare host glue and outbox wakeups. Requires Effect
-`4.0.5`.
+`4.1.2`.
 
 ```ts
 import { Layer, Schema } from "effect";

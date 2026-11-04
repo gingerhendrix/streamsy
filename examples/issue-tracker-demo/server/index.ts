@@ -45,7 +45,7 @@ const ServerLive = Serve.layer(RoutesLive).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
-  Layer.provide([StorageLive, BunCrypto.layer]),
+  Layer.provide([StorageLive, BunCrypto.layerSecureRandom]),
 );
 
 BunRuntime.runMain(Layer.launch(ServerLive), { teardown: Serve.teardown });

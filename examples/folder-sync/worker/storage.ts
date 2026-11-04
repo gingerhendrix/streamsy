@@ -1,21 +1,13 @@
+import { Digest, SecureRandom } from "effect/crypto";
 import { Streamsy } from "@streamsy/core";
-import { Crypto, Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { BlobFailure, BlobStore } from "../server/blob-store.ts";
 import type { Env } from "./env.ts";
 
-const webCrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => crypto.getRandomValues(new Uint8Array(size)),
-    digest: (algorithm, bytes) =>
-      Effect.promise(() => crypto.subtle.digest(algorithm, bytes)).pipe(
-        Effect.map((buffer) => new Uint8Array(buffer)),
-      ),
-  }),
-);
+const webCrypto = Layer.mergeAll(Digest.layerWebCrypto, SecureRandom.layerWebCrypto);
 
 /** Folder owners only inspect and read immutable blobs. Uploads enter through the Worker API. */
 export const r2Blobs = (env: Env) =>

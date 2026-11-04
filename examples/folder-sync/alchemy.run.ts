@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Config, Effect } from "effect";
 
 const folders = Cloudflare.DurableObject("Folders", { className: "FolderObject" });

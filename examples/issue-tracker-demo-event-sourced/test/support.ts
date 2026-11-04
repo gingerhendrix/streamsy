@@ -45,7 +45,7 @@ export const fileHost = (filename: string) =>
 export const trackerOn = <E>(host: Layer.Layer<Layer.Success<typeof MemoryHost>, E>) =>
   IssueTrackerLive.pipe(
     Layer.provideMerge(ProjectionWatchersLive),
-    Layer.provideMerge(Layer.merge(host, BunCrypto.layer)),
+    Layer.provideMerge(Layer.merge(host, BunCrypto.layerSecureRandom)),
   );
 
 /** Every service that a tracker test can use. */

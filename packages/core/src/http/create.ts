@@ -1,4 +1,5 @@
-import { Array, DateTime, Option } from "effect";
+import { isValidExpiresAt } from "../policy/expiry-policy.ts";
+import { Array } from "effect";
 import { CreateResult } from "../protocol/results.ts";
 import { streamPath } from "./stream-path-service.ts";
 import * as Responses from "./responses.ts";
@@ -36,7 +37,7 @@ export function parseHeaders(
       response: responses.badRequest("Cannot specify both Stream-TTL and Stream-Expires-At"),
     };
 
-  if (expiresAtHeader && Option.isNone(DateTime.make(expiresAtHeader)))
+  if (expiresAtHeader && !isValidExpiresAt(expiresAtHeader))
     return {
       ok: false,
       response: responses.badRequest("Invalid Stream-Expires-At format"),

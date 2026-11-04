@@ -1,4 +1,5 @@
-import { Array, Crypto, Effect, Schema } from "effect";
+import { Digest } from "effect/crypto";
+import { Array, Effect, Schema } from "effect";
 import { hex } from "./bytes.ts";
 
 export const FILE_LIMIT = 64 * 1024 * 1024;
@@ -187,9 +188,9 @@ export const Deleted = Schema.Struct({ version: Version, parent: Parent, txid: I
 export type Deleted = typeof Deleted.Type;
 
 export const sha256 = Effect.fn("File.sha256")(function* (bytes: Uint8Array) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
 
-  return hex(yield* crypto.digest("SHA-256", bytes));
+  return hex(yield* crypto.digest(Digest.sha256, bytes));
 });
 
 /** The hash and size that name `bytes` in the blob store. */

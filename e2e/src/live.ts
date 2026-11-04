@@ -7,7 +7,8 @@
  * CLI with the local `.alchemy/` state store. The official suite runs
  * `packages/conformance-tests` `test:deployed` against the Worker URL.
  */
-import { Array, Clock, Crypto, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
+import { Array, Clock, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { Hex } from "effect/encoding";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
@@ -247,7 +248,8 @@ export const liveIdentity = (paths: LivePaths) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
 
     const artifact = yield* fs
       .readFile(paths.workerArtifact)
@@ -264,15 +266,9 @@ export const liveIdentity = (paths: LivePaths) =>
         Effect.mapError(contractError("git rev-parse")),
       );
 
-    const runId = Hex.encode(
-      yield* crypto.randomBytes(3).pipe(Effect.mapError(contractError("run id"))),
-    );
+    const runId = Hex.encode(yield* crypto.randomBytes(3));
 
-    const artifactSha256 = Hex.encode(
-      yield* crypto
-        .digest("SHA-256", artifact)
-        .pipe(Effect.mapError(contractError("artifact hash"))),
-    );
+    const artifactSha256 = Hex.encode(yield* digest.digest(Digest.sha256, artifact));
 
     const now = yield* Clock.currentTimeMillis;
 
