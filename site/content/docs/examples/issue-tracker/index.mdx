@@ -90,7 +90,7 @@ const ServerLive = Serve.layer(RoutesLive).pipe(
   Layer.provide(ListenerLive),
   Layer.provide(SeedLive),
   Layer.provide(IssueTrackerLive),
-  Layer.provide([StorageLive, BunCrypto.layer]),
+  Layer.provide([StorageLive, BunCrypto.layerSecureRandom]),
 );
 
 BunRuntime.runMain(Layer.launch(ServerLive), { teardown: Serve.teardown });
@@ -167,7 +167,7 @@ const createIssue = async (title: string) => {
   const issue = writer === undefined ? unnamed : { ...unnamed, updatedBy: writer };
   await run(db.actions.createIssue, {
     issue,
-    txid: Effect.runSync(browserCrypto.randomUUIDv4()),
+    txid: Effect.runSync(browserCrypto.uuidV4()),
   });
 };
 ```

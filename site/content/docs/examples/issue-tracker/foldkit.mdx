@@ -172,12 +172,12 @@ const application = Runtime.makeApplication({
 Runtime.run(application, { flags });
 ```
 
-`resources` is one Effect Layer. The runtime builds it once and gives it to every Command. So a Command asks for `HttpClient` or `Crypto` and does not provide it.
+`resources` is one Effect Layer. The runtime builds it once and gives it to every Command. So a Command asks for `HttpClient` or `SecureRandom` and does not provide it.
 
 ```ts title="src/resources.ts"
 export const resources = Layer.mergeAll(
   Http.layer,
-  BrowserCrypto.layer,
+  BrowserCrypto.layerSecureRandom,
   BrowserKeyValueStore.layerLocalStorage,
   Clipboard.layer,
 );
@@ -286,9 +286,9 @@ export const GenerateStamp = Command.define("GenerateStamp", {
   messages: [Message.CompletedGenerateStamp],
   execute: ({ intent }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const entropy = yield* crypto.randomUUIDv4();
-      const txid = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const entropy = yield* crypto.uuidV4();
+      const txid = yield* crypto.uuidV4();
       const at = DateTime.formatIso(yield* DateTime.now);
 
       return Message.CompletedGenerateStamp({ intent, stamp: { entropy, txid, at } });
@@ -523,7 +523,7 @@ Other tests cover the pure workspace functions, the batch-to-Message mapping and
 
 ## Versions
 
-Foldkit `0.169.0` and its tools ask for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.0.5`. The root `overrides` entry for `effect` gives one copy of Effect in the install and in the browser bundle. Bun warns about the `@effect/platform-browser` peer. The Vite plugin brings `@effect/platform-node-shared@4.0.0` for its Node side only. Check these again when Foldkit or Effect releases.
+Foldkit `0.169.0` and its tools ask for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.1.2`. Root overrides for `effect`, `@effect/platform-browser`, `@effect/platform-node` and `@effect/platform-node-shared` keep one version of each package, including the Vite plugin's Node dependencies. These overrides are outside Foldkit's declared peer ranges. Check them again when Foldkit or Effect releases.
 
 ## Limits
 

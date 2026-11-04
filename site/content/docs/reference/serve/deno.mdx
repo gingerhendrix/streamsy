@@ -7,7 +7,7 @@ description: Reference for the host exports in @streamsy/serve/deno. They provid
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 ```
 
@@ -22,7 +22,7 @@ import type { ChildProcessSpawner } from "effect/process";
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { same } from "./reference-check.ts";
 // ---cut-end---
@@ -33,7 +33,6 @@ declare function listener(
   | HttpPlatform.HttpPlatform
   | HttpServer.HttpServer
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
   | FileSystem.FileSystem
   | Path.Path
   | Stdio.Stdio
@@ -58,7 +57,7 @@ The Deno HTTP server has no idle or response timeout that cuts off a parked long
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { same } from "./reference-check.ts";
 // ---cut-end---
@@ -80,7 +79,7 @@ Run this Effect before the first `SqliteClient.make` from `@effect/sql-sqlite-no
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { same } from "./reference-check.ts";
 // ---cut-end---
@@ -110,7 +109,7 @@ same<ListenerOptions, Deno.ListenerOptions>(true);
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { same } from "./reference-check.ts";
 // ---cut-end---
@@ -128,7 +127,7 @@ same<typeof DEFAULT_PORT, typeof Deno.DEFAULT_PORT>(true);
 import * as Deno from "@streamsy/serve/deno";
 import type { Duration, Effect, Layer } from "effect";
 import type { Etag, HttpPlatform, HttpServer, HttpServerError } from "effect/http";
-import type { Crypto, FileSystem, Path, Stdio, Terminal } from "effect";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { same } from "./reference-check.ts";
 // ---cut-end---

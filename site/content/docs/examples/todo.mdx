@@ -152,8 +152,8 @@ The add command creates the list's stream if it does not exist yet. There is no 
 ```ts title="server.ts"
 const addTodo = Effect.fn("Todo.add")(function* (listId: string, title: string) {
   const events = yield* TodoEvents;
-  const crypto = yield* Crypto.Crypto;
-  const todoId = (yield* crypto.randomUUIDv4()).slice(0, 8);
+  const crypto = yield* SecureRandom.SecureRandom;
+  const todoId = (yield* crypto.uuidV4()).slice(0, 8);
   const at = yield* now;
 
   // The first add creates the list's stream. A second create of the same stream succeeds.
@@ -275,10 +275,12 @@ export const app = <E>(host: Layer.Layer<Layer.Success<typeof MemoryHost>, E>) =
   Routes.pipe(
     // The handlers read the stream and checkpoint services for each request.
     HttpRouter.provideRequest(
-      Layer.effectContext(Effect.context<TodoEvents | CheckpointStore | Crypto.Crypto>()),
+      Layer.effectContext(
+        Effect.context<TodoEvents | CheckpointStore | SecureRandom.SecureRandom>(),
+      ),
     ),
     Layer.provide(Projection.attach(todoList, { durable: true })),
-    Layer.provide([host, BunCrypto.layer]),
+    Layer.provide([host, BunCrypto.layerSecureRandom]),
   );
 ```
 
