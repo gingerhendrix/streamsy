@@ -12,13 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-bun": "4.1.2",
     "@streamsy/core": "workspace:*",
     "@streamsy/issue-tracker-demo-contract": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.0.5",
+    "effect": "4.1.2",
     "issue-tracker-demo": "workspace:*",
     "typescript": "catalog:"
   },

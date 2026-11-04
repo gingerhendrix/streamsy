@@ -9,11 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/sql-sqlite-bun": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.1.2",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.0.5",
+    "effect": "4.1.2",
     "typescript": "catalog:"
   },
   "devDependencies": {

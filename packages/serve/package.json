@@ -66,25 +66,27 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
-    "@effect/platform-bun": "4.0.5",
-    "@effect/platform-deno": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-sqlite-do": "4.0.5",
+    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-deno": "4.1.2",
+    "@effect/platform-node": "4.1.2",
+    "@effect/sql-sqlite-do": "4.1.2",
     "@effect/vitest": "catalog:",
     "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.4.3",
-    "alchemy": "2.0.0-beta.83",
-    "effect": "4.0.5",
+    "alchemy": "2.0.0-beta.85",
+    "effect": "4.1.2",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@alchemy.run/cloudflare": "2.0.0-beta.85"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "^4.0.5",
-    "@effect/platform-deno": "^4.0.5",
-    "@effect/platform-node": "^4.0.5",
-    "alchemy": "^2.0.0-beta.83",
-    "effect": "^4.0.5"
+    "@effect/platform-bun": "^4.1.2",
+    "@effect/platform-deno": "^4.1.2",
+    "@effect/platform-node": "^4.1.2",
+    "alchemy": "2.0.0-beta.85",
+    "effect": "^4.1.2",
+    "@alchemy.run/cloudflare": "2.0.0-beta.85"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
@@ -97,6 +99,9 @@
       "optional": true
     },
     "alchemy": {
+      "optional": true
+    },
+    "@alchemy.run/cloudflare": {
       "optional": true
     }
   },

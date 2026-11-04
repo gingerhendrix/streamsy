@@ -15,14 +15,14 @@
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.2",
-    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-bun": "4.1.2",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "@tanstack/db": "0.15.1",
     "@tanstack/react-db": "^0.5.11",
-    "effect": "4.0.5",
+    "effect": "4.1.2",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "catalog:"
