@@ -19,7 +19,7 @@
     },
     "examples/bugsy": {
       "name": "bugsy",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@effect/sql-mysql2": "4.1.2",
@@ -41,7 +41,7 @@
     },
     "examples/fold-agent": {
       "name": "fold-agent-example",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/ai-anthropic": "4.1.2",
         "@effect/ai-openai": "4.1.2",
@@ -96,7 +96,7 @@
     },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.1.2",
@@ -122,7 +122,7 @@
     },
     "examples/hex-board": {
       "name": "hex-board",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/sql-sqlite-bun": "4.1.2",
         "@streamsy/core": "workspace:*",
@@ -139,7 +139,7 @@
     },
     "examples/issue-tracker-demo": {
       "name": "issue-tracker-demo",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.1.2",
@@ -178,7 +178,7 @@
     },
     "examples/issue-tracker-demo-event-sourced": {
       "name": "issue-tracker-demo-event-sourced",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@streamsy/core": "workspace:*",
@@ -199,7 +199,7 @@
     },
     "examples/issue-tracker-demo-foldkit": {
       "name": "issue-tracker-demo-foldkit",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@durable-streams/client": "^0.2.7",
         "@effect/platform-browser": "4.1.2",
@@ -221,7 +221,7 @@
     },
     "examples/memory-server": {
       "name": "memory-server",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@streamsy/core": "workspace:*",
@@ -238,7 +238,7 @@
     },
     "examples/platform-matrix": {
       "name": "platform-matrix",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@effect/platform-deno": "4.1.2",
@@ -294,7 +294,7 @@
     },
     "packages/conformance-tests": {
       "name": "@streamsy/conformance-tests",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "dependencies": {
         "@durable-streams/client": "0.2.7",
         "@durable-streams/server-conformance-tests": "^0.3.7",
@@ -323,7 +323,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "devDependencies": {
         "@effect/vitest": "catalog:",
         "@types/bun": "^1.4.3",
@@ -341,7 +341,7 @@
     },
     "packages/outbox": {
       "name": "@streamsy/outbox",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "devDependencies": {
         "@effect/sql-mysql2": "4.1.2",
         "@effect/sql-pg": "4.1.2",
@@ -357,7 +357,7 @@
     },
     "packages/projection": {
       "name": "@streamsy/projection",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
       },
@@ -384,7 +384,7 @@
     },
     "packages/serve": {
       "name": "@streamsy/serve",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
         "@streamsy/outbox": "workspace:^",
@@ -423,7 +423,7 @@
     },
     "packages/storage": {
       "name": "@streamsy/storage",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
       },
