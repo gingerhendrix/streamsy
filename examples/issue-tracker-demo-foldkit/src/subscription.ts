@@ -17,13 +17,16 @@ export const batchMessage = (batch: JsonBatch<JsonValue>): Message =>
     isUpToDate: batch.upToDate,
   });
 
+const gatewayStatuses = new Set([502, 503, 504]);
+
 /**
  * A fetch for the stream reader that reports when the server stops or starts
  * answering. Any HTTP answer, even an error status, means the server is
- * reachable. A rejected fetch is a network failure, unless the reader aborted
- * it on close. The reader retries with backoff and never gives up.
+ * reachable. A gateway status comes from the Vite proxy when the server is
+ * down. A rejected fetch is a network failure, unless the reader aborted it on
+ * close. The reader retries with backoff and never gives up.
  */
-const trackedFetch = (report: (isOnline: boolean) => void): typeof globalThis.fetch => {
+export const trackedFetch = (report: (isOnline: boolean) => void): typeof globalThis.fetch => {
   let isOnline = true;
 
   const set = (next: boolean) => {
@@ -36,7 +39,7 @@ const trackedFetch = (report: (isOnline: boolean) => void): typeof globalThis.fe
     // oxlint-disable-next-line effecttsgo/global-fetch -- The stream client requires native Response and AbortSignal behavior from its fetch adapter.
     globalThis.fetch(input, init).then(
       (response) => {
-        set(true);
+        set(!gatewayStatuses.has(response.status));
 
         return response;
       },
