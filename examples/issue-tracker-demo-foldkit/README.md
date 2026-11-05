@@ -95,11 +95,13 @@ The server is the base app's server, so the base app's `smoke:http` covers it.
 
 ## Limits
 
-- `effect` is `4.0.5`. Foldkit `0.169.0` and its tools ask for exactly
-  `4.0.0` as a peer. The root `overrides` entry keeps one copy of `effect`,
-  and Bun warns about the `@effect/platform-browser` peer. The Vite plugin
-  brings `@effect/platform-node-shared@4.0.0` for its Node side. Check all of
-  these again when Foldkit or Effect moves.
+- `effect` and `@effect/platform-browser` are `4.1.2`. Foldkit `0.170.0` and
+  its tools accept `~4.1.0`, so Foldkit must release again before the repository
+  moves to Effect 4.2. The Vite plugin brings `@effect/platform-node` and
+  `@effect/platform-node-shared` for its Node side, and the root `overrides`
+  entries keep both at `4.1.2`.
+- `@foldkit/vite-plugin` and `@foldkit/devtools-mcp` need Node `22.19.0` or
+  newer.
 - With two tabs open, a reload after an edit gives both tabs the Model of the
   tab that changed last.
 - Form fields are plain elements, not `@foldkit/ui` components, so the page

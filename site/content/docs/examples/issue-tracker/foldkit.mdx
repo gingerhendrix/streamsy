@@ -523,7 +523,7 @@ Other tests cover the pure workspace functions, the batch-to-Message mapping and
 
 ## Versions
 
-Foldkit `0.169.0` and its tools ask for `effect` and `@effect/platform-browser` at exactly `4.0.0`. The repository uses `4.1.2`. Root overrides for `effect`, `@effect/platform-browser`, `@effect/platform-node` and `@effect/platform-node-shared` keep one version of each package, including the Vite plugin's Node dependencies. These overrides are outside Foldkit's declared peer ranges. Check them again when Foldkit or Effect releases.
+Foldkit `0.170.0` and its tools accept `effect` and `@effect/platform-browser` at `~4.1.0`. The repository uses `4.1.2`, so Foldkit must release again before the repository moves to Effect 4.2. Root overrides for `effect`, `@effect/platform-browser`, `@effect/platform-node` and `@effect/platform-node-shared` keep one version of each package, including the Vite plugin's Node dependencies. `@foldkit/vite-plugin` and `@foldkit/devtools-mcp` need Node `22.19.0` or newer.
 
 ## Limits
 
