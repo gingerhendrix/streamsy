@@ -51,6 +51,7 @@ const paper = tegami({
     "hackernews-newest-stream",
     "hex-board",
     "issue-tracker-demo",
+    "issue-tracker-demo-atom",
     "issue-tracker-demo-event-sourced",
     "issue-tracker-demo-foldkit",
     "memory-server",

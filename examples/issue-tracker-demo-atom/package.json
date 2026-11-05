@@ -1,0 +1,35 @@
+{
+  "name": "issue-tracker-demo-atom",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "PORT=1339 bun run --cwd ../issue-tracker-demo dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "bun run test:unit",
+    "test:unit": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@durable-streams/client": "^0.2.7",
+    "@effect/atom-react": "4.1.2",
+    "@streamsy/issue-tracker-demo-contract": "workspace:*",
+    "effect": "4.1.2",
+    "issue-tracker-demo": "workspace:*",
+    "react": "latest",
+    "react-dom": "latest",
+    "scheduler": "0.28.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "happy-dom": "21.0.4",
+    "typescript": "catalog:",
+    "vite": "8.3.5",
+    "vitest": "catalog:"
+  }
+}
