@@ -1,0 +1,106 @@
+---
+title: Issue tracker, Effect Atom
+description: The same issue tracker with Effect Atom in React. Live queries become derived atoms, and only a txid on the stream confirms a write.
+---
+
+This variant of the [issue tracker](/docs/examples/issue-tracker) keeps the server, the wire contract, the stylesheet and every presentational component. Only `IssueTrackerApp.tsx` and the data layer change. The product is the same, so this page shows only what differs.
+
+The page uses `effect/reactivity` and `@effect/atom-react` in place of TanStack DB and `createStreamDB`. The stream read is an atom, each live query is a derived atom, and writes go through the typed `IssueTrackerApi` client.
+
+The source is in [`examples/issue-tracker-demo-atom`](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo-atom).
+
+## Run it
+
+The page is a Vite app. The base app's server answers `/api` and `/streams`. Run each in its own terminal, from the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/issue-tracker-demo-atom dev:api
+bun run --cwd examples/issue-tracker-demo-atom dev
+```
+
+Open http://localhost:1338. `dev:api` starts the base server on port 1339, with the base app's settings.
+
+## What changes
+
+| Concern           | Base app                                       | This variant                                                  |
+| ----------------- | ---------------------------------------------- | ------------------------------------------------------------- |
+| Stream reader     | `createStreamDB` from `@durable-streams/state` | An atom over `stream()` from `@durable-streams/client`        |
+| Rows in memory    | TanStack DB collections                        | A replica value, folded with `Stream.scan`                    |
+| Derived lists     | Live queries                                   | Derived atoms                                                 |
+| Writes            | `fetch`, and the status as a message           | The `HttpApiClient` for `IssueTrackerApi`, with error tags    |
+| Optimistic writes | `onMutate`, `mutationFn` and `awaitTxId`       | A list of local writes, filtered by the txids on the stream   |
+| Server            | `server/`                                      | The base app's server. Vite serves the page and proxies to it |
+
+## Live queries become derived atoms
+
+`src/queries.ts` keeps the name of the base app's file. The read is one atom. `Stream.scan` folds each batch, and `keepAlive` holds the read open for the life of the page:
+
+```ts title="src/queries.ts"
+const replicaResultAtom = Atom.keepAlive(
+  atomRuntime.atom((get) => {
+    const workspaceId = get(workspaceIdAtom);
+
+    return Stream.unwrap(
+      WorkspaceReader.use((reader) => Effect.succeed(reader.read(workspaceId))),
+    ).pipe(Stream.scan(() => emptyReplica, applyReadEvent));
+  }),
+);
+```
+
+Each view is an atom that reads other atoms. The registry recomputes an atom only when a value it read changes, so a new filter sorts the visible issues again and leaves the project list alone:
+
+```ts title="src/queries.ts"
+/** The issues of the selected project that pass the filter, last updated first. */
+export const visibleIssuesAtom = Atom.make((get) =>
+  visibleIssues(get(selectedIssuesAtom), get(filterAtom)),
+);
+
+/** How many issues of the selected project have each status. */
+export const statusCountsAtom = Atom.map(selectedIssuesAtom, statusCounts);
+```
+
+## Only the txid confirms a write
+
+A write shows at once, faded. An HTTP success changes nothing: the row stays faded until its txid arrives on the stream. Confirmation is a derived value too, so the stream never writes to the list of local writes:
+
+```ts title="src/queries.ts"
+export const pendingWritesAtom = Atom.make((get) =>
+  unconfirmed(get(localWritesAtom), get(replicaAtom).confirmed),
+);
+
+/** The stream rows with every pending write on top. */
+export const workspaceAtom = Atom.make((get) =>
+  workspaceView(get(replicaAtom).rows, get(pendingWritesAtom)),
+);
+```
+
+A refusal arrives as a typed error. `WipLimitReached` is the 422 from the work-in-progress rule. `writeAtom` removes the write and shows the server's message, and the derived atoms do the rest of the rollback:
+
+```ts title="src/writes.ts"
+const refusal = (workspaceId: string, pending: PendingWrite) =>
+  send(workspaceId, pending).pipe(
+    Effect.as(Option.none<string>()),
+    Effect.catchTags({
+      // A business rule. A retry gives the same answer until the workspace changes.
+      WipLimitReached: ({ error }) => Effect.succeedSome(error),
+```
+
+## Why not `Atom.optimistic`
+
+We tested `Atom.optimistic` and `Atom.optimisticFn` first, with each transition held open until its txid arrived. They hold a write open, and that causes three problems:
+
+- While any transition is open, the atom hides changes to its source. Rows from another tab do not show until every write has finished.
+- With two writes open, a refused write stays on the page until the other write finishes.
+- When the last transition succeeds, the atom refreshes its source. A stream atom then opens a new read from the start of the stream.
+
+`AtomHttpApi.mutation` does not fit either. It keeps one fiber for each endpoint, so a second call on `issues.update` aborts the first request. `writeAtom` is a `runtime.fn` with `concurrent: true` that calls the client directly.
+
+`concurrent` has a trap of its own. A later call retires the `get` of a running call, and `get.set` on a retired context does nothing. `writeAtom` takes the registry from the `AtomRegistry` service, so a rollback still lands.
+
+## Limits
+
+- `Atom`, `@effect/atom-react` and the HTTP API modules carry `@stability unstable` tags. A later Effect release can break this page.
+- The production JavaScript is 705 kB, 217 kB with gzip. This includes Effect's HTTP client and Schema. The base app built with the same Vite version is 914 kB, 270 kB with gzip.
+- An accepted write has no timeout. It stays faded for as long as the reader cannot reach the stream. The base app's `awaitTxId` gives up and rolls back.

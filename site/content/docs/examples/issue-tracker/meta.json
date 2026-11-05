@@ -1,4 +1,4 @@
 {
   "title": "Issue tracker",
-  "pages": ["index", "event-sourced", "foldkit"]
+  "pages": ["index", "event-sourced", "foldkit", "atom"]
 }

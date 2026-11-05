@@ -38,6 +38,14 @@ export const pageExamples = new Map<string, readonly [string, ...Array<string>]>
       "examples/issue-tracker-demo-contract",
     ],
   ],
+  [
+    "issue-tracker/atom",
+    [
+      "examples/issue-tracker-demo-atom",
+      "examples/issue-tracker-demo",
+      "examples/issue-tracker-demo-contract",
+    ],
+  ],
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
   ["todo", ["examples/todo"]],
