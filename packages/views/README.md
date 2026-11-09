@@ -2,7 +2,7 @@
 
 Declare a keyed relation over sources as data, compile it to a plan, and
 maintain its rows incrementally. Version 0.4.0 requires
-`effect@4.0.5`.
+`effect@4.1.2`.
 
 ```sh
 bun add @streamsy/views effect
@@ -19,7 +19,7 @@ The package has three pure parts: relation authoring, plan IR, and the increment
 
 ## Effect version
 
-This package tracks the stable Effect version Streamsy uses (`effect@4.0.5`).
+This package tracks the stable Effect version Streamsy uses (`effect@4.1.2`).
 Move Streamsy and streamsy-extras to a new stable version together so apps that
 use both share one copy of Effect.
 
