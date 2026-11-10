@@ -1,4 +1,4 @@
-import { Effect, Layer, Schedule } from "effect";
+import { Effect, Layer, Schedule, Schema } from "effect";
 import type { Storage } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
@@ -10,7 +10,10 @@ export type { Attachable } from "./runner.ts";
 export interface AttachOptions {
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
-  /** Retry a failed drain pass. Defaults to capped, jittered exponential backoff. */
+  /**
+   * Retry a failed drain pass, whether it failed with a typed error or a defect.
+   * Defaults to capped, jittered exponential backoff.
+   */
   readonly retry?: Schedule.Schedule<unknown>;
   /**
    * Keep a pending mark for each binding in the storage owner, written in the
@@ -25,6 +28,14 @@ export interface AttachOptions {
   /** With `durable`, the due marks that one drain pass reads. Default 25. */
   readonly batch?: number;
 }
+
+/** A defect of one drain pass, as a failure that the retry schedule sees. */
+class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique symbol }>()(
+  "PassDefect",
+  {
+    defect: Schema.Defect(),
+  },
+) {}
 
 /**
  * Run a projection whenever a local commit writes one of its inputs. The layer
@@ -65,6 +76,8 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
       // A durable wait reads marks, so a failed read retries like a failed drain.
       yield* wait.pipe(
         Effect.andThen(drain),
+        // `Effect.retry` does not retry a defect, so a handler that throws would end this fiber.
+        Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
         Effect.tapError((error) =>
           Effect.logError(`Projection.attach ${projection.id} failed`, error),
         ),

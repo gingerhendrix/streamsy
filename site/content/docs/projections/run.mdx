@@ -163,7 +163,7 @@ Each input must give every projection parameter, so that one stream id picks one
 | `durable` | `false`           | Keep a pending mark for each binding with work in storage                           |
 | `batch`   | `25`              | With `durable`, the most due marks that a pass reads                                |
 
-By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`.
+By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`. A handler that throws fails the pass the same way: the runner logs the defect and retries.
 
 With `durable: true`, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. When the Layer starts, it runs the bindings that have marks. A binding that catches up deletes its mark, unless a write during the run marked it again. A binding that fails waits alone, from 1 s doubling to 1 hour, and the runner logs a warning while the other bindings run. `durable: true` needs a local memory or SQL storage Layer. Over other storage, building the Layer dies. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 

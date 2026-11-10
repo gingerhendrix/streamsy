@@ -3,6 +3,7 @@
   "pages": [
     "constructors",
     "runners",
+    "state-table",
     "declarations",
     "units",
     "commit",

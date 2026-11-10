@@ -5,13 +5,13 @@ step. Its `commit:` value defines how results and offsets become durable.
 
 ## Constructors
 
-| Constructor                | Handler                   | Result           | Commit                          |
-| -------------------------- | ------------------------- | ---------------- | ------------------------------- |
-| `Projection.fold`          | `(state, entry, unit)`    | Next value       | Defaults to `Commit.checkpoint` |
-| `Projection.process`       | `(batch, unit, prepared)` | Effect of void   | Required                        |
-| `Projection.emit`          | `(entry, unit)`           | Output items     | Required                        |
-| `Projection.mapAccum`      | `(state, entry, unit)`    | `[state, emits]` | Required                        |
-| `Projection.mapAccumBatch` | `(state, batch, unit)`    | `[state, emits]` | Required                        |
+| Constructor                | Handler                  | Result           | Commit                          |
+| -------------------------- | ------------------------ | ---------------- | ------------------------------- |
+| `Projection.fold`          | `(state, entry, unit)`   | Next value       | Defaults to `Commit.checkpoint` |
+| `Projection.process`       | `(batch, unit, context)` | Effect of void   | Required                        |
+| `Projection.emit`          | `(entry, unit)`          | Output items     | Required                        |
+| `Projection.mapAccum`      | `(state, entry, unit)`   | `[state, emits]` | Required                        |
+| `Projection.mapAccumBatch` | `(state, batch, unit)`   | `[state, emits]` | Required                        |
 
 Except for `process`, steps return a value or an Effect. A missing output key
 emits nothing. `Projection.each` adapts an entry handler for `process`.
@@ -107,6 +107,25 @@ Outputs accept routes or fixed addresses, like inputs. `Streamsy.json` accepts
 items. `Streamsy.state` accepts `DurableState.upsert("card", row)` and
 `DurableState.remove("card", key)` from `@streamsy/core`. Each change names its
 collection. Two outputs cannot name the same stream or an input.
+
+## State tables
+
+`StateTable.define(State)` declares a projection that keeps the rows of a
+`Streamsy.state` stream in SQLite tables beside the stream. Run
+`StateTable.migrate(sql)` at host start and attach the table with
+`Projection.attach(table, { durable: true })`. A bound table reads rows with
+`get`, `getMany` and `list`, each with the offset that the rows reflect.
+`StateTable.rebuild` makes the rows again from the stream alone. The types of
+a declaration and a bound table are `StateTable.Declaration` and
+`StateTable.Bound`.
+
+`FoldByKey.process(table, spec)` builds a `Projection.process` handler, under
+`Commit.transaction` with the State stream in `outputs`, that folds records into
+one collection. It reads each key's previous row from the table. `sync` and the
+fold handler fail with `ProjectionFault` for every wire, SQL and schema failure,
+and the handler adds `FoldByKeyError` for a row with the wrong key. A fold's `id`,
+`version` and `generation` are its identity, so a rename is a fold fix. See
+[State tables](https://streamsy.dev/docs/projections/state-table).
 
 ## Wake streams
 

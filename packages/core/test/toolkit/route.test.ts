@@ -127,11 +127,14 @@ it("the codec record backstop covers a widened template", () => {
 });
 
 it("state routes round trip decoded params and reject bad segments", () => {
+  const params = { id: Schema.FiniteFromString };
+
   const route = StreamRoute.state("catalog/:id", {
-    params: { id: Schema.FiniteFromString },
+    params,
     collections: { entry: { schema: Entry, key: "text" } },
   });
 
+  expect(route.paramCodecs).toBe(params);
   const address = route.address({ id: 7 });
   expect(Record.keys(address.collections)).toEqual(["entry"]);
   expect(route.parse(address.id)).toEqual(Option.some({ id: 7 }));

@@ -279,6 +279,7 @@ same<
 ```ts
 // ---cut-start---
 import { Schema, type Effect } from "effect";
+import type { SqlClient } from "effect/sql";
 import { Streamsy, type DurableState, type StreamAddress } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import {
@@ -473,6 +474,14 @@ class UserWake extends Streamsy.wake<UserWake>()("Check/UserWake", "users/:works
   params: { workspaceId: Schema.String },
 }) {}
 // ---cut-end---
+// The third argument of `process`, and the declared outputs of `prepare` and `process`.
+interface ProcessContext<Prepared = void> {
+  readonly prepared: Prepared;
+}
+interface OutputsContext<O extends RoutedMap> {
+  readonly outputs: Addresses<O>;
+}
+// Without `outputs`.
 declare function process<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -486,6 +495,7 @@ declare function process<
 >(
   definition: Common<C, I> & {
     readonly commit: Commit.Commit<void, P, Q>;
+    readonly outputs?: never;
     readonly prepare?: (
       batch: Slices<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
@@ -493,32 +503,61 @@ declare function process<
     readonly process: (
       batch: Slices<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
-      prepared: Prepared,
+      context: ProcessContext<Prepared>,
     ) => Effect.Effect<void, E, R>;
   },
 ): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR>;
+// With `outputs`.
+declare function process<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const O extends RoutedMap,
+  E = never,
+  R = never,
+  Q = never,
+  Prepared = void,
+  PE = never,
+  PR = never,
+>(
+  definition: Common<C, I> & {
+    readonly commit: Commit.Commit<void, SqlClient.SqlClient, Q>;
+    readonly outputs: O & OutputsWithin<C, O>;
+    readonly prepare?: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+      context: OutputsContext<O>,
+    ) => Effect.Effect<Prepared, PE, PR>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+      context: ProcessContext<Prepared> & OutputsContext<O>,
+    ) => Effect.Effect<void, E, R>;
+  },
+): OutputDeclaration<C, I, O, E | PE, R, void, SqlClient.SqlClient, Q | PR>;
 // ---cut-after---
-type Shown = typeof process<C0, I0, Oops, Notes, Drafts, CheckpointStore, number, Error, Workspace>;
-type Real = typeof Projection.process<
-  C0,
-  I0,
-  Oops,
-  Notes,
-  Drafts,
-  CheckpointStore,
-  number,
-  Error,
-  Workspace
+// Both overloads take nine type arguments, so one instantiation fits both.
+type Overloads<T> = T extends {
+  (definition: infer A1): infer R1;
+  (definition: infer A2): infer R2;
+}
+  ? readonly [A1, R1, A2, R2]
+  : never;
+type Shown = Overloads<typeof process<C0, I0, O0, Oops, Notes, Drafts, number, Error, Workspace>>;
+type Real = Overloads<
+  typeof Projection.process<C0, I0, O0, Oops, Notes, Drafts, number, Error, Workspace>
 >;
-same<Flat<Parameters<Shown>[0]>, Flat<Parameters<Real>[0]>>(true);
-same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
+same<Flat<Shown[0]>, Flat<Real[0]>>(true);
+same<Flat<Shown[1]>, Flat<Real[1]>>(true);
+same<Flat<Shown[2]>, Flat<Real[2]>>(true);
+same<Flat<Shown[3]>, Flat<Real[3]>>(true);
 ```
 
-`process` declares a projection that runs an effect for each unit. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state and writes no outputs. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
+`process` declares a projection that runs an effect for each unit. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
 
 - `commit` is required. `Commit.transaction` runs `process` in the SQL transaction of the checkpoint, and `Commit.atLeastOnce` runs it at least once.
 - `prepare` is optional and needs `Commit.transaction`, alone or wrapped by `Commit.withCompensation`. With another Commit, the `process` call throws a `RangeError`.
-- `Commit.transaction` runs `prepare` before it opens the transaction, and passes its result to `process` as `prepared`. A retry of the unit runs `prepare` again.
+- `Commit.transaction` runs `prepare` before it opens the transaction, and passes its result to `process` as `context.prepared`. A retry of the unit runs `prepare` again.
+- `outputs` is optional. It names the streams that the handler appends to, by name, with the same param rule as `inputs`. Only a Commit that provides `SqlClient`, such as `Commit.transaction`, accepts it. The Commit checks every output before the handler runs. `prepare` and `process` get the bound addresses as `context.outputs`. The Commit appends nothing itself, so the handler writes the outputs. See [Declared outputs](/docs/projections/process#declared-outputs).
 
 ### `Projection.emit`
 

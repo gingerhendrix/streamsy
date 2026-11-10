@@ -7,7 +7,12 @@ description: Write each unit of input to your own SQL tables in the checkpoint t
 
 ## Process
 
-`process(batch, unit, prepared)` gets the whole unit and returns an `Effect` of `void`. `batch` has one `Slice` for each input, with its `items` in stream order. `prepared` is the result of `prepare`, or `undefined` when the declaration has none. See [Prepare](#prepare).
+`process(batch, unit, context)` gets the whole unit and returns an `Effect` of `void`. `batch` has one `Slice` for each input, with its `items` in stream order. `context` is an object:
+
+- `context.prepared` is the result of `prepare`, or `undefined` when the declaration has none. See [Prepare](#prepare).
+- `context.outputs` holds the bound addresses of the declared outputs. It exists only when the declaration lists `outputs`. See [Declared outputs](#declared-outputs).
+
+Destructure the fields that the handler uses, as in `process: (batch, unit, { prepared }) => ...`. A handler that uses neither can take `(batch, unit)`.
 
 To handle one entry at a time, wrap an entry handler in `Projection.each`. It runs the handler for every entry in order, one after another: all entries of the first declared input, then those of the next. It discards the results.
 
@@ -85,9 +90,50 @@ Before the handler runs, the Commit loads the record again inside the transactio
 
 An append that the handler makes to a stream on the same storage commits with the rows. An append to a stream on other storage fails with phase `process` and reason `unsupported-composition`. To write declared output streams in the same transaction, see [Transaction outputs](/docs/projections/outputs#transaction-outputs).
 
+## Declared outputs
+
+Under `Commit.transaction`, a `process` declaration can list `outputs`, as `emit` does. Each output is a stream declaration or a fixed address, and each declaration must take a subset of `params`. The handler gets the bound address of each output in `context.outputs`, and it appends to them itself.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Array, Effect } from "effect";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+const copyTotals = Projection.process({
+  id: "copy-totals",
+  params: {},
+  inputs: { orders: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.transaction,
+  process: (batch, _unit, { outputs }) =>
+    Effect.gen(function* () {
+      const rows = Array.map(batch.orders.items, (order) => ({
+        orderId: order.orderId,
+        total: order.amount,
+      }));
+      if (!Array.isReadonlyArrayNonEmpty(rows)) return;
+      const { wire } = yield* outputs.totals.stream;
+      yield* Streams.append(outputs.totals, rows).pipe(Effect.provideService(StreamsWriter, wire));
+    }),
+});
+```
+
+- Before `prepare` and the handler run, the Commit checks that every output shares the storage of the `Transaction` service. An output on other storage fails the unit with phase `load` and reason `unsupported-composition`, and the handler does not run.
+- The appends commit with the checkpoint, or roll back with it.
+- The Commit does not create the outputs. Create each output first, or create it in the handler.
+- `prepare` gets the same addresses in its `context.outputs`.
+- `Commit.atLeastOnce` does not provide `SqlClient`, so the compiler rejects `outputs` with it.
+
+[`FoldByKey.process`](/docs/projections/fold-by-key) builds a handler of this shape, which folds rows of a State stream.
+
 ## Prepare
 
-`prepare(batch, unit)` runs before the transaction opens. Use it for work that must not hold the transaction open, such as a slow read from another system. Its result is the third argument of `process(batch, unit, prepared)`.
+`prepare(batch, unit)` runs before the transaction opens. Use it for work that must not hold the transaction open, such as a slow read from another system. Its result reaches `process` as `context.prepared`. When the declaration lists `outputs`, `prepare` also gets `{ outputs }` as its third argument.
 
 - `prepare` needs `Commit.transaction`, or `Commit.transaction` wrapped with `Commit.withCompensation`. With any other Commit, `Projection.process` throws a `RangeError` with the message `prepare requires Commit.transaction`.
 - `prepare` runs at least once for each unit. A retry runs it again. It must not make effects that a second run would repeat.

@@ -267,7 +267,7 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
         definition.prepare === undefined
           ? undefined
           : (batch: Slices<InputMap>, unit: Unit) =>
-              definition.prepare!(batch, withParams(unit, decoded)),
+              definition.prepare!(batch, withParams(unit, decoded), { outputs: streams }),
       process: (batch: Slices<InputMap>, unit: Unit, encoded?: string, prepared?: unknown) =>
         adapt(
           kind,

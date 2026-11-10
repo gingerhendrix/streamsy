@@ -1,0 +1,229 @@
+---
+title: Keyed folds
+description: Fold input records into the rows of a State stream, reading the previous row of each key from its State table.
+---
+
+A keyed fold reads input records, loads the previous row of each key, and appends one change for each key to a Durable State stream. It is an ordinary `Projection.process` under `Commit.transaction`. `FoldByKey.process(table, spec)` builds its handler for one collection. The previous rows come from the [State table](/docs/projections/state-table) of the output. For the full signatures, see [`FoldByKey`](/docs/reference/projection/state-table#foldbykey).
+
+## Declare a fold
+
+The declaration lists the State stream in `outputs`, and `FoldByKey.process` gives the `process` handler. This example keeps an `Agents` stream with two collections. One fold writes `agent` rows from a catalog stream. A second fold writes `status` rows from the event stream of each agent.
+
+```ts
+import { Layer, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, FoldByKey, Projection, StateTable } from "@streamsy/projection";
+
+const Declared = Schema.Struct({ agentId: Schema.String, name: Schema.String });
+const AgentEvent = Schema.Struct({
+  kind: Schema.Literals(["started", "turn", "exited"]),
+  at: Schema.String,
+});
+
+class Catalog extends Streamsy.json<Catalog>()("Agents/Catalog", "agents/catalog", {
+  params: {},
+  schema: Declared,
+}) {}
+
+class AgentEvents extends Streamsy.json<AgentEvents>()("Agents/Events", "agents/:agentId/events", {
+  params: { agentId: Schema.String },
+  schema: AgentEvent,
+}) {}
+
+const AgentRow = Schema.Struct({ agentId: Schema.String, name: Schema.String });
+const StatusRow = Schema.Struct({
+  agentId: Schema.String,
+  state: Schema.Literals(["running", "exited"]),
+  turns: Schema.Finite,
+  updatedAt: Schema.String,
+});
+
+class Agents extends Streamsy.state<Agents>()("Agents/Agents", "agents", {
+  params: {},
+  collections: {
+    agent: { schema: AgentRow, key: "agentId" },
+    status: { schema: StatusRow, key: "agentId" },
+  },
+}) {}
+
+const AgentsTable = StateTable.define(Agents);
+
+const foldStatus = (
+  previous: typeof StatusRow.Type | undefined,
+  event: typeof AgentEvent.Type,
+  agentId: string,
+): typeof StatusRow.Type => ({
+  agentId,
+  state: event.kind === "exited" ? "exited" : "running",
+  turns: (previous?.turns ?? 0) + (event.kind === "turn" ? 1 : 0),
+  updatedAt: event.at,
+});
+
+const agentDeclared = Projection.process({
+  id: "agent-declared",
+  params: {},
+  inputs: { catalog: Catalog },
+  outputs: { agents: Agents },
+  commit: Commit.transaction,
+  process: FoldByKey.process(AgentsTable, {
+    output: "agents",
+    collection: "agent",
+    key: (record) => record.agentId,
+    fold: (_previous, record) => ({ agentId: record.agentId, name: record.name }),
+  }),
+});
+
+const agentStatus = Projection.process({
+  id: "agent-status",
+  params: { agentId: Schema.String },
+  inputs: { events: AgentEvents },
+  outputs: { agents: Agents },
+  commit: Commit.transaction,
+  process: FoldByKey.process(AgentsTable, {
+    output: "agents",
+    collection: "status",
+    key: (_event, unit) => unit.params.agentId,
+    fold: (previous, event, unit) => foldStatus(previous, event, unit.params.agentId),
+  }),
+});
+
+// Attach the table and both folds durably, on the owner of Agents.
+const attached = Layer.mergeAll(
+  Projection.attach(AgentsTable, { durable: true }),
+  Projection.attach(agentDeclared, { durable: true }),
+  Projection.attach(agentStatus, { durable: true }),
+);
+```
+
+Each fold writes one collection, so the two projections can share the stream. See [One writer per collection](#one-writer-per-collection). `agentStatus` has a binding for each agent. Its output takes no params, so every binding writes the same `Agents` stream.
+
+Run the table once at host start, before the folds attach, so that no fold unit applies a long history in its `sync`. See [Start order](/docs/projections/state-table#start-order). The output must sit on the storage of the `Transaction` service, beside its table. The output address comes from the unit's params, with the usual rule that each output takes a subset of the projection params.
+
+## Spec
+
+| Field        | Meaning                                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `output`     | The key in `outputs` of the State stream                                                                                          |
+| `collection` | The one collection that the fold writes. The compiler rejects a collection that the State class does not declare                  |
+| `records`    | Optional. `(item, unit)` returns the records of one input item, for example to skip or split items. The default is the item alone |
+| `key`        | `(record, unit)` returns the row key of a record, or `undefined` to skip the record                                               |
+| `fold`       | `(previous, record, unit)` returns the next row, `FoldByKey.remove`, or an Effect of either                                       |
+
+The first argument is the `StateTable` of the output. `previous` is the current row of the key, or `undefined` when the key has no row. The compiler rejects a `fold` that returns a row of another collection.
+
+`key` is separate from `fold` because the fold needs the key before it runs, to load the previous row. The row that `fold` returns must carry the same key in the key field of its collection. See [Errors](#errors).
+
+Return `FoldByKey.remove` to delete the row. The next record of the same key in the unit then gets `undefined` as `previous`. A key that had no row and ends the unit removed appends nothing.
+
+## What a unit does
+
+`FoldByKey.process` runs inside the transaction of the unit, after the Commit has checked its token and its outputs:
+
+1. It creates the output stream if it is missing.
+2. It calls `sync` on the table of the output. See [Sync](/docs/projections/state-table#sync).
+3. It runs `records` and `key` for every input item, and groups the records by key in the order in which each key first appears.
+4. It loads the stored rows of those keys from the table.
+5. It folds the records of each key in order, and checks the key field of each final row.
+6. It drops each key whose new stored JSON equals the stored JSON of its row.
+7. It appends one change for each remaining key, in one append.
+
+The Commit then saves the checkpoint and commits. Any failure rolls back every write of the unit, so a retry starts from the same rows and cannot count a record twice.
+
+Step 4 loads keys in chunks of 50, as `getMany` does. A chunk binds 52 SQL parameters, under the limit of 100 that Cloudflare Durable Objects allow for each query.
+
+### What a unit reads
+
+The unit does not apply its own append to the table. The next unit's `sync`, or the table binding, applies it. So the rows lag a fold's own append by one table run. A unit groups its records by key before it folds, so it never needs to read its own append.
+
+Step 6 compares the JSON that the table would store, after the collection schema encodes the row. The table stores canonical JSON, so equal rows give equal strings. A fold that rewrites a field such as a time stamp on each record always changes the row, so nothing drops.
+
+## Errors
+
+A unit of `FoldByKey.process` fails in one of four ways:
+
+| Case                                                                          | Failure                                                         |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| A folded row has a key field that differs from `key`                          | A `FoldByKeyError`. Its `message` names both keys               |
+| A `fold` Effect fails                                                         | That error, unchanged                                           |
+| `sync` faults, or the handler cannot read the stored rows or write the output | A `ProjectionFault` with phase `read` or `process`              |
+| `records`, `key` or `fold` throws, or a `fold` Effect dies                    | A defect, as in every other handler kind. The handler adds none |
+
+An interruption stays an interruption. For the reason of each `ProjectionFault`, see [`FoldByKey.Handler`](/docs/reference/projection/state-table#foldbykeyhandler).
+
+`FoldByKeyError` is a handler error, not a `ProjectionFault`. The runners treat it like any handler failure. `run` fails with it. Under durable `attach`, the binding waits on its own backoff while its neighbours run. Under memory `attach`, the runner logs it and retries the pass. A key mismatch is a bug in the fold, so it fails again on every retry until you fix the code.
+
+A `ProjectionFault` with reason `storage-failure` is retryable, so `Projection.follow` retries it. See [Faults](/docs/projections/checkpoints#faults).
+
+### Attach folds durably
+
+Attach every fold with `durable: true`. A fold that fails then defers its own binding, and the other bindings run. In memory mode, a failed binding fails the whole pass, and the runner logs the failure and retries every pending binding of that projection on one schedule. That holds for a typed failure and for a fold that throws.
+
+On a Durable Object, `ProjectionWakeup.attach` is durable by default.
+
+## Write a fold by hand
+
+Any `Commit.transaction` handler can read rows the same way: call `sync`, then `getMany`, then append. Write one by hand when a fold writes several collections, or when it needs logic that `records`, `key` and `fold` cannot express.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Array, Effect, Schema } from "effect";
+import { DurableState, Streamsy } from "@streamsy/core";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { Commit, Projection, StateTable } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+
+const Rename = Schema.Struct({ issueId: Schema.String, title: Schema.String });
+
+class Renames extends Streamsy.json<Renames>()(
+  "Tracker/Renames",
+  "workspaces/:workspaceId/renames",
+  {
+    params: { workspaceId: Schema.String },
+    schema: Rename,
+  },
+) {}
+
+const WorkspaceTable = StateTable.define(Workspace);
+
+const applyRenames = Projection.process({
+  id: "apply-renames",
+  params: { workspaceId: Schema.String },
+  inputs: { renames: Renames },
+  outputs: { workspace: Workspace },
+  commit: Commit.transaction,
+  process: (batch, unit, { outputs }) =>
+    Effect.gen(function* () {
+      const table = WorkspaceTable.at(unit.params);
+      yield* table.sync();
+      // Fold in memory: getMany does not see this unit's own changes.
+      const titles = new Map<string, string>();
+      for (const rename of batch.renames.items) titles.set(rename.issueId, rename.title);
+      const { rows } = yield* table.getMany("issue", [...titles.keys()]);
+      const changes = Array.flatMap([...titles], ([id, title]) => {
+        const issue = rows.get(id);
+        return issue === undefined ? [] : [DurableState.upsert("issue", { ...issue, title })];
+      });
+      if (!Array.isReadonlyArrayNonEmpty(changes)) return;
+      const { wire } = yield* outputs.workspace.stream;
+      yield* Streams.append(
+        outputs.workspace,
+        DurableState.changes(outputs.workspace, {}, changes),
+      ).pipe(Effect.provideService(StreamsWriter, wire));
+    }),
+});
+```
+
+`getMany` does not see the unit's own appends. A handler that changes one key twice in a unit must fold the changes in memory, as `titles` does here. The handler appends to an existing stream. Create the output first, or create it in the handler, as `FoldByKey.process` does.
+
+## One writer per collection
+
+Each collection must have one writer: one fold, one hand-written projection, or one outside writer. Several projections can write one stream when each writes its own collection, as `agentDeclared` and `agentStatus` do. Streamsy does not check this rule. Two writers on one collection interleave their rows with no error.
+
+## Identity
+
+The `id`, `version` and `generation` of a fold are its identity, as for every projection. They name its checkpoint record. A fold with a new identity starts at zero offsets and folds the whole history again over the rows that the old identity wrote. Counters then double, with no error.
+
+So a rename of a fold is a fold fix. Follow the [fold fix](/docs/projections/state-table-operations#fix-a-fold) steps, and pin the ids of your folds in a test so that a rename fails the build.

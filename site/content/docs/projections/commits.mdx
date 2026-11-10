@@ -58,7 +58,7 @@ In each case the transaction rolls back, with the earlier writes of the unit. Ex
 
 ### Prepare
 
-`Projection.process` with `Commit.transaction` accepts `prepare(batch, unit)`. `Commit.transaction` runs `prepare` before it opens the transaction, so `prepare` runs at least once. Its result is the third argument of `process(batch, unit, prepared)`. For an example, see [Tables and effects](/docs/projections/process).
+`Projection.process` with `Commit.transaction` accepts `prepare(batch, unit)`. `Commit.transaction` runs `prepare` before it opens the transaction, so `prepare` runs at least once. Its result reaches `process(batch, unit, context)` as `context.prepared`. For an example, see [Tables and effects](/docs/projections/process).
 
 When the transaction fails, the next pass runs `prepare` again on a new read of the inputs. With the same range, `unit.key` is the same. When new items arrived, the range is longer and `unit.key` changes. Do not use `unit.key` as an idempotency key that must hold across every retry.
 

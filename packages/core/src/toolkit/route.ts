@@ -42,6 +42,9 @@ export type PathSchema<P> = Schema.Codec<P, Readonly<Record<string, string | und
 
 type WithPathSchema<P> = { readonly paramSchema: PathSchema<P> };
 
+/** The codec record a State route was declared with, one codec per template parameter. */
+type WithParamCodecs<Codecs extends ParamCodecs> = { readonly paramCodecs: Codecs };
+
 /** The route constructor. It owns the `StreamRoute` tag of every route. */
 const Route = Data.TaggedClass("StreamRoute");
 
@@ -236,16 +239,24 @@ export function state<
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly collections: C & StreamAddress.ValidCollections<C>;
   },
-): StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>> {
+): StateRoute<Params<Codecs>, C, Template> &
+  WithPathSchema<Params<Codecs>> &
+  WithParamCodecs<Codecs> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
 
   return new Route<
-    Omit<StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>>, "_tag">
+    Omit<
+      StateRoute<Params<Codecs>, C, Template> &
+        WithPathSchema<Params<Codecs>> &
+        WithParamCodecs<Codecs>,
+      "_tag"
+    >
   >({
     template,
     paramSchema: pathSchema(codecs),
+    paramCodecs: codecs,
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     collections: options.collections,

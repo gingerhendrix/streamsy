@@ -118,17 +118,17 @@ Each constructor takes its handler in a field with the name of the constructor.
 | `emit`          | `emit(entry, unit)`                 | Once for each entry | The output items, keyed by output |
 | `mapAccum`      | `mapAccum(state, entry, unit)`      | Once for each entry | `[value, outputs]`                |
 | `mapAccumBatch` | `mapAccumBatch(state, batch, unit)` | Once for each unit  | `[value, outputs]`                |
-| `process`       | `process(batch, unit, prepared)`    | Once for each unit  | An Effect of `void`               |
+| `process`       | `process(batch, unit, context)`     | Once for each unit  | An Effect of `void`               |
 
 `process` must return an Effect. The other handlers return the result, or an Effect of it. An entry handler runs over the entries of the unit in order, and each call gets the value that the call before it returned.
 
-| Argument   | Contents                                                                                                                                       |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entry`    | `{ input, item, index }`. `input` is the input name, `item` is the decoded item, and `index` is the position of the entry in the whole unit    |
-| `batch`    | One slice for each input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. A slice of an input that is gone also has `gone: true` |
-| `unit`     | `projectionId`, `version`, `generation`, `params`, `ranges`, and `key`                                                                         |
-| `state`    | The current value. The first call of a unit gets the stored value, or `initial` when no value is stored                                        |
-| `prepared` | The result of `prepare`. See [Tables and effects](/docs/projections/process)                                                                   |
+| Argument  | Contents                                                                                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entry`   | `{ input, item, index }`. `input` is the input name, `item` is the decoded item, and `index` is the position of the entry in the whole unit                                |
+| `batch`   | One slice for each input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. A slice of an input that is gone also has `gone: true`                             |
+| `unit`    | `projectionId`, `version`, `generation`, `params`, `ranges`, and `key`                                                                                                     |
+| `state`   | The current value. The first call of a unit gets the stored value, or `initial` when no value is stored                                                                    |
+| `context` | `{ prepared }`, the result of `prepare`. A declaration with `outputs` also gets `outputs`, the bound output addresses. See [Tables and effects](/docs/projections/process) |
 
 `unit.params` holds the decoded parameter values. `unit.ranges` has a `{ from, nextOffset }` range for each input that gave items, closed, or is gone in this unit. Inputs with nothing new have no range.
 

@@ -9,6 +9,10 @@
     "---Kinds of projection---",
     "state",
     "outputs",
-    "process"
+    "process",
+    "---State tables---",
+    "state-table",
+    "fold-by-key",
+    "state-table-operations"
   ]
 }

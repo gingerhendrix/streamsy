@@ -1,10 +1,18 @@
 export * as Projection from "./projection.ts";
 
+export * as StateTable from "./state-table.ts";
+
+export * as FoldByKey from "./fold-by-key.ts";
+
+export { FoldByKeyError } from "./fold-by-key-error.ts";
+
 export type { Declaration } from "./declaration.ts";
 
 export type { CurrentProjection } from "./current.ts";
 
 export type { DecideSpec } from "./decide.ts";
+
+export type { OutputsContext, ProcessContext } from "./process.ts";
 
 export type { FollowOptions } from "./follow.ts";
 

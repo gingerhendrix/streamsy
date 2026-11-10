@@ -1,0 +1,521 @@
+---
+title: StateTable and FoldByKey
+description: Reference for StateTable, FoldByKey and FoldByKeyError in @streamsy/projection. A State table keeps the rows of a Durable State stream in SQL, and a keyed fold writes rows into it.
+---
+
+```ts
+import { FoldByKey, FoldByKeyError, StateTable } from "@streamsy/projection";
+```
+
+`StateTable` keeps the rows of a Durable State stream in SQL tables, and `FoldByKey` builds `process` handlers that fold records into those rows. See [State tables](/docs/projections/state-table), [Keyed folds](/docs/projections/fold-by-key) and [Operate State tables](/docs/projections/state-table-operations).
+
+The checks on this page compare each shown signature with the real export for one State class, `Workspace`, and its `issue` collection.
+
+## `StateTable`
+
+### `StateTable.define`
+
+```ts
+// ---cut-start---
+import type { StreamAddress, Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { StateTable } from "@streamsy/projection";
+import { Workspace } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+// A Streamsy.state class with param codecs Codecs and collections C, served by service R.
+type StateClass<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  R,
+> = StreamRoute.StateRoute<StreamRoute.Params<Codecs>, C> &
+  Streamsy.Any & {
+    readonly paramCodecs: Codecs;
+    readonly at: (
+      params: StreamRoute.Params<Codecs>,
+    ) => StreamAddress.StateAddress<C> &
+      Streamsy.Address<
+        StreamAddress.CollectionsEvent<C>,
+        R,
+        StreamAddress.CollectionsDecodingServices<C>,
+        StreamAddress.CollectionsEncodingServices<C>
+      >;
+  };
+
+declare function define<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  R,
+>(state: StateClass<Codecs, C, R>): StateTable.Declaration<Codecs, C, R>;
+// ---cut-after---
+type Codecs0 = typeof Workspace.paramCodecs;
+type C0 = typeof Workspace.collections;
+same<typeof define<Codecs0, C0, Workspace>, typeof StateTable.define<Codecs0, C0, Workspace>>(true);
+```
+
+`define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class.
+
+### `StateTable.Declaration`
+
+```ts
+// ---cut-start---
+import type { Option } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import { StateTable } from "@streamsy/projection";
+import { Workspace } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Declaration<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  R,
+> {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Codecs;
+  readonly parse: (id: string) => Option.Option<StreamRoute.Params<Codecs>>;
+  readonly at: (params: StreamRoute.Params<Codecs>) => StateTable.Bound<C, R>;
+  // Also `inputs`, with the State class as `state`.
+}
+// ---cut-after---
+type Codecs0 = typeof Workspace.paramCodecs;
+type C0 = typeof Workspace.collections;
+type Shown = Declaration<Codecs0, C0, Workspace>;
+type Real = StateTable.Declaration<Codecs0, C0, Workspace>;
+same<Shown, Omit<Real, "inputs">>(true);
+const real: Real = StateTable.define(Workspace);
+same<typeof real.inputs.state.paramCodecs, Codecs0>(true);
+```
+
+A runner, `Projection.attach` and `ProjectionWakeup.attach` take the declaration like any declaration.
+
+| Field        | Value                                                              |
+| ------------ | ------------------------------------------------------------------ |
+| `id`         | `state-table/` followed by the service name of the class           |
+| `version`    | `1`                                                                |
+| `generation` | `1`                                                                |
+| `params`     | The param codecs of the State stream, by name                      |
+| `parse`      | The `parse` of the State class. It gives the params of a stream id |
+| `at`         | Binds the params and gives the [bound table](#statetablebound)     |
+
+`at` throws a `RangeError` when a param does not encode.
+
+### `StateTable.Bound`
+
+```ts
+// ---cut-start---
+import type { Effect, Schema } from "effect";
+import type { SqlClient, SqlError } from "effect/sql";
+import type { StreamAddress, Streamsy } from "@streamsy/core";
+import type {
+  Commit,
+  ProjectionFault,
+  Slices,
+  StateTable,
+  Transaction,
+} from "@streamsy/projection";
+import { Workspace } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface Bound<C extends StreamAddress.Collections, R> {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+  readonly get: <K extends keyof C & string>(
+    collection: K,
+    key: string,
+  ) => Effect.Effect<
+    { readonly offset: string; readonly value: C[K]["schema"]["Type"] | undefined },
+    Schema.SchemaError | SqlError.SqlError,
+    SqlClient.SqlClient | C[K]["schema"]["DecodingServices"]
+  >;
+  readonly getMany: <K extends keyof C & string>(
+    collection: K,
+    keys: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    { readonly offset: string; readonly rows: ReadonlyMap<string, C[K]["schema"]["Type"]> },
+    Schema.SchemaError | SqlError.SqlError,
+    SqlClient.SqlClient | C[K]["schema"]["DecodingServices"]
+  >;
+  readonly list: <K extends keyof C & string>(
+    collection: K,
+    options?: StateTable.ListOptions,
+  ) => Effect.Effect<
+    {
+      readonly offset: string;
+      readonly rows: ReadonlyArray<{
+        readonly key: string;
+        readonly value: C[K]["schema"]["Type"];
+      }>;
+      readonly next: string | undefined;
+    },
+    ProjectionFault | Schema.SchemaError | SqlError.SqlError,
+    SqlClient.SqlClient | C[K]["schema"]["DecodingServices"]
+  >;
+  readonly offset: () => Effect.Effect<string, SqlError.SqlError, SqlClient.SqlClient>;
+  readonly sync: () => Effect.Effect<void, ProjectionFault, Transaction | R>;
+  // The members that make it a bound projection.
+  readonly inputs: { readonly state: Streamsy.Address<string, R> };
+  readonly commit: typeof Commit.transaction;
+  readonly process: (
+    batch: Slices<{ readonly state: Streamsy.Address<string, R> }>,
+  ) => Effect.Effect<void, ProjectionFault, Transaction | R>;
+}
+// ---cut-after---
+type C0 = typeof Workspace.collections;
+same<Bound<C0, Workspace>, StateTable.Bound<C0, Workspace>>(true);
+```
+
+`Bound` is the bound table. It is also a bound projection, so `Projection.run` and `Projection.follow` take it. It uses `Commit.transaction`. Its one input, `state`, reads the State stream as stored JSON text, so the table never decodes a stored value with a collection schema.
+
+| Member                       | Meaning                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `get(collection, key)`       | The row of `key`. `value` is `undefined` when the row is absent                                                                |
+| `getMany(collection, keys)`  | The rows of `keys` that exist, by key. It reads 50 keys for each SQL query                                                     |
+| `list(collection, options?)` | The rows in key order, after `options.after`, at most `options.limit`. `next` is the last key of a full page, else `undefined` |
+| `offset()`                   | The stream offset that the rows reflect. The zero offset when the table has no head                                            |
+| `sync()`                     | Applies the stream from the head to the tail in the caller's transaction                                                       |
+
+Each read takes `offset` first and then the rows, so the rows reflect at least `offset`. Each read decodes the stored values with the collection schema and fails with a `SchemaError` when a value does not decode. `list` fails with a `ProjectionFault` with phase `load` and reason `invalid-options` when `limit` is not a positive safe integer.
+
+`sync` deletes the rows of the stream when the head is past the tail. The reads need `SqlClient`. `sync` needs `Transaction` and the service of the State stream. `sync` fails only with a `ProjectionFault`:
+
+| Cause                                                            | `phase`   | `reason`              |
+| ---------------------------------------------------------------- | --------- | --------------------- |
+| The stream does not exist or is gone, or a read does not advance | `read`    | `history-unavailable` |
+| The stream rejects the read request                              | `read`    | `invalid-source`      |
+| A storage or transport fault of the stream                       | `read`    | `storage-failure`     |
+| A stored message is not a State message                          | `process` | `invalid-record`      |
+| A SQL statement on the row tables fails                          | `process` | `storage-failure`     |
+
+A `storage-failure` fault is retryable unless its `cause` is a stream fault that is not. The `cause` field holds the original error.
+
+### `StateTable.migrate`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { SqlClient, SqlError } from "effect/sql";
+import { StateTable, type ProjectionFault } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function migrate(
+  sql: SqlClient.SqlClient,
+): Effect.Effect<void, ProjectionFault | SqlError.SqlError>;
+// ---cut-after---
+same<typeof migrate, typeof StateTable.migrate>(true);
+```
+
+`migrate` creates `streamsy_state_heads` and `streamsy_state_rows` with `CREATE TABLE IF NOT EXISTS`. Run it once at host start, outside storage migrations. On a dialect other than SQLite it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`.
+
+### `StateTable.rebuild`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StreamAddress } from "@streamsy/core";
+import { StateTable, type ProjectionFault, type Transaction } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function rebuild<C extends StreamAddress.Collections, R>(
+  table: StateTable.Bound<C, R>,
+): Effect.Effect<void, ProjectionFault, R | Transaction>;
+// ---cut-after---
+same<typeof rebuild, typeof StateTable.rebuild>(true);
+```
+
+`rebuild` takes a bound table. In one transaction, it deletes the rows and the head of the stream, then calls `sync`. The checkpoint of the table binding does not change. A failure rolls back, and the old rows and head stay. It fails with the faults of `sync`.
+
+### `StateTable.reset`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { AppendFailure, AppendResult, StreamAddress } from "@streamsy/core";
+import { StateTable } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function reset<C extends StreamAddress.Collections, R>(
+  table: StateTable.Bound<C, R>,
+): Effect.Effect<AppendResult, AppendFailure<{}>, R>;
+// ---cut-after---
+same<typeof reset, typeof StateTable.reset>(true);
+```
+
+`reset` takes a bound table and appends a `reset` control message to its State stream. It does not touch the rows. The next table run, or the next `sync`, deletes every row of the stream. See [Fix a fold](/docs/projections/state-table-operations#fix-a-fold).
+
+### `StateTable.ListOptions`
+
+```ts
+// ---cut-start---
+import type { StateTable } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ListOptions {
+  readonly after?: string | undefined;
+  readonly limit?: number | undefined;
+}
+// ---cut-after---
+same<ListOptions, StateTable.ListOptions>(true);
+```
+
+| Field   | Meaning                                                       |
+| ------- | ------------------------------------------------------------- |
+| `after` | Read rows whose key sorts after this key                      |
+| `limit` | The most rows to read. With no `limit`, `list` reads them all |
+
+## `FoldByKey`
+
+### `FoldByKey.process`
+
+```ts
+// ---cut-start---
+import type { StreamAddress, Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import {
+  FoldByKey,
+  type InputMap,
+  type StateTable,
+  type Step,
+  type Unit,
+} from "@streamsy/projection";
+import { Notes, Workspace } from "./notes-streams.ts";
+import { same, type Flat } from "./reference-check.ts";
+type ItemOf<A> = A extends Streamsy.Address<infer Item, any> ? Item : never;
+// ---cut-end---
+interface Spec<C extends StreamAddress.Collections, K extends keyof C & string, O, A, P, E, R> {
+  readonly output: O;
+  readonly collection: K;
+  readonly key: (record: A, unit: Unit<P>) => string | undefined;
+  readonly fold: (
+    previous: C[K]["schema"]["Type"] | undefined,
+    record: A,
+    unit: Unit<P>,
+  ) => Step<C[K]["schema"]["Type"] | FoldByKey.Remove, E, R>;
+}
+
+// With records: each input item gives records of type A.
+declare function process<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  TR,
+  K extends keyof C & string,
+  O extends string,
+  I extends InputMap,
+  A,
+  P,
+  E = never,
+  R = never,
+>(
+  table: StateTable.Declaration<Codecs, C, TR>,
+  spec: Spec<C, K, O, A, P, E, R> & {
+    readonly records: (item: ItemOf<I[keyof I]>, unit: Unit<P>) => ReadonlyArray<A>;
+  },
+): FoldByKey.Handler<C, O, I, P, E, R, TR>;
+// Without records: each input item is one record.
+declare function process<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  TR,
+  K extends keyof C & string,
+  O extends string,
+  I extends InputMap,
+  P,
+  E = never,
+  R = never,
+>(
+  table: StateTable.Declaration<Codecs, C, TR>,
+  spec: Spec<C, K, O, ItemOf<I[keyof I]>, P, E, R> & { readonly records?: never },
+): FoldByKey.Handler<C, O, I, P, E, R, TR>;
+// ---cut-after---
+type Codecs0 = typeof Workspace.paramCodecs;
+type C0 = typeof Workspace.collections;
+type I0 = { readonly notes: ReturnType<typeof Notes.at> };
+type A0 = { readonly id: string };
+type P0 = { readonly workspaceId: string };
+type WithRecords = typeof process<
+  Codecs0,
+  C0,
+  Workspace,
+  "issue",
+  "workspace",
+  I0,
+  A0,
+  P0,
+  Error,
+  Notes
+>;
+type RealWithRecords = typeof FoldByKey.process<
+  Codecs0,
+  C0,
+  Workspace,
+  "issue",
+  "workspace",
+  I0,
+  A0,
+  P0,
+  Error,
+  Notes
+>;
+same<Flat<Parameters<WithRecords>[1]>, Flat<Parameters<RealWithRecords>[1]>>(true);
+same<Parameters<WithRecords>[0], Parameters<RealWithRecords>[0]>(true);
+same<ReturnType<WithRecords>, ReturnType<RealWithRecords>>(true);
+type WithoutRecords = typeof process<
+  Codecs0,
+  C0,
+  Workspace,
+  "issue",
+  "workspace",
+  I0,
+  P0,
+  Error,
+  Notes
+>;
+type RealWithoutRecords = typeof FoldByKey.process<
+  Codecs0,
+  C0,
+  Workspace,
+  "issue",
+  "workspace",
+  I0,
+  P0,
+  Error,
+  Notes
+>;
+same<Flat<Parameters<WithoutRecords>[1]>, Flat<Parameters<RealWithoutRecords>[1]>>(true);
+same<ReturnType<WithoutRecords>, ReturnType<RealWithoutRecords>>(true);
+```
+
+`process` builds the `process` handler of a `Projection.process` declaration with `Commit.transaction`. The declaration must list the State stream of `table` in `outputs`, under the key `spec.output`. The handler writes one collection, `spec.collection`.
+
+| Field        | Meaning                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `output`     | The key in `outputs` of the State stream                                                                                |
+| `collection` | The collection that the fold writes. It must be a collection of the State class                                         |
+| `records`    | Optional. Gives the records of one input item. Without it, each item is one record                                      |
+| `key`        | Gives the row key of a record. `undefined` skips the record                                                             |
+| `fold`       | Gives the next row from the previous row and a record, or `FoldByKey.remove` to delete the row. It can return an Effect |
+
+In each unit the handler creates the output if it is missing, calls `sync` on the table, groups the records by key in first-seen order, loads the stored rows of those keys, and folds each key's records in order. It drops a key whose new stored JSON equals its stored row, and appends one change for each other key in one append. It does not apply its own append to the table. See [What a unit does](/docs/projections/fold-by-key#what-a-unit-does).
+
+### `FoldByKey.Handler`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { StreamAddress, Streamsy } from "@streamsy/core";
+import type {
+  FoldByKey,
+  FoldByKeyError,
+  InputMap,
+  ProjectionFault,
+  Slices,
+  Transaction,
+  Unit,
+} from "@streamsy/projection";
+import { Notes, Workspace } from "./notes-streams.ts";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+// The bound address of the State stream, as `outputs` gives it.
+type Output<C extends StreamAddress.Collections, TR> = StreamAddress.StateAddress<C> &
+  Streamsy.Address<
+    StreamAddress.CollectionsEvent<C>,
+    TR,
+    StreamAddress.CollectionsDecodingServices<C>,
+    StreamAddress.CollectionsEncodingServices<C>
+  >;
+
+type Handler<
+  C extends StreamAddress.Collections,
+  O extends string,
+  I extends InputMap,
+  P,
+  E,
+  R,
+  TR,
+> = (
+  batch: Slices<I>,
+  unit: Unit<P>,
+  context: { readonly outputs: Readonly<Record<O, Output<C, TR>>> },
+) => Effect.Effect<
+  void,
+  E | FoldByKeyError | ProjectionFault,
+  | R
+  | TR
+  | SqlClient.SqlClient
+  | Transaction
+  | StreamAddress.CollectionsDecodingServices<C>
+  | StreamAddress.CollectionsEncodingServices<C>
+>;
+// ---cut-after---
+type C0 = typeof Workspace.collections;
+type I0 = { readonly notes: ReturnType<typeof Notes.at> };
+type P0 = { readonly workspaceId: string };
+same<
+  Handler<C0, "workspace", I0, P0, Error, Notes, Workspace>,
+  FoldByKey.Handler<C0, "workspace", I0, P0, Error, Notes, Workspace>
+>(true);
+```
+
+`Handler` is the type that `FoldByKey.process` returns: a `process` handler for a declaration that lists the State stream in `outputs` under the key `O`. `E` and `R` are the error and the services of a `fold` that returns an Effect, and `TR` is the service of the State stream.
+
+The handler fails with:
+
+| Failure                             | When                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`FoldByKeyError`](#foldbykeyerror) | A folded row's key field differs from `key`                                                 |
+| `E`                                 | A `fold` Effect fails. The error passes through unchanged                                   |
+| `ProjectionFault`                   | `sync` faults, or the handler cannot read the rows or write the output. See the table below |
+
+| Cause                                                    | `phase`   | `reason`          |
+| -------------------------------------------------------- | --------- | ----------------- |
+| A storage or transport fault on the create or the append | `process` | `storage-failure` |
+| The output refuses the create or the append              | `process` | `invalid-output`  |
+| The SQL read of the stored rows fails                    | `process` | `storage-failure` |
+| A stored row does not decode with the collection schema  | `process` | `invalid-record`  |
+| A folded row does not encode with the collection schema  | `process` | `invalid-output`  |
+
+A `records`, `key` or `fold` callback that throws is a defect, as in every other handler kind. The handler does not catch it.
+
+### `FoldByKey.remove`
+
+```ts
+// ---cut-start---
+import { FoldByKey } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const remove: unique symbol;
+type Remove = typeof remove;
+// ---cut-after---
+// A unique symbol equals only itself, so check the real pair against each other.
+same<typeof FoldByKey.remove, FoldByKey.Remove>(true);
+same<FoldByKey.Remove extends symbol ? true : false, true>(true);
+```
+
+Return `FoldByKey.remove` from `fold` to delete the row of the key. The next record of that key in the unit gets `undefined` as `previous`. A key with no stored row that ends the unit removed appends nothing.
+
+## `FoldByKeyError`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/projection";
+import { same, type Fields } from "./reference-check.ts";
+// ---cut-end---
+interface FoldByKeyError extends Error {
+  readonly _tag: "FoldByKeyError";
+  readonly message: string;
+}
+// ---cut-after---
+same<FoldByKeyError["_tag"], Real.FoldByKeyError["_tag"]>(true);
+same<FoldByKeyError["message"], Real.FoldByKeyError["message"]>(true);
+// The other field is a type-only brand.
+same<Exclude<keyof Fields<Real.FoldByKeyError>, "brand">, "_tag">(true);
+```
+
+`FoldByKeyError` is a `Schema.TaggedError` in the error channel of the handler. It is not a `ProjectionFault`, so it has no `phase` and no `reason`. The handler fails with it when a folded row carries a key that differs from the key that `key` returned. `message` names both keys. Import it from the top level of `@streamsy/projection`.
+
+The runners treat it like any handler error. Under durable `attach` the binding defers on its own backoff. See [Errors](/docs/projections/fold-by-key#errors).

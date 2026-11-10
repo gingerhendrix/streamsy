@@ -163,9 +163,9 @@ const prepared = Projection.process({
 
       return "prepared";
     }),
-  process: (_batch, _unit, value) =>
+  process: (_batch, _unit, context) =>
     Effect.gen(function* () {
-      const check: string = value;
+      const check: string = context.prepared;
       const sql = yield* SqlClient.SqlClient;
       yield* sql`SELECT ${check}`;
     }),

@@ -1,7 +1,9 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the SQLite runtime and transaction instrumentation. */
 import { expect, test } from "vitest";
 import { Array, Cause, Effect, Exit, Schema } from "effect";
-import { Streams } from "@streamsy/core/protocol";
+import { Protocol, Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { Streamsy, MemoryStorage } from "@streamsy/core";
+import { Layer } from "effect";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
 import * as Family from "./support/families.ts";
@@ -9,6 +11,80 @@ import * as Family from "./support/families.ts";
 const input = Family.json("prepare-input", { schema: Schema.Finite });
 
 const host = Family.withFamilies(layerSqlite());
+
+class Sink extends Streamsy.json<Sink>()("process/Sink", "process/sink/:id", {
+  params: { id: Schema.String },
+  schema: Schema.Finite,
+}) {}
+
+test("process and prepare receive bound outputs; only the handler appends", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [2, 3]);
+      const sink = yield* Sink;
+      yield* sink.create({ id: "a" });
+      const address = Sink.at({ id: "a" });
+
+      const projection = Projection.process({
+        id: "process-outputs",
+        params: {},
+        inputs: { input },
+        outputs: { sink: address },
+        commit: Commit.transaction,
+        prepare: (_batch, _unit, { outputs }) => Effect.succeed(outputs.sink.id),
+        process: (batch, _unit, { prepared, outputs }) => {
+          expect(prepared).toBe(address.id);
+
+          return Effect.gen(function* () {
+            const { wire } = yield* outputs.sink.stream;
+
+            if (!Array.isReadonlyArrayNonEmpty(batch.input.items)) return;
+            yield* Streams.append(outputs.sink, batch.input.items).pipe(
+              Effect.provideService(StreamsWriter, wire),
+            );
+          });
+        },
+      }).at({});
+
+      yield* Projection.run(projection);
+      expect((yield* sink.collect({ id: "a" })).items).toEqual([2, 3]);
+    }).pipe(
+      Effect.provide(Protocol.bind(host, Streamsy.group(Sink)).pipe(Layer.provideMerge(host))),
+    ),
+  ));
+
+test("process checks a declared output on another owner before invoking the handler", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [1]);
+      let called = false;
+
+      const projection = Projection.process({
+        id: "process-foreign-output",
+        params: {},
+        inputs: { input },
+        outputs: { sink: Sink.at({ id: "foreign" }) },
+        commit: Commit.transaction,
+        process: () =>
+          Effect.sync(() => {
+            called = true;
+          }),
+      }).at({});
+
+      expect(yield* Projection.run(projection).pipe(Effect.result)).toMatchObject({
+        _tag: "Failure",
+        failure: { phase: "load", reason: "unsupported-composition" },
+      });
+      expect(called).toBe(false);
+      expect((yield* (yield* CheckpointStore).load(projection)).token).toBe("0");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(host, Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Sink))),
+      ),
+    ),
+  ));
 
 test("prepare runs outside the transaction and passes its result into process", () =>
   Effect.runPromise(
@@ -32,7 +108,7 @@ test("prepare runs outside the transaction and passes its result into process", 
 
             return Array.reduce(batch.input.items, 0, (sum, n) => sum + n);
           }),
-        process: (_batch, unit, prepared) =>
+        process: (_batch, unit, { prepared }) =>
           Effect.sync(() => {
             expect(inside).toBe(true);
             expect(unit.key).toBe(preparedKey);
@@ -150,7 +226,7 @@ for (const extended of [false, true]) {
 
               return batch.input.items.length;
             }),
-          process: (_batch, _unit, prepared) =>
+          process: (_batch, _unit, { prepared }) =>
             Effect.sync(() => {
               processed += prepared;
             }),

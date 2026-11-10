@@ -112,7 +112,7 @@ export const search = Projection.process({
   inputs: { input: Files },
   commit: Commit.transaction,
   prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
-  process: (batch, unit, prepared) =>
+  process: (batch, unit, { prepared }) =>
     batch.input.gone
       ? clearIndexFolder(unit.params.folderId)
       : applyIndexChanges(unit.params.folderId, prepared),

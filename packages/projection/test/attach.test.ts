@@ -202,6 +202,46 @@ layer(host())((it) => {
 });
 
 layer(host())((it) => {
+  it.effect("a handler that throws is retried, and the pass keeps running", () =>
+    Effect.gen(function* () {
+      const thrown = yield* Deferred.make<void>();
+      const recovered = yield* Deferred.make<void>();
+      let attempts = 0;
+
+      const projection = Projection.process({
+        id: "throwing-attachment",
+        params: { folderId: Schema.String },
+        inputs: { files: Files },
+        commit: Commit.atLeastOnce,
+        process: () =>
+          Effect.suspend(() => {
+            attempts += 1;
+
+            if (attempts > 1) return Deferred.succeed(recovered, undefined).pipe(Effect.asVoid);
+
+            return Deferred.succeed(thrown, undefined).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  throw new Error("handler bug");
+                }),
+              ),
+            );
+          }),
+      });
+
+      yield* Layer.build(Projection.attach(projection, { retry: Schedule.spaced("1 second") }));
+      const files = yield* Files;
+      yield* files.create(docs);
+      yield* files.append(docs, ["a"]);
+      yield* Deferred.await(thrown);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(recovered);
+      expect(attempts).toBe(2);
+    }),
+  );
+});
+
+layer(host())((it) => {
   it.effect("a source removed before its binding first runs drops the binding", () =>
     Effect.gen(function* () {
       const files = yield* Files;

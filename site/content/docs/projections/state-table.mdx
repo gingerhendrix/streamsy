@@ -1,0 +1,329 @@
+---
+title: State tables
+description: Keep the rows of a Durable State stream in a SQL table, keep the table current with a projection trigger, and read rows by key or in pages.
+---
+
+`StateTable` keeps the rows of a [Durable State stream](/docs/streams/durable-state) in SQL tables on the storage of the stream. The stream stays the source of truth. The table is an index of it, and `StateTable.rebuild` makes the table again from the stream alone. For the full signatures, see [`StateTable`](/docs/reference/projection/state-table#statetable).
+
+A table indexes a State stream whoever writes it: a plain append, an HTTP client, a `Projection.emit` output, or a [keyed fold](/docs/projections/fold-by-key). The writers do not change.
+
+## Define a table
+
+`StateTable.define(Workspace)` takes a `Streamsy.state` class and returns a projection declaration:
+
+| Field        | Value                                                    |
+| ------------ | -------------------------------------------------------- |
+| `id`         | `state-table/` followed by the service name of the class |
+| `version`    | `1`                                                      |
+| `generation` | `1`                                                      |
+| `params`     | The params of the State stream                           |
+| `inputs`     | One input, `state`, which is the State stream            |
+| Commit       | `Commit.transaction`                                     |
+
+`define` takes no options and adds no collection. `table.at(params)` gives the bound table. A runner takes it as a bound projection, and it also has the reads and `sync`.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { StateTable } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+
+const WorkspaceTable = StateTable.define(Workspace);
+const table = WorkspaceTable.at({ workspaceId: "main" });
+```
+
+The table stores the canonical JSON of the value of each change: `JSON.stringify` of the parsed value. Streamsy storage holds each JSON message in that form, so for a Streamsy stream the table stores the bytes of the stream. The table never decodes a value with the collection schema. So the rows depend only on the stream, no code version changes them, and old history that the current schema rejects still applies. Reads decode with the collection schema.
+
+| Message          | Effect on the rows                                                         |
+| ---------------- | -------------------------------------------------------------------------- |
+| Upsert           | Writes the row                                                             |
+| Delete           | Deletes the row                                                            |
+| `reset`          | Deletes every row of the stream                                            |
+| `snapshot-start` | Starts a snapshot                                                          |
+| `snapshot-end`   | Deletes each row that no upsert wrote since the `snapshot-start` before it |
+
+The result equals `DurableState.materialize` over the same items. See [Read and fold rows](/docs/streams/durable-state#read-and-fold-rows).
+
+## Create the tables
+
+Call `StateTable.migrate(sql)` once at host start, before any table runs. It creates two tables with `CREATE TABLE IF NOT EXISTS`:
+
+| Table                  | Holds                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `streamsy_state_heads` | One head for each stream: the offset that the rows reflect, and snapshot state |
+| `streamsy_state_rows`  | One row for each stream, collection and key, with the value as canonical JSON  |
+
+The tables sit outside the storage migrations. The storage version does not change, so an older release still opens the database. `migrate` supports the SQLite family only. On another dialect it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`.
+
+## Keep the table current
+
+The table is an ordinary projection, so the usual triggers keep it current. See [Triggers](/docs/projections/run#triggers).
+
+| Host                                                | Trigger                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
+| Bun or Node process that owns the storage           | `Projection.attach(WorkspaceTable, { durable: true })`             |
+| Cloudflare Durable Object                           | `ProjectionWakeup.attach(WorkspaceTable)`, durable by default      |
+| Another process on the same database file           | `Projection.follow(table)`, or a scheduled `Projection.run(table)` |
+| A request handler, when nothing else runs the table | `Projection.run(table)` before the read                            |
+
+Attach a table with `durable: true`. Without it, a crash between a commit and the attached run loses the binding's pending mark. The table then lags until the stream gets its next write. With `durable: true`, the commit writes the mark in its own transaction. See [Attach](/docs/projections/run#attach).
+
+Only commits through this process's `Storage` start an attached run. A commit by another process on the same database file does not. In that case use `follow` or a scheduled `run`. The [one writer](/docs/projections/run#one-writer) rule applies to the table binding: do not run an attached table under `follow` too.
+
+A Bun host runs `migrate`, then attaches the table beside its API Layer:
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Workspace } from "./streams.ts";
+
+const WorkspaceTable = StateTable.define(Workspace);
+
+const storage = BunStorage.layer(Streamsy.group(Workspace), {
+  client: { filename: "./tracker.sqlite" },
+});
+
+const migrate = Layer.effectDiscard(Effect.flatMap(SqlClient.SqlClient, StateTable.migrate));
+
+const host = Projection.attach(WorkspaceTable, { durable: true }).pipe(
+  Layer.provideMerge(migrate),
+  Layer.provideMerge(Layer.mergeAll(CheckpointStore.layer, Transaction.layer)),
+  Layer.provideMerge(storage),
+);
+```
+
+The table binding uses `Commit.transaction`, so the host needs `Transaction.layer`. A memory host has no `Transaction`, so it cannot keep a table.
+
+On a Durable Object, run `migrate` in the object's `layer` and pass `ProjectionWakeup.attach(WorkspaceTable)` in `wakeups`. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
+
+## Read rows
+
+The reads need the `SqlClient` service. They work inside or outside a transaction.
+
+| Read                               | Returns                                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `table.get(collection, key)`       | `{ offset, value }`. `value` is `undefined` when the row is absent                                 |
+| `table.getMany(collection, keys)`  | `{ offset, rows }`. `rows` is a `ReadonlyMap` from key to value. It has no entry for an absent key |
+| `table.list(collection, options?)` | `{ offset, rows, next }`. `rows` holds `{ key, value }` in key order                               |
+| `table.offset()`                   | The offset that the rows reflect                                                                   |
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+import { Effect } from "effect";
+import { StateTable } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+const WorkspaceTable = StateTable.define(Workspace);
+// ---cut---
+const table = WorkspaceTable.at({ workspaceId: "main" });
+
+const titles = (ids: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const { offset, rows } = yield* table.getMany("issue", ids);
+    return { offset, titles: ids.map((id) => rows.get(id)?.title) };
+  });
+```
+
+Each read decodes the stored values with the collection schema. A stored value that the current schema rejects fails the read with a `SchemaError`. The table still applies it, so the stream and the table never disagree. To read old values, use a schema that decodes both shapes.
+
+A table that has never run has no head. Its reads give no rows, and `offset` is the zero offset.
+
+### Offsets
+
+`offset` is the stream offset that the rows reflect. A read takes the offset first, then the rows, so the rows can be newer than the offset but never older.
+
+To follow the stream after a read, read from that offset. The reader can then get a change that the rows already hold. State changes are whole upserts and deletes, so the reader converges. A row can step back for a moment while the reader catches up, so finish catching up before you treat the rows as current.
+
+The rows lag each write by one table run, a fold's own write included. To read your own write, call `sync` and read in one transaction. See [Sync](#sync). You can also wait until `table.offset()` passes the offset of the append. On a host where nothing else runs the table, `Projection.run(table)` before the read works too. Do not call `run` beside an attached table, because that makes a second writer of its checkpoint.
+
+### Pages
+
+`list` with `limit` reads a page in key order. `next` is the last key of a full page, or `undefined` when the page is not full. Pass it as `after` to read the next page:
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+import { Effect } from "effect";
+import { StateTable } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+const WorkspaceTable = StateTable.define(Workspace);
+const table = WorkspaceTable.at({ workspaceId: "main" });
+// ---cut---
+const allIssues = Effect.gen(function* () {
+  const first = yield* table.list("issue", { limit: 500 });
+  const issues = [...first.rows];
+  let next = first.next;
+  while (next !== undefined) {
+    const page = yield* table.list("issue", { after: next, limit: 500 });
+    issues.push(...page.rows);
+    next = page.next;
+  }
+  return { offset: first.offset, issues };
+});
+```
+
+Pages are not a snapshot. A unit can commit between two pages, so a later page can reflect a newer offset than the first. To follow the stream after a paged read, follow from the offset of the first page. Every later page is at least that new.
+
+`list` with no `limit` reads the whole collection in one call. Bun SQLite is synchronous, so that call holds the event loop for the whole read. On a request path or a running host, read in pages. A `limit` that is not a positive safe integer fails with a `ProjectionFault` with phase `load` and reason `invalid-options`.
+
+The first release has no filter and no secondary index. To find rows by a field other than the key, read pages and filter them in your code.
+
+## Sync
+
+`table.sync()` applies the stream from the head of the table to the tail of the stream, in the caller's transaction. It needs the `Transaction` service, so call it inside a `Commit.transaction` unit or inside `withTransaction`. `sync` moves the head of the table and never writes the checkpoint of the table binding, so it can run beside an attached table. A read after `sync` in the same transaction sees every write that came before it:
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+import { Effect } from "effect";
+import { StateTable, Transaction } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+const WorkspaceTable = StateTable.define(Workspace);
+const table = WorkspaceTable.at({ workspaceId: "main" });
+// ---cut---
+const current = Effect.gen(function* () {
+  const tx = yield* Transaction;
+  return yield* tx.withTransaction(
+    Effect.gen(function* () {
+      yield* table.sync();
+      return yield* table.get("issue", "i-1");
+    }),
+  );
+});
+```
+
+1. `sync` reads the head. A missing head counts as the zero offset with no rows.
+2. It reads the tail of the stream. A head past the tail means that the stream was deleted and created again, so `sync` deletes the rows of the stream and starts from zero.
+3. It reads the stream from the head to the tail, applies each message, and saves the new head. When the head equals the tail, it reads nothing.
+
+A [keyed fold](/docs/projections/fold-by-key) calls `sync` before it reads rows, so it also moves the head. When the table binding gets a slice that starts at the head, it applies the slice items. Otherwise it calls `sync`.
+
+`sync` fails only with a `ProjectionFault`. A stream that does not exist gives reason `history-unavailable`, and a storage, transport or SQL failure gives the retryable reason `storage-failure`. See [`StateTable.Bound`](/docs/reference/projection/state-table#statetablebound) for each case. Do not use the fault to test whether a stream exists. Read `head` on the stream, or keep a registry.
+
+`sync` has no limit. It holds the write lock for the whole gap, and on Bun it also holds the event loop. In normal use the gap is one or a few appends. A bulk append by another writer, a rebuild, or a first run over a stream with history makes a large gap. On a laptop with in-memory SQLite, `sync` took 9 ms for 1,000 changes and 89 ms for 10,000 changes, the median of 5 runs with no disk I/O.
+
+## Start order
+
+A fold that finds a large gap runs the whole `sync` inside its own unit. To keep that work out of the folds, run the table once at host start, before you attach the folds:
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Projection, StateTable } from "@streamsy/projection";
+import { Workspace } from "./streams.ts";
+
+const WorkspaceTable = StateTable.define(Workspace);
+
+const start = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* StateTable.migrate(yield* SqlClient.SqlClient);
+    yield* (yield* Workspace).create({ workspaceId: "main" });
+    yield* Projection.run(WorkspaceTable.at({ workspaceId: "main" }));
+  }),
+);
+
+const tables = Projection.attach(WorkspaceTable, { durable: true }).pipe(Layer.provideMerge(start));
+```
+
+Create the State stream before the start run. A run or a `sync` over a stream that does not exist fails with reason `history-unavailable`, and `create` succeeds when the stream already exists with the same content type. Build the fold Layers over `tables`, so they attach after the start run. This is a startup order, not a mechanism. Streamsy does not check it.
+
+## Rebuild and reset
+
+`StateTable.rebuild(table)` deletes the rows and the head of the stream, then calls `sync`, in one transaction. It reads only the stream. The checkpoint of the table binding stays where it was, so you need no `forget`. Its next slice does not start at the head, so it calls `sync`, which reads nothing.
+
+`StateTable.reset(table)` appends a `reset` message to the stream. The next table run deletes every row. A `reset` is a write to the stream, so every reader and every fold of the stream sees it. Use it only as the first step of a fold fix. See [Operate State tables](/docs/projections/state-table-operations).
+
+## Limits
+
+- The tables need the SQLite family: Bun SQLite, Durable Object SQLite, or another SQLite `SqlClient`.
+- A table needs a host with `Transaction`. A memory host cannot keep one.
+- The table has no secondary indexes and no filtered reads.
+- The rows lag every write by one table run.
+
+## Example: an issue tracker
+
+An issue tracker keeps its workspace in a State stream. Browsers and request handlers append changes to it, and a table on the owner indexes the rows. The writers do not know about the table.
+
+```ts
+// @filename: streams.ts
+export * from "./notes-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { DurableState, Streamsy } from "@streamsy/core";
+import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { Workspace } from "./streams.ts";
+
+const WorkspaceTable = StateTable.define(Workspace);
+
+// A writer that knows nothing about the table.
+const createIssue = (issue: { id: string; projectId: string; title: string }) =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace;
+    const params = { workspaceId: "main" };
+    yield* workspace.append(
+      params,
+      DurableState.changes(Workspace.at(params), {}, [DurableState.upsert("issue", issue)]),
+    );
+  });
+
+// A read that must see the write that came before it.
+const issueTitle = (id: string) =>
+  Effect.gen(function* () {
+    const table = WorkspaceTable.at({ workspaceId: "main" });
+    const tx = yield* Transaction;
+    const { value } = yield* tx.withTransaction(
+      Effect.andThen(table.sync(), table.get("issue", id)),
+    );
+    return value?.title;
+  });
+
+// A read that can lag one table run.
+const issueCount = Effect.map(
+  WorkspaceTable.at({ workspaceId: "main" }).list("issue"),
+  ({ rows }) => rows.length,
+);
+
+const storage = BunStorage.layer(Streamsy.group(Workspace), {
+  client: { filename: "./tracker.sqlite" },
+});
+
+const start = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* StateTable.migrate(yield* SqlClient.SqlClient);
+    yield* (yield* Workspace).create({ workspaceId: "main" });
+    yield* Projection.run(WorkspaceTable.at({ workspaceId: "main" }));
+  }),
+);
+
+const host = Projection.attach(WorkspaceTable, { durable: true }).pipe(
+  Layer.provideMerge(start),
+  Layer.provideMerge(Layer.mergeAll(CheckpointStore.layer, Transaction.layer)),
+  Layer.provideMerge(storage),
+);
+
+const program = Effect.gen(function* () {
+  yield* createIssue({ id: "i-1", projectId: "p-1", title: "Fix the login form" });
+  return yield* issueTitle("i-1");
+});
+```
+
+`issueTitle` calls `sync` before it reads, in one transaction, so it sees the issue that `createIssue` wrote. `issueCount` reads without `sync`, so it can miss a write that the attached table has not applied yet. The attached table applies the stream in its own units, and a `sync` call and the table binding share the head, so neither repeats the other's work.

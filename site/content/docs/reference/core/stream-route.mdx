@@ -73,15 +73,18 @@ declare function state<
     readonly collections: C & StreamAddress.ValidCollections<C>;
   },
 ): StreamRoute.StateRoute<StreamRoute.Params<Codecs>, C, Template> &
-  WithPathSchema<StreamRoute.Params<Codecs>>;
+  WithPathSchema<StreamRoute.Params<Codecs>> &
+  WithParamCodecs<Codecs>;
 
 // WithPathSchema has no exported name. It makes paramSchema required.
 type WithPathSchema<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
+// WithParamCodecs has no exported name. It keeps the codec record of `params`.
+type WithParamCodecs<Codecs extends StreamRoute.ParamCodecs> = { readonly paramCodecs: Codecs };
 // ---cut-after---
 same<typeof state, typeof StreamRoute.state>(true);
 ```
 
-`state` returns a route whose addresses are [State addresses](/docs/reference/core/stream-address#streamaddressstate) with the collections `collections`.
+`state` returns a route whose addresses are [State addresses](/docs/reference/core/stream-address#streamaddressstate) with the collections `collections`. The route keeps the `params` codec record as `paramCodecs`. [`StateTable.define`](/docs/reference/projection/state-table#statetabledefine) reads it for the params of the table declaration.
 
 ### `StreamRoute.bytes`
 

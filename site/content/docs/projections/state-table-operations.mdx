@@ -1,0 +1,77 @@
+---
+title: Operate State tables
+description: Rebuild a State table, fix a keyed fold, and follow the rules that Streamsy does not check for tables and folds.
+---
+
+This page lists the operator steps for [State tables](/docs/projections/state-table) and [keyed folds](/docs/projections/fold-by-key), and the rules that keep their rows right. Streamsy checks none of these rules at run time. A mistake gives wrong rows with no error, as a mistake with [checkpoints](/docs/projections/checkpoints) does.
+
+## Operator steps
+
+| Case                                                  | Steps                                                                                                            |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Rows are lost or suspect                              | `StateTable.rebuild(table)`                                                                                      |
+| Host start, or a new table over a stream with history | `Projection.run(table)` before the folds attach. See [Start order](/docs/projections/state-table#start-order)    |
+| A fold has a bug, or a fold was renamed               | The [fold fix](#fix-a-fold)                                                                                      |
+| You want an empty stream                              | `StateTable.reset(table)`, then `Projection.forget` for every binding of every projection that writes the stream |
+| A checkpoint was moved by hand to skip a bad record   | Nothing more. The fold skips the record, as intended                                                             |
+
+`rebuild` and the start run read only the State stream. A fold fix reads the sources again.
+
+## Fix a fold
+
+A fold fix folds every source again from zero into empty rows. It uses the `generation` of the folds and a `reset` of the stream. A new generation does not fence the old runners of a `Commit.transaction` projection, so you stop them first.
+
+1. Stop the old runners of every projection that writes the stream.
+2. Run `StateTable.reset(table)`. It appends a `reset`, which clears every row of the stream.
+3. Deploy every projection that writes the stream with a raised `generation`.
+4. Run each source address once. `attach` runs a binding only when its source gets a write, so a source with no new write stays unfolded until you run it.
+
+A `reset` clears the whole stream, so the fix folds again every projection that writes it, not only the one with the bug. Readers see the rows empty and then fill again. Choose a time when that is acceptable.
+
+Streamsy has no list of the source addresses of a projection. Keep your own list, for example from the stream ids in storage or from the checkpoint records of the old generation. After step 4, compare the number of checkpoint records of the new generation with your list.
+
+Remote writers under `Commit.producer` must stop before the `reset` too. A reader that does not handle `reset` must stop while you run the fix.
+
+### Wrong orders
+
+The order is the operator's job. A wrong order does not fail. In the Streamsy tests, two sources fold 10 and 20 into one counter, so the right answer is 30:
+
+| Order                                         | Effect                                                          | Counter in the test                          |
+| --------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------- |
+| The steps above                               | The rows equal those of a fresh fold                            | 30                                           |
+| A new generation runs before the `reset`      | It folds from zero over the old rows. Counters double           | 60                                           |
+| An old runner keeps running after the `reset` | It folds onto empty rows from its old offset. Rows lose history | 4 in place of 34, after one more record of 4 |
+
+## Fold identity
+
+The `id`, `version` and `generation` of a fold are its identity. A fold with a new identity has no checkpoint, so it folds every source from zero over the rows that the old identity left.
+
+**A rename is a fold fix.** In the Streamsy tests, a fold renamed over kept rows gave a counter of 60 in place of 30. To rename a fold, or to split one source into two, follow [Fix a fold](#fix-a-fold) with the new ids in step 3. Pin the ids of your folds in a test, so that an accidental rename fails the build.
+
+## Rules that Streamsy does not check
+
+| Rule                                                                                     | What breaks it                                                               | Effect of the mistake                                                             |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Treat `id`, `version` and `generation` as the identity of a fold. A rename is a fold fix | A refactor renames a fold or splits a source                                 | The renamed fold folds history over its old rows. Counters double                 |
+| Do not `forget` a fold binding and keep its rows                                         | `Projection.forget` with no `reset`                                          | The same doubling. See the [`forget` steps](/docs/projections/checkpoints#forget) |
+| Append a `reset`, or a snapshot that omits a fold's rows, only as part of a fold fix     | An operator or another writer appends one                                    | The fold continues on empty rows and loses history                                |
+| Stop the old runners before a fold fix                                                   | A deploy that overlaps two processes                                         | Old fold output lands on the rows of the fix                                      |
+| One writer per collection                                                                | Two projections, or a projection and an outside writer, write one collection | Rows from the two writers interleave                                              |
+| One writer per projection key, the table binding included                                | A table under both `attach` and `follow`                                     | The slower writer fails with reason `token-conflict`                              |
+
+A checkpoint that an operator moves by hand, to skip a bad record, needs no step. The fold skips that record, which is the intent.
+
+## Faults and recovery
+
+The table binding, `sync` and `rebuild` fail only with a `ProjectionFault`: when SQL or the stream storage fails (reason `storage-failure`, retryable), when the history after the head is gone (`history-unavailable`), or when a stored message is not a State message (`invalid-record`). Recovery is the usual projection recovery. A durable binding retries on its own backoff. You can also fix the cause and call `StateTable.rebuild`. See [Faults](/docs/projections/checkpoints#faults).
+
+A fault in the table also fails every fold that writes the stream with the same fault, because each fold calls `sync` before it reads rows.
+
+The first release has a known gap in that recovery:
+
+- **A fix does not resume a deferred binding.** A durable binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. The binding runs again at its due time, or sooner when a commit through this process writes its source.
+- **A health check that counts only fresh marks stays green.** When the table fails, every binding that writes the stream defers. A check that looks only at marks with no failed attempts still reports the host as ready. On a Durable Object, read the `deferred` count of [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) to see deferred bindings.
+
+## SQLite only
+
+The tables need the SQLite family. `StateTable.migrate` fails on Postgres and MySQL with reason `unsupported-composition`.
