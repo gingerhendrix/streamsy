@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ArticlesIndexRouteImport } from './routes/articles/index'
 import { Route as ArticlesSlugRouteImport } from './routes/articles/$slug'
+import { Route as ChangelogChar123PageChar125RouteImport } from './routes/changelog.{-$page}'
 import { Route as DocsSplatRouteImport } from './routes/docs/$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,12 @@ const ArticlesSlugRoute = ArticlesSlugRouteImport.update({
   path: '/articles/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChangelogChar123PageChar125Route =
+  ChangelogChar123PageChar125RouteImport.update({
+    id: '/changelog/{-$page}',
+    path: '/changelog/{-$page}',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DocsSplatRoute = DocsSplatRouteImport.update({
   id: '/docs/$',
   path: '/docs/$',
@@ -45,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/search': typeof ApiSearchRoute
   '/articles/$slug': typeof ArticlesSlugRoute
+  '/changelog/{-$page}': typeof ChangelogChar123PageChar125Route
   '/docs/$': typeof DocsSplatRoute
   '/articles/': typeof ArticlesIndexRoute
 }
@@ -52,6 +60,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/search': typeof ApiSearchRoute
   '/articles/$slug': typeof ArticlesSlugRoute
+  '/changelog/{-$page}': typeof ChangelogChar123PageChar125Route
   '/docs/$': typeof DocsSplatRoute
   '/articles': typeof ArticlesIndexRoute
 }
@@ -60,19 +69,33 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/search': typeof ApiSearchRoute
   '/articles/$slug': typeof ArticlesSlugRoute
+  '/changelog/{-$page}': typeof ChangelogChar123PageChar125Route
   '/docs/$': typeof DocsSplatRoute
   '/articles/': typeof ArticlesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/search' | '/articles/$slug' | '/docs/$' | '/articles/'
+  fullPaths:
+    | '/'
+    | '/api/search'
+    | '/articles/$slug'
+    | '/changelog/{-$page}'
+    | '/docs/$'
+    | '/articles/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/search' | '/articles/$slug' | '/docs/$' | '/articles'
+  to:
+    | '/'
+    | '/api/search'
+    | '/articles/$slug'
+    | '/changelog/{-$page}'
+    | '/docs/$'
+    | '/articles'
   id:
     | '__root__'
     | '/'
     | '/api/search'
     | '/articles/$slug'
+    | '/changelog/{-$page}'
     | '/docs/$'
     | '/articles/'
   fileRoutesById: FileRoutesById
@@ -81,6 +104,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiSearchRoute: typeof ApiSearchRoute
   ArticlesSlugRoute: typeof ArticlesSlugRoute
+  ChangelogChar123PageChar125Route: typeof ChangelogChar123PageChar125Route
   DocsSplatRoute: typeof DocsSplatRoute
   ArticlesIndexRoute: typeof ArticlesIndexRoute
 }
@@ -115,6 +139,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ArticlesSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/changelog/{-$page}': {
+      id: '/changelog/{-$page}'
+      path: '/changelog/{-$page}'
+      fullPath: '/changelog/{-$page}'
+      preLoaderRoute: typeof ChangelogChar123PageChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs/$': {
       id: '/docs/$'
       path: '/docs/$'
@@ -129,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiSearchRoute: ApiSearchRoute,
   ArticlesSlugRoute: ArticlesSlugRoute,
+  ChangelogChar123PageChar125Route: ChangelogChar123PageChar125Route,
   DocsSplatRoute: DocsSplatRoute,
   ArticlesIndexRoute: ArticlesIndexRoute,
 }

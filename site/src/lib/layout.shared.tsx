@@ -11,6 +11,7 @@ export function baseOptions(): BaseLayoutProps {
     links: [
       { text: "Docs", url: withBasePath("/docs"), active: "nested-url" },
       { text: "Articles", url: withBasePath("/articles"), active: "nested-url" },
+      { text: "Changelog", url: withBasePath("/changelog"), active: "nested-url" },
     ],
   };
 }
