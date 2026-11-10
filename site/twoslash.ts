@@ -2,8 +2,11 @@ import { Array, Option, Record } from "effect";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { transformerTwoslash } from "fumadocs-twoslash";
-import type { Code } from "mdast";
-import { defaultHandlers, type Handle } from "mdast-util-to-markdown";
+import type { Code, Root } from "mdast";
+import { defaultHandlers, toMarkdown, type Handle } from "mdast-util-to-markdown";
+import { replaceSource } from "fumadocs-core/mdx-plugins/stringifier";
+import { visit } from "unist-util-visit";
+import type { VFile } from "vfile";
 import type { ShikiTransformer } from "shiki";
 
 /**
@@ -154,4 +157,16 @@ export const processedMarkdownCode: Handle = (node: Code, parent, state, info) =
   };
 
   return defaultHandlers.code(shown, parent, state, info);
+};
+
+/** Fumadocs 16.18 uses source replacements instead of Markdown serializer handlers. */
+export const remarkProcessedMarkdownCode = () => (tree: Root, file: VFile) => {
+  visit(tree, "code", (node) => {
+    if (isCheckedFence(node.lang ?? "", node.meta ?? ""))
+      replaceSource(
+        file,
+        node,
+        toMarkdown(node, { handlers: { code: processedMarkdownCode } }).trimEnd(),
+      );
+  });
 };

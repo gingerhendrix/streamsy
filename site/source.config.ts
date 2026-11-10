@@ -3,7 +3,7 @@ import { rehypeCodeDefaultOptions } from "fumadocs-core/mdx-plugins";
 import { pageSchema } from "fumadocs-core/source/schema";
 import { join } from "node:path";
 import { z } from "zod";
-import { processedMarkdownCode, twoslash } from "./twoslash.ts";
+import { remarkProcessedMarkdownCode, twoslash } from "./twoslash.ts";
 
 export const articles = defineCollections({
   type: "doc",
@@ -17,7 +17,7 @@ export const docs = defineDocs({
   dir: "content/docs",
   docs: {
     postprocess: {
-      includeProcessedMarkdown: { handlers: { code: processedMarkdownCode } },
+      includeProcessedMarkdown: true,
     },
   },
 });
@@ -29,6 +29,7 @@ export const docs = defineDocs({
 // Twoslash type-checks each `ts` code block when the page compiles. See `twoslash.ts`.
 export default defineConfig({
   mdxOptions: {
+    remarkPlugins: [remarkProcessedMarkdownCode],
     remarkImageOptions: { publicDir: join(process.cwd(), "assets") },
     rehypeCodeOptions: {
       ...rehypeCodeDefaultOptions,
