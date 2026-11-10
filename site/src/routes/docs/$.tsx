@@ -6,7 +6,15 @@ import { getRequestUrl } from "@tanstack/react-start/server";
 import { forwardedSection, movedPages } from "#/lib/moved-pages";
 import { getPageImage, source } from "#/lib/source";
 import browserCollections from "collections/browser";
-import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
+import {
+  DocsBody,
+  DocsDescription,
+  DocsPage,
+  DocsTitle,
+  MarkdownCopyButton,
+  ViewOptionsPopover,
+} from "fumadocs-ui/layouts/docs/page";
+import { getPageMarkdownUrl } from "#/lib/shared";
 import { baseOptions } from "#/lib/layout.shared";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
 import { Suspense, useEffect } from "react";
@@ -75,6 +83,7 @@ const serverLoader = createServerFn({
 
     return {
       path: page.path,
+      markdownUrl: getPageMarkdownUrl(page).url,
       title: page.data.title,
       description: page.data.description,
       image,
@@ -83,11 +92,18 @@ const serverLoader = createServerFn({
   });
 
 const clientLoader = browserCollections.docs.createClientLoader({
-  component({ toc, frontmatter, default: MDX }, _props: undefined) {
+  component({ toc, frontmatter, default: MDX }, props: { markdownUrl: string; path: string }) {
     return (
       <DocsPage toc={toc}>
         <DocsTitle>{frontmatter.title}</DocsTitle>
         <DocsDescription>{frontmatter.description}</DocsDescription>
+        <div className="flex flex-row items-center gap-2 border-b pt-2 pb-6">
+          <MarkdownCopyButton markdownUrl={props.markdownUrl} />
+          <ViewOptionsPopover
+            markdownUrl={props.markdownUrl}
+            githubUrl={`https://github.com/gingerhendrix/streamsy/blob/main/site/content/docs/${encodeURI(props.path)}`}
+          />
+        </div>
         <DocsBody>
           <MDX components={useMDXComponents()} />
         </DocsBody>
@@ -135,7 +151,7 @@ function Page() {
   return (
     <DocsLayout {...baseOptions()} tree={data.pageTree}>
       <Suspense>
-        {clientLoader.useContent(data.path)}
+        {clientLoader.useContent(data.path, { markdownUrl: data.markdownUrl, path: data.path })}
         <MovedSections splat={splat} />
       </Suspense>
     </DocsLayout>
