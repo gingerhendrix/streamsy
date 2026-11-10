@@ -44,6 +44,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@fumadocs/changelog@0.1.0": "patches/@fumadocs%2Fchangelog@0.1.0.patch",
+  },
   "packages": {
     "@aws-crypto/crc32": ["@aws-crypto/crc32@5.2.0", "", { "dependencies": { "@aws-crypto/util": "^5.2.0", "@aws-sdk/types": "^3.222.0", "tslib": "^2.6.2" } }, "sha512-nLbCWqQNgUiwwtFsen1AdzAtvuLRsQS8rYgMuxCrdKf9kOssamGLuPwyTY9wyYblNr9+1XM8v6zoDTPPSIeANg=="],
 

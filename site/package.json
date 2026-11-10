@@ -63,5 +63,8 @@
       "esbuild",
       "lightningcss"
     ]
+  },
+  "patchedDependencies": {
+    "@fumadocs/changelog@0.1.0": "patches/@fumadocs%2Fchangelog@0.1.0.patch"
   }
 }

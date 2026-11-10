@@ -1,0 +1,12 @@
+diff --git a/dist/github.js b/dist/github.js
+index 9a630ce4028f52ab3cb3877cdcef141b377b94bf..678a27317c66f445790b8315d9e936561ede3461 100644
+--- a/dist/github.js
++++ b/dist/github.js
+@@ -4,6 +4,7 @@
+ */
+ async function githubReleases({ owner, repo, token, page = 1, perPage = 30, baseUrl = "https://api.github.com" }) {
+ 	const headers = new Headers({ accept: "application/vnd.github+json" });
++	headers.set("user-agent", "fumadocs-changelog");
+ 	if (token) headers.set("authorization", `Bearer ${token}`);
+ 	const res = await fetch(`${baseUrl}/repos/${owner}/${repo}/releases?per_page=${perPage}&page=${page}`, { headers });
+ 	if (res.status === 422) return { entries: [] };
