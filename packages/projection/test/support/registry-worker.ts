@@ -119,7 +119,9 @@ const app = Layer.mergeAll(
     Effect.gen(function* () {
       yield* (yield* Projection.Registry).schedule(declaration.at({ id: "a" }));
 
-      return HttpServerResponse.jsonUnsafe({ alarm: yield* (yield* Control).alarm });
+      const status = (yield* (yield* Projection.Registry).status)[0]!;
+
+      return HttpServerResponse.jsonUnsafe({ status, alarm: yield* (yield* Control).alarm });
     }).pipe(Effect.orDie),
   ),
   HttpRouter.add(
@@ -131,7 +133,9 @@ const app = Layer.mergeAll(
       yield* source.append({ id: "good" }, ["hello"]);
       yield* (yield* Projection.Registry).schedule(declaration.at({ id: "good" }));
 
-      return HttpServerResponse.jsonUnsafe({ alarm: yield* (yield* Control).alarm });
+      const status = (yield* (yield* Projection.Registry).status)[0]!;
+
+      return HttpServerResponse.jsonUnsafe({ status, alarm: yield* (yield* Control).alarm });
     }).pipe(Effect.orDie),
   ),
   HttpRouter.add(
@@ -140,7 +144,9 @@ const app = Layer.mergeAll(
     Effect.gen(function* () {
       const count = yield* (yield* Projection.Registry).retry(declaration);
 
-      return HttpServerResponse.jsonUnsafe({ count, alarm: yield* (yield* Control).alarm });
+      const status = (yield* (yield* Projection.Registry).status)[0]!;
+
+      return HttpServerResponse.jsonUnsafe({ count, status, alarm: yield* (yield* Control).alarm });
     }).pipe(Effect.orDie),
   ),
   HttpRouter.add(
@@ -250,7 +256,13 @@ export default {
   async fetch(request: WorkerRequest, env: Env): Promise<WorkerResponse> {
     const url = new URL(request.url);
     const [, kind, name, ...path] = url.pathname.split("/");
-    const ns = kind === "durable" ? env.DURABLE : kind === "exhausted" ? env.EXHAUSTED : env.MEMORY;
+
+    const ns = Match.value(kind).pipe(
+      Match.when("durable", () => env.DURABLE),
+      Match.when("exhausted", () => env.EXHAUSTED),
+      Match.orElse(() => env.MEMORY),
+    );
+
     url.pathname = `/${Array.join(path, "/")}`;
 
     return ns.get(ns.idFromName(name ?? "test")).fetch(url.toString());

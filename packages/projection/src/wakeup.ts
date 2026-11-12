@@ -39,10 +39,11 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   return Effect.gen(function* () {
     const { next, drain, deferred, status, schedule, retry, reportFailures } = yield* runner;
     let host: WakeupHost | undefined;
+    let running = false;
     let lastPassAt = Option.none<number>();
     const registry = yield* Effect.serviceOption(Registry);
 
-    const changed = Option.isNone(registry)
+    const changed: Effect.Effect<void> = Option.isNone(registry)
       ? Effect.void
       : yield* registerRunner(registry.value, {
           declaration: projection.at,
@@ -54,12 +55,15 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
             return {
               projection: projection.id,
-              state: Option.isSome(state.retryAt)
-                ? "retrying"
-                : state.failures > 0
-                  ? "failed"
-                  : "running",
+              state: running
+                ? "running"
+                : Option.isSome(state.retryAt)
+                  ? "retrying"
+                  : state.failures > 0
+                    ? "failed"
+                    : "running",
               ...state,
+              retryAt: running ? Option.none<number>() : state.retryAt,
               lastPassAt,
               ...(yield* status),
             } satisfies RunnerStatus;
@@ -68,6 +72,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             schedule(binding).pipe(
               Effect.andThen(Effect.suspend(() => host?.retry ?? Effect.void)),
               Effect.andThen(Effect.suspend(() => host?.reconcile ?? Effect.void)),
+              Effect.andThen(Effect.suspend(() => changed)),
               Effect.uninterruptible,
             ),
           retry: (binding) =>
@@ -78,6 +83,8 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
               if (host !== undefined) yield* host.reconcile;
 
+              if (count > 0) yield* changed;
+
               return count;
             }).pipe(Effect.uninterruptible),
         });
@@ -85,15 +92,20 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     return {
       name: `streamsy/projection/${encodeURIComponent(projection.id)}`,
       next,
-      run: drain.pipe(
-        Effect.ensuring(
-          Clock.currentTimeMillis.pipe(
-            Effect.map((at) => {
-              lastPassAt = Option.some(at);
-            }),
+      run: Effect.suspend(() => {
+        running = true;
+
+        return drain.pipe(
+          Effect.ensuring(
+            Clock.currentTimeMillis.pipe(
+              Effect.map((at) => {
+                running = false;
+                lastPassAt = Option.some(at);
+              }),
+            ),
           ),
-        ),
-      ),
+        );
+      }),
       bind: (bound: WakeupHost) =>
         Effect.sync(() => {
           host = bound;

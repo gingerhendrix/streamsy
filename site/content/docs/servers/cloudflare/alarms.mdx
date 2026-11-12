@@ -68,7 +68,7 @@ A failure in one wakeup does not stop the others. The host logs it and backs off
 
 A `next` that fails also backs off, and the other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change it. A finite schedule stops the retries of that wakeup when it is exhausted.
 
-`Wakeups.status` returns each wakeup's `next`, `failures`, `retryAt` floor, and `deferred` count. The backoff lives in memory and resets when the object is evicted.
+`WakeupHost.state` includes the reconciled deadline of an explicitly requested retry until its run starts. `Wakeups.status` returns each wakeup's `next`, `failures`, automatic `retryAt` floor, and `deferred` count. The backoff lives in memory and resets when the object is evicted.
 
 ## Recovery
 

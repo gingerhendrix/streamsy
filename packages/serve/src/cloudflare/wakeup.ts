@@ -32,7 +32,7 @@ export interface WakeupHost {
   readonly reconcile: Effect.Effect<void>;
   /** Clear application-failure backoff; retain storage and deadline-failure backoff. */
   readonly retry: Effect.Effect<void>;
-  /** Consecutive failed passes and the host's backoff floor for this wakeup. */
+  /** Consecutive failed passes and the next automatic or explicitly requested retry. */
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
@@ -171,6 +171,8 @@ export const makeWakeups = <R>(
           floor: 0,
           exhausted: false,
           storageFailure: false,
+          requested: false,
+          requestedAt: 0,
           policy,
           step: yield* Schedule.toStep(policy),
         };
@@ -244,22 +246,33 @@ export const makeWakeups = <R>(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           let target = Infinity;
+          const requested = new Map<State, number>();
 
           for (const state of states) {
             const next = yield* deadlineOf(state, now);
 
-            if (Option.isSome(next)) target = Math.min(target, next.value);
+            if (Option.isSome(next)) {
+              target = Math.min(target, next.value);
+
+              if (state.requested) requested.set(state, Math.max(next.value, now + 1));
+            }
           }
 
-          if (target === Infinity) return yield* slot.clear;
-          const current = yield* slot.current;
+          if (target === Infinity) yield* slot.clear;
+          else {
+            const current = yield* slot.current;
 
-          if (!force && Option.isSome(current) && now < current.value && current.value <= target)
-            return undefined;
+            const keep =
+              !force && Option.isSome(current) && now < current.value && current.value <= target;
 
-          if (Option.isSome(current) && current.value <= now) yield* slot.clear;
+            if (!keep) {
+              if (Option.isSome(current) && current.value <= now) yield* slot.clear;
+              yield* slot.arm(Math.max(target, now + 1));
+            }
+          }
 
-          return yield* slot.arm(Math.max(target, now + 1));
+          // Report a requested retry only after its deadline has been reconciled successfully.
+          for (const state of states) state.requestedAt = requested.get(state) ?? 0;
         }),
       );
 
@@ -282,6 +295,7 @@ export const makeWakeups = <R>(
 
         for (const state of states) {
           let ran = false;
+
           const attempt = Effect.gen(function* () {
             if (state.exhausted || state.floor > (yield* Clock.currentTimeMillis)) return;
             const next = yield* state.wakeup.next;
@@ -290,6 +304,8 @@ export const makeWakeups = <R>(
 
             if (Option.isNone(next) || next.value > at) return;
             ran = true;
+            state.requested = false;
+            state.requestedAt = 0;
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
@@ -357,10 +373,16 @@ export const makeWakeups = <R>(
             if (state.storageFailure) return;
             state.floor = 0;
             state.exhausted = false;
+            state.requested = state.failures > 0;
           }),
           state: Effect.sync(() => ({
             failures: state.failures,
-            retryAt: state.floor > 0 ? Option.some(state.floor) : Option.none<number>(),
+            retryAt:
+              state.floor > 0
+                ? Option.some(state.floor)
+                : state.requestedAt > 0
+                  ? Option.some(state.requestedAt)
+                  : Option.none<number>(),
           })),
         }) ?? Effect.void
       );

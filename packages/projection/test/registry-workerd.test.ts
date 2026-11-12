@@ -81,13 +81,17 @@ const statusOf = async (response: Promise<Response>) =>
   Schema.decodeUnknownSync(Status)(await (await response).json());
 
 const scheduledOf = async (response: Promise<Response>) =>
-  Schema.decodeUnknownSync(Schema.Struct({ alarm: Schema.NullOr(Schema.Finite) }))(
-    await (await response).json(),
-  );
+  Schema.decodeUnknownSync(
+    Schema.Struct({ alarm: Schema.NullOr(Schema.Finite), status: Status.fields.status }),
+  )(await (await response).json());
 
 const retriedOf = async (response: Promise<Response>) =>
   Schema.decodeUnknownSync(
-    Schema.Struct({ count: Schema.Finite, alarm: Schema.NullOr(Schema.Finite) }),
+    Schema.Struct({
+      count: Schema.Finite,
+      alarm: Schema.NullOr(Schema.Finite),
+      status: Status.fields.status,
+    }),
   )(await (await response).json());
 
 const until = async (read: () => Promise<Status>, check: (status: Status) => boolean) => {
@@ -220,6 +224,10 @@ for (const mode of ["binding", "storage"]) {
     const retried = await retriedOf(send(`${path}/retry`));
     expect(retried.count).toBe(1);
     expect(retried.alarm).not.toBeNull();
+    expect(retried.status).toMatchObject({
+      state: "retrying",
+      retryAt: { _tag: "Some", value: retried.alarm },
+    });
 
     if (mode === "binding") {
       const recovered = await until(
@@ -259,6 +267,11 @@ for (const kind of ["memory", "exhausted"]) {
 
     const scheduled = await scheduledOf(send(`${path}/schedule-good`));
     expect(scheduled.alarm).not.toBeNull();
+    expect(scheduled.status).toMatchObject({
+      state: "retrying",
+      failures: 1,
+      retryAt: { _tag: "Some", value: scheduled.alarm },
+    });
     const ran = await until(read, (snapshot) => snapshot.seen.includes("good"));
     expect(ran.seen).toEqual(["a", "a", "good"]);
   }, 30_000);

@@ -175,7 +175,7 @@ layer(
       expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(3_600_000) });
       yield* host!.retry;
       yield* host!.reconcile;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.none() });
+      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(1) });
     }),
   );
 
@@ -207,6 +207,7 @@ layer(
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();
       const observed: Array<string> = [];
+
       const scheduler = yield* makeWakeups(context, [
         ...Array.map(["idle", "future", "backoff", "exhausted", "due"], (name) => ({
           name,
@@ -231,6 +232,7 @@ layer(
           }),
         },
       ]);
+
       yield* scheduler.alarm;
       expect(observed).toEqual(["backoff", "exhausted", "due"]);
       observed.length = 0;

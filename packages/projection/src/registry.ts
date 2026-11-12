@@ -40,7 +40,7 @@ export interface RunnerStatus {
   readonly state: "running" | "retrying" | "failed";
   /** Consecutive failed passes, rather than failed durable bindings. */
   readonly failures: number;
-  /** Set only while waiting for the pass retry schedule. */
+  /** Set while waiting for an automatic or explicitly requested pass retry. */
   readonly retryAt: Option.Option<number>;
   readonly active: number;
   readonly queued: number;

@@ -541,16 +541,19 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       const marks = yield* ProjectionMarks;
       let summaries = 0;
       const nextReads = new Map<string, number>();
+
       const counted = {
         ...marks,
         summary: (id: string, now: number) =>
           Effect.suspend(() => {
             summaries += 1;
+
             return marks.summary(id, now);
           }),
         nextDue: (id: string) =>
           Effect.suspend(() => {
             nextReads.set(id, (nextReads.get(id) ?? 0) + 1);
+
             return marks.nextDue(id);
           }),
       };
@@ -563,21 +566,27 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
           commit: Commit.atLeastOnce,
           process: () => Effect.void,
         });
+
         yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
           Effect.provideService(ProjectionMarks, counted),
         );
       }
+
       yield* eventually(
         Effect.sync(() => nextReads.size),
         (size) => size === 10,
       );
       nextReads.clear();
       yield* source.append({ id: "summary-cost" }, ["one"]);
+
       // Every runner reads nextDue after its drain and again when it waits.
       const completed = yield* eventually(
-        Effect.sync(() => nextReads.size === 10 && [...nextReads.values()].every((n) => n >= 2)),
+        Effect.sync(
+          () => nextReads.size === 10 && Array.every([...nextReads.values()], (n) => n >= 2),
+        ),
         (done) => done,
       );
+
       expect(completed).toBe(true);
       expect(summaries).toBe(0);
       const registry = yield* Projection.Registry;
@@ -604,15 +613,16 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
             summary: (id, now) =>
               Effect.suspend(() => {
                 summaries += 1;
+
                 return marks.summary(id, now);
               }),
           }),
           Scope.provide(scope),
         );
         expect(summaries).toBe(0);
-        expect(only((yield* one)[0]!).projection).toBe("lazy-snapshots");
+        expect(only((yield* one)[0]).projection).toBe("lazy-snapshots");
         expect(summaries).toBe(1);
-        expect(only((yield* two)[0]!).projection).toBe("lazy-snapshots");
+        expect(only((yield* two)[0]).projection).toBe("lazy-snapshots");
         expect(summaries).toBe(2);
         yield* Scope.close(scope, Exit.void);
         expect(yield* one).toEqual([[]]);
