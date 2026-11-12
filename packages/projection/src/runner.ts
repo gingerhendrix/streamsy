@@ -1,5 +1,5 @@
-import { Array, Cause, Clock, Effect, Exit, Option, PubSub, Record, Schema } from "effect";
-import { Storage, type StreamId } from "@streamsy/core";
+import { Array, Cause, Clock, Effect, Exit, Option, PubSub, Queue, Record, Schema } from "effect";
+import { Storage, StorageFault, type StreamId } from "@streamsy/core";
 import {
   CommitHooks,
   ProjectionMarks,
@@ -40,7 +40,7 @@ export interface Attachable<B> {
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
   // Method syntax: a declaration with typed params is assignable here.
-  at(params: Readonly<Record<string, unknown>>): B;
+  at(this: void, params: Readonly<Record<string, unknown>>): B;
 }
 
 /**
@@ -229,6 +229,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const committed = yield* storage.committed;
     const pending = new Map<string, Binding>();
     const working = new Set<string>();
+    const failed = new Set<string>();
+    const retryRequested = new Set<string>();
+    const wake = yield* Queue.sliding<void>(1);
+    const signal = Queue.offer(wake, undefined).pipe(Effect.asVoid);
+    const interruptedDelay = Queue.take(wake).pipe(Effect.asVoid);
     let active = 0;
 
     const runActive = (binding: Binding) =>
@@ -267,7 +272,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       return marks === undefined ? Option.none<number>() : yield* marks.nextDue(declaration.id);
     });
 
-    const take = Effect.map(PubSub.take(committed), add);
+    const take = Effect.raceFirst(Effect.map(PubSub.take(committed), add), interruptedDelay);
 
     const waitDue = (store: ProjectionMarksApi) =>
       Effect.gen(function* () {
@@ -308,9 +313,16 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         pending.delete(key);
         const exit = yield* Effect.exit(runActive(binding));
 
-        if (Exit.isSuccess(exit) && exit.value.status !== "limit-reached") continue;
+        if (Exit.isSuccess(exit)) {
+          failed.delete(key);
+          retryRequested.delete(key);
+
+          if (exit.value.status !== "limit-reached") continue;
+        }
 
         if (Exit.isFailure(exit) && (yield* sourceGone(binding.inputs, exit.cause))) {
+          failed.delete(key);
+          retryRequested.delete(key);
           yield* dropped(key);
 
           continue;
@@ -318,7 +330,20 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
         pending.set(key, binding);
 
-        if (Exit.isFailure(exit)) failure ??= exit.cause;
+        if (Exit.isFailure(exit)) {
+          failed.add(key);
+          retryRequested.delete(key);
+          const error = Cause.findErrorOption(exit.cause);
+
+          const storageFailure =
+            Option.isSome(error) &&
+            (Schema.is(StorageFault)(error.value) ||
+              (Schema.is(ProjectionFault)(error.value) &&
+                error.value.reason === "storage-failure"));
+
+          // Preserve a storage floor even when a peer failed earlier in this pass.
+          if (storageFailure || failure === undefined) failure = exit.cause;
+        }
       }
 
       yield* absorb;
@@ -398,6 +423,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       });
 
     const drain = Effect.fn("Projection.drain")(function* () {
+      yield* Queue.clear(wake);
       yield* absorb;
 
       return yield* marks === undefined ? drainInMemory : drainDurable(marks);
@@ -406,6 +432,53 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     return {
       next,
       wait,
+      resume: interruptedDelay,
+      /** Also used by attach's retry schedule; the queue retains a signal until consumed. */
+      interruptDelay: (duration: number) =>
+        interruptedDelay.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.void })),
+      schedule: (binding: { readonly params: Readonly<Record<string, string>> }) =>
+        Effect.gen(function* () {
+          const key = canonicalParams(binding.params);
+          const bound = bindingOf(declaration, key);
+
+          if (Option.isNone(bound)) return yield* Effect.die(new Error(`Invalid binding ${key}`));
+
+          // Persist before exposing pending work, so a fault cannot enqueue an unrecorded request.
+          if (marks !== undefined)
+            yield* marks.mark(declaration.id, [key]).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StorageFault({
+                    operation: "marks.mark",
+                    message: cause.message,
+                    retryable: cause.isRetryable,
+                    cause,
+                  }),
+              ),
+            );
+          pending.set(key, bound.value);
+          yield* signal;
+
+          return undefined;
+        }).pipe(Effect.uninterruptible),
+      retry: (binding?: { readonly params: Readonly<Record<string, string>> }) =>
+        Effect.gen(function* () {
+          const key = binding === undefined ? undefined : canonicalParams(binding.params);
+          let count = 0;
+
+          if (marks !== undefined) count = yield* marks.retry(declaration.id, key);
+          else
+            for (const pendingKey of failed) {
+              if ((key === undefined || key === pendingKey) && !retryRequested.has(pendingKey)) {
+                retryRequested.add(pendingKey);
+                count += 1;
+              }
+            }
+
+          if (count > 0) yield* signal;
+
+          return count;
+        }).pipe(Effect.uninterruptible),
       drain: drain().pipe(Effect.ensuring(Effect.sync(() => working.clear()))),
       status: Effect.gen(function* () {
         const summary =

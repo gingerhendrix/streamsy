@@ -1,9 +1,20 @@
-import { Effect } from "effect";
+import { Clock, Effect, Option } from "effect";
 import type { InputMap } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { ProjectionRetry } from "./retry.ts";
 import type { AttachOptions } from "./attach.ts";
+import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
+
+// Structural host contract: projection never imports the serve package.
+interface WakeupHost {
+  readonly reconcile: Effect.Effect<void>;
+  readonly retry: Effect.Effect<void>;
+  readonly state: Effect.Effect<{
+    readonly failures: number;
+    readonly retryAt: Option.Option<number>;
+  }>;
+}
 
 /**
  * Local commits choose bindings; each alarm drains the same runner used by
@@ -26,12 +37,67 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   });
 
   return Effect.gen(function* () {
-    const { next, drain, deferred } = yield* runner;
+    const { next, drain, deferred, status, schedule, retry } = yield* runner;
+    let host: WakeupHost | undefined;
+    let lastPassAt = Option.none<number>();
+    const registry = yield* Effect.serviceOption(Registry);
+
+    const changed = Option.isNone(registry)
+      ? Effect.void
+      : yield* registerRunner(registry.value, {
+          declaration: projection.at,
+          status: Effect.gen(function* () {
+            const state =
+              host === undefined
+                ? { failures: 0, retryAt: Option.none<number>() }
+                : yield* host.state;
+
+            return {
+              projection: projection.id,
+              state: Option.isSome(state.retryAt)
+                ? "retrying"
+                : state.failures > 0
+                  ? "failed"
+                  : "running",
+              ...state,
+              lastPassAt,
+              ...(yield* status),
+            } satisfies RunnerStatus;
+          }),
+          schedule: (binding) =>
+            schedule(binding).pipe(
+              Effect.andThen(Effect.suspend(() => host?.reconcile ?? Effect.void)),
+              Effect.uninterruptible,
+            ),
+          retry: (binding) =>
+            Effect.gen(function* () {
+              const count = yield* retry(binding);
+
+              if (count > 0 && host !== undefined) yield* host.retry;
+
+              if (host !== undefined) yield* host.reconcile;
+
+              return count;
+            }).pipe(Effect.uninterruptible),
+        });
 
     return {
       name: `streamsy/projection/${encodeURIComponent(projection.id)}`,
       next,
-      run: drain,
+      run: drain.pipe(
+        Effect.ensuring(
+          Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              lastPassAt = Option.some(at);
+            }),
+          ),
+        ),
+      ),
+      bind: (bound: WakeupHost) =>
+        Effect.sync(() => {
+          host = bound;
+        }),
+      changed,
       retry: options.retry ?? (yield* ProjectionRetry),
       deferred,
     };

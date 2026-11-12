@@ -1,6 +1,15 @@
-import { Context, Effect, Exit, Layer, Option, PubSub, Stream, type Scope } from "effect";
+import { Array, Context, Effect, Exit, Layer, Option, PubSub, Stream, type Scope } from "effect";
 import type { StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
+import { declarationOf } from "./declaration.ts";
+import { NotAttached } from "./fault.ts";
+import type { Identity } from "./checkpoint-store.ts";
+import type { Attachable } from "./runner.ts";
+
+/** Only identity and encoded params are needed; execution uses the runner's binding. */
+type Binding = Pick<Identity, "id" | "params">;
+
+type Declaration = Attachable<Binding>;
 
 /** One live, attached runner. Process fields reset when the host restarts. */
 export interface RunnerStatus {
@@ -21,16 +30,27 @@ export interface RegistryApi {
   readonly status: Effect.Effect<ReadonlyArray<RunnerStatus>, StorageFault>;
   /** An initial snapshot, then a full snapshot after each pass and lifecycle change. */
   readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>, StorageFault>;
+  /** Queue this binding and wake its runner, without another source commit. */
+  readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
+  /** Make failed work due now. Returns the number of failed bindings changed. */
+  readonly retry: (
+    target: Declaration | Binding,
+  ) => Effect.Effect<number, NotAttached | StorageFault>;
+}
+
+interface RegisteredRunner {
+  readonly declaration: object;
+  readonly status: Effect.Effect<RunnerStatus, StorageFault>;
+  readonly schedule: (binding: Binding) => Effect.Effect<void, StorageFault>;
+  readonly retry: (binding?: Binding) => Effect.Effect<number, StorageFault>;
 }
 
 interface Registration {
-  readonly register: (
-    status: Effect.Effect<RunnerStatus, StorageFault>,
-  ) => Effect.Effect<void, never, Scope.Scope>;
+  readonly register: (runner: RegisteredRunner) => Effect.Effect<void, never, Scope.Scope>;
   readonly publish: Effect.Effect<void>;
 }
 
-// Registration stays private to attach; the service exposes only observations.
+// Registration stays private to the host adapters.
 const registrations = new WeakMap<RegistryApi, Registration>();
 
 /** Optional in-process view of Projection.attach runners. */
@@ -41,7 +61,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
   static readonly layer: Layer.Layer<Registry> = Layer.effect(
     this,
     Effect.gen(function* () {
-      const runners = new Set<Effect.Effect<RunnerStatus, StorageFault>>();
+      const runners = new Set<RegisteredRunner>();
       let registered = false;
 
       const updates = yield* Effect.acquireRelease(
@@ -49,7 +69,21 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
         PubSub.shutdown,
       );
 
-      const status = Effect.suspend(() => Effect.all([...runners]));
+      const status = Effect.suspend(() => Effect.forEach(runners, (runner) => runner.status));
+
+      const find = (target: Declaration | Binding) =>
+        Effect.suspend(() => {
+          const declaration = "at" in target ? target.at : declarationOf(target);
+
+          const found = Array.findFirst(
+            [...runners],
+            (runner) => runner.declaration === declaration,
+          );
+
+          return Effect.fromOption(found).pipe(
+            Effect.mapError(() => new NotAttached({ projection: target.id })),
+          );
+        });
 
       // A failed summary read belongs to observers, never to the projection pass.
       const publish = status.pipe(
@@ -60,6 +94,11 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
       const registry = Registry.of({
         status,
+        schedule: (binding) => Effect.flatMap(find(binding), (runner) => runner.schedule(binding)),
+        retry: (target) =>
+          Effect.flatMap(find(target), (runner) =>
+            runner.retry("at" in target ? undefined : target),
+          ),
         changes: Stream.unwrap(
           Effect.gen(function* () {
             // Subscribe before the initial read, so a pass cannot fall into a gap.
@@ -79,15 +118,15 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
       registrations.set(registry, {
         publish,
-        register: (read) =>
+        register: (runner) =>
           Effect.acquireRelease(
             Effect.sync(() => {
               registered = true;
-              runners.add(read);
+              runners.add(runner);
             }).pipe(Effect.andThen(publish)),
             () =>
               Effect.sync(() => {
-                runners.delete(read);
+                runners.delete(runner);
               }).pipe(Effect.andThen(publish)),
           ).pipe(Effect.asVoid),
       });
@@ -107,11 +146,11 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 /** @internal Register in the attach scope and return its pass notification. */
 export const registerRunner = (
   registry: RegistryApi,
-  status: Effect.Effect<RunnerStatus, StorageFault>,
+  runner: RegisteredRunner,
 ): Effect.Effect<Effect.Effect<void>, never, Scope.Scope> => {
   const registration = registrations.get(registry);
 
   return registration === undefined
     ? Effect.succeed(Effect.void)
-    : registration.register(status).pipe(Effect.as(registration.publish));
+    : registration.register(runner).pipe(Effect.as(registration.publish));
 };

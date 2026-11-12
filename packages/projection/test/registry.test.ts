@@ -16,7 +16,13 @@ import {
 import { StorageFault, Streamsy } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
-import { Commit, Projection, type RunnerStatus } from "@streamsy/projection";
+import {
+  Commit,
+  NotAttached,
+  Projection,
+  ProjectionWakeup,
+  type RunnerStatus,
+} from "@streamsy/projection";
 import { TestClock } from "effect/testing";
 import { memoryHost } from "./support/memory-host.ts";
 
@@ -26,7 +32,7 @@ class Source extends Streamsy.json<Source>()("Registry/Source", "source/:id", {
 }) {}
 
 const host = () => {
-  const local = memoryHost();
+  const local = memoryHost({ readLimit: 1 });
 
   return Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
 };
@@ -59,6 +65,194 @@ const only = (statuses: ReadonlyArray<RunnerStatus>) => {
 };
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
+  for (const durable of [false, true]) {
+    it.effect(`schedule runs pre-existing work without another commit (durable: ${durable})`, () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+        yield* source.create({ id: "scheduled" });
+        yield* source.append({ id: "scheduled" }, ["hello"]);
+        const ran = yield* Deferred.make<void>();
+
+        const declaration = projection(
+          "scheduled",
+          Deferred.succeed(ran, undefined).pipe(Effect.asVoid),
+        );
+
+        yield* Layer.build(Projection.attach(declaration, { durable }));
+        const registry = yield* Projection.Registry;
+        yield* registry.schedule(declaration.at({ id: "scheduled" }));
+        yield* Deferred.await(ran);
+        expect(
+          only(yield* eventually(registry.status, (statuses) => only(statuses).active === 0)),
+        ).toMatchObject({
+          queued: 0,
+          failures: 0,
+        });
+      }),
+    );
+  }
+
+  it.effect(
+    "NotAttached uses declaration identity, writes nothing, and applies after scope closure",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* Projection.Registry;
+        const declaration = projection("identity");
+        const other = projection("identity");
+        const scope = yield* Scope.make();
+        yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
+          Scope.provide(scope),
+        );
+        expect(yield* Effect.flip(registry.schedule(other.at({ id: "a" })))).toEqual(
+          new NotAttached({ projection: "identity" }),
+        );
+        expect(yield* Effect.flip(registry.retry(other))).toEqual(
+          new NotAttached({ projection: "identity" }),
+        );
+        expect(yield* Effect.flip(registry.retry(other.at({ id: "a" })))).toEqual(
+          new NotAttached({ projection: "identity" }),
+        );
+        const marks = yield* ProjectionMarks;
+        expect(yield* marks.nextDue("identity")).toEqual(Option.none());
+        yield* Scope.close(scope, Exit.void);
+        expect(yield* Effect.flip(registry.schedule(declaration.at({ id: "a" })))).toEqual(
+          new NotAttached({ projection: "identity" }),
+        );
+        expect(yield* marks.nextDue("identity")).toEqual(Option.none());
+      }),
+  );
+
+  it.effect(
+    "durable retry wakes a sleeping runner, selects a binding, and preserves attempts",
+    () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+
+        for (const id of ["a", "b"]) {
+          yield* source.create({ id });
+          yield* source.append({ id }, ["hello"]);
+        }
+
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+
+        const declaration = projection(
+          "retry-marks",
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        );
+
+        const marks = yield* ProjectionMarks;
+        yield* marks.defer(declaration.id, '{"id":"a"}', 3, 60_000);
+        yield* marks.defer(declaration.id, '{"id":"b"}', 2, 60_000);
+        yield* Layer.build(Projection.attach(declaration, { durable: true }));
+        const registry = yield* Projection.Registry;
+        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(1);
+        yield* Deferred.await(entered);
+        expect((yield* marks.read(declaration.id, ['{"id":"a"}'])).get('{"id":"a"}')).toMatchObject(
+          { attempts: 3, dueAt: 0 },
+        );
+        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(0);
+        expect(yield* registry.retry(declaration)).toBe(1);
+        yield* Deferred.succeed(release, undefined);
+        expect(
+          (yield* eventually(marks.summary(declaration.id, 0), (summary) => summary.retryDue === 0))
+            .retryDue,
+        ).toBe(0);
+      }),
+  );
+
+  it.effect(
+    "non-durable retry counts failed bindings, ignores limit-only work and interrupts pass backoff",
+    () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+
+        for (const id of ["a", "b", "limit"]) {
+          yield* source.create({ id });
+          yield* source.append({ id }, ["one"]);
+          yield* source.append({ id }, ["two"]);
+        }
+
+        let broken = true;
+        const seen: Array<string> = [];
+
+        const declaration = Projection.process({
+          id: "retry-memory",
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: (_batch, unit) =>
+            Effect.suspend(() => {
+              seen.push(unit.params.id);
+
+              return broken && unit.params.id !== "limit" ? Effect.fail("offline") : Effect.void;
+            }),
+        });
+
+        yield* Layer.build(
+          Projection.attach(declaration, { limit: 1, retry: Schedule.spaced("1 hour") }),
+        );
+        const registry = yield* Projection.Registry;
+
+        for (const id of ["a", "b", "limit"]) yield* registry.schedule(declaration.at({ id }));
+        expect(
+          only(
+            yield* eventually(registry.status, (statuses) => only(statuses).state === "retrying"),
+          ).retryAt,
+        ).toEqual(Option.some(3_600_000));
+        expect(yield* registry.retry(declaration.at({ id: "limit" }))).toBe(0);
+        expect(yield* registry.retry(declaration.at({ id: "absent" }))).toBe(0);
+        broken = false;
+        expect(yield* registry.retry(declaration)).toBe(2);
+        expect(
+          only(
+            yield* eventually(
+              registry.status,
+              (statuses) =>
+                only(statuses).queued === 0 &&
+                only(statuses).active === 0 &&
+                only(statuses).failures === 0,
+            ),
+          ),
+        ).toMatchObject({ failures: 0, retryAt: Option.none(), lastPassAt: Option.some(0) });
+        expect(Array.filter(seen, (id) => id === "a").length).toBeGreaterThanOrEqual(2);
+        expect(Array.filter(seen, (id) => id === "b").length).toBeGreaterThanOrEqual(2);
+        expect(yield* registry.retry(declaration)).toBe(0);
+      }),
+  );
+
+  it.effect(
+    "non-durable retry(binding) selects failed work and a dropped binding is no longer failed",
+    () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+        yield* source.create({ id: "a" });
+        yield* source.append({ id: "a" }, ["one"]);
+        let broken = true;
+
+        const declaration = Projection.process({
+          id: "retry-one",
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
+        });
+
+        const wakeup = yield* ProjectionWakeup.attach(declaration, { durable: false });
+        const registry = yield* Projection.Registry;
+        yield* registry.schedule(declaration.at({ id: "a" }));
+        yield* Effect.exit(wakeup.run);
+        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(1);
+        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(0);
+        broken = false;
+        yield* wakeup.run;
+        expect(yield* registry.retry(declaration)).toBe(0);
+        yield* registry.schedule(declaration.at({ id: "missing" }));
+        yield* wakeup.run;
+        expect(yield* registry.retry(declaration.at({ id: "missing" }))).toBe(0);
+      }),
+  );
+
   it.effect("non-durable status and an initial changes snapshot exist before any pass", () =>
     Effect.gen(function* () {
       const registry = yield* Projection.Registry;
@@ -301,16 +495,17 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       }),
   );
 
-  it.effect("an exhausted retry policy leaves a failed runner with no retry time", () =>
+  it.effect("an exhausted retry policy leaves a failed runner that explicit retry can resume", () =>
     Effect.gen(function* () {
       const registry = yield* Projection.Registry;
+      let broken = true;
 
       const failing = Projection.process({
         id: "failed",
         params: { id: Schema.String },
         inputs: { source: Source },
         commit: Commit.atLeastOnce,
-        process: () => Effect.fail("offline"),
+        process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
       });
 
       yield* Layer.build(Projection.attach(failing, { retry: Schedule.recurs(0) }));
@@ -326,6 +521,11 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
         active: 0,
         queued: 1,
       });
+      broken = false;
+      expect(yield* registry.retry(failing)).toBe(1);
+      expect(
+        only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 0)),
+      ).toMatchObject({ state: "running", queued: 0 });
     }),
   );
 

@@ -173,7 +173,7 @@ On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cl
 
 ### Observe attached runners
 
-`Projection.Registry` is an optional service for runners in this process. Provide `Projection.Registry.layer` **below the attach layers**, so each attachment sees the same registry. Each runner registers when its attach layer is built and unregisters when that scope closes. Without the registry, attachments run as usual. This registry currently observes `Projection.attach`; Durable Object wakeup registration is not yet supported.
+`Projection.Registry` is an optional service for runners in this process. Provide `Projection.Registry.layer` **below the attach layers**, so each attachment sees the same registry. Each runner registers when its attach layer is built and unregisters when that scope closes. Without the registry, attachments run as usual. `ProjectionWakeup.attach` also registers when the object's layer provides the registry.
 
 ```ts
 // @filename: streams.ts
@@ -222,6 +222,15 @@ const drained = Effect.gen(function* () {
     Effect.timeout("60 seconds"),
   );
 });
+
+const requestTotals = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.schedule(orderTotals.at({}));
+  const retried = yield* registry.retry(orderTotals);
+  // Select just one binding instead:
+  const bindingRetried = yield* registry.retry(orderTotals.at({}));
+  return { retried, bindingRetried };
+});
 ```
 
 Run the startup `drained` effect inside the application's scope, after its attach layers are built. The registry's `status` effect returns a `ReadonlyArray<RunnerStatus>`; `changes` emits an initial snapshot, then the full list after each pass, registration, removal and retry transition. Both can fail with `StorageFault` if a durable mark summary cannot be read. Reading status does not consume pending commits. A slow `changes` consumer buffers pass snapshots; stop the stream when the wait is complete.
@@ -229,6 +238,22 @@ Run the startup `drained` effect inside the application's scope, after its attac
 Each status includes the projection id, `active` bindings executing now, `queued` bindings in memory, and `lastPassAt` (`None` before any pass completes). `state` is `running` while waiting or processing, `retrying` during a scheduled pass retry, or `failed` when a pass fails and its retry policy stops. `failures` counts consecutive failed passes and resets after a successful pass. `retryAt` is set only while `retrying`. A failed durable binding defers its own mark without failing the pass, so inspect the mark counts too.
 
 `marks` is `None` for a non-durable runner. For a durable runner it contains three disjoint counts: `fresh` has no failed attempts, `retryDue` has failed attempts and is due now, and `backingOff` has failed attempts and is due later. `nextDueAt` is the earliest due time across all marks, or `None` when there are none. The startup filter above allows bindings still backing off; include `marks.backingOff === 0` when they must also finish. An empty registry also passes the filter, so check layer order if expected runners are missing. A registry that closes without ever registering a runner logs a debug message.
+
+`registry.schedule(binding)` queues a binding and wakes its attached runner, without another source write. A durable runner records a mark before returning. A non-durable runner queues it in memory. Schedule is a request to run, so the effect returns before processing finishes. Each runner uses the storage it acquired, even when the registry holds runners from different storage layers.
+
+`registry.retry(declaration)` makes that runner's failed bindings due now; pass a binding to select one. It returns the number of failed bindings changed. Durable retry preserves mark attempts and sequence numbers, and sets their due time to zero. Repeating retry before those marks run returns zero. With `durable: false`, the runner tracks failed bindings separately from bindings that only reached their unit limit. Retry counts only failed bindings, interrupts the pass retry delay, and starts a pass over the pending bindings. A binding that did not fail returns zero. Successful or dropped bindings leave the failure set. Explicit schedule or retry can also resume a runner whose finite automatic retry policy has stopped.
+
+Both methods fail with `NotAttached`, exported from `@streamsy/projection`, if this registry has no runner for the declaration. Declaration identity matters: another declaration with the same id does not select its runner. A missing attachment writes no mark. Storage failures are reported as `StorageFault`.
+
+### Registry on a Durable Object
+
+Put `Projection.Registry.layer` in the object's `layer`, alongside `CheckpointStore.layer`, using `Layer.mergeAll`. The host acquires `ProjectionWakeup.attach` with that context, and request handlers see the same registry. See the [object setup example](/docs/servers/cloudflare/alarms#projections).
+
+On an object, schedule records the request and immediately reconciles the host alarm before returning. Retry makes failed work due and reconciles too. Neither needs another write or `Wakeups.touch`; the same effects work from a request, an RPC method, or another wakeup's run. Retry clears a host backoff floor caused by a binding failure, but keeps a floor caused by a storage or deadline-read failure. A durable binding normally backs off on its own mark without failing the whole pass.
+
+The registry reads `failures`, `retryAt` and `state` from the host, while `Wakeups.status` continues to describe every wakeup. Failure counts, last-pass times, in-memory pending work and stream subscriptions reset on eviction, as they do on a process restart. Durable marks persist; non-durable requests can be lost on eviction.
+
+The workerd test confirms that an alarm can run while a fetch waits on `registry.changes`. The wait observes only that live object instance and request; it does not survive eviction or span requests. Use a caller-chosen timeout and resubscribe after reconnecting.
 
 ## Closed and gone inputs
 

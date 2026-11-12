@@ -12,6 +12,7 @@ import type { InputMap, Slices } from "./batch.ts";
 import { bindState, type StateDefinition, type BoundState } from "./state.ts";
 import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
+import type { Identity } from "./checkpoint-store.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
 export type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
@@ -116,7 +117,13 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
   return built as Addresses<I>;
 };
 
-export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
+/** Declaration identity stays private; equal ids do not imply the same runner. */
+const declarations = new WeakMap<object, object>();
+
+export const declarationOf = (binding: Pick<Identity, "id" | "params">): object | undefined =>
+  declarations.get(binding);
+
+export const declare = <C extends StreamRoute.ParamCodecs, Bound extends object>(
   definition: {
     readonly id: string;
     readonly version?: number;
@@ -135,20 +142,25 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
   const version = definition.version ?? 1;
   const generation = definition.generation ?? 1;
 
-  return {
+  const declaration: Declaration<C, Bound> = {
     id: definition.id,
     version,
     generation,
     params: definition.params,
     inputs: definition.inputs,
-    at: (params) =>
-      bind({
+    at: (params) => {
+      const binding = bind({
         id: definition.id,
         version,
         generation,
         params: encodeParams(definition.id, definition.params, params),
         decoded: params,
-      }),
+      });
+
+      declarations.set(binding, declaration.at);
+
+      return binding;
+    },
     parse: (id) => {
       for (const input of Record.values<string, Input>(definition.inputs)) {
         if (!isDeclaration(input)) continue;
@@ -160,6 +172,8 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
       return Option.none();
     },
   };
+
+  return declaration;
 };
 
 export interface Committing<Result, P, Q> {

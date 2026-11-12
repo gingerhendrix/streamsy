@@ -1,6 +1,11 @@
 import { Schema } from "effect";
 import { isStreamsFault } from "@streamsy/core";
 
+/** No live runner for this declaration exists in the selected registry. */
+export class NotAttached extends Schema.TaggedError<NotAttached>()("NotAttached", {
+  projection: Schema.String,
+}) {}
+
 /** Phase says where the run stopped; a `checkpoint` failure means processing already completed. */
 export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("ProjectionFault", {
   phase: Schema.Literals(["load", "read", "pin", "process", "checkpoint"]),

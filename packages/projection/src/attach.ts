@@ -72,7 +72,16 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain, status } = yield* runner;
+      const {
+        wait,
+        drain,
+        status,
+        schedule,
+        retry: retryBindings,
+        interruptDelay,
+        resume,
+      } = yield* runner;
+
       const policy = options.retry ?? (yield* ProjectionRetry);
       let state: RunnerStatus["state"] = "running";
       let failures = 0;
@@ -82,9 +91,11 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
       const changed = Option.isNone(registry)
         ? Effect.void
-        : yield* registerRunner(
-            registry.value,
-            status.pipe(
+        : yield* registerRunner(registry.value, {
+            declaration: projection.at,
+            schedule,
+            retry: retryBindings,
+            status: status.pipe(
               Effect.map((runnerStatus): RunnerStatus => ({
                 projection: projection.id,
                 state,
@@ -94,7 +105,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
                 ...runnerStatus,
               })),
             ),
-          );
+          });
 
       const completed = (succeeded: boolean) =>
         Effect.gen(function* () {
@@ -111,8 +122,9 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             state = "retrying";
             retryAt = Option.some((yield* Clock.currentTimeMillis) + Duration.toMillis(duration));
             yield* changed;
+            yield* interruptDelay(Duration.toMillis(duration));
 
-            return duration;
+            return Duration.zero;
           }),
         ),
       );
@@ -133,6 +145,8 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           ),
         ),
         Effect.retry(retry),
+        // A finite policy stops automatic retries; an explicit registry request can resume it.
+        Effect.catch(() => resume),
         Effect.repeat(Schedule.forever),
         Effect.withSpan("Projection.attach"),
         Effect.forkScoped,

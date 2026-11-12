@@ -3,7 +3,7 @@ title: Schedule work with alarms
 description: Run bounded work on a Durable Object when no request is in flight, with wakeups that share the object's single alarm, retry on failure, and recover after eviction.
 ---
 
-A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn, with no request in flight.
+A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn.
 
 ```ts
 import { Effect, Option } from "effect";
@@ -38,6 +38,8 @@ The earliest deadline of all wakeups owns the alarm. The host reconciles the ala
 | Code calls `Wakeups.reconcile`      | At once                             |
 
 Reconciling reads every `next`, arms the alarm at the earliest deadline, and clears it when no wakeup has work. A due deadline arms the alarm at `now + 1`, so the work runs in an alarm turn, not in the request.
+
+A wakeup can implement `bind(host)`, which the host calls once at acquisition. `WakeupHost` supplies `reconcile` and the wakeup's current retry `state`, plus `retry` to clear application-failure backoff while retaining storage or deadline-read backoff. These effects work outside requests too. Reconciliation takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock. An optional `changed` effect runs after each alarm pass updates the host retry state.
 
 Writes arm the alarm on their own. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before its handler returns. A streamed response body that queues work after the handler returned, and work outside a request, call `Wakeups.use((wakeups) => wakeups.reconcile)`.
 
@@ -104,7 +106,7 @@ export const filesWake = Projection.wake({
 // ---cut---
 import { Layer } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, ProjectionWakeup } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Files, UserWake, filesWake } from "./wake-streams.ts";
@@ -112,7 +114,7 @@ import { Files, UserWake, filesWake } from "./wake-streams.ts";
 export class FilesObject extends StreamsyObject.make({
   app: Layer.empty,
   layer: (state) =>
-    CheckpointStore.layer.pipe(
+    Layer.mergeAll(CheckpointStore.layer, Projection.Registry.layer).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layer(Streamsy.group(Files, UserWake), {
           client: { storage: state.storage },
@@ -124,6 +126,8 @@ export class FilesObject extends StreamsyObject.make({
 ```
 
 The host acquires the wakeup in the object's layer scope, before any request writes. Put the checkpoint Layer and the input streams in `layer`, so the projection reads and commits on the object's own storage.
+
+With `Projection.Registry.layer` in that layer, request handlers can use `registry.schedule(binding)` and `registry.retry(declarationOrBinding)`. They record the request and reconcile the alarm before returning. See [Registry on a Durable Object](/docs/projections/run#registry-on-a-durable-object) for status and wait lifetimes.
 
 The wakeup is durable by default. Each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and the next turn runs those bindings. A binding that catches up deletes its mark. A binding that fails waits alone, from 1 s doubling to 1 hour, while the other bindings run, and `Wakeups.status` counts it as `deferred`.
 
