@@ -161,6 +161,10 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       params: ReadonlyArray<string>,
     ) => Effect.Effect<void, SqlError.SqlError>;
     readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+    readonly summary: (
+      projection: string,
+      now: number,
+    ) => Effect.Effect<ProjectionMarkSummary, StorageFault>;
     readonly due: (
       projection: string,
       now: number,
@@ -183,8 +187,17 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       dueAt: number,
     ) => Effect.Effect<void, StorageFault>;
     readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+    readonly retry: (projection: string, params?: string) => Effect.Effect<number, StorageFault>;
   }
 > {}
+
+// Disjoint counts of one projection's marks at the supplied time.
+interface ProjectionMarkSummary {
+  readonly fresh: number;
+  readonly retryDue: number;
+  readonly backingOff: number;
+  readonly nextDueAt: Option.Option<number>;
+}
 
 // One pending mark: a binding whose input has commits that may not have run yet.
 interface PendingMark {
@@ -198,6 +211,7 @@ same<OwnerRecords, Internal.OwnerRecords>(true);
 same<CommitHooks, Internal.CommitHooks>(true);
 same<ProjectionMarks, Internal.ProjectionMarks>(true);
 same<PendingMark, Internal.PendingMark>(true);
+same<ProjectionMarkSummary, Internal.ProjectionMarkSummary>(true);
 ```
 
 `@streamsy/projection` uses each service for one job:
@@ -205,3 +219,8 @@ same<PendingMark, Internal.PendingMark>(true);
 - `OwnerRecords` holds the encoded records of the projection checkpoint store
 - `CommitHooks` runs each hook that `beforeCommit` registers inside every later owned transaction that writes at least one stream id. The hook runs after the body and before the commit, and receives the ids that the transaction created, appended to, or deleted. Its writes commit or roll back with the transaction. The memory store turns a hook failure into a defect. Closing the scope of `beforeCommit` removes the hook
 - `ProjectionMarks` holds the pending marks of durable attached projections, keyed by projection id and params. The memory store keeps them with the streams, so they are gone when the scope of the Layer closes. See [`AttachOptions`](/docs/reference/projection/units#attachoptions)
+
+`ProjectionMarks.mark` runs inside the commit hook and fails with `SqlError`; the other mark operations fail with `StorageFault`.
+
+- `summary(projection, now)` returns disjoint counts of fresh marks, failed marks due now, and failed marks backing off, plus the earliest due time across all marks.
+- `retry(projection, params?)` makes failed marks due now, preserving attempts and sequence numbers; it returns the number changed and can select one binding by its canonical params.

@@ -282,6 +282,8 @@ interface Wakeup<R = never> {
   readonly run: Effect.Effect<void | Cloudflare.WakeupProgress, unknown, R>;
   readonly retry?: Schedule.Schedule<unknown>;
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
+  readonly bind?: (host: Cloudflare.WakeupHost) => Effect.Effect<void>;
+  readonly changed?: Effect.Effect<void>;
 }
 
 declare const Wakeup: {
@@ -304,10 +306,42 @@ same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 | `run`      | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
 | `retry`    | The schedule whose delays set the earliest retry time after a failure                                          |
 | `deferred` | The number of units that failed and wait on their own backoff. Without it, `status` reports `0`                |
+| `bind`     | Receives the wakeup's host once at acquisition, before the initial alarm reconciliation                        |
+| `changed`  | Runs after an attempted `run` updates the host's retry state; skipped wakeups receive no notification          |
 
 The host runs stream expiry first, and then the other wakeups in declaration order. Two wakeups with the same name fail the acquisition. When one wakeup fails in `next` or `run`, the others still run.
 
 Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends, the host stops retrying. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
+
+### `Cloudflare.WakeupHost`
+
+```ts
+// ---cut-start---
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type { Effect, Option } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeupHost {
+  readonly reconcile: Effect.Effect<void>;
+  readonly retry: Effect.Effect<void>;
+  readonly state: Effect.Effect<{
+    readonly failures: number;
+    readonly retryAt: Option.Option<number>;
+    readonly retryBlocked?: boolean;
+  }>;
+}
+// ---cut-after---
+same<WakeupHost, Cloudflare.WakeupHost>(true);
+```
+
+`Cloudflare.WakeupHost` supplies effects bound to one acquired wakeup. They also work outside requests. See [Alarms](/docs/servers/cloudflare/alarms).
+
+| Field          | Meaning                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `reconcile`    | Recomputes the alarm from every wakeup's next deadline; it can also run inside a wakeup's `run`            |
+| `retry`        | Clears application-failure backoff while retaining storage or deadline-read backoff                        |
+| `state`        | Reads consecutive failed passes and the next automatic or reconciled explicitly requested retry deadline   |
+| `retryBlocked` | Optional field of `state` that reports whether storage or deadline-read failure prevents an explicit retry |
 
 ### `Cloudflare.OutboxWakeup`
 
