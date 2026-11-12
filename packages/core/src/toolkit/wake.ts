@@ -21,7 +21,11 @@ import { state, type Api } from "./streamsy.ts";
 export const WakeRow = Schema.Struct({
   /** Canonical id of the source stream. It is also the State key. */
   stream: StreamId,
-  /** Source tail after the write. The same value as a reader's saved cursor. */
+  /**
+   * A position in the source that the row's writer vouches for. The stream
+   * holding the row says what is vouched: written in a source wake stream,
+   * or accepted in a projection's accepted stream.
+   */
   offset: Offset,
   /** Present when the source stream is closed. */
   closed: Schema.optionalKey(Schema.Literal(true)),
@@ -244,3 +248,43 @@ export function followWake<Self, P>(
     ),
   );
 }
+
+/**
+ * Wait until a wake row for `stream` reaches `offset`. Works with local and
+ * remote services. Callers choose their own timeout. Removed source ids must
+ * not be reused; a new generation needs a new wake stream or a State reset.
+ */
+export const awaitWake = <Self, P>(
+  declaration: Context.Key<Self, Api<P, WakeEvent>>,
+  params: P,
+  target: { readonly stream: StreamId; readonly offset: string },
+): Effect.Effect<void, Streams.FollowFailure, Self> =>
+  followWake(declaration, params, { cursors: new Map() }).pipe(
+    Stream.mapAccum(
+      () => Option.none<string>(),
+      (observed, batch) => {
+        let current = observed;
+
+        for (const item of batch.items) {
+          if (
+            WakeItem.$is("Reset")(item) ||
+            (WakeItem.$is("Removed")(item) && item.stream === target.stream) ||
+            (WakeItem.$is("Snapshot")(item) && !item.streams.has(target.stream))
+          )
+            current = Option.none();
+          else if (WakeItem.$is("Dirty")(item) && item.stream === target.stream)
+            current = Option.some(item.offset);
+        }
+
+        // Catch up before answering so a reset or removal on a later page wins
+        // over rows from an earlier generation in the replayed history.
+        return [
+          current,
+          [batch.upToDate && Option.isSome(current) && compare(current.value, target.offset) >= 0],
+        ] as const;
+      },
+    ),
+    Stream.filter((reached) => reached),
+    Stream.runHead,
+    Effect.flatMap((found) => (Option.isSome(found) ? Effect.void : Effect.never)),
+  );

@@ -21,6 +21,7 @@ export {
 export {
   wake,
   followWake,
+  awaitWake,
   wakeActions,
   WakeMessage,
   WakeRow,

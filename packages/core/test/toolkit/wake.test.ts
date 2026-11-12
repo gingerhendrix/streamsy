@@ -1,5 +1,6 @@
+/* oxlint-disable effecttsgo/strict-effect-provide -- Standalone live tests provide their own storage at the test entry point. */
 import { expect, it as baseIt, layer } from "@effect/vitest";
-import { Array, Context, Effect, Layer, Option, Record, Schema, Stream } from "effect";
+import { Array, Context, Effect, Fiber, Layer, Option, Record, Schema, Stream } from "effect";
 import { HttpRouter } from "effect/http";
 import { Protocol } from "@streamsy/core/protocol";
 import {
@@ -36,7 +37,7 @@ const annId = Files.at(ann).id;
  */
 const writeWake = (
   user: string,
-  changes: Array.NonEmptyReadonlyArray<DurableState.Change<Streamsy.WakeCollections>>,
+  changes: Array.NonEmptyReadonlyArray<DurableState.Entry<Streamsy.WakeCollections>>,
 ) =>
   Effect.gen(function* () {
     const wake = yield* UserWake;
@@ -447,4 +448,47 @@ baseIt.effect("materialize folds upserts, deletes, reset and a snapshot over two
     expect([...cleared.rows.stream.keys()]).toEqual(["d"]);
     expect([...closed.rows.stream.keys()]).toEqual(["c"]);
   }),
+);
+
+baseIt.live("awaitWake waits for the requested source and accepts equal or later offsets", () =>
+  Effect.gen(function* () {
+    const wake = yield* UserWake;
+    yield* wake.create({ user: "ann" });
+    const target = { stream: annId, offset: offsetAt(2) };
+
+    const waiting = yield* Streamsy.awaitWake(UserWake, { user: "ann" }, target).pipe(
+      Effect.forkScoped,
+    );
+
+    yield* writeWake("ann", [upsert("other", offsetAt(3)), upsert(annId, offsetAt(1))]);
+    expect(waiting.pollUnsafe()).toBeUndefined();
+    yield* writeWake("ann", [upsert(annId, offsetAt(2))]);
+    yield* Fiber.join(waiting).pipe(Effect.timeout("2 seconds"));
+    yield* Streamsy.awaitWake(UserWake, { user: "ann" }, { ...target, offset: offsetAt(1) });
+
+    const absent = yield* Streamsy.awaitWake(
+      UserWake,
+      { user: "ann" },
+      { ...target, stream: StreamId.make("absent") },
+    ).pipe(Effect.timeoutOption("10 millis"));
+
+    expect(Option.isNone(absent)).toBe(true);
+  }).pipe(Effect.provide(MemoryStorage.layer(streams))),
+);
+
+baseIt.live("awaitWake respects a reset on a later history page", () =>
+  Effect.gen(function* () {
+    yield* writeWake("ann", [upsert(annId, offsetAt(3))]);
+    yield* writeWake("ann", [StreamAddress.reset(), upsert("other", offsetAt(3))]);
+
+    const absent = yield* Streamsy.awaitWake(
+      UserWake,
+      { user: "ann" },
+      { stream: annId, offset: offsetAt(3) },
+    ).pipe(Effect.timeoutOption("10 millis"));
+
+    expect(Option.isNone(absent)).toBe(true);
+    yield* writeWake("ann", [upsert(annId, offsetAt(3))]);
+    yield* Streamsy.awaitWake(UserWake, { user: "ann" }, { stream: annId, offset: offsetAt(3) });
+  }).pipe(Effect.provide(MemoryStorage.layer(streams, { readLimit: 1 }))),
 );
