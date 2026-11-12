@@ -1,6 +1,6 @@
 ---
 packages:
-  "@streamsy/core": patch
+  "@streamsy/core": minor
   "@streamsy/storage": patch
 ---
 
