@@ -114,7 +114,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
       const publish = PubSub.publish(updates, undefined).pipe(Effect.asVoid);
 
       const snapshot = status.pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catch((fault) =>
           Effect.logWarning("Projection.Registry changes snapshot failed", fault).pipe(
             Effect.as(Option.none<ReadonlyArray<RunnerStatus>>()),

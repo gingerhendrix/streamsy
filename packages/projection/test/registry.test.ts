@@ -7,6 +7,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Match,
   Option,
   Schedule,
   Schema,
@@ -21,6 +22,7 @@ import {
   NotAttached,
   Projection,
   ProjectionWakeup,
+  ProjectionFault,
   type RunnerStatus,
 } from "@streamsy/projection";
 import { TestClock } from "effect/testing";
@@ -69,6 +71,8 @@ const only = (statuses: ReadonlyArray<RunnerStatus>) => {
   return statuses[0]!;
 };
 
+const paramsKey = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ id: Schema.String })));
+
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
   for (const durable of [false, true]) {
     it.effect(`schedule runs pre-existing work without another commit (durable: ${durable})`, () =>
@@ -96,6 +100,241 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       }),
     );
   }
+
+  for (const failure of ["binding", "storage", "projection-storage"] as const) {
+    for (const request of ["schedule", "retry"] as const) {
+      it.effect(
+        `${request} ${failure === "binding" ? "cuts binding" : "keeps storage"} pass backoff on Bun (${failure})`,
+        () =>
+          Effect.gen(function* () {
+            const id = `backoff-${request}-${failure}`;
+            const source = yield* Source;
+            yield* TestClock.setTime(0);
+
+            for (const key of ["a", "b"]) {
+              yield* source.create({ id: `${id}-${key}` });
+              yield* source.append({ id: `${id}-${key}` }, ["one"]);
+            }
+
+            let broken = true;
+            const seen: Array<string> = [];
+
+            const error = Match.value(failure).pipe(
+              Match.when("binding", () => "offline"),
+              Match.when(
+                "storage",
+                () => new StorageFault({ operation: "test", message: "offline", retryable: true }),
+              ),
+              Match.orElse(
+                () =>
+                  new ProjectionFault({
+                    phase: "process",
+                    reason: "storage-failure",
+                    message: "offline",
+                  }),
+              ),
+            );
+
+            const declaration = Projection.process({
+              id,
+              params: { id: Schema.String },
+              inputs: { source: Source },
+              commit: Commit.atLeastOnce,
+              process: (_batch, unit) =>
+                Effect.suspend(() => {
+                  seen.push(unit.params.id);
+
+                  return broken ? Effect.fail(error) : Effect.void;
+                }),
+            });
+
+            yield* Layer.build(
+              Projection.attach(declaration, { retry: Schedule.spaced("1 second") }),
+            );
+            const registry = yield* Projection.Registry;
+            yield* registry.schedule(declaration.at({ id: `${id}-a` }));
+            expect(
+              only(
+                yield* eventually(
+                  registry.status,
+                  (statuses) => only(statuses).state === "retrying",
+                ),
+              ).retryAt,
+            ).toEqual(Option.some(1_000));
+            broken = false;
+
+            if (request === "retry") {
+              expect(yield* registry.retry(declaration)).toBe(failure === "binding" ? 1 : 0);
+
+              if (failure !== "binding")
+                expect(yield* registry.retry(declaration.at({ id: `${id}-a` }))).toBe(0);
+            } else yield* registry.schedule(declaration.at({ id: `${id}-b` }));
+
+            if (failure !== "binding") {
+              yield* TestClock.adjust(999);
+              expect(seen).toEqual([`${id}-a`]);
+              expect(only(yield* registry.status)).toMatchObject({
+                state: "retrying",
+                failures: 1,
+                retryAt: Option.some(1_000),
+                queued: request === "schedule" ? 2 : 1,
+              });
+              yield* TestClock.adjust(1);
+            }
+
+            expect(
+              only(
+                yield* eventually(
+                  registry.status,
+                  (statuses) => only(statuses).failures === 0 && only(statuses).queued === 0,
+                ),
+              ),
+            ).toMatchObject({ state: "running", failures: 0, queued: 0 });
+            expect(seen).toEqual(
+              request === "schedule" ? [`${id}-a`, `${id}-a`, `${id}-b`] : [`${id}-a`, `${id}-a`],
+            );
+          }).pipe(Effect.ensuring(TestClock.setTime(0))),
+      );
+    }
+  }
+
+  for (const request of ["schedule", "retry"] as const) {
+    it.effect(
+      `durable Bun ${request} keeps a storage-read backoff and records only scheduled work`,
+      () =>
+        Effect.gen(function* () {
+          const source = yield* Source;
+          yield* TestClock.setTime(0);
+          const id = `durable-storage-${request}`;
+          const keyA = paramsKey({ id: `${id}-a` });
+          const keyB = paramsKey({ id: `${id}-b` });
+
+          for (const key of ["a", "b"]) {
+            yield* source.create({ id: `${id}-${key}` });
+            yield* source.append({ id: `${id}-${key}` }, ["one"]);
+          }
+
+          const seen: Array<string> = [];
+
+          const declaration = Projection.process({
+            id,
+            params: { id: Schema.String },
+            inputs: { source: Source },
+            commit: Commit.atLeastOnce,
+            process: (_batch, unit) =>
+              Effect.sync(() => {
+                seen.push(unit.params.id);
+              }),
+          });
+
+          const marks = yield* ProjectionMarks;
+          yield* marks.defer(id, keyA, 3, 0);
+
+          if (request === "retry") yield* marks.defer(id, keyB, 4, 60_000);
+          const before = yield* marks.read(id, [keyA, keyB]);
+          let broken = true;
+          yield* Layer.build(
+            Projection.attach(declaration, { durable: true, retry: Schedule.spaced("1 second") }),
+          ).pipe(
+            Effect.provideService(ProjectionMarks, {
+              ...marks,
+              nextDue: (projectionId) =>
+                Effect.suspend(() =>
+                  broken
+                    ? Effect.fail(
+                        new StorageFault({
+                          operation: "marks.nextDue",
+                          message: "offline",
+                          retryable: true,
+                        }),
+                      )
+                    : marks.nextDue(projectionId),
+                ),
+            }),
+          );
+          const registry = yield* Projection.Registry;
+          expect(
+            only(
+              yield* eventually(registry.status, (statuses) => only(statuses).state === "retrying"),
+            ).retryAt,
+          ).toEqual(Option.some(1_000));
+          broken = false;
+
+          if (request === "retry") expect(yield* registry.retry(declaration)).toBe(0);
+          else {
+            yield* registry.schedule(declaration.at({ id: `${id}-b` }));
+            expect((yield* marks.read(id, [keyB])).get(keyB)).toMatchObject({
+              attempts: 0,
+              dueAt: 0,
+            });
+          }
+
+          yield* TestClock.adjust(999);
+          expect(seen).toEqual([]);
+          expect(yield* marks.read(id, request === "retry" ? [keyA, keyB] : [keyA])).toEqual(
+            before,
+          );
+          expect(only(yield* registry.status).retryAt).toEqual(Option.some(1_000));
+          yield* TestClock.adjust(1);
+          expect(
+            only(
+              yield* eventually(
+                registry.status,
+                (statuses) => only(statuses).failures === 0 && only(statuses).active === 0,
+              ),
+            ),
+          ).toMatchObject({ state: "running", failures: 0, queued: 0 });
+          expect(seen).toEqual(request === "schedule" ? [`${id}-b`, `${id}-a`] : [`${id}-a`]);
+          expect(yield* marks.nextDue(id)).toEqual(
+            request === "retry" ? Option.some(60_000) : Option.none(),
+          );
+        }).pipe(Effect.ensuring(TestClock.setTime(0))),
+    );
+  }
+
+  it.effect("Bun requests retain an exhausted storage-fault policy", () =>
+    Effect.gen(function* () {
+      const source = yield* Source;
+      const id = "exhausted-storage";
+      yield* source.create({ id });
+      yield* source.append({ id }, ["one"]);
+      let runs = 0;
+
+      const declaration = Projection.process({
+        id,
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: () =>
+          Effect.suspend(() => {
+            runs += 1;
+
+            return Effect.fail(
+              new StorageFault({ operation: "test", message: "offline", retryable: true }),
+            );
+          }),
+      });
+
+      yield* Layer.build(Projection.attach(declaration, { retry: Schedule.recurs(0) }));
+      const registry = yield* Projection.Registry;
+      yield* registry.schedule(declaration.at({ id }));
+      expect(
+        only(yield* eventually(registry.status, (statuses) => only(statuses).state === "failed"))
+          .state,
+      ).toBe("failed");
+      expect(yield* registry.retry(declaration)).toBe(0);
+      yield* registry.schedule(declaration.at({ id }));
+      // Let any queued wake signal reach the stopped fiber.
+      yield* Effect.forEach(Array.range(0, 100), () => Effect.yieldNow, { discard: true });
+      expect(runs).toBe(1);
+      expect(only(yield* registry.status)).toMatchObject({
+        state: "failed",
+        queued: 1,
+        failures: 1,
+        retryAt: Option.none(),
+      });
+    }),
+  );
 
   it.effect(
     "NotAttached uses declaration identity, writes nothing, and applies after scope closure",
@@ -640,15 +879,18 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
           const marks = yield* ProjectionMarks;
           const faultRead = yield* Deferred.make<void>();
           let broken = initialFault;
+
           const fault = new StorageFault({
             operation: "marks.summary",
             message: "offline",
             retryable: true,
           });
+
           const source = yield* Source;
           yield* source.create({ id: "a" });
           yield* source.append({ id: "a" }, ["hello"]);
           const declaration = projection("read-fault");
+
           const wakeup = yield* ProjectionWakeup.attach(declaration).pipe(
             Effect.provideService(ProjectionMarks, {
               ...marks,
@@ -662,12 +904,15 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
                 ),
             }),
           );
+
           const pull = yield* Stream.toPull(registry.changes);
+
           if (!initialFault) {
             expect(only((yield* pull)[0]).projection).toBe(declaration.id);
             broken = true;
             yield* wakeup.changed;
           }
+
           const next = yield* pull.pipe(Effect.forkScoped);
           yield* Deferred.await(faultRead);
           expect(yield* Effect.flip(registry.status)).toEqual(fault);
