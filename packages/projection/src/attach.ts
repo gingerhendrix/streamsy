@@ -80,6 +80,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         retry: retryBindings,
         interruptDelay,
         resume,
+        reportFailures,
       } = yield* runner;
 
       const policy = options.retry ?? (yield* ProjectionRetry);
@@ -121,6 +122,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           Effect.gen(function* () {
             state = "retrying";
             retryAt = Option.some((yield* Clock.currentTimeMillis) + Duration.toMillis(duration));
+            yield* reportFailures(retryAt);
             yield* changed;
             yield* interruptDelay(Duration.toMillis(duration));
 
@@ -146,7 +148,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         ),
         Effect.retry(retry),
         // A finite policy stops automatic retries; an explicit registry request can resume it.
-        Effect.catch(() => resume),
+        Effect.catch(() => reportFailures(Option.none()).pipe(Effect.andThen(resume))),
         Effect.repeat(Schedule.forever),
         Effect.withSpan("Projection.attach"),
         Effect.forkScoped,

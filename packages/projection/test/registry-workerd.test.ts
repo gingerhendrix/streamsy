@@ -100,6 +100,58 @@ const until = async (read: () => Promise<Status>, check: (status: Status) => boo
 };
 
 for (const kind of ["durable", "memory"]) {
+  test(`registry emits Ran while a request waits on events (${kind})`, async () => {
+    const send = await start();
+    const path = `/${kind}/event`;
+    await send(`${path}/setup`);
+
+    const event = Schema.decodeUnknownSync(
+      Schema.TaggedStruct("Ran", {
+        projection: Schema.String,
+        params: Schema.String,
+        status: Schema.String,
+        units: Schema.Finite,
+        offsets: Schema.Struct({ source: Schema.String }),
+      }),
+    )(await (await send(`${path}/event`)).json());
+
+    expect(event).toMatchObject({
+      _tag: "Ran",
+      projection: "workerd-registry",
+      params: '{"id":"a"}',
+      status: "caught-up",
+      units: 1,
+    });
+    expect(event.offsets.source).toMatch(/^\d{16}_\d{16}$/);
+  }, 30_000);
+
+  test(`registry Failed carries the actual retry deadline (${kind})`, async () => {
+    const send = await start();
+    const path = `/${kind}/failed-event`;
+    await send(`${path}/setup`);
+    await send(`${path}/mode/binding`);
+
+    const event = Schema.decodeUnknownSync(
+      Schema.TaggedStruct("Failed", {
+        projection: Schema.String,
+        params: Schema.String,
+        attempts: Schema.Finite,
+        dueAt: RetryAt,
+      }),
+    )(await (await send(`${path}/event`)).json());
+
+    expect(event).toMatchObject({
+      _tag: "Failed",
+      projection: "workerd-registry",
+      params: '{"id":"a"}',
+      attempts: 1,
+    });
+    const snapshot = await statusOf(send(`${path}/status`));
+    expect(event.dueAt).toEqual(
+      kind === "durable" ? { _tag: "Some", value: snapshot.mark?.dueAt } : snapshot.status.retryAt,
+    );
+  }, 30_000);
+
   test(`registry.schedule from a request arms and runs without another commit (${kind})`, async () => {
     const send = await start();
     const path = `/${kind}/schedule`;

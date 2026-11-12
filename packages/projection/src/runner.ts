@@ -13,6 +13,7 @@ import type { Executable } from "./executable.ts";
 import { ProjectionFault } from "./fault.ts";
 import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
+import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
 
 export const DEFAULT_LIMIT = 100;
 
@@ -226,6 +227,18 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
   return Effect.gen(function* () {
     const storage = yield* Storage;
+    const registry = yield* Effect.serviceOption(Registry);
+    const publish = Option.isSome(registry) ? eventPublisher(registry.value) : undefined;
+
+    // Only observers need per-binding attempts and failures waiting for the host's retry decision.
+    const observations =
+      publish === undefined || options.durable === true
+        ? undefined
+        : {
+            attempts: new Map<string, number>(),
+            failures: new Map<string, number>(),
+          };
+
     const committed = yield* storage.committed;
     const pending = new Map<string, Binding>();
     const working = new Set<string>();
@@ -236,12 +249,30 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const interruptedDelay = Queue.take(wake).pipe(Effect.asVoid);
     let active = 0;
 
-    const runActive = (binding: Binding) =>
+    const runActive = (key: string, binding: Binding) =>
       Effect.acquireUseRelease(
         Effect.sync(() => {
           active += 1;
         }),
-        () => run(binding, { limit }),
+        () => {
+          const running = run(binding, { limit });
+
+          return publish === undefined
+            ? running
+            : running.pipe(
+                Effect.tap((progress) =>
+                  publish(
+                    RunnerEvent.Ran({
+                      projection: declaration.id,
+                      params: key,
+                      status: progress.status,
+                      units: progress.units,
+                      offsets: progress.offsets,
+                    }),
+                  ),
+                ),
+              );
+        },
         () =>
           Effect.sync(() => {
             active -= 1;
@@ -299,7 +330,37 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const dropped = (key: string) =>
       Effect.logWarning(
         `Projection ${declaration.id} dropped binding ${key}: its source was removed before its first run`,
+      ).pipe(
+        Effect.andThen(
+          publish === undefined
+            ? Effect.void
+            : publish(
+                RunnerEvent.Dropped({
+                  projection: declaration.id,
+                  params: key,
+                }),
+              ),
+        ),
       );
+
+    // Non-durable failures get their deadline only after the host steps its pass retry policy.
+    const reportFailures = (dueAt: Option.Option<number>) =>
+      observations === undefined || publish === undefined
+        ? Effect.void
+        : Effect.gen(function* () {
+            const failures = [...observations.failures];
+            observations.failures.clear();
+
+            for (const [params, attempts] of failures)
+              yield* publish(
+                RunnerEvent.Failed({
+                  projection: declaration.id,
+                  params,
+                  attempts,
+                  dueAt,
+                }),
+              );
+          });
 
     /**
      * Every binding runs once, even if a peer fails; failed or bounded work
@@ -311,11 +372,12 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
       for (const [key, binding] of Array.fromIterable(pending)) {
         pending.delete(key);
-        const exit = yield* Effect.exit(runActive(binding));
+        const exit = yield* Effect.exit(runActive(key, binding));
 
         if (Exit.isSuccess(exit)) {
           failed.delete(key);
           retryRequested.delete(key);
+          observations?.attempts.delete(key);
 
           if (exit.value.status !== "limit-reached") continue;
         }
@@ -323,6 +385,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         if (Exit.isFailure(exit) && (yield* sourceGone(binding.inputs, exit.cause))) {
           failed.delete(key);
           retryRequested.delete(key);
+          observations?.attempts.delete(key);
           yield* dropped(key);
 
           continue;
@@ -331,6 +394,12 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         pending.set(key, binding);
 
         if (Exit.isFailure(exit)) {
+          if (observations !== undefined) {
+            const attempts = (observations.attempts.get(key) ?? 0) + 1;
+            observations.attempts.set(key, attempts);
+            observations.failures.set(key, attempts);
+          }
+
           failed.add(key);
           retryRequested.delete(key);
           const error = Cause.findErrorOption(exit.cause);
@@ -388,7 +457,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
         for (const [key, binding] of work) {
           working.delete(key);
-          const exit = yield* Effect.exit(runActive(binding));
+          const exit = yield* Effect.exit(runActive(key, binding));
           const state = states.get(key);
 
           if (Exit.isSuccess(exit)) {
@@ -407,7 +476,18 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
           const attempts = (state?.attempts ?? 0) + 1;
           const delay = deferDelay(attempts);
-          yield* store.defer(id, key, attempts, (yield* Clock.currentTimeMillis) + delay);
+          const dueAt = (yield* Clock.currentTimeMillis) + delay;
+          yield* store.defer(id, key, attempts, dueAt);
+
+          if (publish !== undefined)
+            yield* publish(
+              RunnerEvent.Failed({
+                projection: id,
+                params: key,
+                attempts,
+                dueAt: Option.some(dueAt),
+              }),
+            );
           yield* Effect.logWarning(
             `Projection ${id} binding ${key} failed (attempt ${attempts}); it runs again in ${delay} ms`,
             exit.cause,
@@ -430,6 +510,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     });
 
     return {
+      reportFailures,
       next,
       wait,
       resume: interruptedDelay,

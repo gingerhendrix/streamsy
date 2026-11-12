@@ -81,6 +81,22 @@ const layer = (state: DurableObjectState) =>
   );
 
 const app = Layer.mergeAll(
+  HttpRouter.add(
+    "GET",
+    "/event",
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      const pull = yield* Stream.toPull(registry.events);
+      yield* registry.schedule(declaration.at({ id: "a" }));
+
+      const event = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+        Stream.runHead,
+        Effect.timeout("2 seconds"),
+      );
+
+      return HttpServerResponse.jsonUnsafe(Option.getOrThrow(event));
+    }).pipe(Effect.orDie),
+  ),
   // GET mutations intentionally skip the host's ordinary HTTP mutation reconciliation.
   HttpRouter.add(
     "GET",

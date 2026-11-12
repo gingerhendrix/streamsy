@@ -1,15 +1,49 @@
-import { Array, Context, Effect, Exit, Layer, Option, PubSub, Stream, type Scope } from "effect";
+import {
+  Array,
+  Context,
+  Data,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  PubSub,
+  Stream,
+  type Scope,
+} from "effect";
 import type { StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
 import { declarationOf } from "./declaration.ts";
 import { NotAttached } from "./fault.ts";
 import type { Identity } from "./checkpoint-store.ts";
 import type { Attachable } from "./runner.ts";
+import type { Progress } from "./run.ts";
 
 /** Only identity and encoded params are needed; execution uses the runner's binding. */
 type Binding = Pick<Identity, "id" | "params">;
 
 type Declaration = Attachable<Binding>;
+
+/** Live binding observations; params is the canonical JSON of encoded params. */
+export type RunnerEvent =
+  | {
+      readonly _tag: "Ran";
+      readonly projection: string;
+      readonly params: string;
+      readonly status: Progress<unknown>["status"];
+      readonly units: number;
+      readonly offsets: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly _tag: "Failed";
+      readonly projection: string;
+      readonly params: string;
+      readonly attempts: number;
+      /** None when the pass retry policy is exhausted. */
+      readonly dueAt: Option.Option<number>;
+    }
+  | { readonly _tag: "Dropped"; readonly projection: string; readonly params: string };
+
+export const RunnerEvent = Data.taggedEnum<RunnerEvent>();
 
 /** One live, attached runner. Process fields reset when the host restarts. */
 export interface RunnerStatus {
@@ -30,6 +64,8 @@ export interface RegistryApi {
   readonly status: Effect.Effect<ReadonlyArray<RunnerStatus>, StorageFault>;
   /** An initial snapshot, then a full snapshot after each pass and lifecycle change. */
   readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>, StorageFault>;
+  /** Future events only. Unbounded buffering keeps slow consumers off the runner's path. */
+  readonly events: Stream.Stream<RunnerEvent>;
   /** Queue this binding and wake its runner, without another source commit. */
   readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
   /** Make failed work due now. Returns the number of failed bindings changed. */
@@ -48,6 +84,7 @@ interface RegisteredRunner {
 interface Registration {
   readonly register: (runner: RegisteredRunner) => Effect.Effect<void, never, Scope.Scope>;
   readonly publish: Effect.Effect<void>;
+  readonly event: (event: RunnerEvent) => Effect.Effect<void>;
 }
 
 // Registration stays private to the host adapters.
@@ -68,6 +105,8 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
         PubSub.unbounded<Exit.Exit<ReadonlyArray<RunnerStatus>, StorageFault>>(),
         PubSub.shutdown,
       );
+
+      const events = yield* Effect.acquireRelease(PubSub.unbounded<RunnerEvent>(), PubSub.shutdown);
 
       const status = Effect.suspend(() => Effect.forEach(runners, (runner) => runner.status));
 
@@ -94,6 +133,10 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
       const registry = Registry.of({
         status,
+        // Acquire eagerly with toPull, so callers can subscribe before reading a checkpoint.
+        events: Stream.fromPull(Effect.map(PubSub.subscribe(events), PubSub.takeAll)).pipe(
+          Stream.scoped,
+        ),
         schedule: (binding) => Effect.flatMap(find(binding), (runner) => runner.schedule(binding)),
         retry: (target) =>
           Effect.flatMap(find(target), (runner) =>
@@ -118,6 +161,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
       registrations.set(registry, {
         publish,
+        event: (event) => PubSub.publish(events, event).pipe(Effect.asVoid),
         register: (runner) =>
           Effect.acquireRelease(
             Effect.sync(() => {
@@ -142,6 +186,9 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
     }),
   );
 }
+
+/** @internal Absent for runners without the optional registry; no events need constructing. */
+export const eventPublisher = (registry: RegistryApi) => registrations.get(registry)?.event;
 
 /** @internal Register in the attach scope and return its pass notification. */
 export const registerRunner = (

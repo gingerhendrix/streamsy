@@ -37,7 +37,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   });
 
   return Effect.gen(function* () {
-    const { next, drain, deferred, status, schedule, retry } = yield* runner;
+    const { next, drain, deferred, status, schedule, retry, reportFailures } = yield* runner;
     let host: WakeupHost | undefined;
     let lastPassAt = Option.none<number>();
     const registry = yield* Effect.serviceOption(Registry);
@@ -97,7 +97,15 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         Effect.sync(() => {
           host = bound;
         }),
-      changed,
+      changed: Option.isNone(registry)
+        ? Effect.void
+        : Effect.gen(function* () {
+            const retryAt =
+              host === undefined ? Option.none<number>() : (yield* host.state).retryAt;
+
+            yield* reportFailures(retryAt);
+            yield* changed;
+          }),
       retry: options.retry ?? (yield* ProjectionRetry),
       deferred,
     };
