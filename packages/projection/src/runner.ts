@@ -228,6 +228,20 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const storage = yield* Storage;
     const committed = yield* storage.committed;
     const pending = new Map<string, Binding>();
+    const working = new Set<string>();
+    let active = 0;
+
+    const runActive = (binding: Binding) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          active += 1;
+        }),
+        () => run(binding, { limit }),
+        () =>
+          Effect.sync(() => {
+            active -= 1;
+          }),
+      );
 
     const marks: ProjectionMarksApi | undefined =
       options.durable === true ? yield* durableMarks(declaration.id, match) : undefined;
@@ -292,7 +306,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
       for (const [key, binding] of Array.fromIterable(pending)) {
         pending.delete(key);
-        const exit = yield* Effect.exit(run(binding, { limit }));
+        const exit = yield* Effect.exit(runActive(binding));
 
         if (Exit.isSuccess(exit) && exit.value.status !== "limit-reached") continue;
 
@@ -342,11 +356,14 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           work.set(row.params, binding.value);
         }
 
+        for (const key of work.keys()) working.add(key);
+
         // Read before any run, so a write during a run raises `seq` past this value.
         const states = yield* store.read(id, [...work.keys()]);
 
         for (const [key, binding] of work) {
-          const exit = yield* Effect.exit(run(binding, { limit }));
+          working.delete(key);
+          const exit = yield* Effect.exit(runActive(binding));
           const state = states.get(key);
 
           if (Exit.isSuccess(exit)) {
@@ -389,7 +406,19 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     return {
       next,
       wait,
-      drain: drain(),
+      drain: drain().pipe(Effect.ensuring(Effect.sync(() => working.clear()))),
+      status: Effect.gen(function* () {
+        const summary =
+          marks === undefined
+            ? Option.none()
+            : Option.some(yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis));
+
+        return {
+          active,
+          queued: new Set([...pending.keys(), ...working]).size,
+          marks: summary,
+        };
+      }),
       deferred: marks === undefined ? Effect.succeed(0) : marks.deferred(declaration.id),
     };
   });

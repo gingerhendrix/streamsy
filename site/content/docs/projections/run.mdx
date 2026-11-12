@@ -171,6 +171,65 @@ The runner drops a binding whose source was removed before its first run, and lo
 
 On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) in place of `Projection.attach`. It runs the same runner in an alarm turn, and it is durable by default.
 
+### Observe attached runners
+
+`Projection.Registry` is an optional service for runners in this process. Provide `Projection.Registry.layer` **below the attach layers**, so each attachment sees the same registry. Each runner registers when its attach layer is built and unregisters when that scope closes. Without the registry, attachments run as usual. This registry currently observes `Projection.attach`; Durable Object wakeup registration is not yet supported.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+// @filename: index.ts
+// ---cut---
+import { Array, Effect, Layer, Option, Stream } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { orderTotals } from "./order-totals.ts";
+import { shop } from "./streams.ts";
+
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
+const app = Layer.mergeAll(
+  Projection.attach(orderTotals, { durable: true }),
+  // Other application layers that use Projection.Registry go here.
+).pipe(Layer.provideMerge(Projection.Registry.layer), Layer.provideMerge(host));
+
+const drained = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  return yield* registry.changes.pipe(
+    Stream.filter(
+      Array.every(
+        (runner) =>
+          runner.active === 0 &&
+          runner.queued === 0 &&
+          Option.match(runner.marks, {
+            onNone: () => true,
+            onSome: (marks) => marks.fresh === 0 && marks.retryDue === 0,
+          }),
+      ),
+    ),
+    Stream.runHead,
+    Effect.timeout("60 seconds"),
+  );
+});
+```
+
+Run the startup `drained` effect inside the application's scope, after its attach layers are built. The registry's `status` effect returns a `ReadonlyArray<RunnerStatus>`; `changes` emits an initial snapshot, then the full list after each pass, registration, removal and retry transition. Both can fail with `StorageFault` if a durable mark summary cannot be read. Reading status does not consume pending commits. A slow `changes` consumer buffers pass snapshots; stop the stream when the wait is complete.
+
+Each status includes the projection id, `active` bindings executing now, `queued` bindings in memory, and `lastPassAt` (`None` before any pass completes). `state` is `running` while waiting or processing, `retrying` during a scheduled pass retry, or `failed` when a pass fails and its retry policy stops. `failures` counts consecutive failed passes and resets after a successful pass. `retryAt` is set only while `retrying`. A failed durable binding defers its own mark without failing the pass, so inspect the mark counts too.
+
+`marks` is `None` for a non-durable runner. For a durable runner it contains three disjoint counts: `fresh` has no failed attempts, `retryDue` has failed attempts and is due now, and `backingOff` has failed attempts and is due later. `nextDueAt` is the earliest due time across all marks, or `None` when there are none. The startup filter above allows bindings still backing off; include `marks.backingOff === 0` when they must also finish. An empty registry also passes the filter, so check layer order if expected runners are missing. A registry that closes without ever registering a runner logs a debug message.
+
 ## Closed and gone inputs
 
 A closed input with no new items still makes one unit, with `closed` set on its slice. The checkpoint records the close, so a later run does not repeat the empty unit. A batch handler can react to the close. A handler for each entry gets no entries.

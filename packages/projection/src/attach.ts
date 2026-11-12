@@ -1,8 +1,9 @@
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Clock, Duration, Effect, Layer, Option, Schedule, Schema } from "effect";
 import type { Storage } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
+import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
 import { ProjectionRetry } from "./retry.ts";
 
 export type { Attachable } from "./runner.ts";
@@ -71,15 +72,65 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain } = yield* runner;
-      const retry = options.retry ?? (yield* ProjectionRetry);
+      const { wait, drain, status } = yield* runner;
+      const policy = options.retry ?? (yield* ProjectionRetry);
+      let state: RunnerStatus["state"] = "running";
+      let failures = 0;
+      let retryAt = Option.none<number>();
+      let lastPassAt = Option.none<number>();
+      const registry = yield* Effect.serviceOption(Registry);
+
+      const changed = Option.isNone(registry)
+        ? Effect.void
+        : yield* registerRunner(
+            registry.value,
+            status.pipe(
+              Effect.map((runnerStatus): RunnerStatus => ({
+                projection: projection.id,
+                state,
+                failures,
+                retryAt,
+                lastPassAt,
+                ...runnerStatus,
+              })),
+            ),
+          );
+
+      const completed = (succeeded: boolean) =>
+        Effect.gen(function* () {
+          lastPassAt = Option.some(yield* Clock.currentTimeMillis);
+          state = succeeded ? "running" : "failed";
+          failures = succeeded ? 0 : failures + 1;
+          retryAt = Option.none();
+          yield* changed;
+        });
+
+      const retry = policy.pipe(
+        Schedule.modifyDelay(({ duration }) =>
+          Effect.gen(function* () {
+            state = "retrying";
+            retryAt = Option.some((yield* Clock.currentTimeMillis) + Duration.toMillis(duration));
+            yield* changed;
+
+            return duration;
+          }),
+        ),
+      );
+
       // A durable wait reads marks, so a failed read retries like a failed drain.
-      yield* wait.pipe(
-        Effect.andThen(drain),
+      yield* Effect.suspend(() => {
+        state = "running";
+        retryAt = Option.none();
+
+        return wait.pipe(Effect.andThen(drain));
+      }).pipe(
+        Effect.tap(() => completed(true)),
         // `Effect.retry` does not retry a defect, so a handler that throws would end this fiber.
         Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
         Effect.tapError((error) =>
-          Effect.logError(`Projection.attach ${projection.id} failed`, error),
+          completed(false).pipe(
+            Effect.andThen(Effect.logError(`Projection.attach ${projection.id} failed`, error)),
+          ),
         ),
         Effect.retry(retry),
         Effect.repeat(Schedule.forever),

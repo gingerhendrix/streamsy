@@ -59,3 +59,5 @@ export { CheckpointRecord } from "./checkpoint-store.ts";
 export { ProjectionRetry } from "./retry.ts";
 
 export { ProjectionWakeup } from "./wakeup.ts";
+
+export type { RegistryApi, RunnerStatus } from "./registry.ts";
