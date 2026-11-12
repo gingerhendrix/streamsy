@@ -631,40 +631,62 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       }),
   );
 
-  it.effect("summary faults fail observers without failing the projection pass", () =>
-    Effect.gen(function* () {
-      const registry = yield* Projection.Registry;
-      const marks = yield* ProjectionMarks;
-      const processed = yield* Deferred.make<void>();
-
-      const fault = new StorageFault({
-        operation: "marks.summary",
-        message: "offline",
-        retryable: true,
-      });
-
-      yield* Layer.build(
-        Projection.attach(
-          projection("read-fault", Deferred.succeed(processed, undefined).pipe(Effect.asVoid)),
-          { durable: true },
-        ),
-      ).pipe(
-        Effect.provideService(ProjectionMarks, { ...marks, summary: () => Effect.fail(fault) }),
-      );
-      expect(yield* Effect.flip(registry.status)).toEqual(fault);
-      expect(yield* registry.changes.pipe(Stream.runHead, Effect.flip)).toEqual(fault);
-      const source = yield* Source;
-      yield* source.create({ id: "a" });
-      yield* source.append({ id: "a" }, ["hello"]);
-      yield* Deferred.await(processed);
-      expect(
-        yield* eventually(marks.summary("read-fault", 0), (summary) => summary.fresh === 0),
-      ).toEqual({
-        fresh: 0,
-        retryDue: 0,
-        backingOff: 0,
-        nextDueAt: Option.none(),
-      });
-    }),
-  );
+  for (const initialFault of [false, true]) {
+    it.effect(
+      `changes skips a failed ${initialFault ? "initial" : "later"} snapshot and stays open`,
+      () =>
+        Effect.gen(function* () {
+          const registry = yield* Projection.Registry;
+          const marks = yield* ProjectionMarks;
+          const faultRead = yield* Deferred.make<void>();
+          let broken = initialFault;
+          const fault = new StorageFault({
+            operation: "marks.summary",
+            message: "offline",
+            retryable: true,
+          });
+          const source = yield* Source;
+          yield* source.create({ id: "a" });
+          yield* source.append({ id: "a" }, ["hello"]);
+          const declaration = projection("read-fault");
+          const wakeup = yield* ProjectionWakeup.attach(declaration).pipe(
+            Effect.provideService(ProjectionMarks, {
+              ...marks,
+              summary: (id, now) =>
+                Effect.suspend(() =>
+                  broken
+                    ? Deferred.succeed(faultRead, undefined).pipe(
+                        Effect.andThen(Effect.fail(fault)),
+                      )
+                    : marks.summary(id, now),
+                ),
+            }),
+          );
+          const pull = yield* Stream.toPull(registry.changes);
+          if (!initialFault) {
+            expect(only((yield* pull)[0]).projection).toBe(declaration.id);
+            broken = true;
+            yield* wakeup.changed;
+          }
+          const next = yield* pull.pipe(Effect.forkScoped);
+          yield* Deferred.await(faultRead);
+          expect(yield* Effect.flip(registry.status)).toEqual(fault);
+          expect(next.pollUnsafe()).toBeUndefined();
+          yield* registry.schedule(declaration.at({ id: "a" }));
+          yield* wakeup.run;
+          broken = false;
+          yield* wakeup.changed;
+          const recovered = only((yield* Fiber.join(next))[0]);
+          expect(recovered).toMatchObject({ projection: declaration.id, active: 0, queued: 0 });
+          expect(recovered.marks).toEqual(
+            Option.some({
+              fresh: 0,
+              retryDue: 0,
+              backingOff: 0,
+              nextDueAt: Option.none(),
+            }),
+          );
+        }),
+    );
+  }
 });

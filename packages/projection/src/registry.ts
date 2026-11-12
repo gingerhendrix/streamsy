@@ -51,8 +51,8 @@ export interface RunnerStatus {
 
 export interface RegistryApi {
   readonly status: Effect.Effect<ReadonlyArray<RunnerStatus>, StorageFault>;
-  /** An initial snapshot, then a full snapshot after each pass and lifecycle change. */
-  readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>, StorageFault>;
+  /** Full snapshots after subscription and changes; failed reads are logged and skipped. */
+  readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>>;
   /** Future events only. Unbounded buffering keeps slow consumers off the runner's path. */
   readonly events: Stream.Stream<RunnerEvent>;
   /** Queue this binding and wake its runner, without another source commit. */
@@ -113,6 +113,15 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
       // Snapshot reads belong to subscribers, never to the projection pass.
       const publish = PubSub.publish(updates, undefined).pipe(Effect.asVoid);
 
+      const snapshot = status.pipe(
+        Effect.map(Option.some),
+        Effect.catch((fault) =>
+          Effect.logWarning("Projection.Registry changes snapshot failed", fault).pipe(
+            Effect.as(Option.none<ReadonlyArray<RunnerStatus>>()),
+          ),
+        ),
+      );
+
       const registry = Registry.of({
         status,
         // Acquire eagerly with toPull, so callers can subscribe before reading a checkpoint.
@@ -130,8 +139,11 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
             const subscription = yield* PubSub.subscribe(updates);
 
             return Stream.concat(
-              Stream.fromEffect(status),
-              Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => status)),
+              Stream.fromEffect(snapshot),
+              Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => snapshot)),
+            ).pipe(
+              Stream.filter(Option.isSome),
+              Stream.map((value) => value.value),
             );
           }),
         ),
