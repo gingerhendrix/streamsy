@@ -14,6 +14,7 @@ import { ProjectionFault } from "./fault.ts";
 import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
 import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
+import { triggersOf, type WakeClass } from "./triggers.ts";
 
 export const DEFAULT_LIMIT = 100;
 
@@ -27,6 +28,7 @@ export const deferDelay = (attempts: number): number =>
   Math.min(1_000 * 2 ** Math.max(0, attempts - 1), MAX_DEFER_MS);
 
 export interface RunnerOptions {
+  readonly triggers?: ReadonlyArray<WakeClass> | undefined;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number | undefined;
   /** Keep a pending mark for each binding in the storage owner. Default false. */
@@ -282,6 +284,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const marks: ProjectionMarksApi | undefined =
       options.durable === true ? yield* durableMarks(declaration.id, match) : undefined;
 
+    const triggers =
+      options.triggers === undefined || options.triggers.length === 0
+        ? undefined
+        : yield* triggersOf(declaration.id, options.triggers, match, marks);
+
     const add = (ids: ReadonlyArray<StreamId>) => {
       for (const id of ids) {
         const found = match(id);
@@ -298,7 +305,8 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const next = Effect.gen(function* () {
       yield* absorb;
 
-      if (pending.size > 0) return Option.some(yield* Clock.currentTimeMillis);
+      if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next)))
+        return Option.some(yield* Clock.currentTimeMillis);
 
       return marks === undefined ? Option.none<number>() : yield* marks.nextDue(declaration.id);
     });
@@ -322,7 +330,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const wait = Effect.gen(function* () {
       yield* absorb;
 
-      if (pending.size > 0) return undefined;
+      if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next))) return undefined;
 
       return yield* marks === undefined ? take : waitDue(marks);
     });
@@ -506,7 +514,12 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       yield* Queue.clear(wake);
       yield* absorb;
 
-      return yield* marks === undefined ? drainInMemory : drainDurable(marks);
+      if (triggers !== undefined)
+        for (const [key, binding] of yield* triggers.read) pending.set(key, binding);
+
+      const result = yield* marks === undefined ? drainInMemory : drainDurable(marks);
+
+      return { more: result.more || (triggers !== undefined && (yield* triggers.next)) };
     });
 
     return {

@@ -152,16 +152,17 @@ const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(s
 const attached = Projection.attach(orderTotals, { durable: true }).pipe(Layer.provideMerge(host));
 ```
 
-Build the Layer before the application writes. A commit before the subscription exists does not start a run. Only a commit through this process's `Storage` starts a run. Remote inputs, inputs on another storage owner, and commits by another process on the same database do not.
+Build the Layer before the application writes. A commit before the subscription exists does not start a run. Local input commits start runs through this process's `Storage`. For remote inputs, append a row to a local trigger stream as described below. A second process writing the same database starts no run.
 
 Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
 
-| Option    | Default           | Effect                                                                              |
-| --------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `limit`   | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
-| `retry`   | `ProjectionRetry` | The schedule for a retry after a failed pass                                        |
-| `durable` | `false`           | Keep a pending mark for each binding with work in storage                           |
-| `batch`   | `25`              | With `durable`, the most due marks that a pass reads                                |
+| Option     | Default           | Effect                                                                              |
+| ---------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `limit`    | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
+| `retry`    | `ProjectionRetry` | The schedule for a retry after a failed pass                                        |
+| `durable`  | `false`           | Keep a pending mark for each binding with work in storage                           |
+| `triggers` | `[]`              | Local fixed-address wake declarations whose rows request binding runs               |
+| `batch`    | `25`              | With `durable`, the most due marks that a pass reads                                |
 
 By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`. A handler that throws fails the pass the same way: the runner logs the defect and retries.
 
@@ -170,6 +171,48 @@ With `durable: true`, each commit that writes an input also writes a pending mar
 The runner drops a binding whose source was removed before its first run, and logs a warning. To write wake rows for each source stream, see [Wake streams](/docs/streams/wake).
 
 On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) in place of `Projection.attach`. It runs the same runner in an alarm turn, and it is durable by default.
+
+### Trigger streams
+
+Pass `triggers: [FolderWake]` to `Projection.attach` or `ProjectionWakeup.attach` when a wake stream on the runner's owner requests work for inputs on another owner. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
+
+class Files extends Streamsy.json<Files>()("TriggerDemo/Files", "folders/:folderId/files", {
+  params: { folderId: Schema.String },
+  schema: Schema.String,
+}) {}
+class FolderWake extends Streamsy.wake<FolderWake>()("TriggerDemo/Wake", "wake", { params: {} }) {}
+
+const index = Projection.fold({
+  id: "trigger-demo-index",
+  params: { folderId: Schema.String },
+  inputs: { files: Files },
+  commit: Commit.checkpoint,
+  state: { schema: Schema.Number, initial: 0 },
+  fold: (count) => count + 1,
+});
+const attached = Projection.attach(index, { durable: true, triggers: [FolderWake] });
+const wakeup = ProjectionWakeup.attach(index, { triggers: [FolderWake] });
+```
+
+At the start of each drain, the runner reads new trigger messages after its saved cursor. Each upsert's `row.stream` is parsed by the projection's inputs to choose one binding, just as a local input commit does. A State delete requests a run for its key, so removed sources can clear their outputs. State controls advance the cursor without requesting a binding. Several requests for one binding coalesce. An unmatched source id is skipped and logged, and the cursor still advances past it. The row's `offset` is never compared: even a repeated or smaller offset requests work. Triggered bindings share the ordinary queue, registry events, and failure and retry paths. A durable failed binding keeps its own backoff when another row requests it.
+
+The runner's next deadline is now while a trigger tail is ahead of its cursor. A Bun attachment wakes through the trigger's local `Storage.committed` notification. On a Durable Object, the ordinary append route reconciles the alarm; acquisition also finds unread rows after an eviction. No extra wake signal is required.
+
+With `durable: true`, trigger cursors and pending binding marks commit in one owner transaction. A stop after ingestion leaves marks for unfinished bindings; a row written while the runner is down is read on startup. This gives restart safety on persistent storage. Use one runner for each projection id on an owner, retain trigger history, and never reuse a removed stream id.
+
+With `durable: false`, the saved cursor still advances at ingestion, but the requested work then lives only in memory. A stop or eviction before the binding finishes loses that request. Restart does not replay rows already read. Use `durable: true` when trigger requests must survive a restart. It is the default for `ProjectionWakeup.attach`; Bun's `Projection.attach` defaults to `false`.
+
+A hand-written request must include a valid `WakeRow.offset`:
+
+- If the wake stream is also a served index, read the source head and write its real tail. This keeps the row truthful for other readers, as in folder-sync's `FolderWake`.
+- For a stream used only to trigger, use the zero offset `0000000000000000_0000000000000000`. It requests a run, but a `followWake` reader comparing saved source offsets may report no `Dirty` item for it. `"-1"` and a missing offset do not decode as `WakeRow`.
+
+`Projection.wake` already publishes real source tails across owners with producer deduplication. The [folder-sync example](/docs/examples/folder-sync) uses it to trigger one search binding per folder on the index object, so a failing folder backs off alone.
 
 ### Observe attached runners
 

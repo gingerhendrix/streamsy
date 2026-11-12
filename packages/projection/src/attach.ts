@@ -6,10 +6,15 @@ import { runnerOf, type Attachable } from "./runner.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
 import { ProjectionFault } from "./fault.ts";
 import { ProjectionRetry } from "./retry.ts";
+import type { WakeClass } from "./triggers.ts";
+
+export type { WakeClass } from "./triggers.ts";
 
 export type { Attachable } from "./runner.ts";
 
 export interface AttachOptions {
+  /** Local wake streams whose source ids request binding runs. Use fixed-address wake classes. */
+  readonly triggers?: ReadonlyArray<WakeClass>;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
   /**
@@ -52,7 +57,7 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * commit and before the run leaves that binding late until its source gets its
  * next write. With `durable: true`, a pending mark in storage covers that
  * window, and the layer runs due marks when it starts.
- * Inputs on another owner never commit here, so they never trigger. Do not run
+ * Inputs on another owner need a local wake stream in `triggers`. Do not run
  * an attached binding under `Projection.follow` too: use one writer per key.
  *
  * ```ts
@@ -69,6 +74,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     limit: options.limit,
     durable: options.durable ?? false,
     batch: options.batch,
+    triggers: options.triggers,
   });
 
   return Layer.effectDiscard(

@@ -36,6 +36,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     limit: options.limit,
     durable: options.durable ?? true,
     batch: options.batch,
+    triggers: options.triggers,
   });
 
   return Effect.gen(function* () {

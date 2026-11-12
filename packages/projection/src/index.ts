@@ -16,7 +16,7 @@ export type { OutputsContext, ProcessContext } from "./process.ts";
 
 export type { FollowOptions } from "./follow.ts";
 
-export type { AttachOptions, Attachable } from "./attach.ts";
+export type { AttachOptions, Attachable, WakeClass } from "./attach.ts";
 
 export type { RunOptions } from "./read.ts";
 
