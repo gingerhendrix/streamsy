@@ -84,24 +84,20 @@ Worker checks the writer token at its edge, and each object checks it again.
 `ProjectionWakeup.attach(filesWake)` runs from a folder object's
 alarm after each local `Files` commit. It appends the folder's current tail to
 `FolderWake` through `wakeLink` in `worker/links.ts`. The index object's own
-wake commits drive a second attached projection, `wakeSearch`, which reads each
-affected folder through the read-only `filesLink`. Both links use internal
-`/__` mounts that the Worker edge never forwards. Public streams stay read-only.
-Search rows and each folder's source checkpoint commit together; the wake
-checkpoint advances only after every affected folder has caught up. A removed
-folder produces a wake delete, clears its index rows and forgets its binding.
+wake rows trigger `search` with `triggers: [FolderWake]`. Each row's source id
+selects its `folderId` binding, which reads through the read-only `filesLink`.
+Both links use internal `/__` mounts that the Worker edge never forwards.
+Public streams stay read-only. Search rows and each folder's source checkpoint
+commit together. A removed folder produces a wake delete, clears its index rows
+and forgets its binding. A failing folder backs off alone while other folders run.
 
-Both wakeups are durable: each commit to a projection's input also writes a
-pending mark in its transaction. A `Files` commit marks the folder object's
-wake production, so an eviction or a deploy before the alarm still produces the
-wake row. A `FolderWake` commit marks `wakeSearch`. When the index object
-starts, it finds that mark and arms the alarm. The `wakeSearch` run compares
-durable wake rows with search checkpoints and catches up dirty folders without
-another write. It also checks indexed folders whose wake row disappeared and
-resumes unacknowledged wake batches. Wake rows committed by a build older than
-the marks have no mark. They wait for the next write to any folder, which
-catches them all up. Bun uses `Projection.attach(..., { durable: true })` for both search and
-wake production, so a restart runs the folders that a stop left behind.
+Both wakeups are durable. A `Files` commit marks the folder object's wake
+production in its transaction, so an eviction or a deploy before the alarm still
+produces the wake row. The index object reads new `FolderWake` rows and commits
+its trigger cursor with the pending marks for the matched search bindings.
+At startup, unread rows or unfinished marks arm the alarm without another write.
+Bun uses `Projection.attach(..., { durable: true })` for local search and wake
+production, so a restart runs the folders that a stop left behind.
 
 `build:worker` writes two bundles. `public/worker/index.js` is the deploy
 bundle. `public/worker/test-worker.js` adds test switches from
@@ -449,12 +445,11 @@ at a time, so a page does not hold every blob's text in memory.
 
 Both hosts use the search projection in `server/search-index.ts`, committing SQL
 rows with its source checkpoint. Bun attaches it directly to local `Files`
-commits. The Worker attaches `wakeSearch` to the index object's local
-`FolderWake` commits, then reads affected `Files` streams through `filesLink`.
-At start, the Worker index arms its alarm for the pending `wakeSearch` mark and
-answers requests while the alarm catches up. Bun runs the search bindings that
-still have pending marks, in the attach layer's own fiber, so the server answers
-requests while it catches up.
+commits. The Worker attaches that same projection with `triggers: [FolderWake]`
+on the index object, then reads each folder's `Files` through `filesLink`.
+At start, unread trigger rows and pending folder marks arm the index alarm;
+requests can be answered while the folders catch up. Bun runs pending search
+bindings in the attach layer's own fiber.
 An index restart needs no new folder write.
 Search and listing are eventually consistent. A missing blob keeps file metadata
 without searchable text and does not stall later changes.

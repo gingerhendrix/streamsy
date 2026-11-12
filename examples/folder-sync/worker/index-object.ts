@@ -12,10 +12,9 @@ import { registerFolder } from "../server/folder-registry.ts";
 import { createFailures, FolderCreateFailed, folderRoutes } from "../server/folder-routes.ts";
 import { WriterTokenLive } from "../server/http.ts";
 import { IndexRequestLive } from "../server/index-api.ts";
-import { initialiseSearch } from "../server/search-index.ts";
+import { initialiseSearch, search } from "../server/search-index.ts";
 import { Files, Folders, FolderWake } from "../server/streams.ts";
 import type { Env } from "./env.ts";
-import { wakeSearch } from "./search.ts";
 import { filesLink, wakeLink } from "./links.ts";
 import { folderObject } from "./placement.ts";
 import { objectStorage } from "./storage.ts";
@@ -127,5 +126,5 @@ export class IndexObject extends StreamsyObject.make<
   app: IndexApp,
   layer: indexLayer,
   links: (env) => [filesLink.client(env.FOLDERS)],
-  wakeups: [ProjectionWakeup.attach(wakeSearch)],
+  wakeups: [ProjectionWakeup.attach(search, { triggers: [FolderWake] })],
 }) {}
