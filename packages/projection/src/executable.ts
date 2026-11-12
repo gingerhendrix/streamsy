@@ -20,6 +20,7 @@ export interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (

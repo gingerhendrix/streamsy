@@ -1,0 +1,81 @@
+---
+title: Accepted stream
+description: Publish the input offsets a projection has accepted, and wait for them across storage owners with an ordinary wake stream.
+---
+
+An accepted stream is a normal `Streamsy.wake` stream whose rows describe the input offsets a projection has accepted. Set `accepted` on the declaration. The kernel adds one `WakeRow` upsert for each input that moved in a unit, using that unit's accepted offset. A terminal close can also publish the final offset with `closed: true`. The State key is the source stream id.
+
+## Declare
+
+```ts include accepted-example
+// @filename: accepted.ts
+// ---cut---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+export class Events extends Streamsy.json<Events>()("Accepted/Events", "events/:id", {
+  params: { id: Schema.String },
+  schema: Schema.Finite,
+}) {}
+
+export class TotalsAccepted extends Streamsy.wake<TotalsAccepted>()(
+  "Accepted/Totals",
+  "totals/:id/accepted",
+  { params: { id: Schema.String } },
+) {}
+
+export const totals = Projection.fold({
+  id: "totals",
+  params: { id: Schema.String },
+  inputs: { events: Events },
+  accepted: TotalsAccepted,
+  commit: Commit.transaction,
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+});
+```
+
+`accepted` supports **`Commit.transaction` and `Commit.producer` only**, including compensation wrappers around those strategies. Any other strategy throws `accepted requires Commit.transaction or Commit.producer` when the declaration is built. This includes a fold's default `Commit.checkpoint`, `Commit.atLeastOnce`, and custom strategies. A fold that publishes accepted offsets must explicitly set `commit: Commit.transaction` (as above) or `Commit.producer`. Adding `accepted` never changes the default strategy.
+
+With `Commit.transaction`, the row, checkpoint, and transactional state commit together on one owner. Create the accepted stream before running the projection. With `Commit.producer`, the append is effectively once: it can precede checkpoint settlement, and retrying a failed settlement does not duplicate the row. A missing accepted stream on the checkpoint's owner is created by the producer; an accepted stream on another owner must already exist.
+
+This works through `Projection.run`, `Projection.follow`, `Projection.attach`, and `ProjectionWakeup.attach`. Process and output declarations use the same option. State tables use `StateTable.define(StateClass, { accepted: AcceptedClass })`; their ordinary runner commits the row in the table transaction. Calling a table's `sync` directly does not run a projection unit or publish accepted offsets.
+
+The accepted stream cannot be an input of the same projection or duplicate a declared output. Its parameter names and decoded types must be projection parameters, as for `Projection.wake` outputs. Give each projection its own accepted stream. When bindings share a source, include the parameters that distinguish those bindings in the accepted stream template so their rows cannot overwrite each other.
+
+## Wait across owners
+
+After writing a source, wait for its row to reach the receipt offset:
+
+```ts
+// @include: accepted-example
+// @filename: wait.ts
+// ---cut---
+import { Effect } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Events, TotalsAccepted } from "./accepted.ts";
+
+export const writeAndWait = Effect.gen(function* () {
+  const params = { id: "one" };
+  const receipt = yield* (yield* Events).append(params, [5]);
+  yield* Streamsy.awaitWake(TotalsAccepted, params, {
+    stream: Events.at(params).id,
+    offset: receipt.offset,
+  }).pipe(Effect.timeout("10 seconds"));
+});
+```
+
+`awaitWake` uses the normal wake follow service and core offset `compare`, accepting equality or a later offset. It catches up with the wake history before answering, so a later `reset` or removal supersedes old rows. It works over local storage or `RemoteStreams.layer`, including when the writer and projection live on different owners. The caller provides the wake service and chooses the timeout. See [Remote clients](/docs/servers/remote) and [Wake streams](/docs/streams/wake).
+
+## Compare lag
+
+A source wake stream and an accepted stream use the same source ids as keys. Materialize both with `DurableState.materialize`, then compare the offsets of each source with core `compare`. When the source wake row is ahead of the accepted row, or the accepted row is absent, the projection is behind. The accepted stream also lists the sources that have run and their accepted offsets. Failure details remain in the in-process registry.
+
+## Limits
+
+- A binding that keeps failing writes no new accepted row. Callers set their own timeout. Under the producer strategy a successfully processed unit may have appended its row before checkpoint settlement fails.
+- The stream grows by one row per moved input per unit. It has the same growth cost as other wake streams.
+- Removed or expired source stream ids must not be reused. A recreated source starts at a lower offset.
+- A new generation writes to a new accepted stream or emits a State `reset`, so a row from an old generation cannot satisfy a new wait.
+- The row is keyed by source id. Bindings that share a source need distinct accepted stream addresses.

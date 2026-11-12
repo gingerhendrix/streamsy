@@ -1,10 +1,13 @@
 /* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
 import type { Effect } from "effect";
 import type { SqlClient } from "effect/sql";
+import type { WakeOutput } from "./wake.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Slices } from "./batch.ts";
 import {
   build,
+  type AcceptedServices,
+  type AcceptedResult,
   type Common,
   type Inputs,
   type Addresses,
@@ -37,9 +40,10 @@ export function process<
   Prepared = void,
   PE = never,
   PR = never,
+  W extends WakeOutput | undefined = undefined,
 >(
-  definition: Common<C, I> &
-    Committing<void, P, Q> & {
+  definition: Common<C, I, W> &
+    Committing<AcceptedResult<void, W>, P, Q> & {
       readonly outputs?: never;
       readonly prepare?: (
         batch: Slices<Addresses<I>>,
@@ -51,7 +55,7 @@ export function process<
         context: ProcessContext<Prepared>,
       ) => Effect.Effect<void, E, R>;
     },
-): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR>;
+): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR, never, AcceptedServices<W>>;
 // The outputs overload is last, so the compiler reports a mistake in `outputs` against it.
 export function process<
   C extends StreamRoute.ParamCodecs,
@@ -63,9 +67,10 @@ export function process<
   Prepared = void,
   PE = never,
   PR = never,
+  W extends WakeOutput | undefined = undefined,
 >(
-  definition: Common<C, I> &
-    Committing<void, SqlClient.SqlClient, Q> & {
+  definition: Common<C, I, W> &
+    Committing<AcceptedResult<void, W>, SqlClient.SqlClient, Q> & {
       readonly outputs: O & OutputsWithin<C, O>;
       readonly prepare?: (
         batch: Slices<Addresses<I>>,
@@ -78,7 +83,18 @@ export function process<
         context: ProcessContext<Prepared> & OutputsContext<O>,
       ) => Effect.Effect<void, E, R>;
     },
-): OutputDeclaration<C, I, O, E | PE, R, void, SqlClient.SqlClient, Q | PR>;
+): OutputDeclaration<
+  C,
+  I,
+  O,
+  E | PE,
+  R,
+  void,
+  SqlClient.SqlClient,
+  Q | PR,
+  never,
+  AcceptedServices<W>
+>;
 export function process(definition: Parameters<typeof build>[1]): unknown {
   return build("process", definition);
 }

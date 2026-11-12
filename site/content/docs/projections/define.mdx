@@ -38,6 +38,7 @@ A declaration is inert. It reads and writes nothing. `orderTotals.at({})` binds 
 | `outputs`    | Required for `emit`, `mapAccum`, and `mapAccumBatch`, and not accepted by the others. A record of JSON or State stream classes or fixed addresses. See [Output streams](/docs/projections/outputs) |
 | `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                                 |
 | `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)               |
+| `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)                                        |
 | `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                        |
 | The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                                 |
 

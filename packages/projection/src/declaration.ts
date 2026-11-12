@@ -4,6 +4,8 @@ import { Array, Option, Record, Schema, type Effect } from "effect";
 import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
+import { acceptedKey, validateAccepted } from "./accepted.ts";
+import type { WakeOutput } from "./wake.ts";
 import { supportsPrepare } from "./commit/range.ts";
 import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
@@ -73,12 +75,22 @@ export interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
   readonly parse: (id: string) => Option.Option<Partial<StreamRoute.Params<Codecs>>>;
 }
 
-export interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs> {
+export type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
+
+export type AcceptedResult<Result, W> = W extends WakeOutput
+  ? Result extends Commit.Folded<infer A>
+    ? Commit.Accumulated<A, {}>
+    : Commit.Emitted<{}>
+  : Result;
+
+export interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs, W = undefined> {
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
+  /** Publish accepted input offsets in this wake stream as part of each unit. */
+  readonly accepted?: W & OneWithin<C, W>;
 }
 
 /** Decoded params, keyed by name. */
@@ -214,7 +226,8 @@ export type StatefulDeclaration<
   Result,
   P,
   Q,
-> = RunningDeclaration<C, I, E, R, Result, P, Q, A>;
+  OR = never,
+> = RunningDeclaration<C, I, E, R, Result, P, Q, A, OR>;
 
 export type OutputDeclaration<
   C extends StreamRoute.ParamCodecs,
@@ -226,11 +239,12 @@ export type OutputDeclaration<
   P,
   Q,
   A = never,
-> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>, "at"> & {
+  OR = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR>, "at"> & {
   readonly at: (params: StreamRoute.Params<C>) => ReturnType<
-    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O>>["at"]
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR>["at"]
   > & {
-    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O>>>>;
+    readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O> | OR>>>;
   };
 };
 
@@ -243,12 +257,17 @@ export type AccumulatingDeclaration<
   R,
   P,
   Q,
-> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A>;
+  OR = never,
+> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A, OR>;
 
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 
 /** Public constructors check all mapped types before this shared binding boundary. */
-export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs> {
+export interface BuildDefinition extends Common<
+  StreamRoute.ParamCodecs,
+  Inputs,
+  WakeOutput | undefined
+> {
   readonly commit?: Commit.Commit<any, any, any>;
   readonly state?: StateDefinition<any, any, any>;
   readonly outputs?: RoutedMap;
@@ -262,20 +281,44 @@ export interface BuildDefinition extends Common<StreamRoute.ParamCodecs, Inputs>
 
 export const build = (kind: Kind, definition: BuildDefinition) => {
   const commit = definition.commit ?? Commit.checkpoint;
+  validateAccepted(
+    definition.accepted,
+    definition.params,
+    Array.map(
+      Array.filter(Record.values(definition.inputs), isDeclaration),
+      (input) => input.template,
+    ),
+    commit,
+  );
 
   if (definition.prepare !== undefined && !supportsPrepare(commit))
     throw new RangeError("prepare requires Commit.transaction");
+
+  if (definition.accepted !== undefined) {
+    if (Record.has(definition.outputs ?? {}, acceptedKey))
+      throw new RangeError(`Output name ${acceptedKey} is reserved for accepted`);
+
+    for (const input of Record.values(definition.inputs)) {
+      if (!isDeclaration(input) && Option.isSome(definition.accepted.parse(input.id)))
+        throw new RangeError("An accepted stream may not name an input stream");
+    }
+  }
 
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
     const inputs = addressesOf(definition.inputs, decoded);
     const streams = resolveOutputs(definition.outputs ?? {}, decoded, inputs);
+    const accepted = definition.accepted?.at(decoded);
+
+    if (accepted !== undefined)
+      resolveOutputs({ ...streams, [acceptedKey]: accepted }, decoded, inputs);
 
     return {
       ...key,
       inputs,
       state,
       streams,
+      accepted,
       commit,
       prepare:
         definition.prepare === undefined

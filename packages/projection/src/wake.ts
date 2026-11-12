@@ -8,6 +8,7 @@ import {
   build,
   isDeclaration,
   type AccumulatingDeclaration,
+  type AcceptedServices,
   type DecodedParams,
   type Input,
   type OneWithin,
@@ -15,9 +16,18 @@ import {
 } from "./declaration.ts";
 
 /** A State declaration with the wake collections. */
-export type WakeOutput = StreamDeclaration & StreamRoute.StateRoute<any, Streamsy.WakeCollections>;
+export type WakeOutput = StreamDeclaration &
+  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+    readonly paramCodecs: StreamRoute.ParamCodecs;
+  };
 
-export interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O> {
+export interface WakeDefinition<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  O,
+  W = undefined,
+> {
+  readonly accepted?: W & OneWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -32,6 +42,7 @@ export type WakeDeclaration<
   C extends StreamRoute.ParamCodecs,
   I extends Input,
   O extends Input,
+  W = undefined,
 > = AccumulatingDeclaration<
   C,
   { readonly source: I },
@@ -40,7 +51,8 @@ export type WakeDeclaration<
   never,
   never,
   never,
-  CheckpointStore
+  CheckpointStore,
+  AcceptedServices<W>
 >;
 
 type Change = DurableState.Change<Streamsy.WakeCollections>;
@@ -75,7 +87,8 @@ export function wake<
   C extends StreamRoute.ParamCodecs,
   const I extends Input,
   const O extends WakeOutput,
->(definition: WakeDefinition<C, I, O>): WakeDeclaration<C, I, O> {
+  W extends WakeOutput | undefined = undefined,
+>(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W> {
   const input: Input = definition.input;
 
   return build("mapAccumBatch", {
@@ -86,6 +99,7 @@ export function wake<
     commit: Commit.producer as Commit.Commit<any, any, any>,
     inputs: { source: input },
     outputs: { wake: definition.output },
+    accepted: definition.accepted,
     state: { schema: Schema.Null, initial: null },
     mapAccumBatch: (
       _state: null,
@@ -112,5 +126,5 @@ export function wake<
         },
       ] as const;
     },
-  }) as unknown as WakeDeclaration<C, I, O>;
+  }) as unknown as WakeDeclaration<C, I, O, W>;
 }

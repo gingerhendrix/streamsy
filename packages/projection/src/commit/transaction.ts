@@ -8,7 +8,7 @@ import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
 
-import { withPrepare } from "./range.ts";
+import { withPrepare, withAccepted } from "./range.ts";
 
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
@@ -96,4 +96,4 @@ export const transaction = withPrepare(
         return yield* Effect.void;
       }),
   }),
-);
+).pipe(withAccepted);

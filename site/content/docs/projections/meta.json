@@ -6,6 +6,7 @@
     "run",
     "commits",
     "checkpoints",
+    "accepted",
     "---Kinds of projection---",
     "state",
     "outputs",

@@ -1,3 +1,4 @@
+import { acceptedOutput, acceptedResult, acceptedKey } from "./accepted.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord and Range are Schema.Struct plain data records. */
 import { Array, Effect, Option, Record } from "effect";
 import {
@@ -187,6 +188,11 @@ const step = Effect.fn("Projection.pass")(function* <
     outputs[name] = { address, service };
   }
 
+  if (projection.accepted !== undefined) {
+    const address = projection.accepted;
+    outputs[acceptedKey] = { address, service: yield* address.stream };
+  }
+
   let prepared: unknown;
   // The last result of `run`. The Commit stores the state of the run that it commits.
   let result: Result | undefined;
@@ -194,6 +200,24 @@ const step = Effect.fn("Projection.pass")(function* <
   const processed = Effect.suspend(() =>
     projection.process(batch, unit, before.record.state, prepared),
   ).pipe(
+    Effect.map((value) => {
+      if (projection.accepted === undefined) return value;
+
+      // SAFETY: build validates an output-writing Commit before accepted is installed.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The kernel adds outputs while retaining the handler's encoded state.
+      const handled = value as Settled;
+
+      const output = acceptedOutput(
+        projection.accepted,
+        projection.inputs,
+        unit,
+        before.record.closed,
+      );
+
+      // SAFETY: only the two built-in output Commit strategies consume this enriched result.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The encoded state and original output batches are retained by the adapter.
+      return acceptedResult(handled, output) as Result;
+    }),
     Effect.tap((value) =>
       Effect.sync(() => {
         result = value;

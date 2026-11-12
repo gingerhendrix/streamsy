@@ -28,7 +28,7 @@ export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/
 
 `Streamsy.wake` calls `Streamsy.state` with `Streamsy.wakeCollections`, so a wake class has the normal State service and the item format of a [Durable State stream](/docs/streams/durable-state#items). The declaration takes no `collections` and names no sources. The service name, template, and params work as for every stream class. See [Declare streams](/docs/streams/declare).
 
-The only collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is the tail of the source after the write. `closed` is `true` when the source is closed, and a row for an open source leaves it out.
+The only collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is a position in the source that the row's writer vouches for. The stream holding the row says what is vouched: written, for a source wake stream, or accepted, for a projection's [accepted stream](/docs/projections/accepted). `closed` is `true` when the source is closed, and a row for an open source leaves it out.
 
 ## Write rows
 

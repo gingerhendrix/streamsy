@@ -1,9 +1,11 @@
 /* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
+import type { WakeOutput } from "./wake.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Entry, Slices } from "./batch.ts";
 import type { Accumulated } from "./commit.ts";
 import {
   build,
+  type AcceptedServices,
   type Common,
   type Inputs,
   type Addresses,
@@ -24,7 +26,8 @@ type Definition<
   SI,
   P,
   Q,
-> = Common<C, I> &
+  W,
+> = Common<C, I, W> &
   Committing<Accumulated<NoInfer<A>, NoInfer<O>>, P, Q> & {
     readonly outputs: O & OutputsWithin<C, O>;
     readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
@@ -42,8 +45,9 @@ export function mapAccum<
   R = never,
   P = never,
   Q = never,
+  W extends WakeOutput | undefined = undefined,
 >(
-  definition: Definition<C, I, O, A, SI, P, Q> & {
+  definition: Definition<C, I, O, A, SI, P, Q, W> & {
     readonly mapAccum: ((
       state: NoInfer<A>,
       entry: Entry<Addresses<I>>,
@@ -53,7 +57,7 @@ export function mapAccum<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>>;
 export function mapAccum(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccum", definition);
 }
@@ -70,8 +74,9 @@ export function mapAccumBatch<
   R = never,
   P = never,
   Q = never,
+  W extends WakeOutput | undefined = undefined,
 >(
-  definition: Definition<C, I, O, A, SI, P, Q> & {
+  definition: Definition<C, I, O, A, SI, P, Q, W> & {
     readonly mapAccumBatch: ((
       state: NoInfer<A>,
       batch: Slices<Addresses<I>>,
@@ -81,7 +86,7 @@ export function mapAccumBatch<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, E, R, P, Q>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>>;
 export function mapAccumBatch(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccumBatch", definition);
 }

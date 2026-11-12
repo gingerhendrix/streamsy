@@ -1,3 +1,6 @@
+import { validateAccepted } from "./accepted.ts";
+import type { WakeOutput } from "./wake.ts";
+import type { AcceptedServices, OneWithin } from "./declaration.ts";
 import { Array, Effect, Option, Schema } from "effect";
 import { SqlClient, type SqlError } from "effect/sql";
 import { compare, StreamAddress, type Streamsy, ZERO_OFFSET } from "@streamsy/core";
@@ -254,6 +257,7 @@ export interface Bound<C extends StreamAddress.Collections, R> {
   readonly params: Record<string, string>;
   /** The State stream, read as stored JSON text. */
   readonly inputs: { readonly state: Streamsy.Address<string, R> };
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
   readonly commit: typeof Commit.transaction;
   readonly process: (
     batch: Slices<{ readonly state: Streamsy.Address<string, R> }>,
@@ -435,12 +439,18 @@ export function define<
   Codecs extends StreamRoute.ParamCodecs,
   C extends StreamAddress.Collections,
   R,
->(state: State<Codecs, C, R>): Declaration<Codecs, C, R> {
+  W extends WakeOutput | undefined = undefined,
+>(
+  state: State<Codecs, C, R>,
+  options: { readonly accepted?: W & OneWithin<Codecs, W> } = {},
+): Declaration<Codecs, C, R | AcceptedServices<W>> {
+  validateAccepted(options.accepted, state.paramCodecs, [state.template], Commit.transaction);
+
   // `declare` gives the identity and the param encoding. The input and `parse` are set
   // below, because `declare` types its inputs without their schema services.
   const declaration = declare(
     { id: `state-table/${state.key}`, params: state.paramCodecs, inputs: {} },
-    ({ decoded, ...key }): Bound<C, R> => {
+    ({ decoded, ...key }): Bound<C, R | AcceptedServices<W>> => {
       const address = state.at(decoded);
 
       // Keep the same State stream and service, but retain raw JSON for schema-independent apply.
@@ -449,8 +459,14 @@ export function define<
         codec: Schema.String,
       });
 
+      const accepted = options.accepted?.at(decoded);
+
+      if (accepted?.id === address.id)
+        throw new RangeError("An accepted stream may not name an input stream");
+
       return {
         ...key,
+        accepted,
         inputs: { state: raw },
         commit: Commit.transaction,
         process: (batch) => applySlice(raw, batch.state),
