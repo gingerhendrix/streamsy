@@ -57,7 +57,7 @@ export interface Wakeup<R = never> {
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
   /** Called once at acquire, before the initial alarm reconciliation. */
   readonly bind?: (host: WakeupHost) => Effect.Effect<void>;
-  /** Notification after a pass updates the host's retry state. */
+  /** Notification after an attempted run updates the host's retry state. */
   readonly changed?: Effect.Effect<void>;
 }
 
@@ -281,6 +281,7 @@ export const makeWakeups = <R>(
         yield* slot.arm(now + 30_000);
 
         for (const state of states) {
+          let ran = false;
           const attempt = Effect.gen(function* () {
             if (state.exhausted || state.floor > (yield* Clock.currentTimeMillis)) return;
             const next = yield* state.wakeup.next;
@@ -288,6 +289,7 @@ export const makeWakeups = <R>(
             const at = yield* Clock.currentTimeMillis;
 
             if (Option.isNone(next) || next.value > at) return;
+            ran = true;
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
@@ -329,7 +331,7 @@ export const makeWakeups = <R>(
               ),
             ),
           );
-          yield* (state.wakeup.changed ?? Effect.void).pipe(
+          yield* (ran ? (state.wakeup.changed ?? Effect.void) : Effect.void).pipe(
             Effect.catchCause((cause) =>
               Effect.logError(`Wakeup ${state.wakeup.name} notification failed`, cause),
             ),

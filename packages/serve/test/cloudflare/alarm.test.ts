@@ -203,6 +203,42 @@ layer(
     }),
   );
 
+  it.effect("changed runs only when that wakeup's run was attempted", () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.context<Storage | AlarmSlot>();
+      const observed: Array<string> = [];
+      const scheduler = yield* makeWakeups(context, [
+        ...Array.map(["idle", "future", "backoff", "exhausted", "due"], (name) => ({
+          name,
+          next:
+            name === "idle"
+              ? Effect.succeedNone
+              : Effect.succeedSome(name === "future" ? 10_000 : 0),
+          retry: name === "exhausted" ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+          run: name === "due" ? Effect.void : Effect.fail("offline"),
+          changed: Effect.sync(() => {
+            observed.push(name);
+          }),
+        })),
+        {
+          name: "unreadable",
+          next: Effect.fail(
+            new StorageFault({ operation: "test.next", message: "offline", retryable: true }),
+          ),
+          run: Effect.die("must not run"),
+          changed: Effect.sync(() => {
+            observed.push("unreadable");
+          }),
+        },
+      ]);
+      yield* scheduler.alarm;
+      expect(observed).toEqual(["backoff", "exhausted", "due"]);
+      observed.length = 0;
+      yield* scheduler.alarm;
+      expect(observed).toEqual([]);
+    }),
+  );
+
   it.effect("changed sees the updated retry state and a broken observer does not stop peers", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();

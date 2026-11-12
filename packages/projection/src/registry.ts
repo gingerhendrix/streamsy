@@ -1,15 +1,4 @@
-import {
-  Array,
-  Context,
-  Data,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  PubSub,
-  Stream,
-  type Scope,
-} from "effect";
+import { Array, Context, Data, Effect, Layer, Option, PubSub, Stream, type Scope } from "effect";
 import type { StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
 import { declarationOf } from "./declaration.ts";
@@ -101,10 +90,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
       const runners = new Set<RegisteredRunner>();
       let registered = false;
 
-      const updates = yield* Effect.acquireRelease(
-        PubSub.unbounded<Exit.Exit<ReadonlyArray<RunnerStatus>, StorageFault>>(),
-        PubSub.shutdown,
-      );
+      const updates = yield* Effect.acquireRelease(PubSub.unbounded<void>(), PubSub.shutdown);
 
       const events = yield* Effect.acquireRelease(PubSub.unbounded<RunnerEvent>(), PubSub.shutdown);
 
@@ -124,12 +110,8 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
           );
         });
 
-      // A failed summary read belongs to observers, never to the projection pass.
-      const publish = status.pipe(
-        Effect.exit,
-        Effect.flatMap((exit) => PubSub.publish(updates, exit)),
-        Effect.asVoid,
-      );
+      // Snapshot reads belong to subscribers, never to the projection pass.
+      const publish = PubSub.publish(updates, undefined).pipe(Effect.asVoid);
 
       const registry = Registry.of({
         status,
@@ -149,11 +131,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
             return Stream.concat(
               Stream.fromEffect(status),
-              Stream.fromSubscription(subscription).pipe(
-                Stream.mapEffect((exit) =>
-                  Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
-                ),
-              ),
+              Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => status)),
             );
           }),
         ),

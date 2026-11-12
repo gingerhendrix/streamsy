@@ -31,10 +31,15 @@ class Source extends Streamsy.json<Source>()("Registry/Source", "source/:id", {
   schema: Schema.String,
 }) {}
 
+class Other extends Streamsy.json<Other>()("Registry/Other", "other/:id", {
+  params: { id: Schema.String },
+  schema: Schema.String,
+}) {}
+
 const host = () => {
   const local = memoryHost({ readLimit: 1 });
 
-  return Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
+  return Protocol.bind(local, Streamsy.group(Source, Other)).pipe(Layer.provideMerge(local));
 };
 
 const projection = (id: string, process: Effect.Effect<void> = Effect.void) =>
@@ -527,6 +532,93 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
         only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 0)),
       ).toMatchObject({ state: "running", queued: 0 });
     }),
+  );
+
+  it.effect("ten durable runners perform no summary reads without changes subscribers", () =>
+    Effect.gen(function* () {
+      const source = yield* Source;
+      yield* source.create({ id: "summary-cost" });
+      const marks = yield* ProjectionMarks;
+      let summaries = 0;
+      const nextReads = new Map<string, number>();
+      const counted = {
+        ...marks,
+        summary: (id: string, now: number) =>
+          Effect.suspend(() => {
+            summaries += 1;
+            return marks.summary(id, now);
+          }),
+        nextDue: (id: string) =>
+          Effect.suspend(() => {
+            nextReads.set(id, (nextReads.get(id) ?? 0) + 1);
+            return marks.nextDue(id);
+          }),
+      };
+
+      for (let n = 0; n < 10; n += 1) {
+        const declaration = Projection.process({
+          id: `summary-cost-${n}`,
+          params: { id: Schema.String },
+          inputs: { source: n === 0 ? Source : Other },
+          commit: Commit.atLeastOnce,
+          process: () => Effect.void,
+        });
+        yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
+          Effect.provideService(ProjectionMarks, counted),
+        );
+      }
+      yield* eventually(
+        Effect.sync(() => nextReads.size),
+        (size) => size === 10,
+      );
+      nextReads.clear();
+      yield* source.append({ id: "summary-cost" }, ["one"]);
+      // Every runner reads nextDue after its drain and again when it waits.
+      const completed = yield* eventually(
+        Effect.sync(() => nextReads.size === 10 && [...nextReads.values()].every((n) => n >= 2)),
+        (done) => done,
+      );
+      expect(completed).toBe(true);
+      expect(summaries).toBe(0);
+      const registry = yield* Projection.Registry;
+      expect(yield* Stream.runHead(registry.changes)).toBeDefined();
+      expect(summaries).toBe(10);
+    }),
+  );
+
+  it.effect(
+    "changes reads each subscriber's snapshots on consumption and reports lifecycle changes",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* Projection.Registry;
+        const one = yield* Stream.toPull(registry.changes);
+        const two = yield* Stream.toPull(registry.changes);
+        expect(yield* one).toEqual([[]]);
+        expect(yield* two).toEqual([[]]);
+        const marks = yield* ProjectionMarks;
+        let summaries = 0;
+        const scope = yield* Scope.make();
+        yield* Layer.build(Projection.attach(projection("lazy-snapshots"), { durable: true })).pipe(
+          Effect.provideService(ProjectionMarks, {
+            ...marks,
+            summary: (id, now) =>
+              Effect.suspend(() => {
+                summaries += 1;
+                return marks.summary(id, now);
+              }),
+          }),
+          Scope.provide(scope),
+        );
+        expect(summaries).toBe(0);
+        expect(only((yield* one)[0]!).projection).toBe("lazy-snapshots");
+        expect(summaries).toBe(1);
+        expect(only((yield* two)[0]!).projection).toBe("lazy-snapshots");
+        expect(summaries).toBe(2);
+        yield* Scope.close(scope, Exit.void);
+        expect(yield* one).toEqual([[]]);
+        expect(yield* two).toEqual([[]]);
+        expect(summaries).toBe(2);
+      }),
   );
 
   it.effect("summary faults fail observers without failing the projection pass", () =>
