@@ -284,7 +284,7 @@ For in-process read-your-writes, call `awaitTotals` with the source append recei
 
 Put `Projection.Registry.layer` in the object's `layer`, alongside `CheckpointStore.layer`, using `Layer.mergeAll`. The host acquires `ProjectionWakeup.attach` with that context, and request handlers see the same registry. See the [object setup example](/docs/servers/cloudflare/alarms#projections).
 
-On an object, schedule records the request and immediately reconciles the host alarm before returning. Retry makes failed work due and reconciles too. Neither needs another write or `Wakeups.touch`; the same effects work from a request, an RPC method, or another wakeup's run. Retry clears a host backoff floor caused by a binding failure, but keeps a floor caused by a storage or deadline-read failure. A durable binding normally backs off on its own mark without failing the whole pass.
+On an object, schedule records the request and immediately reconciles the host alarm before returning. Retry makes failed work due and reconciles too. Neither needs another write or `Wakeups.touch`; the same effects work from a request, an RPC method, or another wakeup's run. Schedule and retry clear host backoff caused by a binding failure, including an exhausted finite retry policy, but keep backoff caused by a storage or deadline-read failure. A durable binding normally backs off on its own mark without failing the whole pass.
 
 The registry reads `failures`, `retryAt` and `state` from the host, while `Wakeups.status` continues to describe every wakeup. Failure counts, last-pass times, in-memory pending work and stream subscriptions reset on eviction, as they do on a process restart. Durable marks persist; non-durable requests can be lost on eviction.
 

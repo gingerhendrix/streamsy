@@ -34,6 +34,7 @@ class Control extends Context.Service<
   {
     mode: "ok" | "binding" | "storage";
     runs: number;
+    readonly seen: Array<string>;
     attempts: number | null;
     readonly alarm: Effect.Effect<number | null>;
   }
@@ -44,14 +45,16 @@ const declaration = Projection.process({
   params: { id: Schema.String },
   inputs: { source: Source },
   commit: Commit.atLeastOnce,
-  process: () =>
+  process: (_batch, unit) =>
     Effect.gen(function* () {
       const control = yield* Control;
       control.runs += 1;
+      control.seen.push(unit.params.id);
       const marks = yield* (yield* ProjectionMarks).read("workerd-registry", ['{"id":"a"}']);
       control.attempts = marks.get('{"id":"a"}')?.attempts ?? null;
 
-      if (control.mode === "binding") return yield* Effect.fail("offline");
+      if (control.mode === "binding" && unit.params.id === "a")
+        return yield* Effect.fail("offline");
 
       if (control.mode === "storage")
         return yield* new StorageFault({
@@ -71,6 +74,7 @@ const layer = (state: DurableObjectState) =>
     Layer.succeed(Control, {
       mode: "ok",
       runs: 0,
+      seen: [],
       attempts: null,
       alarm: Effect.promise(() => state.storage.getAlarm()),
     }),
@@ -114,6 +118,18 @@ const app = Layer.mergeAll(
     "/schedule",
     Effect.gen(function* () {
       yield* (yield* Projection.Registry).schedule(declaration.at({ id: "a" }));
+
+      return HttpServerResponse.jsonUnsafe({ alarm: yield* (yield* Control).alarm });
+    }).pipe(Effect.orDie),
+  ),
+  HttpRouter.add(
+    "GET",
+    "/schedule-good",
+    Effect.gen(function* () {
+      const source = yield* Source;
+      yield* source.create({ id: "good" });
+      yield* source.append({ id: "good" }, ["hello"]);
+      yield* (yield* Projection.Registry).schedule(declaration.at({ id: "good" }));
 
       return HttpServerResponse.jsonUnsafe({ alarm: yield* (yield* Control).alarm });
     }).pipe(Effect.orDie),
@@ -168,6 +184,7 @@ const app = Layer.mergeAll(
 
       return HttpServerResponse.jsonUnsafe({
         runs: control.runs,
+        seen: control.seen,
         attempts: control.attempts,
         alarm: yield* control.alarm,
         status,
@@ -197,6 +214,7 @@ const app = Layer.mergeAll(
 interface Env {
   readonly DURABLE: DurableObjectNamespace;
   readonly MEMORY: DurableObjectNamespace;
+  readonly EXHAUSTED: DurableObjectNamespace;
 }
 
 export class DurableRegistryObject extends StreamsyObject.make<
@@ -219,11 +237,20 @@ export class MemoryRegistryObject extends StreamsyObject.make<
   ],
 }) {}
 
+export class ExhaustedRegistryObject extends StreamsyObject.make<
+  Env,
+  Layer.Success<ReturnType<typeof layer>>
+>({
+  layer,
+  app,
+  wakeups: [ProjectionWakeup.attach(declaration, { durable: false, retry: Schedule.recurs(0) })],
+}) {}
+
 export default {
   async fetch(request: WorkerRequest, env: Env): Promise<WorkerResponse> {
     const url = new URL(request.url);
     const [, kind, name, ...path] = url.pathname.split("/");
-    const ns = kind === "durable" ? env.DURABLE : env.MEMORY;
+    const ns = kind === "durable" ? env.DURABLE : kind === "exhausted" ? env.EXHAUSTED : env.MEMORY;
     url.pathname = `/${Array.join(path, "/")}`;
 
     return ns.get(ns.idFromName(name ?? "test")).fetch(url.toString());

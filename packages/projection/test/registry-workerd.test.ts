@@ -43,6 +43,7 @@ const start = async () => {
     durableObjects: {
       DURABLE: { className: "DurableRegistryObject", useSQLite: true },
       MEMORY: { className: "MemoryRegistryObject", useSQLite: true },
+      EXHAUSTED: { className: "ExhaustedRegistryObject", useSQLite: true },
     },
   });
 
@@ -64,6 +65,7 @@ const RetryAt = Schema.Struct({ _tag: Schema.String, value: Schema.optionalKey(S
 
 const Status = Schema.Struct({
   runs: Schema.Finite,
+  seen: Schema.Array(Schema.String),
   attempts: Schema.NullOr(Schema.Finite),
   alarm: Schema.NullOr(Schema.Finite),
   status: Schema.Struct({ failures: Schema.Finite, retryAt: RetryAt, state: Schema.String }),
@@ -241,4 +243,39 @@ test("workerd delivers an alarm while fetch waits on registry.changes", async ()
   const path = "/durable/wait";
   await send(`${path}/setup`);
   expect(await (await send(`${path}/wait`)).json()).toEqual({ observed: true });
+}, 30_000);
+
+for (const kind of ["memory", "exhausted"]) {
+  test(`schedule runs a healthy binding during application backoff (${kind})`, async () => {
+    const send = await start();
+    const path = `/${kind}/schedule-after-failure`;
+    await send(`${path}/setup`);
+    await send(`${path}/mode/binding`);
+    await send(`${path}/schedule`);
+    const read = () => statusOf(send(`${path}/status`));
+    const failed = await until(read, (snapshot) => snapshot.status.failures === 1);
+    expect(failed.status.state).toBe(kind === "exhausted" ? "failed" : "retrying");
+    expect(failed.alarm === null).toBe(kind === "exhausted");
+
+    const scheduled = await scheduledOf(send(`${path}/schedule-good`));
+    expect(scheduled.alarm).not.toBeNull();
+    const ran = await until(read, (snapshot) => snapshot.seen.includes("good"));
+    expect(ran.seen).toEqual(["a", "a", "good"]);
+  }, 30_000);
+}
+
+test("schedule retains the storage-fault alarm deadline on workerd", async () => {
+  const send = await start();
+  const path = "/memory/schedule-storage";
+  await send(`${path}/setup`);
+  await send(`${path}/mode/storage`);
+  await send(`${path}/schedule`);
+  const read = () => statusOf(send(`${path}/status`));
+  const failed = await until(read, (snapshot) => snapshot.status.failures === 1);
+  const scheduled = await scheduledOf(send(`${path}/schedule-good`));
+  expect(scheduled.alarm).toBe(failed.alarm);
+  expect(scheduled.alarm).toBe(failed.status.retryAt.value);
+  const retained = await read();
+  expect(retained.seen).toEqual(["a"]);
+  expect(retained.status.retryAt).toEqual(failed.status.retryAt);
 }, 30_000);

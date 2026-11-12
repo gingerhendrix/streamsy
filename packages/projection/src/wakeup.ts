@@ -66,6 +66,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           }),
           schedule: (binding) =>
             schedule(binding).pipe(
+              Effect.andThen(Effect.suspend(() => host?.retry ?? Effect.void)),
               Effect.andThen(Effect.suspend(() => host?.reconcile ?? Effect.void)),
               Effect.uninterruptible,
             ),
