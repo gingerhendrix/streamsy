@@ -23,7 +23,13 @@ import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http
 import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
 import { isReserved, resolvePlacement } from "./cloudflare/router.ts";
 
-export { Wakeup, Wakeups, type WakeupProgress, type WakeupSource } from "./cloudflare/wakeup.ts";
+export {
+  Wakeup,
+  Wakeups,
+  type WakeupHost,
+  type WakeupProgress,
+  type WakeupSource,
+} from "./cloudflare/wakeup.ts";
 
 export { alarmSlotLayer } from "./cloudflare/alarm.ts";
 
