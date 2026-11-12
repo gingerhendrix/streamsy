@@ -75,6 +75,10 @@ export interface ProjectionMarksApi {
   ) => Effect.Effect<void, StorageFault>;
   /** The number of the projection's marks with at least one failed attempt. */
   readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+  /** Set failed marks due now, preserving attempts and seq. Optionally select one binding.
+   * Returns the number changed; marks already at dueAt 0 are unchanged.
+   */
+  readonly retry: (projection: string, params?: string) => Effect.Effect<number, StorageFault>;
 }
 
 export class ProjectionMarks extends Context.Service<ProjectionMarks, ProjectionMarksApi>()(

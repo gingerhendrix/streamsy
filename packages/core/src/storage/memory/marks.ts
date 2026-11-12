@@ -90,6 +90,21 @@ export const defer = (
 export const deferred = (marks: MarkTable, projection: string) =>
   Array.filter([...(marks.get(projection)?.values() ?? [])], (row) => row.attempts > 0).length;
 
+export const retry = (marks: MarkTable, projection: string, params?: string) => {
+  let changed = 0;
+  const rows = marks.get(projection);
+
+  if (rows === undefined) return 0;
+
+  for (const [key, row] of rows) {
+    if (row.attempts === 0 || row.dueAt === 0 || (params !== undefined && key !== params)) continue;
+    rows.set(key, { ...row, dueAt: 0 });
+    changed += 1;
+  }
+
+  return changed;
+};
+
 /** Classify each row once; a failed row at `now` is due, not backing off. */
 export const summary = (
   marks: MarkTable,

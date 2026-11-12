@@ -164,5 +164,36 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       Effect.mapError(fault("deferred")),
     );
 
-  return ProjectionMarks.of({ mark, nextDue, summary, due, read, clear, remove, defer, deferred });
+  const retry = (projection: string, params?: string) => {
+    const selected = sql`projection = ${projection} AND attempts > 0 AND due_at <> 0
+      ${params === undefined ? sql`` : sql`AND params = ${params}`}`;
+
+    // Count and update in one transaction on all dialects, including MySQL,
+    // which has no UPDATE RETURNING. Neither attempts nor seq is reset.
+    return sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly count: SqlNumber }>`SELECT COUNT(*) AS count
+          FROM ${table} WHERE ${selected}`;
+
+          yield* sql`UPDATE ${table} SET due_at = 0 WHERE ${selected}`;
+
+          return Number(rows[0]?.count ?? 0);
+        }),
+      )
+      .pipe(Effect.mapError(fault("retry")));
+  };
+
+  return ProjectionMarks.of({
+    mark,
+    nextDue,
+    summary,
+    due,
+    read,
+    clear,
+    remove,
+    defer,
+    deferred,
+    retry,
+  });
 };

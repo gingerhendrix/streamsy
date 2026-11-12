@@ -141,11 +141,12 @@ export const makeBoundary = (
     const readMarks = <A>(f: (marks: Marks.MarkTable) => A) =>
       Effect.map(current, (draft) => f(Option.isSome(draft) ? draft.value.marks : committedMarks));
 
-    const writeMarks = (f: (marks: Marks.MarkTable) => void) =>
+    const writeMarks = <A>(f: (marks: Marks.MarkTable) => A) =>
       withTransaction(
         Effect.map(current, (draft) => {
           if (Option.isNone(draft)) throw new Error("Memory mark write requires an owner");
-          f(draft.value.marks);
+
+          return f(draft.value.marks);
         }),
       );
 
@@ -163,6 +164,7 @@ export const makeBoundary = (
       defer: (projection, params, attempts, dueAt) =>
         writeMarks((table) => Marks.defer(table, projection, params, attempts, dueAt)),
       deferred: (projection) => readMarks((table) => Marks.deferred(table, projection)),
+      retry: (projection, params) => writeMarks((table) => Marks.retry(table, projection, params)),
     });
 
     return {

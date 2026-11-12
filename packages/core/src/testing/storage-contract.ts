@@ -402,6 +402,40 @@ export const StorageContract = {
           }),
       );
       recordsTest(
+        "R7c retry selects failed marks, preserves attempts and seq, and rolls back",
+        ({ boundary, marks }) =>
+          Effect.gen(function* () {
+            expect(yield* marks.retry("retry")).toBe(0);
+            yield* Effect.orDie(marks.mark("retry", ["fresh", "a", "b"]));
+            yield* Effect.orDie(marks.mark("retry", ["a"]));
+            yield* marks.defer("retry", "a", 3, 10_000);
+            yield* marks.defer("retry", "b", 1, 20_000);
+            yield* marks.defer("other", "a", 2, 30_000);
+            expect(yield* marks.retry("retry", "absent")).toBe(0);
+            expect(yield* marks.retry("retry", "fresh")).toBe(0);
+            expect(yield* marks.retry("retry", "a")).toBe(1);
+            expect((yield* marks.read("retry", ["a"])).get("a")).toEqual({
+              params: "a",
+              seq: 2,
+              attempts: 3,
+              dueAt: 0,
+            });
+
+            const failed = yield* Effect.exit(
+              boundary.withTransaction(
+                marks.retry("retry").pipe(Effect.andThen(Effect.fail("rollback"))),
+              ),
+            );
+
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect((yield* marks.read("retry", ["b"])).get("b")?.dueAt).toBe(20_000);
+            expect(yield* marks.retry("retry")).toBe(1);
+            expect(yield* marks.retry("retry")).toBe(0);
+            expect(yield* marks.deferred("retry")).toBe(2);
+            expect((yield* marks.read("other", ["a"])).get("a")?.dueAt).toBe(30_000);
+          }),
+      );
+      recordsTest(
         "R7 projection marks raise seq, clear by seq, defer, and list due marks in order",
         ({ marks }) =>
           Effect.gen(function* () {
