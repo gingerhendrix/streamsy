@@ -13,6 +13,8 @@ interface WakeupHost {
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
+    /** Storage or deadline-read failure prevents explicit retry from making work due. */
+    readonly retryBlocked?: boolean;
   }>;
 }
 
@@ -62,7 +64,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
                   : state.failures > 0
                     ? "failed"
                     : "running",
-              ...state,
+              failures: state.failures,
               retryAt: running ? Option.none<number>() : state.retryAt,
               lastPassAt,
               ...(yield* status),
@@ -77,6 +79,8 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             ),
           retry: (binding) =>
             Effect.gen(function* () {
+              // Check before changing marks or recording in-memory retry requests.
+              if (host !== undefined && (yield* host.state).retryBlocked) return 0;
               const count = yield* retry(binding);
 
               if (count > 0 && host !== undefined) yield* host.retry;

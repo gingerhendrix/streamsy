@@ -2,6 +2,7 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schedule, Schema, Stream } from "effect";
 import { StorageFault, Streamsy } from "@streamsy/core";
+import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
 import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { AlarmSlot } from "../../serve/src/cloudflare/alarm.ts";
@@ -16,6 +17,8 @@ class Source extends Streamsy.json<Source>()("RegistryAlarm/Source", "source/:id
 const local = memoryHost({ readLimit: 1 });
 
 const host = Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
+
+const paramsKey = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ id: Schema.String })));
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   for (const failure of ["binding", "storage"] as const) {
@@ -106,6 +109,112 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       );
     }
   }
+
+  for (const durable of [false, true]) {
+    it.effect(`blocked retry leaves failed work unchanged (durable: ${durable})`, () =>
+      Effect.gen(function* () {
+        const id = `blocked-${durable}`;
+        const source = yield* Source;
+        yield* source.create({ id });
+        yield* source.append({ id }, ["one"]);
+
+        const declaration = Projection.process({
+          id,
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: () => Effect.fail("offline"),
+        });
+
+        const wakeup = yield* ProjectionWakeup.attach(declaration, { durable });
+        const registry = yield* Projection.Registry;
+        yield* registry.schedule(declaration.at({ id }));
+        yield* Effect.exit(wakeup.run);
+        const marks = yield* ProjectionMarks;
+
+        const before = yield* marks.read(id, [paramsKey({ id })]);
+
+        let blocked = true;
+        yield* wakeup.bind({
+          reconcile: Effect.void,
+          retry: Effect.void,
+          state: Effect.sync(() => ({
+            failures: 1,
+            retryAt: Option.some(1_000),
+            retryBlocked: blocked,
+          })),
+        });
+        expect(yield* registry.retry(declaration)).toBe(0);
+        expect(yield* registry.retry(declaration.at({ id }))).toBe(0);
+        expect(yield* marks.read(id, [paramsKey({ id })])).toEqual(before);
+        blocked = false;
+        // A rejected request must not have recorded the binding as already requested.
+        expect(yield* registry.retry(declaration.at({ id }))).toBe(1);
+        expect(yield* registry.retry(declaration)).toBe(0);
+      }),
+    );
+  }
+
+  it.effect("durable retry preserves marks behind a real deadline-read storage floor", () =>
+    Effect.gen(function* () {
+      const marks = yield* ProjectionMarks;
+      const id = "durable-deadline-floor";
+      yield* marks.defer(id, '{"id":"a"}', 4, 60_000);
+      let broken = true;
+      const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+      let armed = Option.none<number>();
+
+      const declaration = Projection.process({
+        id,
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: () => Effect.void,
+      });
+
+      const scheduler = yield* makeWakeups(
+        Context.add(context, AlarmSlot, {
+          current: Effect.sync(() => armed),
+          arm: (at) =>
+            Effect.sync(() => {
+              armed = Option.some(at);
+            }),
+          clear: Effect.sync(() => {
+            armed = Option.none();
+          }),
+        }),
+        [
+          ProjectionWakeup.attach(declaration, { retry: Schedule.spaced("1 hour") }).pipe(
+            Effect.provideService(ProjectionMarks, {
+              ...marks,
+              nextDue: (projection) =>
+                Effect.suspend(() =>
+                  broken
+                    ? Effect.fail(
+                        new StorageFault({
+                          operation: "marks.nextDue",
+                          message: "offline",
+                          retryable: true,
+                        }),
+                      )
+                    : marks.nextDue(projection),
+                ),
+            }),
+          ),
+        ],
+      );
+
+      broken = false;
+      const registry = yield* Projection.Registry;
+      expect(armed).toEqual(Option.some(3_600_000));
+      const before = yield* marks.read(id, ['{"id":"a"}']);
+      expect(yield* registry.retry(declaration)).toBe(0);
+      expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(0);
+      yield* scheduler.alarm;
+      expect(yield* marks.read(id, ['{"id":"a"}'])).toEqual(before);
+      expect((yield* registry.status)[0]!.retryAt).toEqual(Option.some(3_600_000));
+    }),
+  );
 
   for (const request of ["schedule", "retry"] as const) {
     for (const exhausted of [false, true]) {

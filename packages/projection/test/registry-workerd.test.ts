@@ -222,7 +222,7 @@ for (const mode of ["binding", "storage"]) {
     expect(failed.status.failures).toBe(host.failures);
     await send(`${path}/mode/ok`);
     const retried = await retriedOf(send(`${path}/retry`));
-    expect(retried.count).toBe(1);
+    expect(retried.count).toBe(mode === "storage" ? 0 : 1);
     expect(retried.alarm).not.toBeNull();
     expect(retried.status).toMatchObject({
       state: "retrying",

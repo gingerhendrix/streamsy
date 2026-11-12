@@ -36,6 +36,8 @@ export interface WakeupHost {
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
+    /** Storage or deadline-read failure prevents explicit retry from making work due. */
+    readonly retryBlocked?: boolean;
   }>;
 }
 
@@ -377,6 +379,7 @@ export const makeWakeups = <R>(
           }),
           state: Effect.sync(() => ({
             failures: state.failures,
+            retryBlocked: state.storageFailure,
             retryAt:
               state.floor > 0
                 ? Option.some(state.floor)

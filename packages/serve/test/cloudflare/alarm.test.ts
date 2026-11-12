@@ -121,7 +121,11 @@ layer(
       yield* scheduler.alarm;
       expect(pending).toBe(false);
       expect(binds).toBe(1);
-      expect(yield* host!.state).toEqual({ failures: 0, retryAt: Option.none() });
+      expect(yield* host!.state).toEqual({
+        failures: 0,
+        retryAt: Option.none(),
+        retryBlocked: false,
+      });
     }),
   );
 
@@ -146,10 +150,18 @@ layer(
       ]);
 
       yield* scheduler.alarm;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(10_000) });
+      expect(yield* host!.state).toEqual({
+        failures: 1,
+        retryAt: Option.some(10_000),
+        retryBlocked: true,
+      });
       yield* host!.reconcile;
       yield* host!.retry;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(10_000) });
+      expect(yield* host!.state).toEqual({
+        failures: 1,
+        retryAt: Option.some(10_000),
+        retryBlocked: true,
+      });
     }),
   );
 
@@ -172,10 +184,18 @@ layer(
       ]);
 
       yield* scheduler.alarm;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(3_600_000) });
+      expect(yield* host!.state).toEqual({
+        failures: 1,
+        retryAt: Option.some(3_600_000),
+        retryBlocked: false,
+      });
       yield* host!.retry;
       yield* host!.reconcile;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(1) });
+      expect(yield* host!.state).toEqual({
+        failures: 1,
+        retryAt: Option.some(1),
+        retryBlocked: false,
+      });
     }),
   );
 
@@ -199,7 +219,11 @@ layer(
       ]);
       yield* host!.retry;
       yield* host!.reconcile;
-      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.some(3_600_000) });
+      expect(yield* host!.state).toEqual({
+        failures: 1,
+        retryAt: Option.some(3_600_000),
+        retryBlocked: true,
+      });
     }),
   );
 
