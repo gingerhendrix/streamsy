@@ -14,6 +14,15 @@ export interface PendingMark {
   readonly dueAt: number;
 }
 
+/** Disjoint counts of one projection's marks at the supplied time. */
+export interface ProjectionMarkSummary {
+  readonly fresh: number;
+  readonly retryDue: number;
+  readonly backingOff: number;
+  /** Earliest due time across all marks, including fresh marks. */
+  readonly nextDueAt: Option.Option<number>;
+}
+
 /**
  * Durable pending marks on the storage owner, for attached projections.
  *
@@ -33,6 +42,11 @@ export interface ProjectionMarksApi {
   ) => Effect.Effect<void, SqlError.SqlError>;
   /** The earliest `dueAt` of the projection's marks. */
   readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+  /** Fresh marks have no attempts; failed marks are due now or backing off. */
+  readonly summary: (
+    projection: string,
+    now: number,
+  ) => Effect.Effect<ProjectionMarkSummary, StorageFault>;
   /** Up to `limit` marks with `dueAt <= now`, earliest first. */
   readonly due: (
     projection: string,

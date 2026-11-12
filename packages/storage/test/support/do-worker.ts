@@ -3,6 +3,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Effect, Layer, ManagedRuntime, Option } from "effect";
 import { Storage, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { ProjectionMarks } from "@streamsy/core/internal";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../../src/boundary.ts";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { layerWithTestProbe } from "../../src/storage.ts";
@@ -87,6 +88,25 @@ export class StorageObject {
     const entry = await entryRuntime.runPromise(
       Effect.gen(function* () {
         const storage = yield* Storage;
+        const marks = yield* ProjectionMarks;
+
+        const summary = (now: number) =>
+          marks.summary("summary", now).pipe(
+            Effect.map((row) => ({
+              ...row,
+              nextDueAt: Option.getOrNull(row.nextDueAt),
+            })),
+          );
+
+        const empty = yield* summary(3_000);
+        yield* Effect.orDie(marks.mark("summary", ["fresh"]));
+        yield* marks.defer("summary", "past", 1, 2_000);
+        yield* marks.defer("summary", "now", 2, 3_000);
+        yield* marks.defer("summary", "future", 3, 4_000);
+        yield* marks.defer("other", "future", 1, 5_000);
+        const mixed = yield* summary(3_000);
+        yield* marks.remove("summary", "fresh");
+        const allDue = yield* summary(4_000);
 
         const outcome = yield* storage.mutate({
           operations: [
@@ -107,6 +127,7 @@ export class StorageObject {
           outcome: outcome._tag,
           present: Option.isSome(yield* storage.record(StreamId.make("exported-entry"))),
           capabilities: storage.capabilities,
+          markSummaries: { empty, mixed, allDue },
         };
       }),
     );

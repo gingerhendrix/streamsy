@@ -152,6 +152,7 @@ export const makeBoundary = (
     const marks = ProjectionMarks.of({
       mark: (projection, params) => writeMarks((table) => Marks.mark(table, projection, params)),
       nextDue: (projection) => readMarks((table) => Marks.nextDue(table, projection)),
+      summary: (projection, now) => readMarks((table) => Marks.summary(table, projection, now)),
       due: (projection, now, limit) =>
         readMarks((table) => Marks.due(table, projection, now, limit)),
       read: (projection, params) => readMarks((table) => Marks.read(table, projection, params)),

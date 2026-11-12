@@ -82,6 +82,32 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       Effect.mapError(fault("nextDue")),
     );
 
+  const summary = (projection: string, now: number) =>
+    sql<{
+      readonly fresh: SqlNumber | null;
+      readonly retry_due: SqlNumber | null;
+      readonly backing_off: SqlNumber | null;
+      readonly next_due_at: SqlNumber | null;
+    }>`SELECT
+ SUM(CASE WHEN attempts = 0 THEN 1 ELSE 0 END) AS fresh,
+ SUM(CASE WHEN attempts > 0 AND due_at <= ${now} THEN 1 ELSE 0 END) AS retry_due,
+ SUM(CASE WHEN attempts > 0 AND due_at > ${now} THEN 1 ELSE 0 END) AS backing_off,
+ MIN(due_at) AS next_due_at FROM ${table} WHERE projection = ${projection}`.pipe(
+      Effect.map((rows) => {
+        const row = rows[0];
+        const at = row?.next_due_at;
+
+        return {
+          fresh: Number(row?.fresh ?? 0),
+          retryDue: Number(row?.retry_due ?? 0),
+          backingOff: Number(row?.backing_off ?? 0),
+          nextDueAt:
+            at === null || at === undefined ? Option.none<number>() : Option.some(Number(at)),
+        };
+      }),
+      Effect.mapError(fault("summary")),
+    );
+
   const due = (projection: string, now: number, limit: number) =>
     sql<MarkRow>`SELECT params, seq, attempts, due_at FROM ${table}
  WHERE projection = ${projection} AND due_at <= ${now}
@@ -138,5 +164,5 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       Effect.mapError(fault("deferred")),
     );
 
-  return ProjectionMarks.of({ mark, nextDue, due, read, clear, remove, defer, deferred });
+  return ProjectionMarks.of({ mark, nextDue, summary, due, read, clear, remove, defer, deferred });
 };

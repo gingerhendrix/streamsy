@@ -118,6 +118,11 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
       outcome: "Applied",
       present: true,
       capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
+      markSummaries: {
+        empty: { fresh: 0, retryDue: 0, backingOff: 0, nextDueAt: null },
+        mixed: { fresh: 1, retryDue: 2, backingOff: 1, nextDueAt: 0 },
+        allDue: { fresh: 0, retryDue: 3, backingOff: 0, nextDueAt: 2_000 },
+      },
     },
   });
 });

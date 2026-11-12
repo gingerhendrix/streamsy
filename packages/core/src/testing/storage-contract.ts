@@ -472,6 +472,42 @@ export const StorageContract = {
           }),
       );
       recordsTest(
+        "R7b projection mark summaries have disjoint fresh, due retry and backoff counts",
+        ({ marks }) =>
+          Effect.gen(function* () {
+            expect(yield* marks.summary("summary", 3_000)).toEqual({
+              fresh: 0,
+              retryDue: 0,
+              backingOff: 0,
+              nextDueAt: Option.none(),
+            });
+            yield* Effect.orDie(marks.mark("summary", ["fresh"]));
+            yield* marks.defer("summary", "past", 1, 2_000);
+            yield* marks.defer("summary", "now", 2, 3_000);
+            yield* marks.defer("summary", "future", 3, 4_000);
+            yield* marks.defer("other", "future", 1, 5_000);
+            expect(yield* marks.summary("summary", 3_000)).toEqual({
+              fresh: 1,
+              retryDue: 2,
+              backingOff: 1,
+              nextDueAt: Option.some(0),
+            });
+            yield* marks.remove("summary", "fresh");
+            expect(yield* marks.summary("summary", 1_000)).toEqual({
+              fresh: 0,
+              retryDue: 0,
+              backingOff: 3,
+              nextDueAt: Option.some(2_000),
+            });
+            expect(yield* marks.summary("summary", 4_000)).toEqual({
+              fresh: 0,
+              retryDue: 3,
+              backingOff: 0,
+              nextDueAt: Option.some(2_000),
+            });
+          }),
+      );
+      recordsTest(
         "R8 marks written by a commit hook commit and roll back with the write",
         ({ boundary, hooks, marks }) =>
           Effect.gen(function* () {

@@ -1,5 +1,5 @@
 import { Array, Option, Order } from "effect";
-import type { PendingMark } from "../../internal/projection-marks.ts";
+import type { PendingMark, ProjectionMarkSummary } from "../../internal/projection-marks.ts";
 
 /** Projection id to params to mark. Rows are replaced, never changed in place. */
 export type MarkTable = Map<string, Map<string, PendingMark>>;
@@ -89,3 +89,24 @@ export const defer = (
 
 export const deferred = (marks: MarkTable, projection: string) =>
   Array.filter([...(marks.get(projection)?.values() ?? [])], (row) => row.attempts > 0).length;
+
+/** Classify each row once; a failed row at `now` is due, not backing off. */
+export const summary = (
+  marks: MarkTable,
+  projection: string,
+  now: number,
+): ProjectionMarkSummary => {
+  let fresh = 0;
+  let retryDue = 0;
+  let backingOff = 0;
+  let earliest: number | undefined;
+
+  for (const row of marks.get(projection)?.values() ?? []) {
+    if (row.attempts === 0) fresh += 1;
+    else if (row.dueAt <= now) retryDue += 1;
+    else backingOff += 1;
+    earliest = earliest === undefined ? row.dueAt : Math.min(earliest, row.dueAt);
+  }
+
+  return { fresh, retryDue, backingOff, nextDueAt: Option.fromUndefinedOr(earliest) };
+};
