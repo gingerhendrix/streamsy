@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Clock, Duration, Effect, Exit, Layer, Option, Pull, Schedule, Schema } from "effect";
 import type { Storage } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
@@ -78,21 +78,26 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const {
-        wait,
-        drain,
-        status,
-        schedule,
-        retry: retryBindings,
-        interruptDelay,
-        resume,
-      } = yield* runner;
-
+      const { wait, drain, status, schedule, retry, interruptDelay, resume } = yield* runner;
       const policy = options.retry ?? (yield* ProjectionRetry);
-      let state: RunnerStatus["state"] = "running";
-      let failures = 0;
-      let retryAt = Option.none<number>();
-      let lastPassAt = Option.none<number>();
+      const step = yield* Schedule.toStep(policy);
+
+      type Status = {
+        state: RunnerStatus["state"];
+        failures: number;
+        retryAt: Option.Option<number>;
+        lastPassAt: Option.Option<number>;
+        step: typeof step;
+      };
+
+      const current: Status = {
+        state: "running",
+        failures: 0,
+        retryAt: Option.none<number>(),
+        lastPassAt: Option.none<number>(),
+        step,
+      };
+
       const registry = yield* Effect.serviceOption(Registry);
 
       const changed = Option.isNone(registry)
@@ -100,64 +105,62 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         : yield* registerRunner(registry.value, {
             declaration: projection.at,
             schedule,
-            retry: retryBindings,
+            retry,
             status: status.pipe(
               Effect.map((runnerStatus): RunnerStatus => ({
                 projection: projection.id,
-                state,
-                failures,
-                retryAt,
-                lastPassAt,
+                state: current.state,
+                failures: current.failures,
+                retryAt: current.retryAt,
+                lastPassAt: current.lastPassAt,
                 ...runnerStatus,
               })),
             ),
           });
 
-      const completed = (succeeded: boolean) =>
-        Effect.gen(function* () {
-          lastPassAt = Option.some(yield* Clock.currentTimeMillis);
-          state = succeeded ? "running" : "failed";
-          failures = succeeded ? 0 : failures + 1;
-          retryAt = Option.none();
-          yield* changed;
-        });
-
-      const retry = policy.pipe(
-        Schedule.modifyDelay(({ duration }) =>
-          Effect.gen(function* () {
-            state = "retrying";
-            retryAt = Option.some((yield* Clock.currentTimeMillis) + Duration.toMillis(duration));
-            yield* changed;
-
-            yield* interruptDelay(Duration.toMillis(duration));
-
-            return Duration.zero;
-          }),
-        ),
-      );
-
       // A durable wait reads marks, so a failed read retries like a failed drain.
-      yield* Effect.suspend(() => {
-        state = "running";
-        retryAt = Option.none();
+      yield* Effect.gen(function* () {
+        while (true) {
+          current.state = "running";
+          current.retryAt = Option.none();
 
-        return wait.pipe(Effect.andThen(drain));
-      }).pipe(
-        Effect.tap(() => completed(true)),
-        // `Effect.retry` does not retry a defect, so a handler that throws would end this fiber.
-        Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
-        Effect.tapError((error) => {
-          return completed(false).pipe(
-            Effect.andThen(Effect.logError(`Projection.attach ${projection.id} failed`, error)),
+          const exit = yield* Effect.exit(
+            wait.pipe(
+              Effect.andThen(drain),
+              Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
+            ),
           );
-        }),
-        Effect.retry(retry),
-        // A finite policy stops automatic retries; an explicit registry request can resume it.
-        Effect.catch(() => resume),
-        Effect.repeat(Schedule.forever),
-        Effect.withSpan("Projection.attach"),
-        Effect.forkScoped,
-      );
+
+          current.lastPassAt = Option.some(yield* Clock.currentTimeMillis);
+
+          if (Exit.isSuccess(exit)) {
+            current.failures = 0;
+            current.step = yield* Schedule.toStep(policy);
+            yield* changed;
+            continue;
+          }
+
+          current.failures += 1;
+          yield* Effect.logError(`Projection.attach ${projection.id} failed`, exit.cause);
+
+          const delay = yield* current.step(yield* Clock.currentTimeMillis, undefined).pipe(
+            Effect.map(([, duration]) => Option.some(Duration.toMillis(duration))),
+            Pull.catchDone(() => Effect.succeedNone),
+          );
+
+          if (Option.isSome(delay)) {
+            current.state = "retrying";
+            current.retryAt = Option.some((yield* Clock.currentTimeMillis) + delay.value);
+            yield* changed;
+            yield* interruptDelay(delay.value);
+          } else {
+            current.state = "failed";
+            yield* changed;
+            // Exhaustion stops automatic retries; every request permits one more pass.
+            yield* resume;
+          }
+        }
+      }).pipe(Effect.withSpan("Projection.attach"), Effect.forkScoped);
     }),
   );
 };
