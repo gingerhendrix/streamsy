@@ -76,11 +76,15 @@ class FixedWake extends Streamsy.wake<FixedWake>()("AcceptedTypes/FixedWake", "f
 }) {}
 
 export const fixedWake: WakeOutput<{}> = FixedWake;
+
 export const parameterizedWake: WakeOutput<{ readonly id: string }> = Accepted;
+
 export const triggers: AttachOptions = { triggers: [fixedWake] };
+
 export const invalidTriggers: AttachOptions = {
   // @ts-expect-error triggers must resolve without params
   triggers: [Accepted],
 };
+
 // @ts-expect-error JSON declarations are not wake outputs
 export const invalidWake: WakeOutput = Source;

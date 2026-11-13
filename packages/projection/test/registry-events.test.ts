@@ -49,10 +49,12 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   it.effect("isFor matches encoded params by value and tagged matchers are exported", () =>
     Effect.sync(() => {
       const binding = { id: "encoded", params: { tenant: "01", name: "ann" } };
+
       const event = RunnerEvent.Dropped({
         projection: "encoded",
         params: { name: "ann", tenant: "01" },
       });
+
       expect(Projection.Registry.isFor(binding)(event)).toBe(true);
       expect(Projection.Registry.isFor({ ...binding, id: "other" })(event)).toBe(false);
       expect(
@@ -306,10 +308,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         const binding = declaration.at(params);
         const registry = yield* Projection.Registry;
         const wakeup = yield* ProjectionWakeup.attach(declaration);
+
         const run = registry
           .schedule(binding)
           .pipe(Effect.andThen(wakeup.run), Effect.orDie, Effect.asVoid);
+
         const readDone = yield* Deferred.make<void>();
+
         const readable = {
           ...binding,
           commit: {
@@ -326,15 +331,19 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
                 ),
           },
         };
+
         if (race === "before-subscribe") yield* run;
+
         const waiting = yield* registry
           .awaitOffset(readable, "source", receipt.offset)
           .pipe(Effect.forkScoped);
+
         if (race === "after-read") {
           yield* Deferred.await(readDone);
           expect(waiting.pollUnsafe()).toBeUndefined();
           yield* run;
         }
+
         yield* Fiber.join(waiting);
         // Equality and a later checkpoint both satisfy an already completed wait.
         yield* registry.awaitOffset(binding, "source", "-1");
@@ -351,11 +360,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         new NotAttached({ projection: declaration.id }),
       );
       yield* ProjectionWakeup.attach(declaration);
+
       const fault = new ProjectionFault({
         phase: "load",
         reason: "storage-failure",
         message: "offline",
       });
+
       const broken = { ...binding, commit: { ...binding.commit, load: () => Effect.fail(fault) } };
       expect(yield* Effect.flip(registry.awaitOffset(broken, "source", "-1"))).toBe(fault);
     }),
@@ -364,16 +375,32 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   it.effect("awaitOffset ignores other params and offsets below the target", () =>
     Effect.gen(function* () {
       const registry = yield* Projection.Registry;
-      const declaration = projection("wait-filter");
-      const wakeup = yield* ProjectionWakeup.attach(declaration);
+      const secondUnit = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const declaration = Projection.process({
+        id: "wait-filter",
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: (batch) =>
+          batch.source.items[0] === "two"
+            ? Deferred.succeed(secondUnit, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+      });
+
       const source = yield* Source;
+
       for (const id of ["a", "b"]) {
         yield* source.create({ id });
         yield* source.append({ id }, ["one"]);
       }
+
       const receipt = yield* source.append({ id: "a" }, ["two"]);
+      const wakeup = yield* ProjectionWakeup.attach(declaration, { limit: 1 });
       const readDone = yield* Deferred.make<void>();
       const binding = declaration.at({ id: "a" });
+
       const readable = {
         ...binding,
         commit: {
@@ -382,15 +409,24 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             binding.commit.load(key).pipe(Effect.tap(() => Deferred.succeed(readDone, undefined))),
         },
       };
+
       const waiting = yield* registry
         .awaitOffset(readable, "source", receipt.offset)
         .pipe(Effect.forkScoped);
+
       yield* Deferred.await(readDone);
       yield* registry.schedule(declaration.at({ id: "b" }));
       yield* wakeup.run;
       expect(waiting.pollUnsafe()).toBeUndefined();
       yield* registry.schedule(binding);
       yield* wakeup.run;
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      const pass = yield* wakeup.run.pipe(Effect.forkScoped);
+      yield* Deferred.await(secondUnit);
+      // The first Ran for this binding is still below the target.
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(pass);
       yield* Fiber.join(waiting);
     }),
   );

@@ -39,10 +39,21 @@ class Other extends Streamsy.json<Other>()("Registry/Other", "other/:id", {
   schema: Schema.String,
 }) {}
 
+class NumericSource extends Streamsy.json<NumericSource>()(
+  "Registry/NumericSource",
+  "numeric/:id",
+  {
+    params: { id: Schema.FiniteFromString },
+    schema: Schema.String,
+  },
+) {}
+
 const host = () => {
   const local = memoryHost({ readLimit: 1 });
 
-  return Protocol.bind(local, Streamsy.group(Source, Other)).pipe(Layer.provideMerge(local));
+  return Protocol.bind(local, Streamsy.group(Source, Other, NumericSource)).pipe(
+    Layer.provideMerge(local),
+  );
 };
 
 const projection = (id: string, process: Effect.Effect<void> = Effect.void) =>
@@ -99,6 +110,32 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       }),
     );
   }
+
+  it.effect("schedule decodes plain encoded binding params with the registered declaration", () =>
+    Effect.gen(function* () {
+      const source = yield* NumericSource;
+      yield* source.create({ id: 42 });
+      yield* source.append({ id: 42 }, ["one"]);
+      const seen: Array<number> = [];
+
+      const declaration = Projection.process({
+        id: "decoded-params",
+        params: { id: Schema.FiniteFromString },
+        inputs: { source: NumericSource },
+        commit: Commit.atLeastOnce,
+        process: (_batch, unit) =>
+          Effect.sync(() => {
+            seen.push(unit.params.id);
+          }),
+      });
+
+      const wakeup = yield* ProjectionWakeup.attach(declaration);
+      const registry = yield* Projection.Registry;
+      yield* registry.schedule({ id: declaration.id, params: { id: "42" } });
+      yield* wakeup.run;
+      expect(seen).toEqual([42]);
+    }),
+  );
 
   for (const failure of ["binding", "storage", "projection-storage"] as const) {
     for (const request of ["schedule", "retry"] as const) {
@@ -430,11 +467,14 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
         const declaration = projection("duplicate-id");
         yield* Layer.build(Projection.attach(declaration));
         const duplicate = projection(declaration.id);
+
         const registration = objectHost
           ? ProjectionWakeup.attach(duplicate).pipe(Effect.asVoid)
           : Layer.build(Projection.attach(duplicate)).pipe(Effect.asVoid);
+
         const exit = yield* Effect.exit(registration);
         expect(Exit.isFailure(exit)).toBe(true);
+
         if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("duplicate-id");
         const registry = yield* Projection.Registry;
         expect(only(yield* registry.status).projection).toBe(declaration.id);
@@ -952,6 +992,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       const pull = yield* Stream.toPull(registry.changes);
       expect(yield* pull).toEqual([[]]);
       const wakeup = yield* ProjectionWakeup.attach(projection("sliding-changes"));
+
       for (let n = 0; n < 100; n += 1) yield* wakeup.changed;
       expect(only((yield* pull)[0]).projection).toBe("sliding-changes");
       const next = yield* pull.pipe(Effect.forkScoped);

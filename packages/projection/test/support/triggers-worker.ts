@@ -97,6 +97,9 @@ const app = Layer.mergeAll(
       let cursorKey = "";
 
       const runner = yield* ProjectionWakeup.attach(projection, { triggers: [Wake] }).pipe(
+        // The fault-injection runner has its own registry; the host already attached this id.
+        // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test-only HTTP handler owns the isolated runner scope.
+        Effect.provide(Projection.Registry.layer),
         Effect.provideService(OwnerRecords, {
           ...records,
           write: (key, value) =>

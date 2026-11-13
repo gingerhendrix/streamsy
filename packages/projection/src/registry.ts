@@ -163,14 +163,16 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
           S = never,
           Q = never,
         >(binding: Readable<Inputs, S, Q>, input: keyof Inputs & string, offset: string) {
+          const reached = (value: string | undefined) =>
+            value !== undefined && compare(value, offset) >= 0;
+
           return yield* Effect.scoped(
             Effect.gen(function* () {
               yield* find(binding);
               const pull = yield* Stream.toPull(observations);
-              const reached = (value: string | undefined) =>
-                value !== undefined && compare(value, offset) >= 0;
-              const snapshot = yield* read(binding);
-              if (reached(snapshot.offsets[input])) return;
+              const checkpoint = yield* read(binding);
+
+              if (reached(checkpoint.offsets[input])) return;
 
               yield* Stream.fromPull(Effect.succeed(pull)).pipe(
                 Stream.filter(Registry.isFor(binding)),
@@ -190,6 +192,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
           target: string | Declaration | Binding,
         ) {
           const runner = yield* find(target);
+
           return yield* runner.retry(
             Predicate.isString(target) || "at" in target ? undefined : target,
           );
@@ -214,6 +217,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
           Effect.acquireRelease(
             Effect.sync(() => {
               registered = true;
+
               if (runners.has(runner.id))
                 throw new RangeError(
                   `Projection ${runner.id} is already attached to this registry`,

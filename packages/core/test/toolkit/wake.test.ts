@@ -500,6 +500,7 @@ baseIt.live("awaitWake forwards a saved wake cursor and follow options", () =>
     const saved = (yield* wake.collect({ user: "ann" })).offset;
     const options = { from: saved, live: "long-poll" as const };
     let observed: Parameters<typeof wake.follow>[1];
+
     const waiting = yield* Streamsy.awaitWake(
       UserWake,
       { user: "ann" },
@@ -510,11 +511,13 @@ baseIt.live("awaitWake forwards a saved wake cursor and follow options", () =>
         ...wake,
         follow: (params, follow) => {
           observed = follow;
+
           return wake.follow(params, follow);
         },
       }),
       Effect.forkScoped,
     );
+
     yield* writeWake("ann", [upsert(annId, offsetAt(2))]);
     yield* Fiber.join(waiting).pipe(Effect.timeout("2 seconds"));
     expect(observed).toMatchObject({ offset: saved, live: "long-poll" });
