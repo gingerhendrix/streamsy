@@ -347,7 +347,7 @@ import type * as Real from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 interface AttachOptions {
-  readonly triggers?: ReadonlyArray<Real.WakeClass>;
+  readonly triggers?: ReadonlyArray<Real.WakeOutput<{}>>;
   readonly limit?: number;
   readonly retry?: Schedule.Schedule<unknown>;
   readonly durable?: boolean;

@@ -15,9 +15,9 @@ import {
   type StreamDeclaration,
 } from "./declaration.ts";
 
-/** A State declaration with the wake collections. */
-export type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+/** A Streamsy.wake class. Use WakeOutput<{}> for a fixed-address trigger with no params. */
+export type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 

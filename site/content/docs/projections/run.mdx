@@ -174,7 +174,7 @@ On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cl
 
 ### Trigger streams
 
-Pass `triggers: [FolderWake]` to `Projection.attach` or `ProjectionWakeup.attach` when a wake stream on the runner's owner requests work for inputs on another owner. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
+Pass `triggers: [FolderWake]` to `Projection.attach` or `ProjectionWakeup.attach` when a wake stream on the runner's owner requests work for inputs on another owner. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`, typed as `WakeOutput<{}>`. `WakeOutput` is the exported type for wake classes; its type parameter describes the decoded params. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
 
 ```ts
 import { Schema } from "effect";

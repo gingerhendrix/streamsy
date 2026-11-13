@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Commit, Projection } from "@streamsy/projection";
+import { Commit, Projection, type AttachOptions, type WakeOutput } from "@streamsy/projection";
 
 class Source extends Streamsy.json<Source>()("AcceptedTypes/Source", "source", {
   params: {},
@@ -70,3 +70,17 @@ Projection.fold({
   state: { schema: Schema.Finite, initial: 0 },
   fold: (state) => state,
 });
+
+class FixedWake extends Streamsy.wake<FixedWake>()("AcceptedTypes/FixedWake", "fixed-wake", {
+  params: {},
+}) {}
+
+export const fixedWake: WakeOutput<{}> = FixedWake;
+export const parameterizedWake: WakeOutput<{ readonly id: string }> = Accepted;
+export const triggers: AttachOptions = { triggers: [fixedWake] };
+export const invalidTriggers: AttachOptions = {
+  // @ts-expect-error triggers must resolve without params
+  triggers: [Accepted],
+};
+// @ts-expect-error JSON declarations are not wake outputs
+export const invalidWake: WakeOutput = Source;

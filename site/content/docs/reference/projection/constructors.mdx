@@ -218,8 +218,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -471,8 +471,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -784,8 +784,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -1039,8 +1039,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -1315,8 +1315,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -1591,8 +1591,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -1855,8 +1855,8 @@ interface BoundState<A> {
 }
 
 // The definition and result of `Projection.wake`.
-type WakeOutput = StreamDeclaration &
-  StreamRoute.StateRoute<any, Streamsy.WakeCollections> & {
+type WakeOutput<P = any> = StreamDeclaration &
+  StreamRoute.StateRoute<P, Streamsy.WakeCollections> & {
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
@@ -1946,3 +1946,5 @@ declare function wake<
 | `OutputDeclaration`, `AccumulatingDeclaration`    | The declarations with outputs. Their bound projection also has `streams`                     |
 | `Executable`, `BoundState`                        | The bound projection that the runners take, and its state with `initial` bound to the params |
 | `WakeOutput`, `WakeDefinition`, `WakeDeclaration` | The output, definition, and result of `Projection.wake`                                      |
+
+`WakeOutput<P>` is the exported type for a `Streamsy.wake` class. Its type parameter is the decoded params; omitting it accepts any wake class. `WakeOutput<{}>` is the fixed-address variant used by `AttachOptions.triggers`.

@@ -13,16 +13,12 @@ import { OwnerRecords, type ProjectionMarksApi } from "@streamsy/core/internal";
 import { ProjectionFault } from "./fault.ts";
 import { encodeKey } from "./unit.ts";
 
-/** A wake declaration at one fixed address on the runner's storage owner. */
-export type WakeClass = Pick<
-  Streamsy.StateClass<unknown, string, string, {}, Streamsy.WakeCollections>,
-  "address"
->;
+import type { WakeOutput } from "./wake.ts";
 
 /** Persistent ingestion shared by both hosts; no trigger service or remote reader is used. */
 export const triggersOf = <B>(
   projection: string,
-  declarations: ReadonlyArray<WakeClass>,
+  declarations: ReadonlyArray<WakeOutput<{}>>,
   match: (id: StreamId) => Option.Option<readonly [string, B]>,
   marks: ProjectionMarksApi | undefined,
 ) =>

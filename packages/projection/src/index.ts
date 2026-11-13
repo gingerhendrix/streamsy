@@ -16,7 +16,7 @@ export type { OutputsContext, ProcessContext } from "./process.ts";
 
 export type { FollowOptions } from "./follow.ts";
 
-export type { AttachOptions, Attachable, WakeClass } from "./attach.ts";
+export type { AttachOptions, Attachable } from "./attach.ts";
 
 export type { RunOptions } from "./read.ts";
 
@@ -61,3 +61,5 @@ export { ProjectionRetry } from "./retry.ts";
 export { ProjectionWakeup } from "./wakeup.ts";
 
 export { RunnerEvent, type RegistryApi, type RunnerStatus } from "./registry.ts";
+
+export type { WakeOutput } from "./wake.ts";

@@ -5,15 +5,13 @@ import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
 import { ProjectionRetry } from "./retry.ts";
-import type { WakeClass } from "./triggers.ts";
-
-export type { WakeClass } from "./triggers.ts";
+import type { WakeOutput } from "./wake.ts";
 
 export type { Attachable } from "./runner.ts";
 
 export interface AttachOptions {
   /** Local wake streams whose source ids request binding runs. Use fixed-address wake classes. */
-  readonly triggers?: ReadonlyArray<WakeClass>;
+  readonly triggers?: ReadonlyArray<WakeOutput<{}>>;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
   /**

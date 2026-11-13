@@ -56,7 +56,7 @@ type C0 = typeof Workspace.collections;
 same<typeof define<Codecs0, C0, Workspace>, typeof StateTable.define<Codecs0, C0, Workspace>>(true);
 ```
 
-`define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class. The optional second argument is `{ accepted: WakeClass }`, with wake parameters drawn from the State class parameters. It adds the wake service requirement to the table declaration. See [Accepted stream](/docs/projections/accepted). The signature above shows the default without an accepted class.
+`define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class. The optional second argument is `{ accepted: WakeOutput }`, with wake parameters drawn from the State class parameters. It adds the wake service requirement to the table declaration. See [Accepted stream](/docs/projections/accepted). The signature above shows the default without an accepted class.
 
 ### `StateTable.Declaration`
 

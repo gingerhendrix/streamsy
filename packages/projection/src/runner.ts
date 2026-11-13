@@ -14,7 +14,8 @@ import { ProjectionFault } from "./fault.ts";
 import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
 import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
-import { triggersOf, type WakeClass } from "./triggers.ts";
+import { triggersOf } from "./triggers.ts";
+import type { WakeOutput } from "./wake.ts";
 
 export const DEFAULT_LIMIT = 100;
 
@@ -28,7 +29,7 @@ export const deferDelay = (attempts: number): number =>
   Math.min(1_000 * 2 ** Math.max(0, attempts - 1), MAX_DEFER_MS);
 
 export interface RunnerOptions {
-  readonly triggers?: ReadonlyArray<WakeClass> | undefined;
+  readonly triggers?: ReadonlyArray<WakeOutput<{}>> | undefined;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number | undefined;
   /** Keep a pending mark for each binding in the storage owner. Default false. */
