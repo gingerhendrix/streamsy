@@ -11,9 +11,11 @@ import {
   Stream,
   type Scope,
 } from "effect";
-import type { StorageFault } from "@streamsy/core";
+import { compare, type StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
-import { NotAttached } from "./fault.ts";
+import { read, type Readable } from "./snapshot.ts";
+import type { InputMap } from "./batch.ts";
+import { NotAttached, type ProjectionFault } from "./fault.ts";
 import type { Identity } from "./checkpoint-store.ts";
 import type { Attachable } from "./runner.ts";
 import type { Progress } from "./run.ts";
@@ -70,6 +72,12 @@ export interface RegistryApi {
   readonly events: Stream.Stream<RunnerEvent>;
   /** Queue this binding and wake its runner, without another source commit. */
   readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
+  /** Wait for an attached binding's checkpoint, subscribing before the first read. No timeout. */
+  readonly awaitOffset: <Inputs extends InputMap, S = never, Q = never>(
+    binding: Readable<Inputs, S, Q>,
+    input: keyof Inputs & string,
+    offset: string,
+  ) => Effect.Effect<void, NotAttached | ProjectionFault, Q>;
   /** Make failed work due now. Returns the number of failed bindings selected. */
   readonly retry: (
     target: string | Declaration | Binding,
@@ -141,12 +149,38 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
         ),
       );
 
+      // Eager acquisition matters: a run between subscription and the first pull is retained.
+      const observations = Stream.fromPull(
+        Effect.map(PubSub.subscribe(events), PubSub.takeAll),
+      ).pipe(Stream.scoped);
+
       const registry = Registry.of({
         status,
-        // Acquire eagerly with toPull, so callers can subscribe before reading a checkpoint.
-        events: Stream.fromPull(Effect.map(PubSub.subscribe(events), PubSub.takeAll)).pipe(
-          Stream.scoped,
-        ),
+        events: observations,
+        awaitOffset: Effect.fn("Projection.Registry.awaitOffset")(function* <
+          Inputs extends InputMap,
+          S = never,
+          Q = never,
+        >(binding: Readable<Inputs, S, Q>, input: keyof Inputs & string, offset: string) {
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* find(binding);
+              const pull = yield* Stream.toPull(observations);
+              const reached = (value: string | undefined) =>
+                value !== undefined && compare(value, offset) >= 0;
+              const snapshot = yield* read(binding);
+              if (reached(snapshot.offsets[input])) return;
+
+              yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+                Stream.filter(Registry.isFor(binding)),
+                Stream.filter(RunnerEvent.$is("Ran")),
+                Stream.filter((event) => reached(event.offsets[input])),
+                Stream.runHead,
+                Effect.flatMap((event) => (Option.isSome(event) ? Effect.void : Effect.never)),
+              );
+            }),
+          );
+        }),
         schedule: (binding) => Effect.flatMap(find(binding), (runner) => runner.schedule(binding)),
         retry: (target) =>
           Effect.flatMap(find(target), (runner) =>

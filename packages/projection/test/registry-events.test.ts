@@ -13,10 +13,17 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { compare, Streamsy } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
-import { Commit, Projection, ProjectionWakeup, RunnerEvent } from "@streamsy/projection";
+import {
+  Commit,
+  NotAttached,
+  Projection,
+  ProjectionFault,
+  ProjectionWakeup,
+  RunnerEvent,
+} from "@streamsy/projection";
 import { TestClock } from "effect/testing";
 import { memoryHost } from "./support/memory-host.ts";
 
@@ -288,8 +295,8 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     }),
   );
 
-  for (const race of ["before-check", "after-check"] as const) {
-    it.effect(`read-your-writes subscribes before checking the checkpoint (${race})`, () =>
+  for (const race of ["before-subscribe", "during-read", "after-read"] as const) {
+    it.effect(`awaitOffset covers a completed pass ${race}`, () =>
       Effect.gen(function* () {
         const params = { id: `read-write-${race}` };
         const source = yield* Source;
@@ -299,43 +306,94 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         const binding = declaration.at(params);
         const registry = yield* Projection.Registry;
         const wakeup = yield* ProjectionWakeup.attach(declaration);
-        // toPull acquires the subscription now, before reading the checkpoint.
-        const pull = yield* Stream.toPull(registry.events);
-
-        if (race === "before-check") {
-          yield* registry.schedule(binding);
-          yield* wakeup.run;
+        const run = registry
+          .schedule(binding)
+          .pipe(Effect.andThen(wakeup.run), Effect.orDie, Effect.asVoid);
+        const readDone = yield* Deferred.make<void>();
+        const readable = {
+          ...binding,
+          commit: {
+            ...binding.commit,
+            load: (key: Parameters<typeof binding.commit.load>[0]) =>
+              binding.commit
+                .load(key)
+                .pipe(
+                  Effect.tap(() =>
+                    race === "during-read"
+                      ? run
+                      : Deferred.succeed(readDone, undefined).pipe(Effect.asVoid),
+                  ),
+                ),
+          },
+        };
+        if (race === "before-subscribe") yield* run;
+        const waiting = yield* registry
+          .awaitOffset(readable, "source", receipt.offset)
+          .pipe(Effect.forkScoped);
+        if (race === "after-read") {
+          yield* Deferred.await(readDone);
+          expect(waiting.pollUnsafe()).toBeUndefined();
+          yield* run;
         }
-
-        const snapshot = yield* Projection.read(binding);
-        const caughtUp = (offset: string) => compare(offset, receipt.offset) >= 0;
-
-        if (caughtUp(snapshot.offsets.source)) {
-          expect(race).toBe("before-check");
-
-          return;
-        }
-
-        // Complete between the checkpoint read and consuming the subscribed stream.
-        yield* registry.schedule(binding);
-        yield* wakeup.run;
-
-        const observed = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-          Stream.filter(
-            (event) =>
-              event._tag === "Ran" &&
-              event.projection === binding.id &&
-              Projection.Registry.isFor(binding)(event) &&
-              event.offsets.source !== undefined &&
-              caughtUp(event.offsets.source),
-          ),
-          Stream.runHead,
-        );
-
-        expect(Option.isSome(observed)).toBe(true);
+        yield* Fiber.join(waiting);
+        // Equality and a later checkpoint both satisfy an already completed wait.
+        yield* registry.awaitOffset(binding, "source", "-1");
       }),
     );
   }
+
+  it.effect("awaitOffset fails with NotAttached and preserves checkpoint read failures", () =>
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      const declaration = projection("wait-errors");
+      const binding = declaration.at({ id: "a" });
+      expect(yield* Effect.flip(registry.awaitOffset(binding, "source", "-1"))).toEqual(
+        new NotAttached({ projection: declaration.id }),
+      );
+      yield* ProjectionWakeup.attach(declaration);
+      const fault = new ProjectionFault({
+        phase: "load",
+        reason: "storage-failure",
+        message: "offline",
+      });
+      const broken = { ...binding, commit: { ...binding.commit, load: () => Effect.fail(fault) } };
+      expect(yield* Effect.flip(registry.awaitOffset(broken, "source", "-1"))).toBe(fault);
+    }),
+  );
+
+  it.effect("awaitOffset ignores other params and offsets below the target", () =>
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      const declaration = projection("wait-filter");
+      const wakeup = yield* ProjectionWakeup.attach(declaration);
+      const source = yield* Source;
+      for (const id of ["a", "b"]) {
+        yield* source.create({ id });
+        yield* source.append({ id }, ["one"]);
+      }
+      const receipt = yield* source.append({ id: "a" }, ["two"]);
+      const readDone = yield* Deferred.make<void>();
+      const binding = declaration.at({ id: "a" });
+      const readable = {
+        ...binding,
+        commit: {
+          ...binding.commit,
+          load: (key: Parameters<typeof binding.commit.load>[0]) =>
+            binding.commit.load(key).pipe(Effect.tap(() => Deferred.succeed(readDone, undefined))),
+        },
+      };
+      const waiting = yield* registry
+        .awaitOffset(readable, "source", receipt.offset)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(readDone);
+      yield* registry.schedule(declaration.at({ id: "b" }));
+      yield* wakeup.run;
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* registry.schedule(binding);
+      yield* wakeup.run;
+      yield* Fiber.join(waiting);
+    }),
+  );
 
   it.effect("a slow subscriber buffers events without blocking a pass", () =>
     Effect.gen(function* () {

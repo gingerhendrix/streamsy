@@ -236,7 +236,7 @@ export const orderTotals = Projection.emit({
 // @filename: index.ts
 // ---cut---
 import { Array, Effect, Layer, Option, Stream } from "effect";
-import { compare, MemoryStorage } from "@streamsy/core";
+import { MemoryStorage } from "@streamsy/core";
 import { CheckpointStore, Projection, RunnerEvent } from "@streamsy/projection";
 import { orderTotals } from "./order-totals.ts";
 import { shop } from "./streams.ts";
@@ -283,28 +283,21 @@ const requestTotals = Effect.gen(function* () {
 });
 
 const awaitTotals = (receipt: { readonly offset: string }) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const registry = yield* Projection.Registry;
-      const binding = orderTotals.at({});
-      // Acquire the subscription before reading the checkpoint.
-      const pull = yield* Stream.toPull(registry.events);
-      const snapshot = yield* Projection.read(binding);
-      if (compare(snapshot.offsets.input, receipt.offset) >= 0) return;
+  Effect.gen(function* () {
+    const registry = yield* Projection.Registry;
+    yield* registry
+      .awaitOffset(orderTotals.at({}), "input", receipt.offset)
+      .pipe(Effect.timeout("10 seconds"));
+  });
 
-      yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-        Stream.filter(
-          (event) =>
-            RunnerEvent.$is("Ran")(event) &&
-            Projection.Registry.isFor(binding)(event) &&
-            event.offsets.input !== undefined &&
-            compare(event.offsets.input, receipt.offset) >= 0,
-        ),
-        Stream.runHead,
-        Effect.timeout("10 seconds"),
-      );
-    }),
+const observeTotals = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  return yield* registry.events.pipe(
+    Stream.filter(Projection.Registry.isFor(orderTotals.at({}))),
+    Stream.filter(RunnerEvent.$is("Ran")),
+    Stream.runForEach((event) => Effect.log("accepted offsets", event.offsets)),
   );
+});
 ```
 
 Run the startup `drained` effect inside the application's scope, after its attach layers are built. The registry's `status` effect returns a `ReadonlyArray<RunnerStatus>`; `changes` emits an initial snapshot, then the full list after each pass, registration, removal and retry transition. `status` fails with `StorageFault` if a durable mark summary cannot be read. `changes` logs and skips that snapshot, keeps the subscription open, and emits the next good snapshot; its error type is `never`. This also applies to a failed initial read. Reading status does not consume pending commits. Each subscriber reads the full status when it consumes a notification; with no subscribers, passes perform no status or mark-summary reads. A slow `changes` consumer buffers notifications and can observe the same current status more than once; stop the stream when the wait is complete.
@@ -327,9 +320,9 @@ Both methods resolve the runner by projection id and fail with `NotAttached`, ex
 - `Failed`: a failed binding run, with consecutive binding `attempts` and `dueAt: Option<number>`. For durable bindings these come from the deferred mark, with `Some(dueAt)`. Non-durable failures publish immediately with `dueAt: None`; those bindings retry with their pass, at `RunnerStatus.retryAt`. A successful run resets non-durable binding attempts.
 - `Dropped`: a binding whose source was removed before its first run. It is dropped instead of emitting `Failed`.
 
-Events have no replay or initial snapshot: a subscriber sees only events published after subscription. Like `changes`, the stream uses unbounded in-memory buffering so a slow subscriber never blocks or fails a projection pass. A consumer that falls behind can retain an increasing amount of memory. Close subscriptions when finished; the scoped wait above does this automatically. Without a registry, runners construct and publish no events.
+Events have no replay or initial snapshot: a subscriber sees only events published after subscription. The stream uses unbounded in-memory buffering so a slow subscriber never blocks or fails a projection pass. A consumer that falls behind can retain an increasing amount of memory. Close subscriptions when finished; the wait above does this automatically. Without a registry, runners construct and publish no events.
 
-For in-process read-your-writes, call `awaitTotals` with the source append receipt while the attachment is alive. Subscribe first with `Stream.toPull`, then check `Projection.read` once, then consume that same subscription until the matching binding's input offset reaches or exceeds the receipt under core `compare`. Checking the checkpoint handles a run completed before subscription; subscribing before the check covers a run completed during or after the check. A metrics fold over `events` is left to the host.
+For in-process read-your-writes, call `registry.awaitOffset(binding, input, receipt.offset)` while the attachment is alive. It subscribes to events before reading the checkpoint with `Projection.read`, then waits for the matching binding's input offset to reach or exceed the receipt under core `compare`. A completed run cannot fall between the subscription and the read. The helper fails with `NotAttached` for an unregistered id or the checkpoint read's own error. It has no timeout; add `Effect.timeout` as above. The subscription closes when the wait completes or is interrupted. A metrics fold over `events` is left to the host.
 
 ### Registry on a Durable Object
 
