@@ -4,6 +4,8 @@ export {
   type ObjectInstance,
 } from "./cloudflare/object.ts";
 
+export type { LiveConfiguration, LiveSocketOptions } from "./cloudflare/live-socket.ts";
+
 export { Placement } from "./cloudflare/placement.ts";
 
 export { rule } from "./cloudflare/placement.ts";
