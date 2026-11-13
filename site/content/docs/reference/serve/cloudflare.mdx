@@ -70,6 +70,7 @@ interface ObjectConfiguration<Env, R = never, L = never> {
     env: Env,
   ) => Layer.Layer<Storage | R, StorageFault, L>;
   readonly links?: (env: Env) => ReadonlyArray<Cloudflare.LinkClient<L>>;
+  readonly live?: Cloudflare.LiveConfiguration;
 }
 
 // ObjectApp has no exported name. It is the route Layer that the object hosts accept.
@@ -96,7 +97,7 @@ same<
 >(true);
 ```
 
-`Cloudflare.ObjectConfiguration` holds the routes, the local services, the wakeups, and the links of an object class.
+`Cloudflare.ObjectConfiguration` holds the routes, the local services, the wakeups, the links, and the live sockets of an object class.
 
 | Field     | Meaning                                                                                             |
 | --------- | --------------------------------------------------------------------------------------------------- |
@@ -104,6 +105,7 @@ same<
 | `layer`   | Builds the Layer of local storage and services from the object state and the environment            |
 | `wakeups` | More wakeups. The host always adds stream expiry                                                    |
 | `links`   | Builds the clients of streams that live on other objects                                            |
+| `live`    | Turns on `live=websocket`. Off by default. See [`LiveConfiguration`](#cloudflareliveconfiguration)  |
 
 The host provides the alarm slot from `state.storage`. It builds the linked services before the local Layer, so the local Layer can use them. When the local Layer also provides a linked stream, the acquisition fails with `StorageFault`. Keep linked streams out of the local storage group.
 
@@ -121,12 +123,88 @@ import { same } from "./reference-check.ts";
 interface ObjectInstance {
   fetch(request: Request): Promise<Response>;
   alarm(info?: Workers.AlarmInvocationInfo): Promise<void>;
+  webSocketMessage(ws: Workers.WebSocket, message: string | ArrayBuffer): Promise<void>;
+  webSocketClose(
+    ws: Workers.WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean,
+  ): Promise<void>;
+  webSocketError(ws: Workers.WebSocket, error: unknown): Promise<void>;
 }
 // ---cut-after---
 same<ObjectInstance, Cloudflare.ObjectInstance>(true);
 ```
 
-`Cloudflare.ObjectInstance` is the shape of an object: its `fetch` and `alarm` methods. `alarm` ignores `info`. No HTTP request can run an alarm turn.
+`Cloudflare.ObjectInstance` is the shape of an object: its `fetch`, `alarm`, and socket handler methods. `alarm` ignores `info`. No HTTP request can run an alarm turn.
+
+The socket handlers serve [live sockets](#live-sockets). The runtime answers the client's `ping` itself, so `webSocketMessage` runs only for another message, and it closes the socket with `4400`. `webSocketClose` does nothing, because the runtime answers close frames from compatibility date `2026-04-07`. `webSocketError` logs the error.
+
+## Live sockets
+
+`live=websocket` is a Streamsy extension to Durable Streams HTTP. The object accepts the socket with the WebSocket Hibernation API, so it can hibernate while its readers wait. See [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets).
+
+### `Cloudflare.LiveConfiguration`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface LiveConfiguration {
+  readonly websocket: true | Cloudflare.LiveSocketOptions;
+}
+// ---cut-after---
+same<LiveConfiguration, Cloudflare.LiveConfiguration>(true);
+```
+
+`Cloudflare.LiveConfiguration` turns on live sockets for an object class. `true` uses the default options. `StreamsyObject.make` throws a `RangeError` when an option is out of range.
+
+With `live` set, `fetch` takes a `GET` with `Upgrade: websocket` and `live=websocket` to a stream under `prefix`. It reads the stream through the object's routes, as a catch-up `GET` at the same URL. When that read does not answer 200, the upgrade gets the read's answer. A missing `offset` gets 400. Otherwise the object answers 101, sends the catch-up frames, and keeps the socket's offset in the socket attachment.
+
+At the end of each fetch and alarm turn, the object pushes the stream ids that the event committed. The push reads each stream from each distinct socket offset and sends the frames to every socket at that offset. Every other request goes to the routes as before.
+
+| Close code | When                                                                |
+| ---------- | ------------------------------------------------------------------- |
+| 1000       | The stream closed, after a `control` frame with `streamClosed`      |
+| 1011       | A push read failed with another status, or a push failed            |
+| 1012       | The socket attachment has an unknown version                        |
+| 4100       | A connect passed `maxCatchUpBytes`, or a push passed `maxPushBytes` |
+| 4400       | The client sent a message other than `ping`                         |
+| 4404       | A push read answered 404                                            |
+| 4410       | A push read answered 410                                            |
+
+### `Cloudflare.LiveSocketOptions`
+
+```ts
+// ---cut-start---
+import * as Cloudflare from "@streamsy/serve/cloudflare";
+import type * as Workers from "@cloudflare/workers-types";
+import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
+import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface LiveSocketOptions {
+  readonly prefix?: `/${string}`;
+  readonly maxSockets?: number;
+  readonly maxPushBytes?: number;
+  readonly maxCatchUpBytes?: number;
+}
+// ---cut-after---
+same<LiveSocketOptions, Cloudflare.LiveSocketOptions>(true);
+```
+
+| Field             | Meaning                                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `prefix`          | The prefix of the stream routes, as in `Http.routes` and `router`. The default is `/`           |
+| `maxSockets`      | Open sockets per object, up to 32,768. An upgrade over the limit gets 503. The default is 1,000 |
+| `maxPushBytes`    | Data bytes a socket gets in one event before it closes with 4100. The default is 1 MiB          |
+| `maxCatchUpBytes` | Data bytes a connect sends before it closes with 4100. The default is 4 MiB                     |
 
 ## Worker routing and placement
 
