@@ -19,6 +19,7 @@ import {
 } from "@streamsy/projection";
 import { Facts, Workspace, Table, fold, sums, type Row, type Fact } from "./support/fold-by-key.ts";
 import { layerSqlite } from "./support/sqlite.ts";
+import { eventually } from "./support/eventually.ts";
 
 const host = (readLimit = 1000) => {
   const local = layerSqlite(readLimit);
@@ -31,18 +32,6 @@ const host = (readLimit = 1000) => {
     Layer.provideMerge(streams),
   );
 };
-
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, check: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1000; turn += 1) {
-      const value = yield* read;
-
-      if (check(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 const params = { workspace: "main", source: "events" };
 

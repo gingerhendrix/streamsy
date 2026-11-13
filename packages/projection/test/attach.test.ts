@@ -6,6 +6,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { TestClock } from "effect/testing";
 import { memoryHost } from "./support/memory-host.ts";
+import { eventually } from "./support/eventually.ts";
 
 class Files extends Streamsy.json<Files>()("Attach/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -54,19 +55,6 @@ const rows = Effect.gen(function* () {
     StreamAddress.isChange(item) ? [[item.headers.operation, item.key] as const] : [],
   );
 }).pipe(Effect.catchTag("StreamNotFound", () => Effect.succeed([])));
-
-/** Let the forked runner work until `check` holds. */
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, check: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1_000; turn += 1) {
-      const value = yield* read;
-
-      if (check(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 layer(host())((it) => {
   it.effect("a projection whose input does not give every param cannot attach", () =>

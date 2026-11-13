@@ -16,6 +16,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
+import { eventually } from "./support/eventually.ts";
 import { triggersOf } from "../src/triggers.ts";
 
 class Files extends Streamsy.json<Files>()("Triggers/Files", "folders/:folderId/files", {
@@ -76,18 +77,6 @@ const counting = (
 
   return { projection, runs };
 };
-
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1_000; turn++) {
-      const value = yield* read;
-
-      if (ready(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 for (const [name, host] of [
   ["memory", memoryHost()],

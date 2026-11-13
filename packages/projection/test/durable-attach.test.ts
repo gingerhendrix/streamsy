@@ -11,6 +11,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
+import { eventually } from "./support/eventually.ts";
 
 class Files extends Streamsy.json<Files>()("Durable/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -68,19 +69,6 @@ const markOf = (projection: string, folder: { readonly folderId: string }) =>
       Option.fromUndefinedOr(found.get(keyOf(folder))),
     ),
   );
-
-/** Let a forked runner work until `check` holds. */
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, check: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1_000; turn += 1) {
-      const value = yield* read;
-
-      if (check(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 class Offline extends Schema.TaggedError<Offline, { readonly brand: unique symbol }>()(
   "Offline",
