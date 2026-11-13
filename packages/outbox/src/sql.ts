@@ -1,4 +1,4 @@
-import { SqlClient, type SqlError } from "effect/sql";
+import { SqlClient, type SqlError, type Statement } from "effect/sql";
 import { Array, Effect, Layer, Option, Predicate, Schema, SchemaTransformation } from "effect";
 import { InvalidStoredRecord, OutboxUnavailable, type StoreFailure } from "./errors.ts";
 import {
@@ -195,9 +195,6 @@ const mysqlKeyFault = (draft: OutboxDraft): OutboxUnavailable | undefined => {
   return undefined;
 };
 
-const execute = (operation: string, statement: Effect.Effect<unknown, SqlError.SqlError>) =>
-  unavailable(operation, statement).pipe(Effect.asVoid);
-
 const rows = (
   operation: string,
   statement: Effect.Effect<ReadonlyArray<OutboxRow>, SqlError.SqlError>,
@@ -212,6 +209,21 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
     sql`name = ${name}`,
     ...(partitionId === undefined ? [] : [sql`partition_id = ${partitionId}`]),
   ];
+
+  /** Count changed rows without a second query or a check/update race. */
+  const changed = (operation: string, statement: Statement.Statement<unknown>) =>
+    unavailable(
+      operation,
+      sql.onDialectOrElse({
+        mysql: () =>
+          statement.raw.pipe(
+            Effect.map((result) =>
+              Predicate.hasProperty(result, "affectedRows") ? Number(result.affectedRows) : 0,
+            ),
+          ),
+        orElse: () => sql`${statement} RETURNING id`.pipe(Effect.map((found) => found.length)),
+      }),
+    );
 
   const update = Settlement.$match({
     Delivered: ({ attempts, atMs }) =>
@@ -297,7 +309,21 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
         ])} ORDER BY id LIMIT ${limit}`,
       ),
     settle: (id, settlement) =>
-      execute("settle", sql`UPDATE streamsy_outbox SET ${update(settlement)} WHERE id = ${id}`),
+      changed(
+        "settle",
+        sql`UPDATE streamsy_outbox SET ${update(settlement)} WHERE id = ${id} AND state = 'pending'`,
+      ).pipe(
+        Effect.flatMap((count) =>
+          count > 0
+            ? Effect.void
+            : Effect.fail(
+                new OutboxUnavailable({
+                  operation: "settle",
+                  detail: `outbox entry ${id} does not exist or is not pending`,
+                }),
+              ),
+        ),
+      ),
     list: ({ name, partitionId }) =>
       rows(
         "list",

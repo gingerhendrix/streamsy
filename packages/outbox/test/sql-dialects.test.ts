@@ -12,7 +12,7 @@ import { OutboxStore, Settlement, type OutboxBacking, type OutboxDraft } from ".
 import { layerSql, migrateOutbox } from "../src/sql.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./dialect-support.ts";
 
-import { dueTimes } from "./addition-contracts.ts";
+import { dueTimes, guardedSettlement } from "./addition-contracts.ts";
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
@@ -69,6 +69,14 @@ const withOutbox = <A, E>(
 for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`the ${dialect.name} outbox`, () => {
+    test(
+      "settlement refuses missing and terminal entries",
+      async () => {
+        if (url === undefined) return;
+        await withOutbox(dialect, url, guardedSettlement);
+      },
+      TIMEOUT_MS,
+    );
     test(
       "first due times and absorbed repeats",
       async () => {

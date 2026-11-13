@@ -104,11 +104,11 @@ function makeStore(): OutboxBacking {
       Effect.suspend(() => {
         const existing = entries.get(id);
 
-        if (existing === undefined)
+        if (existing === undefined || existing.state !== "pending")
           return Effect.fail(
             new OutboxUnavailable({
               operation: "settle",
-              detail: `outbox entry ${id} does not exist`,
+              detail: `outbox entry ${id} does not exist or is not pending`,
             }),
           );
         entries.set(id, { ...existing, ...settledFields(settlement) });

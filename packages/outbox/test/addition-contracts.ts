@@ -1,6 +1,11 @@
 import { Effect, Option } from "effect";
 import { expect } from "vitest";
-import type { OutboxBacking, OutboxDraft } from "../src/index.ts";
+import {
+  Settlement,
+  OutboxUnavailable,
+  type OutboxBacking,
+  type OutboxDraft,
+} from "../src/index.ts";
 
 const name = "additions";
 const draft = (key: string, partitionId = "main"): OutboxDraft => ({
@@ -36,4 +41,32 @@ export const dueTimes = (store: OutboxBacking) =>
       partitionId: "main",
     });
     expect(yield* store.readDue({ name }, 1000, 10)).toHaveLength(3);
+  });
+
+export const guardedSettlement = (store: OutboxBacking) =>
+  Effect.gen(function* () {
+    const delivered = Settlement.Delivered({ attempts: 1, atMs: 200 });
+    expect(yield* store.settle(999, delivered).pipe(Effect.flip)).toMatchObject({
+      _tag: "OutboxUnavailable",
+      operation: "settle",
+    });
+    yield* store.enqueue([draft("delivered"), draft("dead")]);
+    const entries = yield* store.list({ name });
+    yield* store.settle(entries[0]!.id, delivered);
+    yield* store.settle(
+      entries[1]!.id,
+      Settlement.Dead({ attempts: 1, reason: "permanent", detail: "gone", atMs: 200 }),
+    );
+    const before = yield* store.list({ name });
+    for (const entry of before) {
+      for (const settlement of [
+        delivered,
+        Settlement.Retry({ attempts: 2, nextAttemptAtMs: 300, detail: "retry" }),
+        Settlement.Dead({ attempts: 2, reason: "permanent", detail: "overwrite", atMs: 300 }),
+      ])
+        expect(yield* store.settle(entry.id, settlement).pipe(Effect.flip)).toBeInstanceOf(
+          OutboxUnavailable,
+        );
+    }
+    expect(yield* store.list({ name })).toEqual(before);
   });
