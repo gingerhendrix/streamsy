@@ -25,6 +25,14 @@ The remote client now resumes from the last offset it received.
 
 Use `patch`, `minor` or `major` in the frontmatter. The five packages share a version, so a note for one package bumps all five. Target `"group:streamsy"` when the note is about every package.
 
+### Write one note for each user-facing change
+
+Tegami adds each note as its own section under the next release in the changelog of every package. Write a note for each change that a user of the released packages will see, not for each commit.
+
+- A branch that lands as one merge gets one note for each feature it adds. When a later commit on the branch changes the feature, edit that note.
+- Do not add a note for a fix to behaviour that has not been released yet. Users never saw the bug. Update the feature's note if the fix changes what it says.
+- Write for a developer who uses Streamsy. Say what they can do now, which API they call, and what they must change in their code. Mark a breaking change with `**Breaking change:**`. Leave out internal names and implementation steps unless a user must act on them, and link the docs page.
+
 Do not edit package versions or create release tags by hand.
 
 ## How a release happens
