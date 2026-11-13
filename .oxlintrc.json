@@ -135,7 +135,8 @@
       "files": [
         "packages/conformance-tests/test/support/spawned-host.ts",
         "packages/conformance-tests/test/sqlite.conformance.test.ts",
-        "packages/conformance-tests/test/workerd.conformance.test.ts"
+        "packages/conformance-tests/test/workerd.conformance.test.ts",
+        "packages/conformance-tests/test/workerd.websocket.test.ts"
       ],
       "rules": {
         "effecttsgo/global-fetch": "off",

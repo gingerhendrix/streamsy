@@ -32,6 +32,13 @@ const workerPath = join(uploadDirectory, "worker.js");
 
 const reportPath = join(outputRoot, "bundle-report.json");
 
+const liveWorkerSource = join(packageRoot, "src", "live-worker.ts");
+
+/** The WebSocket test entry. It is never uploaded, so it stays out of the bundle report. */
+const liveDirectory = join(outputRoot, "live-worker");
+
+const liveWorkerPath = join(liveDirectory, "worker.js");
+
 const failPrerequisite = (message: string): never => {
   throw new Error(`${message}. Run bun run build first.`);
 };
@@ -300,7 +307,37 @@ const build = () =>
 
     const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(report);
     yield* Effect.promise(() => Bun.write(reportPath, `${json}\n`));
+    yield* buildLiveWorker(temporaryRoot);
   }).pipe(Effect.scoped);
+
+const buildLiveWorker = (temporaryRoot: string) =>
+  Effect.gen(function* () {
+    assertOwnedAncestors(liveDirectory, "Live worker directory");
+    assertOwnedDirectory(liveDirectory, "Live worker directory");
+    const liveRoot = join(temporaryRoot, "live");
+    mkdirSync(liveRoot);
+
+    const live = yield* Effect.promise(() =>
+      Bun.build({
+        entrypoints: [liveWorkerSource],
+        outdir: liveRoot,
+        naming: { entry: "worker.js" },
+        target: "browser",
+        format: "esm",
+        minify: false,
+        sourcemap: "none",
+        external: ["cloudflare:workers"],
+      }),
+    );
+
+    if (!live.success)
+      throw new Error(
+        `Live worker build failed: ${Array.join(Array.map(live.logs, String), "; ")}`,
+      );
+
+    mkdirSync(liveDirectory, { recursive: true });
+    cpSync(outputFile(live.outputs, "Live").path, liveWorkerPath);
+  });
 
 try {
   await Effect.runPromise(build());
