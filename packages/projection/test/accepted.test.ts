@@ -298,17 +298,31 @@ describe("accepted declaration validation", () => {
       }),
     ).toThrow("An accepted stream may not name an input stream");
   });
-  test("rejects fixed input aliases at declaration build", () => {
+  test("checks fixed input aliases against the resolved accepted address at bind time", () => {
+    const projection = Projection.process({
+      id: "fixed-cycle",
+      params: { id: Schema.String },
+      inputs: { wake: Accepted.at(fixedParams) },
+      accepted: Accepted,
+      commit: Commit.transaction,
+      process: () => Effect.void,
+    });
+
+    expect(() => projection.at(fixedParams)).toThrow("An output may not name an input stream");
+    expect(() => projection.at({ id: "other" })).not.toThrow();
+  });
+  test("rejects the reserved accepted output name at declaration build", () => {
     expect(() =>
-      Projection.process({
-        id: "fixed-cycle",
+      Projection.emit({
+        id: "reserved-output",
         params: { id: Schema.String },
-        inputs: { wake: Accepted.at(fixedParams) },
+        inputs: { input: Input },
+        outputs: { "@streamsy/accepted": Rows },
         accepted: Accepted,
         commit: Commit.transaction,
-        process: () => Effect.void,
+        emit: () => ({}),
       }),
-    ).toThrow("An accepted stream may not name an input stream");
+    ).toThrow("Output name @streamsy/accepted is reserved for accepted");
   });
   test("rejects accepted params absent from the projection", () => {
     expect(() =>

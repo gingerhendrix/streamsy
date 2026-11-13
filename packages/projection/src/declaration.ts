@@ -278,20 +278,11 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
       (input) => input.template,
     ),
     commit,
+    Record.keys(definition.outputs ?? {}),
   );
 
   if (definition.prepare !== undefined && !supportsPrepare(commit))
     throw new RangeError("prepare requires Commit.transaction");
-
-  if (definition.accepted !== undefined) {
-    if (Record.has(definition.outputs ?? {}, acceptedKey))
-      throw new RangeError(`Output name ${acceptedKey} is reserved for accepted`);
-
-    for (const input of Record.values(definition.inputs)) {
-      if (!isDeclaration(input) && Option.isSome(definition.accepted.parse(input.id)))
-        throw new RangeError("An accepted stream may not name an input stream");
-    }
-  }
 
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);

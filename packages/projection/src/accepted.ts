@@ -1,4 +1,4 @@
-import { Record } from "effect";
+import { Array, Record } from "effect";
 import { compare, Offset, StreamId, Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { Accumulated, Emitted, type Commit } from "./commit.ts";
@@ -16,6 +16,7 @@ export const validateAccepted = (
   params: StreamRoute.ParamCodecs,
   inputTemplates: ReadonlyArray<string>,
   commit: Pick<Commit<never>, "name">,
+  outputNames: ReadonlyArray<string> = [],
 ): void => {
   if (accepted === undefined) return;
 
@@ -40,6 +41,9 @@ export const validateAccepted = (
     if (template === accepted.template)
       throw new RangeError("An accepted stream may not name an input stream");
   }
+
+  if (Array.contains(outputNames, acceptedKey))
+    throw new RangeError(`Output name ${acceptedKey} is reserved for accepted`);
 };
 
 /** Only moved inputs contribute a row; terminal closes retain their final offset. */
