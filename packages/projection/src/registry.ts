@@ -1,7 +1,16 @@
-import { Array, Context, Data, Effect, Layer, Option, PubSub, Stream, type Scope } from "effect";
+import {
+  Context,
+  Data,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  PubSub,
+  Stream,
+  type Scope,
+} from "effect";
 import type { StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
-import { declarationOf } from "./declaration.ts";
 import { NotAttached } from "./fault.ts";
 import type { Identity } from "./checkpoint-store.ts";
 import type { Attachable } from "./runner.ts";
@@ -59,12 +68,12 @@ export interface RegistryApi {
   readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
   /** Make failed work due now. Returns the number of failed bindings selected. */
   readonly retry: (
-    target: Declaration | Binding,
+    target: string | Declaration | Binding,
   ) => Effect.Effect<number, NotAttached | StorageFault>;
 }
 
 interface RegisteredRunner {
-  readonly declaration: object;
+  readonly id: string;
   readonly status: Effect.Effect<RunnerStatus, StorageFault>;
   readonly schedule: (binding: Binding) => Effect.Effect<void, StorageFault>;
   readonly retry: (binding?: Binding) => Effect.Effect<number, StorageFault>;
@@ -87,26 +96,24 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
   static readonly layer: Layer.Layer<Registry> = Layer.effect(
     this,
     Effect.gen(function* () {
-      const runners = new Set<RegisteredRunner>();
+      const runners = new Map<string, RegisteredRunner>();
       let registered = false;
 
       const updates = yield* Effect.acquireRelease(PubSub.unbounded<void>(), PubSub.shutdown);
 
       const events = yield* Effect.acquireRelease(PubSub.unbounded<RunnerEvent>(), PubSub.shutdown);
 
-      const status = Effect.suspend(() => Effect.forEach(runners, (runner) => runner.status));
+      const status = Effect.suspend(() =>
+        Effect.forEach(runners.values(), (runner) => runner.status),
+      );
 
-      const find = (target: Declaration | Binding) =>
+      const find = (target: string | Declaration | Binding) =>
         Effect.suspend(() => {
-          const declaration = "at" in target ? target.at : declarationOf(target);
-
-          const found = Array.findFirst(
-            [...runners],
-            (runner) => runner.declaration === declaration,
-          );
+          const id = Predicate.isString(target) ? target : target.id;
+          const found = Option.fromUndefinedOr(runners.get(id));
 
           return Effect.fromOption(found).pipe(
-            Effect.mapError(() => new NotAttached({ projection: target.id })),
+            Effect.mapError(() => new NotAttached({ projection: id })),
           );
         });
 
@@ -131,7 +138,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
         schedule: (binding) => Effect.flatMap(find(binding), (runner) => runner.schedule(binding)),
         retry: (target) =>
           Effect.flatMap(find(target), (runner) =>
-            runner.retry("at" in target ? undefined : target),
+            runner.retry(Predicate.isString(target) || "at" in target ? undefined : target),
           ),
         changes: Stream.unwrap(
           Effect.gen(function* () {
@@ -156,11 +163,15 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
           Effect.acquireRelease(
             Effect.sync(() => {
               registered = true;
-              runners.add(runner);
+              if (runners.has(runner.id))
+                throw new RangeError(
+                  `Projection ${runner.id} is already attached to this registry`,
+                );
+              runners.set(runner.id, runner);
             }).pipe(Effect.andThen(publish)),
             () =>
               Effect.sync(() => {
-                runners.delete(runner);
+                runners.delete(runner.id);
               }).pipe(Effect.andThen(publish)),
           ).pipe(Effect.asVoid),
       });

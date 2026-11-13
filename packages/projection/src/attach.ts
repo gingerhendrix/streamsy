@@ -103,7 +103,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
       const changed = Option.isNone(registry)
         ? Effect.void
         : yield* registerRunner(registry.value, {
-            declaration: projection.at,
+            id: projection.id,
             schedule,
             retry,
             status: status.pipe(

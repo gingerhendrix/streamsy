@@ -43,7 +43,7 @@ export interface Attachable<B> {
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
   // Method syntax: a declaration with typed params is assignable here.
-  at(this: void, params: Readonly<Record<string, unknown>>): B;
+  at(params: Readonly<Record<string, unknown>>): B;
 }
 
 /**

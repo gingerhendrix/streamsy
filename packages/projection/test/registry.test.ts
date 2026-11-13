@@ -397,35 +397,51 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
     }),
   );
 
-  it.effect(
-    "NotAttached uses declaration identity, writes nothing, and applies after scope closure",
-    () =>
-      Effect.gen(function* () {
-        const registry = yield* Projection.Registry;
-        const declaration = projection("identity");
-        const other = projection("identity");
-        const scope = yield* Scope.make();
-        yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
-          Scope.provide(scope),
-        );
-        expect(yield* Effect.flip(registry.schedule(other.at({ id: "a" })))).toEqual(
-          new NotAttached({ projection: "identity" }),
-        );
-        expect(yield* Effect.flip(registry.retry(other))).toEqual(
-          new NotAttached({ projection: "identity" }),
-        );
-        expect(yield* Effect.flip(registry.retry(other.at({ id: "a" })))).toEqual(
-          new NotAttached({ projection: "identity" }),
-        );
-        const marks = yield* ProjectionMarks;
-        expect(yield* marks.nextDue("identity")).toEqual(Option.none());
-        yield* Scope.close(scope, Exit.void);
-        expect(yield* Effect.flip(registry.schedule(declaration.at({ id: "a" })))).toEqual(
-          new NotAttached({ projection: "identity" }),
-        );
-        expect(yield* marks.nextDue("identity")).toEqual(Option.none());
-      }),
+  it.effect("requests resolve by id and NotAttached writes nothing after scope closure", () =>
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      const declaration = projection("identity");
+      const other = projection("identity");
+      const scope = yield* Scope.make();
+      yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
+        Scope.provide(scope),
+      );
+      // A separately declared binding and a plain encoded binding resolve by id.
+      yield* registry.schedule(other.at({ id: "a" }));
+      yield* registry.schedule({ id: declaration.id, params: { id: "b" } });
+      expect(yield* registry.retry(other)).toBe(0);
+      expect(yield* registry.retry(other.at({ id: "a" }))).toBe(0);
+      expect(yield* registry.retry(declaration.id)).toBe(0);
+      const marks = yield* ProjectionMarks;
+      yield* Scope.close(scope, Exit.void);
+      expect(yield* Effect.flip(registry.schedule(declaration.at({ id: "a" })))).toEqual(
+        new NotAttached({ projection: "identity" }),
+      );
+      const before = yield* marks.nextDue("identity");
+      expect(yield* Effect.flip(registry.retry("identity"))).toEqual(
+        new NotAttached({ projection: "identity" }),
+      );
+      expect(yield* marks.nextDue("identity")).toEqual(before);
+    }),
   );
+
+  for (const objectHost of [false, true]) {
+    it.effect(`duplicate ids die at registration (object host: ${objectHost})`, () =>
+      Effect.gen(function* () {
+        const declaration = projection("duplicate-id");
+        yield* Layer.build(Projection.attach(declaration));
+        const duplicate = projection(declaration.id);
+        const registration = objectHost
+          ? ProjectionWakeup.attach(duplicate).pipe(Effect.asVoid)
+          : Layer.build(Projection.attach(duplicate)).pipe(Effect.asVoid);
+        const exit = yield* Effect.exit(registration);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("duplicate-id");
+        const registry = yield* Projection.Registry;
+        expect(only(yield* registry.status).projection).toBe(declaration.id);
+      }),
+    );
+  }
 
   it.effect(
     "durable retry wakes a sleeping runner, selects a binding, and preserves attempts",

@@ -266,6 +266,13 @@ const drained = Effect.gen(function* () {
   );
 });
 
+// An ops route can retry by id without importing a declaration.
+const retryRoute = (projectionId: string) =>
+  Effect.gen(function* () {
+    const registry = yield* Projection.Registry;
+    return yield* registry.retry(projectionId);
+  });
+
 const requestTotals = Effect.gen(function* () {
   const registry = yield* Projection.Registry;
   yield* registry.schedule(orderTotals.at({}));
@@ -313,7 +320,7 @@ Each status includes the projection id, `active` bindings executing now, `queued
 
 Pass a declaration to retry all its failed bindings, or a binding to select one. Requests preserve the retry schedule and can resume an exhausted finite policy. Retry excludes bindings that only reached their unit limit. Durable retry preserves attempts and sequence numbers and sets due times to zero; a repeat before the marks run returns zero. A non-durable repeat counts the failed bindings again until they run successfully or are dropped.
 
-Both methods fail with `NotAttached`, exported from `@streamsy/projection`, if this registry has no runner for the declaration. Declaration identity matters: another declaration with the same id does not select its runner. A missing attachment writes no mark. Storage failures are reported as `StorageFault`.
+Both methods resolve the runner by projection id and fail with `NotAttached`, exported from `@streamsy/projection`, if that id is not registered. Attaching an id already present in the same registry dies at layer build with an error naming the id. A binding supplies encoded params, which the runner decodes with its declaration. A missing attachment writes no mark. Storage failures are reported as `StorageFault`.
 
 `registry.events` is a `Stream<RunnerEvent>` combining binding observations from all registered runners, on both hosts. Each event has `projection` (the declaration id) and `params` (canonical JSON of the binding's encoded params, with keys sorted). The cases are:
 
@@ -323,7 +330,7 @@ Both methods fail with `NotAttached`, exported from `@streamsy/projection`, if t
 
 Events have no replay or initial snapshot: a subscriber sees only events published after subscription. Like `changes`, the stream uses unbounded in-memory buffering so a slow subscriber never blocks or fails a projection pass. A consumer that falls behind can retain an increasing amount of memory. Close subscriptions when finished; the scoped wait above does this automatically. Without a registry, runners construct and publish no events.
 
-For in-process read-your-writes, call `awaitTotals` with the source append receipt while the attachment is alive. Subscribe first with `Stream.toPull`, then check `Projection.read` once, then consume that same subscription until the matching binding's input offset reaches or exceeds the receipt under core `compare`. Checking the checkpoint handles a run completed before subscription; subscribing before the check covers a run completed during or after the check. Use projection ids that distinguish the runners you observe, since events identify declarations by id. A metrics fold over `events` is left to the host.
+For in-process read-your-writes, call `awaitTotals` with the source append receipt while the attachment is alive. Subscribe first with `Stream.toPull`, then check `Projection.read` once, then consume that same subscription until the matching binding's input offset reaches or exceeds the receipt under core `compare`. Checking the checkpoint handles a run completed before subscription; subscribing before the check covers a run completed during or after the check. A metrics fold over `events` is left to the host.
 
 ### Registry on a Durable Object
 

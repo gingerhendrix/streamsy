@@ -47,7 +47,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     const changed: Effect.Effect<void> = Option.isNone(registry)
       ? Effect.void
       : yield* registerRunner(registry.value, {
-          declaration: projection.at,
+          id: projection.id,
           status: Effect.gen(function* () {
             const state =
               host === undefined

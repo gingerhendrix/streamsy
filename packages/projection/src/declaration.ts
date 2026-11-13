@@ -14,7 +14,6 @@ import type { InputMap, Slices } from "./batch.ts";
 import { bindState, type StateDefinition, type BoundState } from "./state.ts";
 import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
-import type { Identity } from "./checkpoint-store.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
 export type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
@@ -129,13 +128,7 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
   return built as Addresses<I>;
 };
 
-/** Declaration identity stays private; equal ids do not imply the same runner. */
-const declarations = new WeakMap<object, object>();
-
-export const declarationOf = (binding: Pick<Identity, "id" | "params">): object | undefined =>
-  declarations.get(binding);
-
-export const declare = <C extends StreamRoute.ParamCodecs, Bound extends object>(
+export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
   definition: {
     readonly id: string;
     readonly version?: number;
@@ -161,17 +154,13 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound extends object>
     params: definition.params,
     inputs: definition.inputs,
     at: (params) => {
-      const binding = bind({
+      return bind({
         id: definition.id,
         version,
         generation,
         params: encodeParams(definition.id, definition.params, params),
         decoded: params,
       });
-
-      declarations.set(binding, declaration.at);
-
-      return binding;
     },
     parse: (id) => {
       for (const input of Record.values<string, Input>(definition.inputs)) {

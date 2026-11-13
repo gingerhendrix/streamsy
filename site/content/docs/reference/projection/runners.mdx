@@ -1235,3 +1235,9 @@ same<typeof read, typeof Projection.read>(true);
 ```
 
 A bound projection from any constructor is an `Executable`. `BoundState` is the state of a bound projection: `initial` already has the params bound, and it runs only when no state is stored.
+
+## `Projection.Registry`
+
+Provide `Projection.Registry.layer` below attach layers to share one in-process registry. Its `status` effect reads the attached runners and `changes` streams full snapshots, starting with the current snapshot. Runners unregister when their attach scope closes.
+
+The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` resolves by `binding.id` and decodes its encoded params with the attached declaration. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. Both requests end the current wait and start one pass. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
