@@ -70,3 +70,56 @@ export const guardedSettlement = (store: OutboxBacking) =>
     }
     expect(yield* store.list({ name })).toEqual(before);
   });
+
+export const filteredReads = (store: OutboxBacking) =>
+  Effect.gen(function* () {
+    yield* store.enqueue([
+      draft("a"),
+      draft("b", "other"),
+      { ...draft("c"), notBeforeMs: 300 },
+      { ...draft("alien"), name: "other" },
+    ]);
+    const initial = yield* store.list({ name });
+    yield* store.settle(
+      initial[1]!.id,
+      Settlement.Dead({ attempts: 1, reason: "permanent", detail: "gone", atMs: 200 }),
+    );
+    expect(yield* store.list({ name, state: "delivered" })).toEqual([]);
+    expect(
+      (yield* store.list({ name, state: "pending", afterId: 0, limit: 1 })).map(
+        (row) => row.idempotencyKey,
+      ),
+    ).toEqual(["a"]);
+    expect(
+      (yield* store.list({ name, state: "pending", afterId: initial[0]!.id, limit: 1 })).map(
+        (row) => row.idempotencyKey,
+      ),
+    ).toEqual(["c"]);
+    expect(
+      (yield* store.list({
+        name,
+        state: "dead",
+        partitionId: "other",
+        afterId: initial[0]!.id,
+      })).map((row) => row.idempotencyKey),
+    ).toEqual(["b"]);
+    expect(yield* store.count({ name })).toBe(3);
+    expect(yield* store.count({ name, state: "pending" })).toBe(2);
+    expect(yield* store.count({ name, state: "pending", dueBeforeMs: 100 })).toBe(1);
+    expect(yield* store.count({ name, state: "pending", dueBeforeMs: 99 })).toBe(0);
+    expect(yield* store.count({ name, state: "pending", dueBeforeMs: 300 })).toBe(2);
+    expect(
+      yield* store.count({ name, state: "dead", partitionId: "other", dueBeforeMs: 100 }),
+    ).toBe(1);
+    expect(yield* store.count({ name, partitionId: "missing" })).toBe(0);
+    for (const limit of [0, -1, 1.5, Infinity, NaN])
+      expect(yield* store.list({ name, limit }).pipe(Effect.flip)).toBeInstanceOf(
+        OutboxUnavailable,
+      );
+    expect(yield* store.list({ name, afterId: -1 }).pipe(Effect.flip)).toBeInstanceOf(
+      OutboxUnavailable,
+    );
+    expect(yield* store.count({ name, dueBeforeMs: Infinity }).pipe(Effect.flip)).toBeInstanceOf(
+      OutboxUnavailable,
+    );
+  });

@@ -56,6 +56,19 @@ export interface DueScope extends OutboxScope {
   readonly ordered?: boolean;
 }
 
+/** Inspection in id order; afterId is exclusive. */
+export interface ListScope extends OutboxScope {
+  readonly state?: EntryState;
+  readonly limit?: number;
+  readonly afterId?: number;
+}
+
+/** Count matching rows, optionally at or before a due timestamp. */
+export interface CountScope extends OutboxScope {
+  readonly state?: EntryState;
+  readonly dueBeforeMs?: number;
+}
+
 /** The recorded outcome of one attempt. `attempts` is the new persisted count. */
 export type Settlement = Data.TaggedEnum<{
   Delivered: { readonly attempts: number; readonly atMs: number };
@@ -73,7 +86,7 @@ export const Settlement = Data.taggedEnum<Settlement>();
 /**
  * Adapter protocol. Reads acquire no distributed ownership or lease.
  * Only `Outbox.enqueue` and `Outbox.drain` call `enqueue`, `readDue` and `settle`.
- * Applications use `nextDue` and `list`.
+ * Applications use `nextDue`, `list` and `count`.
  */
 export interface OutboxBacking {
   readonly enqueue: (drafts: readonly OutboxDraft[]) => Effect.Effect<EnqueueReport, StoreFailure>;
@@ -85,7 +98,8 @@ export interface OutboxBacking {
     limit: number,
   ) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
   readonly settle: (id: number, settlement: Settlement) => Effect.Effect<void, StoreFailure>;
-  readonly list: (scope: OutboxScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+  readonly list: (scope: ListScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+  readonly count: (scope: CountScope) => Effect.Effect<number, StoreFailure>;
 }
 
 export class OutboxStore extends Context.Service<OutboxStore, OutboxBacking>()(

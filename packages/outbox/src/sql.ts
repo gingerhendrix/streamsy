@@ -12,6 +12,8 @@ import {
   type OutboxEntry,
 } from "./store.ts";
 
+import { validateOptions } from "./validation.ts";
+
 const TABLE = "streamsy_outbox";
 
 /** MySQL key columns. Their sum fits the 3072-byte InnoDB index limit at 4 bytes a character. */
@@ -324,12 +326,39 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
               ),
         ),
       ),
-    list: ({ name, partitionId }) =>
-      rows(
-        "list",
-        sql<OutboxRow>`SELECT * FROM streamsy_outbox WHERE ${sql.and(
-          inScope(name, partitionId),
-        )} ORDER BY id`,
+    list: (scope) =>
+      validateOptions("list", scope).pipe(
+        Effect.andThen(
+          rows(
+            "list",
+            sql<OutboxRow>`SELECT * FROM streamsy_outbox WHERE ${sql.and([
+              ...inScope(scope.name, scope.partitionId),
+              ...(scope.state === undefined ? [] : [sql`state = ${scope.state}`]),
+              ...(scope.afterId === undefined ? [] : [sql`id > ${scope.afterId}`]),
+            ])} ORDER BY id ${scope.limit === undefined ? sql`` : sql`LIMIT ${scope.limit}`}`,
+          ),
+        ),
+      ),
+    count: (scope) =>
+      validateOptions("count", scope).pipe(
+        Effect.andThen(
+          unavailable(
+            "count",
+            sql<{
+              readonly total: number | bigint | string;
+            }>`SELECT COUNT(*) AS total FROM streamsy_outbox WHERE ${sql.and([
+              ...inScope(scope.name, scope.partitionId),
+              ...(scope.state === undefined ? [] : [sql`state = ${scope.state}`]),
+              ...(scope.dueBeforeMs === undefined
+                ? []
+                : [sql`next_attempt_at_ms <= ${scope.dueBeforeMs}`]),
+            ])}`,
+          ).pipe(
+            Effect.flatMap((found) =>
+              Schema.decodeUnknownEffect(StoredInt)(found[0]?.total).pipe(storedFailure("count")),
+            ),
+          ),
+        ),
       ),
   };
 }

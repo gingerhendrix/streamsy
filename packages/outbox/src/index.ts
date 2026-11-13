@@ -12,5 +12,7 @@ export {
   type OutboxDraft,
   type OutboxScope,
   type DueScope,
+  type ListScope,
+  type CountScope,
   type EnqueueReport,
 } from "./store.ts";

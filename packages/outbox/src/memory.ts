@@ -1,4 +1,5 @@
 import { Array, Effect, Layer, Option } from "effect";
+import { validateOptions } from "./validation.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import {
   OutboxStore,
@@ -115,7 +116,33 @@ function makeStore(): OutboxBacking {
 
         return Effect.void;
       }),
-    list: (scope) => Effect.sync(() => scoped(scope)),
+    list: (scope) =>
+      validateOptions("list", scope).pipe(
+        Effect.andThen(
+          Effect.sync(() =>
+            scoped(scope)
+              .filter(
+                (entry) =>
+                  (scope.state === undefined || entry.state === scope.state) &&
+                  (scope.afterId === undefined || entry.id > scope.afterId),
+              )
+              .slice(0, scope.limit),
+          ),
+        ),
+      ),
+    count: (scope) =>
+      validateOptions("count", scope).pipe(
+        Effect.andThen(
+          Effect.sync(
+            () =>
+              scoped(scope).filter(
+                (entry) =>
+                  (scope.state === undefined || entry.state === scope.state) &&
+                  (scope.dueBeforeMs === undefined || entry.nextAttemptAtMs <= scope.dueBeforeMs),
+              ).length,
+          ),
+        ),
+      ),
   };
 }
 
