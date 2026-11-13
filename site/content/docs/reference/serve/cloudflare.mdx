@@ -327,7 +327,6 @@ interface WakeupHost {
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
-    readonly retryBlocked?: boolean;
   }>;
 }
 // ---cut-after---
@@ -336,12 +335,11 @@ same<WakeupHost, Cloudflare.WakeupHost>(true);
 
 `Cloudflare.WakeupHost` supplies effects bound to one acquired wakeup. They also work outside requests. See [Alarms](/docs/servers/cloudflare/alarms).
 
-| Field          | Meaning                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------- |
-| `reconcile`    | Recomputes the alarm from every wakeup's next deadline; it can also run inside a wakeup's `run`            |
-| `retry`        | Clears application-failure backoff while retaining storage or deadline-read backoff                        |
-| `state`        | Reads consecutive failed passes and the next automatic or reconciled explicitly requested retry deadline   |
-| `retryBlocked` | Optional field of `state` that reports whether storage or deadline-read failure prevents an explicit retry |
+| Field       | Meaning                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `reconcile` | Recomputes the alarm from every wakeup's next deadline; it can also run inside a wakeup's `run`     |
+| `retry`     | Clears this wakeup’s backoff floor without resetting its retry schedule                             |
+| `state`     | Reads consecutive failed passes and the automatic or reconciled explicitly requested retry deadline |
 
 ### `Cloudflare.OutboxWakeup`
 

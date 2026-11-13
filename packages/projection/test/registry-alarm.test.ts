@@ -92,28 +92,76 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             const before = exhausted ? Option.none() : Option.some(3_600_000);
             expect(armed).toEqual(before);
             yield* registry.schedule(declaration.at({ id: `${prefix}-good` }));
-            expect(armed).toEqual(failure === "storage" ? before : Option.some(1));
+            expect(armed).toEqual(Option.some(1));
             const status = (yield* registry.status)[0]!;
             expect(status).toMatchObject({
-              state: failure === "storage" && exhausted ? "failed" : "retrying",
+              state: "retrying",
               failures: 1,
               retryAt: armed,
             });
             yield* scheduler.alarm;
-            expect(seen).toEqual(
-              failure === "storage"
-                ? [`${prefix}-bad`]
-                : [`${prefix}-bad`, `${prefix}-bad`, `${prefix}-good`],
-            );
+            expect(seen).toEqual([`${prefix}-bad`, `${prefix}-bad`, `${prefix}-good`]);
           }),
       );
     }
   }
 
+  it.effect("object requests preserve the next storage-fault delay", () =>
+    Effect.gen(function* () {
+      const id = "growing-object";
+      const source = yield* Source;
+      yield* source.create({ id });
+      yield* source.append({ id }, ["one"]);
+
+      const declaration = Projection.process({
+        id,
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: () =>
+          Effect.fail(new StorageFault({ operation: "test", message: "offline", retryable: true })),
+      });
+
+      let armed = Option.none<number>();
+      const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+
+      const scheduler = yield* makeWakeups(
+        Context.add(context, AlarmSlot, {
+          current: Effect.sync(() => armed),
+          arm: (at) =>
+            Effect.sync(() => {
+              armed = Option.some(at);
+            }),
+          clear: Effect.sync(() => {
+            armed = Option.none();
+          }),
+        }),
+        [
+          ProjectionWakeup.attach(declaration, {
+            durable: false,
+            retry: Schedule.exponential("1 second"),
+          }),
+        ],
+      );
+
+      const registry = yield* Projection.Registry;
+      yield* registry.schedule(declaration.at({ id }));
+      yield* scheduler.alarm;
+      expect(armed).toEqual(Option.some(1_000));
+      expect(yield* registry.retry(declaration)).toBe(1);
+      yield* scheduler.alarm;
+      expect(armed).toEqual(Option.some(2_000));
+      yield* registry.schedule(declaration.at({ id }));
+      yield* scheduler.alarm;
+      expect(armed).toEqual(Option.some(4_000));
+      expect((yield* registry.status)[0]!.failures).toBe(3);
+    }),
+  );
+
   for (const durable of [false, true]) {
-    it.effect(`blocked retry leaves failed work unchanged (durable: ${durable})`, () =>
+    it.effect(`retry selects failed work before the next pass (durable: ${durable})`, () =>
       Effect.gen(function* () {
-        const id = `blocked-${durable}`;
+        const id = `selected-${durable}`;
         const source = yield* Source;
         yield* source.create({ id });
         yield* source.append({ id }, ["one"]);
@@ -131,31 +179,99 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         yield* registry.schedule(declaration.at({ id }));
         yield* Effect.exit(wakeup.run);
         const marks = yield* ProjectionMarks;
-
         const before = yield* marks.read(id, [paramsKey({ id })]);
-
-        let blocked = true;
         yield* wakeup.bind({
           reconcile: Effect.void,
           retry: Effect.void,
-          state: Effect.sync(() => ({
-            failures: 1,
-            retryAt: Option.some(1_000),
-            retryBlocked: blocked,
-          })),
+          state: Effect.succeed({ failures: 1, retryAt: Option.some(1_000) }),
         });
-        expect(yield* registry.retry(declaration)).toBe(0);
-        expect(yield* registry.retry(declaration.at({ id }))).toBe(0);
-        expect(yield* marks.read(id, [paramsKey({ id })])).toEqual(before);
-        blocked = false;
-        // A rejected request must not have recorded the binding as already requested.
         expect(yield* registry.retry(declaration.at({ id }))).toBe(1);
-        expect(yield* registry.retry(declaration)).toBe(0);
+        expect(yield* registry.retry(declaration)).toBe(durable ? 0 : 1);
+        const after = yield* marks.read(id, [paramsKey({ id })]);
+
+        if (durable) {
+          expect(after.get(paramsKey({ id }))).toEqual({
+            ...before.get(paramsKey({ id })),
+            dueAt: 0,
+          });
+        } else expect(after).toEqual(before);
       }),
     );
   }
 
-  it.effect("durable retry preserves marks behind a real deadline-read storage floor", () =>
+  for (const exhausted of [false, true]) {
+    it.effect(
+      `object retry starts a pass after a storage fault with no failed binding (${exhausted})`,
+      () =>
+        Effect.gen(function* () {
+          const marks = yield* ProjectionMarks;
+          const id = `empty-object-${exhausted}`;
+          let broken = true;
+          let passes = 0;
+          let armed = Option.none<number>();
+          const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+
+          const declaration = Projection.process({
+            id,
+            params: { id: Schema.String },
+            inputs: { source: Source },
+            commit: Commit.atLeastOnce,
+            process: () => Effect.void,
+          });
+
+          const scheduler = yield* makeWakeups(
+            Context.add(context, AlarmSlot, {
+              current: Effect.sync(() => armed),
+              arm: (at) =>
+                Effect.sync(() => {
+                  armed = Option.some(at);
+                }),
+              clear: Effect.sync(() => {
+                armed = Option.none();
+              }),
+            }),
+            [
+              ProjectionWakeup.attach(declaration, {
+                retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+              }).pipe(
+                Effect.provideService(ProjectionMarks, {
+                  ...marks,
+                  nextDue: (projection) =>
+                    Effect.suspend(() =>
+                      broken
+                        ? Effect.fail(
+                            new StorageFault({
+                              operation: "marks.nextDue",
+                              message: "offline",
+                              retryable: true,
+                            }),
+                          )
+                        : marks.nextDue(projection),
+                    ),
+                  due: (...args) =>
+                    Effect.suspend(() => {
+                      passes += 1;
+
+                      return marks.due(...args);
+                    }),
+                }),
+              ),
+            ],
+          );
+
+          const registry = yield* Projection.Registry;
+          expect((yield* registry.status)[0]!.failures).toBe(1);
+          broken = false;
+          expect(yield* registry.retry(declaration)).toBe(0);
+          expect(armed).toEqual(Option.some(1));
+          yield* scheduler.alarm;
+          expect(passes).toBe(1);
+          expect((yield* registry.status)[0]).toMatchObject({ state: "running", failures: 0 });
+        }),
+    );
+  }
+
+  it.effect("durable retry clears a deadline-read floor and preserves attempts", () =>
     Effect.gen(function* () {
       const marks = yield* ProjectionMarks;
       const id = "durable-deadline-floor";
@@ -207,12 +323,16 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       broken = false;
       const registry = yield* Projection.Registry;
       expect(armed).toEqual(Option.some(3_600_000));
-      const before = yield* marks.read(id, ['{"id":"a"}']);
-      expect(yield* registry.retry(declaration)).toBe(0);
+      expect(yield* registry.retry(declaration)).toBe(1);
       expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(0);
+      expect((yield* marks.read(id, ['{"id":"a"}'])).get('{"id":"a"}')).toMatchObject({
+        attempts: 4,
+        dueAt: 0,
+      });
+      expect(armed).toEqual(Option.some(1));
       yield* scheduler.alarm;
-      expect(yield* marks.read(id, ['{"id":"a"}'])).toEqual(before);
-      expect((yield* registry.status)[0]!.retryAt).toEqual(Option.some(3_600_000));
+      expect(yield* marks.read(id, ['{"id":"a"}'])).toEqual(new Map());
+      expect((yield* registry.status)[0]!.retryAt).toEqual(Option.none());
     }),
   );
 

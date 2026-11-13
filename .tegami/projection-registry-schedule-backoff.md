@@ -3,6 +3,6 @@ packages:
   "@streamsy/projection": patch
 ---
 
-## Resume scheduled bindings on Durable Objects
+## Resume requested bindings on both hosts
 
-Registry schedule requests now resume a Durable Object runner during application-failure backoff and after a finite retry policy stops. Storage and deadline-read backoff remain in place.
+Registry schedule and retry requests end the current wait and start one pass on Bun and Durable Objects, including after storage or deadline-read failures and an exhausted finite retry policy. Requests preserve the retry schedule; another failure waits its next delay.

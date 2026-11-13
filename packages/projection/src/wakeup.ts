@@ -13,8 +13,6 @@ interface WakeupHost {
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
-    /** Storage or deadline-read failure prevents explicit retry from making work due. */
-    readonly retryBlocked?: boolean;
   }>;
 }
 
@@ -40,7 +38,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   });
 
   return Effect.gen(function* () {
-    const { next, drain, deferred, status, schedule, retry, reportFailures } = yield* runner;
+    const { next, drain, deferred, status, schedule, retry } = yield* runner;
     let host: WakeupHost | undefined;
     let running = false;
     let lastPassAt = Option.none<number>();
@@ -72,27 +70,20 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             } satisfies RunnerStatus;
           }),
           schedule: (binding) =>
-            schedule(binding).pipe(
-              Effect.andThen(Effect.suspend(() => host?.retry ?? Effect.void)),
-              Effect.andThen(Effect.suspend(() => host?.reconcile ?? Effect.void)),
-              Effect.andThen(Effect.suspend(() => changed)),
+            schedule(binding).pipe(Effect.andThen(request), Effect.uninterruptible),
+          retry: (binding) =>
+            retry(binding).pipe(
+              Effect.tap(() => request),
               Effect.uninterruptible,
             ),
-          retry: (binding) =>
-            Effect.gen(function* () {
-              // Check before changing marks or recording in-memory retry requests.
-              if (host !== undefined && (yield* host.state).retryBlocked) return 0;
-              const count = yield* retry(binding);
-
-              if (count > 0 && host !== undefined) yield* host.retry;
-
-              if (host !== undefined) yield* host.reconcile;
-
-              if (count > 0) yield* changed;
-
-              return count;
-            }).pipe(Effect.uninterruptible),
         });
+
+    const request = Effect.gen(function* () {
+      if (host === undefined) return;
+      yield* host.retry;
+      yield* host.reconcile;
+      yield* changed;
+    });
 
     return {
       name: `streamsy/projection/${encodeURIComponent(projection.id)}`,
@@ -115,15 +106,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         Effect.sync(() => {
           host = bound;
         }),
-      changed: Option.isNone(registry)
-        ? Effect.void
-        : Effect.gen(function* () {
-            const retryAt =
-              host === undefined ? Option.none<number>() : (yield* host.state).retryAt;
-
-            yield* reportFailures(retryAt);
-            yield* changed;
-          }),
+      changed,
       retry: options.retry ?? (yield* ProjectionRetry),
       deferred,
     };

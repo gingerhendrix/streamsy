@@ -124,12 +124,11 @@ layer(
       expect(yield* host!.state).toEqual({
         failures: 0,
         retryAt: Option.none(),
-        retryBlocked: false,
       });
     }),
   );
 
-  it.effect("bound state exposes host backoff and reconcile preserves it", () =>
+  it.effect("bound state exposes storage backoff and retry clears it", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();
       let host: WakeupHost | undefined;
@@ -153,14 +152,12 @@ layer(
       expect(yield* host!.state).toEqual({
         failures: 1,
         retryAt: Option.some(10_000),
-        retryBlocked: true,
       });
       yield* host!.reconcile;
       yield* host!.retry;
       expect(yield* host!.state).toEqual({
         failures: 1,
-        retryAt: Option.some(10_000),
-        retryBlocked: true,
+        retryAt: Option.none(),
       });
     }),
   );
@@ -187,26 +184,24 @@ layer(
       expect(yield* host!.state).toEqual({
         failures: 1,
         retryAt: Option.some(3_600_000),
-        retryBlocked: false,
       });
       yield* host!.retry;
       yield* host!.reconcile;
       expect(yield* host!.state).toEqual({
         failures: 1,
         retryAt: Option.some(1),
-        retryBlocked: false,
       });
     }),
   );
 
-  it.effect("host retry preserves a floor from a failed deadline read", () =>
+  it.effect("host retry clears a deadline-read floor without resetting the policy", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();
       let host: WakeupHost | undefined;
       yield* makeWakeups(context, [
         {
           name: "deadline-failure",
-          retry: Schedule.spaced("1 hour"),
+          retry: Schedule.exponential("1 hour"),
           next: Effect.fail(
             new StorageFault({ operation: "test.next", message: "offline", retryable: true }),
           ),
@@ -218,11 +213,11 @@ layer(
         },
       ]);
       yield* host!.retry;
+      expect(yield* host!.state).toEqual({ failures: 1, retryAt: Option.none() });
       yield* host!.reconcile;
       expect(yield* host!.state).toEqual({
-        failures: 1,
-        retryAt: Option.some(3_600_000),
-        retryBlocked: true,
+        failures: 2,
+        retryAt: Option.some(7_200_000),
       });
     }),
   );

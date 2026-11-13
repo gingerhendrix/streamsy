@@ -1,7 +1,6 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context -- Wakeup.run deliberately accepts arbitrary app failures; the alarm isolates their causes. */
 import {
   Array,
-  Cause,
   Clock,
   Context,
   Duration,
@@ -30,14 +29,12 @@ export interface WakeupProgress {
 export interface WakeupHost {
   /** Recompute the alarm from every wakeup's next deadline. */
   readonly reconcile: Effect.Effect<void>;
-  /** Clear application-failure backoff; retain storage and deadline-failure backoff. */
+  /** Clear this wakeup's backoff floor without resetting its retry schedule. */
   readonly retry: Effect.Effect<void>;
   /** Consecutive failed passes and the next automatic or explicitly requested retry. */
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
-    /** Storage or deadline-read failure prevents explicit retry from making work due. */
-    readonly retryBlocked?: boolean;
   }>;
 }
 
@@ -172,7 +169,6 @@ export const makeWakeups = <R>(
           failures: 0,
           floor: 0,
           exhausted: false,
-          storageFailure: false,
           requested: false,
           requestedAt: 0,
           policy,
@@ -232,8 +228,6 @@ export const makeWakeups = <R>(
             Effect.map(Option.map((next) => Math.max(next, state.floor))),
             Effect.catchCause((cause) => {
               return Effect.gen(function* () {
-                state.storageFailure = true;
-
                 if (state.floor <= now) yield* backOff(state, now);
                 yield* Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
 
@@ -273,7 +267,7 @@ export const makeWakeups = <R>(
             }
           }
 
-          // Report a requested retry only after its deadline has been reconciled successfully.
+          // Publish requested deadlines only after reconciliation succeeds.
           for (const state of states) state.requestedAt = requested.get(state) ?? 0;
         }),
       );
@@ -311,12 +305,6 @@ export const makeWakeups = <R>(
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
-              const error = Cause.findErrorOption(exit.cause);
-              state.storageFailure =
-                Option.isSome(error) &&
-                (Predicate.isTagged(error.value, "StorageFault") ||
-                  (Predicate.hasProperty(error.value, "reason") &&
-                    error.value.reason === "storage-failure"));
               yield* backOff(state, yield* Clock.currentTimeMillis);
               yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
 
@@ -327,7 +315,6 @@ export const makeWakeups = <R>(
             // due during the run is new work. Only work that was due before
             // the run and is still due shows a run that changed nothing.
             const after = yield* state.wakeup.next;
-            state.storageFailure = false;
 
             if (!reportsMore(exit.value) && Option.isSome(after) && after.value <= at)
               yield* backOff(state, yield* Clock.currentTimeMillis);
@@ -337,15 +324,13 @@ export const makeWakeups = <R>(
           yield* attempt.pipe(
             Effect.catchCause((cause) =>
               Clock.currentTimeMillis.pipe(
-                Effect.flatMap((at) => {
-                  state.storageFailure = true;
-
-                  return backOff(state, at).pipe(
+                Effect.flatMap((at) =>
+                  backOff(state, at).pipe(
                     Effect.andThen(
                       Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause),
                     ),
-                  );
-                }),
+                  ),
+                ),
               ),
             ),
           );
@@ -372,14 +357,12 @@ export const makeWakeups = <R>(
         state.wakeup.bind?.({
           reconcile: service.reconcile,
           retry: Effect.sync(() => {
-            if (state.storageFailure) return;
             state.floor = 0;
             state.exhausted = false;
             state.requested = state.failures > 0;
           }),
           state: Effect.sync(() => ({
             failures: state.failures,
-            retryBlocked: state.storageFailure,
             retryAt:
               state.floor > 0
                 ? Option.some(state.floor)

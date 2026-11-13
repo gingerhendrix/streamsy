@@ -1,10 +1,9 @@
 import { Clock, Duration, Effect, Layer, Option, Schedule, Schema } from "effect";
-import { StorageFault, type Storage } from "@streamsy/core";
+import type { Storage } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
-import { ProjectionFault } from "./fault.ts";
 import { ProjectionRetry } from "./retry.ts";
 import type { WakeClass } from "./triggers.ts";
 
@@ -87,13 +86,11 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         retry: retryBindings,
         interruptDelay,
         resume,
-        reportFailures,
       } = yield* runner;
 
       const policy = options.retry ?? (yield* ProjectionRetry);
       let state: RunnerStatus["state"] = "running";
       let failures = 0;
-      let storageFailure = false;
       let retryAt = Option.none<number>();
       let lastPassAt = Option.none<number>();
       const registry = yield* Effect.serviceOption(Registry);
@@ -103,8 +100,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         : yield* registerRunner(registry.value, {
             declaration: projection.at,
             schedule,
-            retry: (binding) =>
-              Effect.suspend(() => (storageFailure ? Effect.succeed(0) : retryBindings(binding))),
+            retry: retryBindings,
             status: status.pipe(
               Effect.map((runnerStatus): RunnerStatus => ({
                 projection: projection.id,
@@ -131,12 +127,9 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           Effect.gen(function* () {
             state = "retrying";
             retryAt = Option.some((yield* Clock.currentTimeMillis) + Duration.toMillis(duration));
-            yield* reportFailures(retryAt);
             yield* changed;
 
-            // A request still queues work, but cannot shorten a storage outage's delay.
-            if (storageFailure) yield* Effect.sleep(duration);
-            else yield* interruptDelay(Duration.toMillis(duration));
+            yield* interruptDelay(Duration.toMillis(duration));
 
             return Duration.zero;
           }),
@@ -146,7 +139,6 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
       // A durable wait reads marks, so a failed read retries like a failed drain.
       yield* Effect.suspend(() => {
         state = "running";
-        storageFailure = false;
         retryAt = Option.none();
 
         return wait.pipe(Effect.andThen(drain));
@@ -155,21 +147,13 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
         // `Effect.retry` does not retry a defect, so a handler that throws would end this fiber.
         Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
         Effect.tapError((error) => {
-          storageFailure =
-            Schema.is(StorageFault)(error) ||
-            (Schema.is(ProjectionFault)(error) && error.reason === "storage-failure");
-
           return completed(false).pipe(
             Effect.andThen(Effect.logError(`Projection.attach ${projection.id} failed`, error)),
           );
         }),
         Effect.retry(retry),
         // A finite policy stops automatic retries; an explicit registry request can resume it.
-        Effect.catch(() =>
-          reportFailures(Option.none()).pipe(
-            Effect.andThen(Effect.suspend(() => (storageFailure ? Effect.never : resume))),
-          ),
-        ),
+        Effect.catch(() => resume),
         Effect.repeat(Schedule.forever),
         Effect.withSpan("Projection.attach"),
         Effect.forkScoped,

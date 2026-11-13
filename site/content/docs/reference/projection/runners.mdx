@@ -484,7 +484,6 @@ interface WakeupHost {
   readonly state: Effect.Effect<{
     readonly failures: number;
     readonly retryAt: Option.Option<number>;
-    readonly retryBlocked?: boolean;
   }>;
 }
 // ---cut-end---

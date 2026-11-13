@@ -232,23 +232,13 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const registry = yield* Effect.serviceOption(Registry);
     const publish = Option.isSome(registry) ? eventPublisher(registry.value) : undefined;
 
-    // Only observers need per-binding attempts and failures waiting for the host's retry decision.
-    const observations =
-      publish === undefined || options.durable === true
-        ? undefined
-        : {
-            attempts: new Map<string, number>(),
-            failures: new Map<string, number>(),
-          };
-
     const committed = yield* storage.committed;
-    const pending = new Map<string, Binding>();
+    const pending = new Map<string, { binding: Binding; attempts: number }>();
     const working = new Set<string>();
-    const failed = new Set<string>();
-    const retryRequested = new Set<string>();
     const wake = yield* Queue.sliding<void>(1);
     const signal = Queue.offer(wake, undefined).pipe(Effect.asVoid);
-    const interruptedDelay = Queue.take(wake).pipe(Effect.asVoid);
+    // Retain a request through backoff and wait; drain consumes the level-triggered signal.
+    const interruptedDelay = Queue.peek(wake).pipe(Effect.asVoid);
     let active = 0;
 
     const runActive = (key: string, binding: Binding) =>
@@ -293,7 +283,10 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       for (const id of ids) {
         const found = match(id);
 
-        if (Option.isSome(found)) pending.set(found.value[0], found.value[1]);
+        if (Option.isSome(found)) {
+          const [key, binding] = found.value;
+          pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
+        }
       }
     };
 
@@ -305,7 +298,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const next = Effect.gen(function* () {
       yield* absorb;
 
-      if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next)))
+      if (
+        (yield* Queue.size(wake)) > 0 ||
+        pending.size > 0 ||
+        (triggers !== undefined && (yield* triggers.next))
+      )
         return Option.some(yield* Clock.currentTimeMillis);
 
       return marks === undefined ? Option.none<number>() : yield* marks.nextDue(declaration.id);
@@ -351,25 +348,6 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         ),
       );
 
-    // Non-durable failures get their deadline only after the host steps its pass retry policy.
-    const reportFailures = (dueAt: Option.Option<number>) =>
-      observations === undefined || publish === undefined
-        ? Effect.void
-        : Effect.gen(function* () {
-            const failures = [...observations.failures];
-            observations.failures.clear();
-
-            for (const [params, attempts] of failures)
-              yield* publish(
-                RunnerEvent.Failed({
-                  projection: declaration.id,
-                  params,
-                  attempts,
-                  dueAt,
-                }),
-              );
-          });
-
     /**
      * Every binding runs once, even if a peer fails; failed or bounded work
      * stays pending. A binding whose source went before its first run is
@@ -378,49 +356,37 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const drainInMemory = Effect.gen(function* () {
       let failure: Cause.Cause<E | ProjectionFault> | undefined;
 
-      for (const [key, binding] of Array.fromIterable(pending)) {
+      for (const [key, entry] of Array.fromIterable(pending)) {
         pending.delete(key);
+        const { binding } = entry;
         const exit = yield* Effect.exit(runActive(key, binding));
 
         if (Exit.isSuccess(exit)) {
-          failed.delete(key);
-          retryRequested.delete(key);
-          observations?.attempts.delete(key);
+          entry.attempts = 0;
 
-          if (exit.value.status !== "limit-reached") continue;
-        }
-
-        if (Exit.isFailure(exit) && (yield* sourceGone(binding.inputs, exit.cause))) {
-          failed.delete(key);
-          retryRequested.delete(key);
-          observations?.attempts.delete(key);
-          yield* dropped(key);
-
+          if (exit.value.status === "limit-reached") pending.set(key, entry);
           continue;
         }
 
-        pending.set(key, binding);
-
-        if (Exit.isFailure(exit)) {
-          if (observations !== undefined) {
-            const attempts = (observations.attempts.get(key) ?? 0) + 1;
-            observations.attempts.set(key, attempts);
-            observations.failures.set(key, attempts);
-          }
-
-          failed.add(key);
-          retryRequested.delete(key);
-          const error = Cause.findErrorOption(exit.cause);
-
-          const storageFailure =
-            Option.isSome(error) &&
-            (Schema.is(StorageFault)(error.value) ||
-              (Schema.is(ProjectionFault)(error.value) &&
-                error.value.reason === "storage-failure"));
-
-          // Preserve a storage floor even when a peer failed earlier in this pass.
-          if (storageFailure || failure === undefined) failure = exit.cause;
+        if (yield* sourceGone(binding.inputs, exit.cause)) {
+          yield* dropped(key);
+          continue;
         }
+
+        pending.set(key, entry);
+        entry.attempts += 1;
+
+        if (publish !== undefined)
+          yield* publish(
+            RunnerEvent.Failed({
+              projection: declaration.id,
+              params: key,
+              attempts: entry.attempts,
+              dueAt: Option.none(),
+            }),
+          );
+
+        if (failure === undefined) failure = exit.cause;
       }
 
       yield* absorb;
@@ -455,7 +421,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
             continue;
           }
 
-          work.set(row.params, binding.value);
+          work.set(row.params, { binding: binding.value, attempts: 0 });
         }
 
         for (const key of work.keys()) working.add(key);
@@ -463,13 +429,14 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         // Read before any run, so a write during a run raises `seq` past this value.
         const states = yield* store.read(id, [...work.keys()]);
 
-        for (const [key, binding] of work) {
+        for (const [key, entry] of work) {
+          const { binding } = entry;
           working.delete(key);
           const exit = yield* Effect.exit(runActive(key, binding));
           const state = states.get(key);
 
           if (Exit.isSuccess(exit)) {
-            if (exit.value.status === "limit-reached") pending.set(key, binding);
+            if (exit.value.status === "limit-reached") pending.set(key, entry);
             else if (state !== undefined) yield* store.clear(id, key, state.seq);
 
             continue;
@@ -515,7 +482,8 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       yield* absorb;
 
       if (triggers !== undefined)
-        for (const [key, binding] of yield* triggers.read) pending.set(key, binding);
+        for (const [key, binding] of yield* triggers.read)
+          pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
 
       const result = yield* marks === undefined ? drainInMemory : drainDurable(marks);
 
@@ -523,7 +491,6 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     });
 
     return {
-      reportFailures,
       next,
       wait,
       resume: interruptedDelay,
@@ -550,7 +517,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
                   }),
               ),
             );
-          pending.set(key, bound.value);
+          pending.set(key, { binding: bound.value, attempts: pending.get(key)?.attempts ?? 0 });
           yield* signal;
 
           return undefined;
@@ -562,14 +529,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
           if (marks !== undefined) count = yield* marks.retry(declaration.id, key);
           else
-            for (const pendingKey of failed) {
-              if ((key === undefined || key === pendingKey) && !retryRequested.has(pendingKey)) {
-                retryRequested.add(pendingKey);
-                count += 1;
-              }
+            for (const [pendingKey, entry] of pending) {
+              if (entry.attempts > 0 && (key === undefined || key === pendingKey)) count += 1;
             }
 
-          if (count > 0) yield* signal;
+          yield* signal;
 
           return count;
         }).pipe(Effect.uninterruptible),

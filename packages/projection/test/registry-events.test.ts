@@ -1,6 +1,17 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Array, Effect, Layer, Option, Order, Schedule, Schema, Stream } from "effect";
+import {
+  Array,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Order,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { compare, Streamsy } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
@@ -108,9 +119,49 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     }),
   );
 
+  it.effect("non-durable Failed publishes before the rest of its pass finishes", () =>
+    Effect.gen(function* () {
+      const source = yield* Source;
+
+      for (const id of ["early-failure", "suspended-peer"]) {
+        yield* source.create({ id });
+        yield* source.append({ id }, ["one"]);
+      }
+
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const declaration = Projection.process({
+        id: "immediate-failure",
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: (_batch, unit) =>
+          unit.params.id === "early-failure"
+            ? Effect.fail("offline")
+            : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      });
+
+      const registry = yield* Projection.Registry;
+      const pull = yield* Stream.toPull(registry.events);
+      const wakeup = yield* ProjectionWakeup.attach(declaration, { durable: false });
+      yield* registry.schedule(declaration.at({ id: "early-failure" }));
+      yield* registry.schedule(declaration.at({ id: "suspended-peer" }));
+      const pass = yield* Effect.exit(wakeup.run).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      expect((yield* pull)[0]).toMatchObject({
+        _tag: "Failed",
+        attempts: 1,
+        dueAt: Option.none(),
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(pass);
+    }),
+  );
+
   for (const exhausted of [false, true]) {
     it.effect(
-      `non-durable Failed reports binding attempts and ${exhausted ? "no exhausted deadline" : "the pass deadline"}`,
+      `non-durable Failed reports binding attempts and no binding deadline (exhausted: ${exhausted})`,
       () =>
         Effect.gen(function* () {
           const params = { id: `memory-failed-${exhausted}` };
@@ -132,7 +183,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             projection: declaration.id,
             params: key,
             attempts: 1,
-            dueAt: exhausted ? Option.none() : Option.some(1_000),
+            dueAt: Option.none(),
           });
 
           if (exhausted) yield* registry.retry(declaration);
@@ -142,7 +193,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             projection: declaration.id,
             params: key,
             attempts: 2,
-            dueAt: exhausted ? Option.none() : Option.some(2_000),
+            dueAt: Option.none(),
           });
         }),
     );

@@ -27,7 +27,7 @@ export type RunnerEvent =
       readonly projection: string;
       readonly params: string;
       readonly attempts: number;
-      /** None when the pass retry policy is exhausted. */
+      /** Durable binding deadline; None for non-durable bindings, which retry with their pass. */
       readonly dueAt: Option.Option<number>;
     }
   | { readonly _tag: "Dropped"; readonly projection: string; readonly params: string };
@@ -57,7 +57,7 @@ export interface RegistryApi {
   readonly events: Stream.Stream<RunnerEvent>;
   /** Queue this binding and wake its runner, without another source commit. */
   readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
-  /** Make failed work due now. Returns the number of failed bindings changed. */
+  /** Make failed work due now. Returns the number of failed bindings selected. */
   readonly retry: (
     target: Declaration | Binding,
   ) => Effect.Effect<number, NotAttached | StorageFault>;
