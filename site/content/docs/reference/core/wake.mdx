@@ -100,12 +100,13 @@ declare function awaitWake<Self, P>(
   declaration: Context.Key<Self, Streamsy.Api<P, Streamsy.WakeEvent>>,
   params: P,
   target: { readonly stream: StreamId; readonly offset: string },
+  options?: Streamsy.AwaitWakeOptions,
 ): Effect.Effect<void, FollowFailure, Self>;
 // ---cut-after---
 same<typeof awaitWake, typeof Streamsy.awaitWake>(true);
 ```
 
-Wait for the source row to reach the requested offset under core `compare`. The helper catches up before checking, respecting resets, removals and snapshot controls across history pages. It uses the wake service over local or remote storage. Callers choose their own `Effect.timeout`; a closed wake stream without a matching row leaves the wait pending. See [Accepted stream](/docs/projections/accepted).
+Wait for the source row to reach the requested offset under core `compare`. The helper catches up before checking, respecting resets, removals and snapshot controls across history pages. It uses the wake service over local or remote storage. `AwaitWakeOptions` is `Omit<Streamsy.FollowWakeOptions, "cursors">`: pass `from` to resume after a saved wake cursor, plus any `Streams.FollowOptions` except `offset`. Without `from`, each call reads the wake stream from the start. A saved cursor skips earlier rows, so the target must be observed after that cursor. Callers choose their own `Effect.timeout`; a closed wake stream without a matching row leaves the wait pending. See [Accepted stream](/docs/projections/accepted).
 
 ### `Streamsy.wakeActions`
 

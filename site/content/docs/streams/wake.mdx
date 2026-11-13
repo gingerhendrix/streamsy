@@ -148,3 +148,5 @@ const actionsOf = (
 The cursor rule is the same. Save the `stream-next-offset` of a page as the wake cursor after you handle its items. Serve a wake stream as any State stream. See [State routes](/docs/servers/serve#state-routes). The sync CLI of the [folder sync example](/docs/examples/folder-sync#browser-and-sync-cli) follows one wake stream this way.
 
 For every signature and the full rules of `wakeActions`, see [Wake streams](/docs/reference/core/wake) in the reference.
+
+For a single source offset, `Streamsy.awaitWake(Wake, params, { stream, offset }, options?)` waits for an equal or later row. Without `options.from`, each call reads the wake stream from the start. Pass a saved wake cursor and follow options to start after that cursor; only later rows can satisfy that wait. See [Accepted stream](/docs/projections/accepted).

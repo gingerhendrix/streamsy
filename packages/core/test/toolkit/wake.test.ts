@@ -492,3 +492,32 @@ baseIt.live("awaitWake respects a reset on a later history page", () =>
     yield* Streamsy.awaitWake(UserWake, { user: "ann" }, { stream: annId, offset: offsetAt(3) });
   }).pipe(Effect.provide(MemoryStorage.layer(streams, { readLimit: 1 }))),
 );
+
+baseIt.live("awaitWake forwards a saved wake cursor and follow options", () =>
+  Effect.gen(function* () {
+    const wake = yield* UserWake;
+    yield* wake.create({ user: "ann" });
+    const saved = (yield* wake.collect({ user: "ann" })).offset;
+    const options = { from: saved, live: "long-poll" as const };
+    let observed: Parameters<typeof wake.follow>[1];
+    const waiting = yield* Streamsy.awaitWake(
+      UserWake,
+      { user: "ann" },
+      { stream: annId, offset: offsetAt(2) },
+      options,
+    ).pipe(
+      Effect.provideService(UserWake, {
+        ...wake,
+        follow: (params, follow) => {
+          observed = follow;
+          return wake.follow(params, follow);
+        },
+      }),
+      Effect.forkScoped,
+    );
+    yield* writeWake("ann", [upsert(annId, offsetAt(2))]);
+    yield* Fiber.join(waiting).pipe(Effect.timeout("2 seconds"));
+    expect(observed).toMatchObject({ offset: saved, live: "long-poll" });
+    expect(observed).not.toHaveProperty("from");
+  }).pipe(Effect.provide(MemoryStorage.layer(streams))),
+);

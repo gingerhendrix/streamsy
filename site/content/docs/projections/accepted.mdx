@@ -66,7 +66,7 @@ export const writeAndWait = Effect.gen(function* () {
 });
 ```
 
-`awaitWake` uses the normal wake follow service and core offset `compare`, accepting equality or a later offset. It catches up with the wake history before answering, so a later `reset` or removal supersedes old rows. It works over local storage or `RemoteStreams.layer`, including when the writer and projection live on different owners. The caller provides the wake service and chooses the timeout. See [Remote clients](/docs/servers/remote) and [Wake streams](/docs/streams/wake).
+`awaitWake` uses the normal wake follow service and core offset `compare`, accepting equality or a later offset. It catches up with the wake history before answering, so a later `reset` or removal supersedes old rows. It works over local storage or `RemoteStreams.layer`, including when the writer and projection live on different owners. The caller provides the wake service and chooses the timeout. Without `options.from`, each call reads the wake stream from the start. Pass a saved wake cursor as the fourth argument, `{ from: savedCursor }`, to read only later rows; the target must be observed after that cursor. The same options accept the follow settings supported by `followWake`. See [Remote clients](/docs/servers/remote) and [Wake streams](/docs/streams/wake).
 
 ## Compare lag
 

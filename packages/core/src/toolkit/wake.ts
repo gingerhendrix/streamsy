@@ -111,6 +111,9 @@ export interface FollowWakeOptions extends Omit<Streams.FollowOptions, "offset">
   readonly cursors: ReadonlyMap<StreamId, string>;
 }
 
+/** Follow options for a wait, including a saved wake cursor. */
+export type AwaitWakeOptions = Omit<FollowWakeOptions, "cursors">;
+
 export interface WakeActionsOptions {
   /** Saved source cursors. A missing entry starts from `-1`. */
   readonly cursors: ReadonlyMap<StreamId, string>;
@@ -253,13 +256,15 @@ export function followWake<Self, P>(
  * Wait until a wake row for `stream` reaches `offset`. Works with local and
  * remote services. Callers choose their own timeout. Removed source ids must
  * not be reused; a new generation needs a new wake stream or a State reset.
+ * Without `options.from`, each call reads the wake history from the start.
  */
 export const awaitWake = <Self, P>(
   declaration: Context.Key<Self, Api<P, WakeEvent>>,
   params: P,
   target: { readonly stream: StreamId; readonly offset: string },
+  options: AwaitWakeOptions = {},
 ): Effect.Effect<void, Streams.FollowFailure, Self> =>
-  followWake(declaration, params, { cursors: new Map() }).pipe(
+  followWake(declaration, params, { ...options, cursors: new Map() }).pipe(
     Stream.mapAccum(
       () => Option.none<string>(),
       (observed, batch) => {
