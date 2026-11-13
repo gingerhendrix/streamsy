@@ -1,5 +1,5 @@
 import { Array, Cause, Clock, Effect, Exit, Option, PubSub, Queue, Record, Schema } from "effect";
-import { Storage, StorageFault, type StreamId } from "@streamsy/core";
+import { Storage, type StreamId } from "@streamsy/core";
 import {
   CommitHooks,
   ProjectionMarks,
@@ -15,6 +15,7 @@ import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
 import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
 import { triggersOf } from "./triggers.ts";
+import { storageFault } from "./storage-fault.ts";
 import type { WakeOutput } from "./wake.ts";
 
 export const DEFAULT_LIMIT = 100;
@@ -507,17 +508,9 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
           // Persist before exposing pending work, so a fault cannot enqueue an unrecorded request.
           if (marks !== undefined)
-            yield* marks.mark(declaration.id, [key]).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new StorageFault({
-                    operation: "marks.mark",
-                    message: cause.message,
-                    retryable: cause.isRetryable,
-                    cause,
-                  }),
-              ),
-            );
+            yield* marks
+              .mark(declaration.id, [key])
+              .pipe(Effect.mapError(storageFault("marks.mark")));
           pending.set(key, { binding: bound.value, attempts: pending.get(key)?.attempts ?? 0 });
           yield* signal;
 

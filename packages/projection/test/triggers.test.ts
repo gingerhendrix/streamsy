@@ -4,6 +4,7 @@ import { Array, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Str
 import { TestClock } from "effect/testing";
 import {
   DurableState,
+  CommitBoundary,
   Offset,
   StorageFault,
   StreamId,
@@ -15,6 +16,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { memoryHost } from "./support/memory-host.ts";
+import { triggersOf } from "../src/triggers.ts";
 
 class Files extends Streamsy.json<Files>()("Triggers/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -97,6 +99,82 @@ for (const [name, host] of [
   ],
 ] as const) {
   const bound = Protocol.bind(host, group).pipe(Layer.provideMerge(host));
+
+  layer(bound)((it) =>
+    it.effect(
+      `${name}: trigger cursors are cached after reading and committing, then reload on restart`,
+      () =>
+        Effect.gen(function* () {
+          yield* (yield* Wake).create({});
+          yield* (yield* OtherWake).create({});
+          const records = yield* OwnerRecords;
+          const reads = new Map<string, number>();
+          const marks = yield* ProjectionMarks;
+
+          const attach = triggersOf(
+            "cached-cursors",
+            [Wake, OtherWake],
+            (id) => Option.some([id, id] as const),
+            marks,
+          ).pipe(
+            Effect.provideService(OwnerRecords, {
+              ...records,
+              read: (recordKey) =>
+                Effect.suspend(() => {
+                  reads.set(recordKey, (reads.get(recordKey) ?? 0) + 1);
+
+                  return records.read(recordKey);
+                }),
+            }),
+          );
+
+          const triggers = yield* attach;
+          expect(yield* triggers.next).toBe(false);
+          expect(yield* triggers.next).toBe(false);
+          yield* request("docs");
+          yield* request("later", OtherWake);
+          expect(yield* triggers.next).toBe(true);
+          expect((yield* triggers.read).size).toBe(2);
+          expect(yield* triggers.next).toBe(false);
+          expect((yield* triggers.read).size).toBe(0);
+          expect([...reads.values()]).toEqual([1, 1]);
+
+          const restarted = yield* attach;
+          expect(yield* restarted.next).toBe(false);
+          expect((yield* restarted.read).size).toBe(0);
+          expect([...reads.values()]).toEqual([2, 2]);
+        }),
+    ),
+  );
+
+  layer(bound)((it) =>
+    it.effect(`${name}: interruption after trigger commit reloads the committed cursor`, () =>
+      Effect.gen(function* () {
+        yield* (yield* Wake).create({});
+        yield* request("docs");
+        const boundary = yield* CommitBoundary;
+        const marks = yield* ProjectionMarks;
+
+        const triggers = yield* triggersOf(
+          "interrupted-cursor",
+          [Wake],
+          (id) => Option.some([id, id] as const),
+          marks,
+        ).pipe(
+          Effect.provideService(CommitBoundary, {
+            withTransaction: (body) =>
+              boundary.withTransaction(body).pipe(Effect.tap(() => Effect.interrupt)),
+          }),
+        );
+
+        // Prime the in-memory cursor before the transaction advances the durable cursor.
+        expect(yield* triggers.next).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(triggers.read))).toBe(true);
+        expect(yield* triggers.next).toBe(false);
+        expect((yield* marks.summary("interrupted-cursor", 0)).fresh).toBe(1);
+      }),
+    ),
+  );
 
   for (const durable of [true, false]) {
     layer(bound)((it) =>
@@ -271,47 +349,57 @@ for (const [name, host] of [
   });
 
   for (const afterWrite of [false, true]) {
-    layer(bound)((it) =>
-      it.effect(
-        `${name}: failure ${afterWrite ? "after" : "before"} cursor write rolls back marks and cursor`,
-        () =>
-          Effect.gen(function* () {
-            const { projection, runs } = counting("atomic");
-            yield* source("docs");
-            yield* (yield* Wake).create({});
-            yield* request("docs");
-            const records = yield* OwnerRecords;
-            let failedKey = "";
+    for (const restart of [false, true]) {
+      layer(bound)((it) =>
+        it.effect(
+          `${name}: failure ${afterWrite ? "after" : "before"} cursor write rolls back marks and cursor (${restart ? "restart" : "same runner"})`,
+          () =>
+            Effect.gen(function* () {
+              const { projection, runs } = counting("atomic");
+              yield* source("docs");
+              yield* (yield* Wake).create({});
+              yield* request("docs");
+              const records = yield* OwnerRecords;
+              let failedKey = "";
+              let fail = true;
 
-            const runner = yield* ProjectionWakeup.attach(projection, options).pipe(
-              Effect.provideService(OwnerRecords, {
-                ...records,
-                write: (recordKey, encoded) =>
-                  Effect.gen(function* () {
-                    failedKey = recordKey;
+              const runner = yield* ProjectionWakeup.attach(projection, options).pipe(
+                Effect.provideService(OwnerRecords, {
+                  ...records,
+                  write: (recordKey, encoded) =>
+                    Effect.gen(function* () {
+                      if (!fail) return yield* records.write(recordKey, encoded);
+                      failedKey = recordKey;
 
-                    if (afterWrite) yield* records.write(recordKey, encoded);
+                      if (afterWrite) yield* records.write(recordKey, encoded);
 
-                    return yield* new StorageFault({
-                      operation: "test.cursor",
-                      message: "injected",
-                      retryable: true,
-                    });
-                  }),
-              }),
-            );
+                      return yield* new StorageFault({
+                        operation: "test.cursor",
+                        message: "injected",
+                        retryable: true,
+                      });
+                    }),
+                }),
+              );
 
-            expect(Exit.isFailure(yield* Effect.exit(runner.run))).toBe(true);
-            expect(runs).toEqual([]);
-            expect(yield* records.read(failedKey)).toEqual(Option.none());
-            const marks = yield* ProjectionMarks;
-            expect((yield* marks.read(projection.id, [key("docs")])).size).toBe(0);
-            const restarted = yield* ProjectionWakeup.attach(projection, options);
-            yield* restarted.run;
-            expect(runs).toEqual(["docs"]);
-            expect(yield* restarted.next).toEqual(Option.none());
-          }),
-      ),
-    );
+              expect(Exit.isFailure(yield* Effect.exit(runner.run))).toBe(true);
+              expect(runs).toEqual([]);
+              expect(yield* records.read(failedKey)).toEqual(Option.none());
+              const marks = yield* ProjectionMarks;
+              expect((yield* marks.read(projection.id, [key("docs")])).size).toBe(0);
+              fail = false;
+
+              const recovered = restart
+                ? yield* ProjectionWakeup.attach(projection, options)
+                : runner;
+
+              expect(yield* recovered.next).toEqual(Option.some(0));
+              yield* recovered.run;
+              expect(runs).toEqual(["docs"]);
+              expect(yield* recovered.next).toEqual(Option.none());
+            }),
+        ),
+      );
+    }
   }
 }

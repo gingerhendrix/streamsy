@@ -12,8 +12,15 @@ import {
 import { OwnerRecords, type ProjectionMarksApi } from "@streamsy/core/internal";
 import { ProjectionFault } from "./fault.ts";
 import { encodeKey } from "./unit.ts";
+import { storageFault } from "./storage-fault.ts";
 
 import type { WakeOutput } from "./wake.ts";
+
+const DEFAULT_LIMIT = 1_000;
+
+const decodeWakeMessage = Schema.decodeEffect(Schema.fromJsonString(Streamsy.WakeMessage));
+
+const decoder = new TextDecoder();
 
 /** Persistent ingestion shared by both hosts; no trigger service or remote reader is used. */
 export const triggersOf = <B>(
@@ -36,6 +43,7 @@ export const triggersOf = <B>(
 
     const owner = records.value;
     const transaction = boundary.value;
+    const cursors = new Map<string, Offset>();
 
     const streams = new Map(
       Array.map(declarations, (declaration) => {
@@ -47,21 +55,28 @@ export const triggersOf = <B>(
 
     const cursor = (key: string) =>
       Effect.gen(function* () {
+        const cached = cursors.get(key);
+
+        if (cached !== undefined) return cached;
         const saved = yield* owner.read(key);
 
-        if (Option.isNone(saved)) return Offset.make(ZERO_OFFSET);
+        const from = Option.isNone(saved)
+          ? Offset.make(ZERO_OFFSET)
+          : yield* Schema.decodeEffect(Offset)(saved.value).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StorageFault({
+                    operation: "projection.trigger.cursor",
+                    retryable: false,
+                    message: `Invalid trigger cursor for ${projection}`,
+                    cause,
+                  }),
+              ),
+            );
 
-        return yield* Schema.decodeEffect(Offset)(saved.value).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StorageFault({
-                operation: "projection.trigger.cursor",
-                retryable: false,
-                message: `Invalid trigger cursor for ${projection}`,
-                cause,
-              }),
-          ),
-        );
+        cursors.set(key, from);
+
+        return from;
       });
 
     const next = Effect.gen(function* () {
@@ -85,25 +100,24 @@ export const triggersOf = <B>(
       for (const [id, key] of streams) {
         // Return bindings only after the marks and cursor have committed. An interruption
         // before enqueue loses only non-durable work, exactly like a process stop.
-        const bindings = yield* transaction
+        const { bindings } = yield* transaction
           .withTransaction(
             Effect.gen(function* () {
               const record = yield* storage.record(id);
               const found = new Map<string, B>();
 
-              if (Option.isNone(record) || record.value.lifecycle.softDeleted) return found;
+              if (Option.isNone(record) || record.value.lifecycle.softDeleted)
+                return { bindings: found, offset: undefined };
               const from = yield* cursor(key);
 
               const messages = yield* storage.messages(id, {
                 after: from,
                 until: record.value.currentOffset,
-                limit: 1_000,
+                limit: DEFAULT_LIMIT,
               });
 
               for (const message of messages) {
-                const event = yield* Schema.decodeEffect(
-                  Schema.fromJsonString(Streamsy.WakeMessage),
-                )(new TextDecoder().decode(message.data)).pipe(
+                const event = yield* decodeWakeMessage(decoder.decode(message.data)).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ProjectionFault({
@@ -131,7 +145,7 @@ export const triggersOf = <B>(
 
               const last = messages.at(-1);
 
-              if (last === undefined) return found;
+              if (last === undefined) return { bindings: found, offset: from };
 
               if (marks !== undefined && found.size > 0)
                 yield* marks.mark(projection, [...found.keys()]);
@@ -145,20 +159,21 @@ export const triggersOf = <B>(
                 for (const [params, state] of states) if (state.dueAt > now) found.delete(params);
               }
 
-              return found;
+              return { bindings: found, offset: last.offset };
             }),
           )
           .pipe(
             Effect.catchTag("SqlError", (cause) =>
-              Effect.fail(
-                new StorageFault({
-                  operation: "projection.triggers",
-                  message: cause.message,
-                  retryable: cause.isRetryable,
-                  cause,
-                }),
-              ),
+              Effect.fail(storageFault("projection.triggers")(cause)),
             ),
+            // Publish the cached position only after commit. On interruption or rollback,
+            // reload storage in case the transaction committed before it was interrupted.
+            Effect.tap(({ offset }) =>
+              Effect.sync(() => {
+                if (offset !== undefined) cursors.set(key, offset);
+              }),
+            ),
+            Effect.onError(() => Effect.sync(() => cursors.delete(key))),
           );
 
         for (const [params, binding] of bindings) ready.set(params, binding);
