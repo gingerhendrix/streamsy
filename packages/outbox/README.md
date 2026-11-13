@@ -76,7 +76,7 @@ on every dialect. Store operations run no DDL, and they fail with
 
 The new table is `streamsy_outbox`. No legacy table is changed or migrated.
 Identity is `(name, idempotencyKey)`. Duplicate enqueue retains the original
-payload and partition even after delivery or dead-lettering. Settled rows remain
+payload, partition and first due time even after delivery or dead-lettering. Settled rows remain
 as deduplication history. MySQL names and partitions support 255 Unicode code
 points, and keys 512, with case-sensitive, trailing-space-sensitive comparison.
 
@@ -89,9 +89,9 @@ sleeping. Retry deadlines are persisted using the Effect clock. A deadline beyon
 when the pass stopped at its limit, so a scheduler can run another pass at once.
 
 An omitted `partitionId` selects all partitions. With `ordered: true`, the oldest
-pending entry blocks the selected scope until its retry is due. A retry also
+pending entry blocks the selected scope until its first attempt or retry is due. A retry also
 stops that ordered pass. Terminal dead letters allow subsequent entries to run.
-Without ordering, future retries do not block other entries.
+Without ordering, future first attempts and retries do not block other entries.
 
 All drains of one name through the **same built store** share a permit, including
 whole-name and partition drains. A `partitionId` filters a pass; it does not let
@@ -102,7 +102,9 @@ acquire a distributed lease.
 
 Use the store's `nextDue({ name, partitionId, ordered })` to schedule another
 pass. It returns an Effect `Option<number>`, excluding settled entries.
-`list({ name, partitionId })` provides inspection. `OutboxBacking` is the adapter
+`list({ name, partitionId, state?, limit?, afterId? })` provides inspection in id order,
+with an exclusive cursor. `count({ name, partitionId, state?, dueBeforeMs? })` counts
+matching rows, including the due-time boundary. `OutboxBacking` is the adapter
 protocol behind `OutboxStore`. Applications must not call its write methods
 (`enqueue`, `readDue`, `settle`) directly. `settle` takes a `Settlement`, a
 `Data.TaggedEnum` with `Delivered`, `Retry` and `Dead` cases.
@@ -110,13 +112,40 @@ protocol behind `OutboxStore`. Applications must not call its write methods
 Store failures are `OutboxUnavailable` for storage errors and
 `InvalidStoredRecord` for malformed rows, distinct from payload poison. `drain`
 also fails with `InvalidConfiguration` for an invalid limit. Enqueue codec or
-identity callback failures use `PayloadEncodingFailure`.
+identity or due-time callback failures use `PayloadEncodingFailure`.
 
 Receivers must deduplicate by the supplied key. A successful external call
 followed by failed settlement can repeat with the same attempt number.
 `maxAttempts` bounds persisted failure accounting, not absolute external calls.
 Applications own handler timeouts: a bounded entry count does not bound pass
-duration. There is no host scheduler, replay API or retention policy here.
+duration. There is no host scheduler or automatic retention policy here.
+
+## Due times and maintenance
+
+Set `notBefore: (payload) => payload.atMs` on a definition for a delayed first
+attempt. It must return safe integer epoch milliseconds; throws, non-finite,
+fractional and unsafe values fail with `PayloadEncodingFailure` before any batch
+writes. Stores use the later of enqueue time and that deadline. Absorbed repeats
+keep the first due time. Move or cancel fact-owned work with a new fact/key and
+current-fact checks in delivery.
+
+`Outbox.requeue(id, { atMs })` changes only dead entries back to pending. It keeps
+the original id, key and payload, resets attempts to zero, sets the exact deadline,
+and clears errors and settlement fields. Reconcile the host scheduler afterwards.
+`Outbox.prune({ name, state: "delivered" | "dead", settledBeforeMs, limit })`
+deletes at most the limit, in id order, settled strictly before the cutoff, and
+returns the count. Pending rows are never deleted. A pruned key can be enqueued
+again. Applications own retention timing and dead-letter acknowledgement rules.
+
+Inspection and prune limits must be positive safe integers. Cursors must be
+nonnegative safe integers and timestamps must be safe integer milliseconds.
+Invalid bounds fail with `OutboxUnavailable`. Settlement of missing or non-pending
+rows and requeue of missing or non-dead rows also fail with `OutboxUnavailable`.
+A settlement failure stops the drain and releases its permit; earlier outcomes
+remain persisted and later entries are not attempted.
+
+Custom `OutboxBacking` implementations must add `count`, `prune` and `requeue`,
+and implement the due-time and guarded settlement contracts.
 
 Run `bun run test:unit` for memory and SQLite checks. For live dialect tests, set
 `STREAMSY_PG_URL` and/or `STREAMSY_MYSQL_URL` and run `bun run test:dialects`.

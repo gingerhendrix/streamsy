@@ -29,13 +29,32 @@ export const receipts = Outbox.define({
 });
 ```
 
-Derive the key from durable facts. A repeated enqueue with the same outbox name and key retains the original payload and partition. Delivered and dead-letter rows also retain that identity.
+Derive the key from durable facts. A repeated enqueue with the same outbox name and key retains the original payload, partition and first due time. Delivered and dead-letter rows also retain that identity.
 
 Use a service-free Schema codec. `enqueue` encodes the decoded payload type as Schema JSON, and `drain` decodes it before delivery. Schema transformations apply in both directions.
 
 `define` does no I/O. It copies and freezes the retry policy, and throws `InvalidConfiguration` for invalid settings. `maxAttempts` must be a positive safe integer. Delays must be finite and nonnegative. `factor` must be finite and at least 1. `maxDelayMs` must be a safe integer and at least `initialDelayMs`.
 
 The policy above waits 1, 2, 4, and 8 seconds after successive retryable failures. The fifth failure dead-letters the entry. See [RetryPolicy](/docs/reference/outbox/outbox#retrypolicy) for the delay calculation.
+
+## Delay the first attempt
+
+Add `notBefore` to derive a due time from the payload:
+
+```ts
+import { Schema } from "effect";
+import { Outbox } from "@streamsy/outbox";
+
+const reminders = Outbox.define({
+  name: "reminder",
+  payload: Schema.Struct({ id: Schema.String, atMs: Schema.Int }),
+  idempotencyKey: (reminder) => reminder.id,
+  notBefore: (reminder) => reminder.atMs,
+  retry: { maxAttempts: 5, initialDelayMs: 1_000, factor: 2, maxDelayMs: 60_000 },
+});
+```
+
+Times are safe integer epoch milliseconds. The first attempt is due at the later of enqueue time and `notBefore(payload)`. A callback throw or invalid time (including `NaN`, infinity or a fractional millisecond) fails the whole batch with `PayloadEncodingFailure` before any writes. An absorbed repeat keeps the original due time; it cannot move an existing entry. To move or cancel fact-owned work, enqueue a new key for the new fact and have delivery check that its fact is still current.
 
 ## Enqueue with your SQL writes
 
@@ -112,9 +131,9 @@ A pass attempts at most `limit` entries, one at a time, in enqueue order. The de
 | ------------- | -------------- | ------------------------------------------------------------- |
 | `partitionId` | All partitions | Filters to one partition when supplied                        |
 | `limit`       | 100            | Bounds the entries attempted. Must be a positive safe integer |
-| `ordered`     | `false`        | Blocks the selected scope behind its oldest pending retry     |
+| `ordered`     | `false`        | Blocks the selected scope behind its oldest pending entry     |
 
-Without ordering, later due entries can pass an entry whose retry is in the future. With `ordered: true`, a retry stops the pass. An omitted partition makes ordering cover the whole outbox name. A terminal dead letter allows later entries to proceed.
+Without ordering, later due entries can pass an entry whose first attempt or retry is in the future. With `ordered: true`, a future entry blocks the scope, and a retry stops the pass. An omitted partition makes ordering cover the whole outbox name. A terminal dead letter allows later entries to proceed.
 
 | Delivery outcome                                                              | Stored result                                                     |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -134,7 +153,7 @@ Delivery is at least once. If the external call succeeds and settlement fails, t
 
 Run one owner for each drained scope. Drains of one name through the same store object share a permit across all partitions, so a partition filter does not make partitions drain concurrently. Different store objects and processes share no permit. `readDue` acquires no distributed lease. A delivery function must not recursively drain its own outbox name because the permit is not reentrant.
 
-Set delivery timeouts in your application. A bounded entry count does not bound pass duration. The package has no replay API or retention policy.
+Set delivery timeouts in your application. A bounded entry count does not bound pass duration. Settlement of a missing or already-settled row fails with `OutboxUnavailable`, stops the pass and releases the permit. Earlier settlements remain recorded. Coordinate the single owner before retrying an ownership conflict.
 
 ## Enqueue from a projection
 
@@ -203,6 +222,40 @@ const receiptWakeup = OutboxWakeup.make(receipts, sendReceipt, { limit: 100 });
 
 Provide the store and delivery services in the object's storage Layer. Requests and alarm turns use that acquired context. After a request enqueues, call `Wakeups.touch` before it returns. For work outside a request, call `Wakeups.reconcile` after commit.
 
-The wakeup reads the next deadline and drains one pass. A pass that fills its limit reports `more: true`, so a backlog advances through successive alarm turns. Alchemy exports the same adapter from `@streamsy/serve/alchemy`.
+The wakeup preserves future deadlines and arms the alarm for that time; it drains only when due. A pass that fills its limit reports `more: true`, so a backlog advances through successive alarm turns. Alchemy exports the same adapter from `@streamsy/serve/alchemy`.
 
 See [Outbox alarms](/docs/servers/cloudflare/alarms#outbox) for host setup and [OutboxWakeup](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup) for the adapter signature.
+
+## Inspect and maintain entries
+
+Use the store service for inspection, and the `Outbox` functions for maintenance:
+
+```ts
+import { Effect } from "effect";
+import { Outbox, OutboxStore } from "@streamsy/outbox";
+
+const inspect = Effect.gen(function* () {
+  const store = yield* OutboxStore;
+  const dead = yield* store.list({ name: "reminder", state: "dead", limit: 20, afterId: 0 });
+  const overdue = yield* store.count({
+    name: "reminder",
+    state: "pending",
+    dueBeforeMs: 1_790_000_000_000,
+  });
+  return { dead, overdue };
+});
+
+const retryDead = Outbox.requeue(42, { atMs: 1_790_000_000_000 });
+const retainDelivered = Outbox.prune({
+  name: "reminder",
+  state: "delivered",
+  settledBeforeMs: 1_790_000_000_000,
+  limit: 100,
+});
+```
+
+`list` sorts by id, takes an exclusive `afterId`, and defaults to all rows when filters are omitted. Both reads accept an optional `partitionId`. `count` includes `nextAttemptAtMs <= dueBeforeMs`; request `state: "pending"` to count overdue work. Limits must be positive safe integers.
+
+`requeue` accepts only a dead row. It preserves its identity and payload, resets attempts to zero, uses the exact supplied deadline, and clears error and settlement fields. Missing or non-dead rows fail with `OutboxUnavailable`. The receiver sees the same idempotency key again. Reconcile the host scheduler after requeue as after enqueue.
+
+`prune` deletes at most `limit` delivered or dead rows settled strictly before the cutoff, oldest id first, and returns the number deleted. It never deletes pending rows. A pruned key can be enqueued again. The application owns its retention schedule and any dead-letter acknowledgement rule; keep effect claims or current-fact checks when rebuilding from facts. See [Maintenance](/docs/reference/outbox/outbox#maintenance) for the full contract.

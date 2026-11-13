@@ -23,7 +23,9 @@ same<typeof layerMemory, typeof Real.layerMemory>(true);
 
 The layer provides an ephemeral `OutboxStore`. Entries and retained identities end with the process. Each build of the layer creates an independent store with its own drain permits.
 
-The memory store uses the same tuple identity, due selection, partition filtering, ordering, and settlement behavior as the SQL store. Duplicate enqueue retains the original payload and partition after delivery or dead-lettering.
+Filtered list/count, bounded pruning and dead-entry requeue have the same contracts in both stores. Pruning also releases the retained identity.
+
+The memory store uses the same tuple identity, due selection, partition filtering, ordering, and settlement behavior as the SQL store. Duplicate enqueue retains the original payload, partition and first due time after delivery or dead-lettering.
 
 ```ts
 import { Effect } from "effect";

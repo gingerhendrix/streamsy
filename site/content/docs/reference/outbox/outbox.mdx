@@ -13,6 +13,10 @@ import {
   type OutboxDraft,
   type OutboxScope,
   type DueScope,
+  type ListScope,
+  type CountScope,
+  type PruneOptions,
+  type RequeueOptions,
   type EnqueueReport,
 } from "@streamsy/outbox";
 ```
@@ -50,6 +54,7 @@ interface Spec<Payload> {
   readonly name: string;
   readonly payload: Schema.Codec<Payload, unknown>;
   readonly idempotencyKey: (payload: Payload) => string;
+  readonly notBefore?: (payload: Payload) => number;
   readonly partitionBy?: (payload: Payload) => string;
   readonly retry: RetryPolicy;
 }
@@ -57,7 +62,7 @@ interface Spec<Payload> {
 same<Spec<string>, Real.Outbox.Spec<string>>(true);
 ```
 
-`name` identifies the outbox. `payload` is a service-free Schema codec. `idempotencyKey` derives a durable key from the decoded payload. `partitionBy` derives its partition, or defaults to `""` when omitted. Identity is `(name, idempotencyKey)` across all partitions.
+`name` identifies the outbox. `payload` is a service-free Schema codec. `idempotencyKey` derives a durable key from the decoded payload. `partitionBy` derives its partition, or defaults to `""` when omitted. Identity is `(name, idempotencyKey)` across all partitions. Optional `notBefore` derives the earliest first attempt in safe integer epoch milliseconds. Omit it for immediate eligibility.
 
 ### `Definition` and `PayloadOf`
 
@@ -130,9 +135,9 @@ declare const enqueue: <Payload>(
 same<typeof enqueue, typeof Outbox.enqueue>(true);
 ```
 
-`enqueue` uses Schema JSON encoding for every payload before inserting any entry. Codec failures and identity callback throws become `PayloadEncodingFailure`. New entries are pending and due at enqueue time.
+`enqueue` uses Schema JSON encoding for every payload before inserting any entry. Codec failures, identity or `notBefore` callback throws, and non-safe-integer `notBefore` results become `PayloadEncodingFailure`. This includes non-finite and fractional times. New entries are pending, with `nextAttemptAtMs = Math.max(enqueuedAtMs, notBeforeMs ?? enqueuedAtMs)`.
 
-A duplicate name and key leaves the original payload and partition unchanged, including after delivery or dead-lettering. Enqueue starts no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed.
+A duplicate name and key leaves the original payload, partition and first due time unchanged, including after delivery or dead-lettering. Enqueue starts no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed.
 
 ### `EnqueueReport`
 
@@ -179,7 +184,7 @@ same<typeof drain, typeof Outbox.drain>(true);
 
 Success settles the entry as delivered. Retryable delivery failures, synchronous throws, and non-interrupt Effect defects reschedule it. At the attempt limit, they dead-letter it as `attempts-exhausted`. Permanent delivery failures dead-letter it as `permanent`. A payload that fails Schema JSON decoding dead-letters as `payload-poison` without calling delivery.
 
-Interruption leaves the current entry unsettled and interrupts the pass. Operational failures fail the pass. An invalid `limit` fails with `InvalidConfiguration` before the pass reads anything. Both release the permit. Earlier settlements in that pass remain recorded.
+Interruption leaves the current entry unsettled and interrupts the pass. Operational failures fail the pass. This includes settlement of an entry that was removed or is no longer pending: `OutboxUnavailable` stops the pass without overwriting the entry or attempting later entries. An invalid `limit` fails with `InvalidConfiguration` before the pass reads anything. Both release the permit. Earlier settlements in that pass remain recorded.
 
 All drains of one name through the same built store share one non-reentrant permit across partitions. A `partitionId` filters a pass. It does not let partitions drain concurrently. Delivery must not recursively drain that name. Hosts must keep one owner for overlapping scopes across store objects or processes. Reads acquire no distributed leases.
 
@@ -251,7 +256,7 @@ same<DrainOptions, Real.Outbox.DrainOptions>(true);
 | `limit`       | 100         | Positive safe integer that bounds a pass                                          |
 | `ordered`     | `false`     | Blocks the selected scope behind its oldest pending entry until that entry is due |
 
-An ordered retry ends the pass. Delivered and dead entries do not block later work. Without ordering, future retries do not block later due entries.
+An ordered retry ends the pass. Delivered and dead entries do not block later work. A future first attempt also blocks an ordered scope. Without ordering, future first attempts and retries do not block later due entries.
 
 ### `DrainReport`
 
@@ -274,6 +279,58 @@ same<DrainReport, Real.Outbox.DrainReport>(true);
 ```
 
 `attempted` counts entries processed, including payload poison. The other counts describe their stored outcomes. `more` is true when `attempted` reached the limit. A host scheduler uses it to run another pass at once. An operational failure returns an error instead of a partial report.
+
+## Maintenance
+
+### `Outbox.prune` and `PruneOptions`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { OutboxStore, StoreFailure } from "@streamsy/outbox";
+// ---cut-end---
+interface PruneOptions {
+  readonly name: string;
+  readonly state: "delivered" | "dead";
+  readonly settledBeforeMs: number;
+  readonly limit: number;
+}
+declare const prune: (options: PruneOptions) => Effect.Effect<number, StoreFailure, OutboxStore>;
+// ---cut-after---
+same<PruneOptions, Real.PruneOptions>(true);
+same<typeof prune, typeof Real.Outbox.prune>(true);
+```
+
+Deletes at most `limit` entries of the requested name and settled state, in ascending id order, whose `settledAtMs < settledBeforeMs`. Returns the number deleted. Pending rows are never eligible. `limit` must be a positive safe integer and the cutoff must be safe integer epoch milliseconds. Invalid options fail with `OutboxUnavailable`.
+
+Pruning removes the retained identity, so a pruned key can be enqueued again with a new id. Choose retention and acknowledgement rules in the application, and keep durable cause/effect checks when rebuilding from facts. The package does not automatically prune or track dead-letter acknowledgement.
+
+### `Outbox.requeue` and `RequeueOptions`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type * as Real from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+import type { OutboxStore, StoreFailure } from "@streamsy/outbox";
+// ---cut-end---
+interface RequeueOptions {
+  readonly atMs: number;
+}
+declare const requeue: (
+  id: number,
+  options: RequeueOptions,
+) => Effect.Effect<void, StoreFailure, OutboxStore>;
+// ---cut-after---
+same<RequeueOptions, Real.RequeueOptions>(true);
+same<typeof requeue, typeof Real.Outbox.requeue>(true);
+```
+
+Changes only a dead entry to pending. Preserves id, name, key, partition, payload and enqueue time; resets attempts to zero, sets `nextAttemptAtMs` exactly to `atMs`, and clears `lastError`, `deadLetterReason` and `settledAtMs`. An already-past deadline is immediately eligible. The next delivery starts at attempt 1 with the same receiver idempotency key.
+
+A missing or non-dead row fails with `OutboxUnavailable` and changes nothing. The id must be a positive safe integer and `atMs` must be safe integer epoch milliseconds; invalid arguments also fail with `OutboxUnavailable`. Notify the host scheduler after requeue just as after enqueue (for Cloudflare, `Wakeups.touch` or `Wakeups.reconcile`). Coordinate maintenance with the scope's single drain owner; requeue does not add a lease or fence.
 
 ## Store service
 
@@ -306,7 +363,10 @@ import type { Effect, Option } from "effect";
 import type {
   OutboxEntry,
   OutboxDraft,
-  OutboxScope,
+  ListScope,
+  CountScope,
+  PruneOptions,
+  RequeueOptions,
   DueScope,
   EnqueueReport,
   Settlement,
@@ -323,7 +383,10 @@ interface OutboxBacking {
     limit: number,
   ) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
   readonly settle: (id: number, settlement: Settlement) => Effect.Effect<void, StoreFailure>;
-  readonly list: (scope: OutboxScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+  readonly list: (scope: ListScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
+  readonly count: (scope: CountScope) => Effect.Effect<number, StoreFailure>;
+  readonly prune: (options: PruneOptions) => Effect.Effect<number, StoreFailure>;
+  readonly requeue: (id: number, options: RequeueOptions) => Effect.Effect<void, StoreFailure>;
 }
 // ---cut-after---
 same<OutboxBacking, Real.OutboxBacking>(true);
@@ -334,12 +397,16 @@ same<OutboxBacking, Real.OutboxBacking>(true);
 | `enqueue` | Inserts new drafts and absorbs retained identities                                                                                                       |
 | `nextDue` | Returns the earliest pending deadline, or the oldest pending entry's deadline when ordered. Returns `None` for an empty scope                            |
 | `readDue` | Reads at most `limit` pending entries by id. Unordered reads exclude future entries. Ordered reads include the future head so the runtime can stop there |
-| `settle`  | Records the outcome of an attempt. See [`Settlement`](#settlement)                                                                                       |
-| `list`    | Returns all entries by id, including delivered and dead entries                                                                                          |
+| `settle`  | Records the outcome only for a pending row; a missing or settled row fails with `OutboxUnavailable`. See [`Settlement`](#settlement)                     |
+| `list`    | Returns matching entries by id, optionally filtered by state, paginated after an exclusive id, and bounded by limit                                      |
+
+`count` returns the number of rows matching name, optional partition and state, and optional `nextAttemptAtMs <= dueBeforeMs`. The due filter applies to every selected state; request `state: "pending"` for a pending or overdue count. SQL counts use `COUNT(*)` without decoding payloads or loading entries.
+
+`prune` and `requeue` implement the [maintenance operations](#maintenance) below. Custom backings must implement all three new methods (`count`, `prune`, `requeue`) and honor the new due-time and state-guard semantics.
 
 `readDue` does not change rows or acquire ownership. These methods return `StoreFailure` on operational failure.
 
-`enqueue`, `readDue` and `settle` are the adapter protocol that `Outbox.enqueue` and `Outbox.drain` call. Applications must not call them directly. The runtime checks the drain limit, and the stores do not check their arguments again. Ids come from the store's own reads. Applications use `nextDue` to schedule passes and `list` to inspect entries.
+`enqueue`, `readDue` and `settle` are the adapter protocol that `Outbox.enqueue` and `Outbox.drain` call. Applications must not call them directly. The runtime checks the drain limit; ids for settlement come from the store's own reads. Applications use `nextDue` to schedule passes, and `list` and `count` to inspect entries. Use `Outbox.prune` and `Outbox.requeue` for maintenance.
 
 ### `OutboxScope` and `DueScope`
 
@@ -362,6 +429,31 @@ same<DueScope, Real.DueScope>(true);
 ```
 
 An omitted `partitionId` selects every partition of the name. `ordered` has the same meaning as in [`DrainOptions`](#drainoptions).
+
+### `ListScope` and `CountScope`
+
+```ts
+// ---cut-start---
+import type * as Real from "@streamsy/outbox";
+import type { EntryState, OutboxScope } from "@streamsy/outbox";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface ListScope extends OutboxScope {
+  readonly state?: EntryState;
+  readonly limit?: number;
+  readonly afterId?: number;
+}
+
+interface CountScope extends OutboxScope {
+  readonly state?: EntryState;
+  readonly dueBeforeMs?: number;
+}
+// ---cut-after---
+same<ListScope, Real.ListScope>(true);
+same<CountScope, Real.CountScope>(true);
+```
+
+`list` defaults to all states and no limit. It sorts by ascending id; `afterId` is exclusive. A supplied `limit` must be a positive safe integer, and `afterId` must be a nonnegative safe integer. `dueBeforeMs` must be safe integer epoch milliseconds and includes the boundary. Invalid bounds fail with `OutboxUnavailable` before querying.
 
 ### `Settlement`
 
@@ -407,12 +499,13 @@ interface OutboxDraft {
   readonly idempotencyKey: string;
   readonly encodedPayload: string;
   readonly enqueuedAtMs: number;
+  readonly notBeforeMs?: number;
 }
 // ---cut-after---
 same<OutboxDraft, Real.OutboxDraft>(true);
 ```
 
-A draft contains the name, partition, key, encoded JSON payload, and enqueue timestamp before storage assigns an id. `Outbox.enqueue` constructs drafts from decoded payloads.
+A draft contains the name, partition, key, encoded JSON payload, enqueue timestamp and optional earliest first-attempt timestamp before storage assigns an id. `Outbox.enqueue` constructs drafts from decoded payloads.
 
 ### `OutboxEntry`
 
@@ -444,4 +537,4 @@ same<OutboxEntry, Real.OutboxEntry>(true);
 
 `id` increases with enqueue order. `encodedPayload` is the stored JSON text, not the decoded value that delivery receives. `state` is `"pending"`, `"delivered"` or `"dead"`. `attempts` starts at zero and counts persisted outcomes. Timestamps are safe integer milliseconds. `settledAtMs` is undefined while pending. `lastError` holds the latest failure detail, and `deadLetterReason` is defined only for dead entries.
 
-Both stores retain delivered and dead entries for deduplication. There is no replay API or retention policy.
+Both stores retain delivered and dead entries for deduplication until explicitly pruned. Requeue preserves the retained identity. No retention schedule runs automatically.

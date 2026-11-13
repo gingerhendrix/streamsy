@@ -26,7 +26,9 @@ same<typeof layerSql, typeof Real.layerSql>(true);
 
 The layer builds an `OutboxStore` over the `SqlClient` in its context. It opens no connection. Operations use that client's active transaction at execution time. Provide it with the same `SqlClient` layer as your application, and causal SQL and enqueue commit together.
 
-Enqueue performs inserts serially and opens no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed. A unique index on `(name, idempotency_key)` retains the original payload and partition for every duplicate, including settled entries.
+Enqueue performs inserts serially and opens no transaction. Outside a caller transaction, a later insert failure can leave earlier inserts committed. A unique index on `(name, idempotency_key)` retains the original payload, partition and first due time for every duplicate, including settled entries.
+
+Settlement updates only pending rows and requeue updates only dead rows. Each checks the changed-row count atomically (`RETURNING id` on SQLite/Postgres, `affectedRows` on MySQL); no matching row fails with `OutboxUnavailable`. Prune is bounded on every dialect: MySQL uses `DELETE ... LIMIT`, while SQLite and Postgres select at most the limit of ids in a subquery. No schema migration is required for these operations.
 
 SQL errors become `OutboxUnavailable`. Malformed row structure, inconsistent states, and unsafe numeric conversions become `InvalidStoredRecord`. A structurally valid row with an invalid payload reaches `drain`, which dead-letters it as `payload-poison`.
 

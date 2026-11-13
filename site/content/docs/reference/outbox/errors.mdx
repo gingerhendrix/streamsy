@@ -40,7 +40,7 @@ interface OutboxUnavailable {
 same<OutboxUnavailable, Omit<Fields<Real.OutboxUnavailable>, "brand">>(true);
 ```
 
-The store cannot read or write. `operation` names the failed operation. SQL errors and unsupported dialects become this failure.
+The store cannot read or write. `operation` names the failed operation. SQL errors and unsupported dialects become this failure. It also reports invalid inspection or maintenance bounds, settlement of a missing or non-pending row, and requeue of a missing or non-dead row.
 
 ### `InvalidStoredRecord`
 
@@ -96,7 +96,7 @@ interface PayloadEncodingFailure {
 same<PayloadEncodingFailure, Omit<Fields<Real.PayloadEncodingFailure>, "brand">>(true);
 ```
 
-Schema JSON encoding failed, or an identity callback threw. `outbox` is the definition name. `enqueue` validates the complete batch before any insert.
+Schema JSON encoding failed, an identity or `notBefore` callback threw, or `notBefore` returned a value other than safe integer epoch milliseconds. `outbox` is the definition name. `enqueue` validates the complete batch before any insert.
 
 ## Delivery failures
 
@@ -177,4 +177,4 @@ same<DeadLetterReason, Real.DeadLetterReason>(true);
 | `permanent`          | Delivery failed with `PermanentDeliveryFailure`      |
 | `payload-poison`     | Stored JSON failed Schema decoding before delivery   |
 
-Dead entries remain stored for inspection and deduplication. The package provides no replay or retention policy.
+Dead entries remain stored for inspection and deduplication. Use `Outbox.requeue` to retry a dead entry or `Outbox.prune` for explicit retention. Neither runs automatically.
