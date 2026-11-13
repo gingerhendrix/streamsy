@@ -1,23 +1,25 @@
 core:changelogs:
-  - content: "---\npackages:\n  \"@streamsy/outbox\":\n    type: minor\n---\n\n## Schedule and maintain outbox work\n\nAdd `notBefore` for delayed first attempts, filtered and paginated `list` reads,\n`count` for monitoring, bounded `Outbox.prune` for settled rows, and\n`Outbox.requeue` to retry dead entries with a fresh attempt budget. Duplicate\nenqueue keeps the first due time; ordered drains block behind future entries.\nPruned keys can be enqueued again. Requeue preserves the original identity.\n\nSettlement now fails with `OutboxUnavailable` for missing or already-settled\nentries on every store, stopping the drain without overwriting a recorded result.\n\n**Breaking for third-party backings:** `OutboxBacking` now requires `count`,\n`prune` and `requeue`. Implementations must also honor `OutboxDraft.notBeforeMs`,\nthe extended list filters and pending-only settlement. The built-in stores need no database schema migration.\n"
-    filename: outbox-due-time.md
+  - content: "---\npackages:\n  \"@streamsy/core\":\n    type: minor\n  \"@streamsy/serve\":\n    type: minor\n---\n\n## Follow streams over hibernatable WebSockets on Cloudflare\n\nA Durable Object made with `StreamsyObject.make` can now serve `live=websocket`, a Streamsy extension to Durable Streams HTTP. Set `live: { websocket: true }`, or `live: { websocket: { prefix: \"/streams\" } }` when the routes have a prefix. The object accepts the socket with the WebSocket Hibernation API, keeps each socket's offset in its attachment, and pushes the new messages in the event that committed them. An object whose readers all hold sockets can hibernate between commits.\n\nEach `data` frame holds the exact body of a catch-up `GET`, and a `control` frame with the SSE control fields follows it. The option is off by default, and an object without it behaves as before.\n\n`Http.read` and `Http.app` now answer `live=websocket` with `426 Upgrade Required` on every host that does not take the upgrade, so a client falls back to long-poll. `@streamsy/core/http` exports the frame helpers and close codes. See [Follow streams over WebSockets](https://streamsy.dev/docs/servers/cloudflare/live-sockets).\n"
+    filename: live-websocket.md
     v: 0.0.0
 core:packages:
   - id: npm:folder-sync
     updated: false
   - id: npm:todo
     updated: false
-  - id: npm:@streamsy/core
-    updated: true
   - changelogIds:
-      - outbox-due-time.md
-    id: npm:@streamsy/outbox
+      - live-websocket.md
+    id: npm:@streamsy/core
+    updated: true
+  - id: npm:@streamsy/outbox
     updated: true
   - id: npm:@streamsy/projection
     updated: true
-  - id: npm:@streamsy/serve
-    updated: true
   - id: npm:@streamsy/storage
+    updated: true
+  - changelogIds:
+      - live-websocket.md
+    id: npm:@streamsy/serve
     updated: true
 npm:packages:
   - id: npm:folder-sync
@@ -25,17 +27,17 @@ npm:packages:
   - id: npm:@streamsy/core
   - id: npm:@streamsy/outbox
   - id: npm:@streamsy/projection
-  - id: npm:@streamsy/serve
   - id: npm:@streamsy/storage
+  - id: npm:@streamsy/serve
   - id: npm:bugsy
   - id: npm:hackernews-newest-stream
-  - id: npm:fold-agent-example
-  - id: npm:hex-board
   - id: npm:issue-tracker-demo
   - id: npm:issue-tracker-demo-atom
   - id: npm:issue-tracker-demo-event-sourced
   - id: npm:issue-tracker-demo-foldkit
+  - id: npm:memory-server
   - id: npm:platform-matrix
   - id: npm:@streamsy/conformance-tests
   - id: npm:@streamsy/docs-snippets
-  - id: npm:memory-server
+  - id: npm:fold-agent-example
+  - id: npm:hex-board
