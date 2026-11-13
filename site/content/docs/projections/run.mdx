@@ -218,6 +218,8 @@ A hand-written request must include a valid `WakeRow.offset`:
 
 `Projection.Registry` is an optional service for runners in this process. Provide `Projection.Registry.layer` **below the attach layers**, so each attachment sees the same registry. Each runner registers when its attach layer is built and unregisters when that scope closes. Without the registry, attachments run as usual. `ProjectionWakeup.attach` also registers when the object's layer provides the registry.
 
+Use `Registry.layer` to create the registry. Attaching a runner to a hand-built `Registry.of(...)` value dies with a clear error because it has no private registration support.
+
 ```ts
 // @filename: streams.ts
 export * from "./shop-streams.ts";

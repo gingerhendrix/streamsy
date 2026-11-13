@@ -243,7 +243,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
   );
 }
 
-/** @internal Absent for runners without the optional registry; no events need constructing. */
+/** @internal The event publisher installed by Registry.layer. */
 export const eventPublisher = (registry: RegistryApi) => registrations.get(registry)?.event;
 
 /** @internal Register in the attach scope and return its pass notification. */
@@ -254,6 +254,10 @@ export const registerRunner = (
   const registration = registrations.get(registry);
 
   return registration === undefined
-    ? Effect.succeed(Effect.void)
+    ? Effect.die(
+        new Error(
+          "Projection runners require Registry.layer; a hand-built Registry has no registration support",
+        ),
+      )
     : registration.register(runner).pipe(Effect.as(registration.publish));
 };

@@ -462,6 +462,29 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
   );
 
   for (const objectHost of [false, true]) {
+    it.effect(`a hand-built registry dies at attachment (object host: ${objectHost})`, () =>
+      Effect.gen(function* () {
+        const registry = yield* Projection.Registry;
+        const manual = Projection.Registry.of({ ...registry });
+        const declaration = projection("manual-registry");
+
+        const registration = objectHost
+          ? ProjectionWakeup.attach(declaration).pipe(Effect.asVoid)
+          : Layer.build(Projection.attach(declaration)).pipe(Effect.asVoid);
+
+        const exit = yield* registration.pipe(
+          Effect.provideService(Projection.Registry, manual),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+
+        if (Exit.isFailure(exit))
+          expect(String(exit.cause)).toContain("Projection runners require Registry.layer");
+        expect(yield* registry.status).toEqual([]);
+      }),
+    );
+
     it.effect(`duplicate ids die at registration (object host: ${objectHost})`, () =>
       Effect.gen(function* () {
         const declaration = projection("duplicate-id");
