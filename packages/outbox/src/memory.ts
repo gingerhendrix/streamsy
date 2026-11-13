@@ -67,7 +67,7 @@ function makeStore(): OutboxBacking {
             encodedPayload: draft.encodedPayload,
             state: "pending",
             attempts: 0,
-            nextAttemptAtMs: draft.enqueuedAtMs,
+            nextAttemptAtMs: Math.max(draft.enqueuedAtMs, draft.notBeforeMs ?? draft.enqueuedAtMs),
             lastError: undefined,
             deadLetterReason: undefined,
             enqueuedAtMs: draft.enqueuedAtMs,

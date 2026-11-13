@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { Effect, Schema } from "effect";
-import { Outbox, InvalidConfiguration } from "../src/index.ts";
+import { Outbox, InvalidConfiguration, PayloadEncodingFailure } from "../src/index.ts";
 import { definition, retry, withStore } from "./support.ts";
 
 const key = (value: { id: string }) => value.id;
@@ -69,3 +69,53 @@ for (const mode of ["memory", "sqlite"] as const)
         expect(received).toEqual([42]);
       }),
     ));
+
+for (const mode of ["memory", "sqlite"] as const) {
+  test(`${mode}: notBefore holds ordered drains behind the future head`, () =>
+    withStore(mode, (store) =>
+      Effect.gen(function* () {
+        const scheduled = Outbox.define({
+          ...definition,
+          notBefore: (value) => (value.id === "future" ? 1000 : 0),
+        });
+        yield* Outbox.enqueue(scheduled, [
+          { id: "future", lane: "main" },
+          { id: "now", lane: "main" },
+        ]);
+        expect(yield* Outbox.drain(scheduled, () => Effect.void, { ordered: true })).toMatchObject({
+          attempted: 0,
+        });
+        expect(yield* Outbox.drain(scheduled, () => Effect.void)).toMatchObject({ delivered: 1 });
+        expect((yield* store.list({ name: scheduled.name }))[0]?.nextAttemptAtMs).toBe(1000);
+      }),
+    ));
+  for (const value of [
+    NaN,
+    Infinity,
+    -Infinity,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    "throw",
+  ] as const) {
+    test(`${mode}: invalid notBefore ${value} fails the whole batch before writes`, () =>
+      withStore(mode, (store) =>
+        Effect.gen(function* () {
+          const scheduled = Outbox.define({
+            ...definition,
+            notBefore: (payload) => {
+              if (payload.id === "valid") return 1000;
+              if (value === "throw") throw new Error("bad time");
+              return value;
+            },
+          });
+          expect(
+            yield* Outbox.enqueue(scheduled, [
+              { id: "valid", lane: "main" },
+              { id: "invalid", lane: "main" },
+            ]).pipe(Effect.flip),
+          ).toBeInstanceOf(PayloadEncodingFailure);
+          expect(yield* store.list({ name: scheduled.name })).toEqual([]);
+        }),
+      ));
+  }
+}

@@ -233,7 +233,7 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
       payload: draft.encodedPayload,
       state: "pending",
       attempts: 0,
-      next_attempt_at_ms: draft.enqueuedAtMs,
+      next_attempt_at_ms: Math.max(draft.enqueuedAtMs, draft.notBeforeMs ?? draft.enqueuedAtMs),
       enqueued_at_ms: draft.enqueuedAtMs,
     });
 

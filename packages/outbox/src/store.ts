@@ -37,6 +37,7 @@ export interface OutboxDraft {
   readonly idempotencyKey: string;
   readonly encodedPayload: string;
   readonly enqueuedAtMs: number;
+  readonly notBeforeMs?: number;
 }
 
 export interface EnqueueReport {

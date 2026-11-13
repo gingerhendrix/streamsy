@@ -30,6 +30,8 @@ export interface Spec<Payload> {
   readonly name: string;
   readonly payload: Schema.Codec<Payload, unknown>;
   readonly idempotencyKey: (payload: Payload) => string;
+  /** Earliest first attempt, as safe integer epoch milliseconds. */
+  readonly notBefore?: (payload: Payload) => number;
   readonly partitionBy?: (payload: Payload) => string;
   readonly retry: RetryPolicy;
 }
@@ -87,10 +89,18 @@ export const enqueue = Effect.fn("Outbox.enqueue")(function* <Payload>(
     );
 
     const identity = yield* Effect.try({
-      try: () => ({
-        idempotencyKey: definition.idempotencyKey(payload),
-        partitionId: definition.partitionBy?.(payload) ?? "",
-      }),
+      try: () => {
+        const notBeforeMs = definition.notBefore?.(payload);
+
+        if (notBeforeMs !== undefined && !Number.isSafeInteger(notBeforeMs))
+          throw new Error("notBefore must return safe integer epoch milliseconds");
+
+        return {
+          idempotencyKey: definition.idempotencyKey(payload),
+          partitionId: definition.partitionBy?.(payload) ?? "",
+          notBeforeMs,
+        };
+      },
       catch: (cause) =>
         new PayloadEncodingFailure({ outbox: definition.name, detail: String(cause) }),
     });

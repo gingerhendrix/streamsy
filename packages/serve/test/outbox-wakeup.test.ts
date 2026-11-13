@@ -117,3 +117,18 @@ class Sender extends Context.Service<Sender, { readonly send: Effect.Effect<void
 const requiringSender = OutboxWakeup.make(definition, () => Sender.use((sender) => sender.send));
 
 expectTypeOf<Effect.Services<typeof requiringSender.run>>().toEqualTypeOf<OutboxStore | Sender>();
+
+test("notBefore schedules a future wakeup and delivers only when due", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const scheduled = Outbox.define({ ...definition, notBefore: () => 1000 });
+      const wakeup = OutboxWakeup.make(scheduled, () => Effect.void);
+      yield* Outbox.enqueue(scheduled, ["later"]);
+      expect(yield* wakeup.next).toEqual(Option.some(1000));
+      expect(yield* wakeup.run).toEqual({ more: false });
+      expect(yield* wakeup.next).toEqual(Option.some(1000));
+      yield* TestClock.setTime(1000);
+      expect(yield* wakeup.run).toEqual({ more: false });
+      expect(yield* wakeup.next).toEqual(Option.none());
+    }).pipe(Effect.provide(Layer.merge(layerMemory, TestClock.layer()))),
+  ));
