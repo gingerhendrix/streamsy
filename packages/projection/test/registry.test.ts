@@ -946,6 +946,22 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
       }),
   );
 
+  it.effect("changes coalesces unread notifications for a slow subscriber", () =>
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      const pull = yield* Stream.toPull(registry.changes);
+      expect(yield* pull).toEqual([[]]);
+      const wakeup = yield* ProjectionWakeup.attach(projection("sliding-changes"));
+      for (let n = 0; n < 100; n += 1) yield* wakeup.changed;
+      expect(only((yield* pull)[0]).projection).toBe("sliding-changes");
+      const next = yield* pull.pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      expect(next.pollUnsafe()).toBeUndefined();
+      yield* wakeup.changed;
+      expect(only((yield* Fiber.join(next))[0]).projection).toBe("sliding-changes");
+    }),
+  );
+
   for (const initialFault of [false, true]) {
     it.effect(
       `changes skips a failed ${initialFault ? "initial" : "later"} snapshot and stays open`,

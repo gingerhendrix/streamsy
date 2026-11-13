@@ -8,6 +8,7 @@ import {
   Predicate,
   PubSub,
   Record,
+  Result,
   Stream,
   type Scope,
 } from "effect";
@@ -119,7 +120,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
       const runners = new Map<string, RegisteredRunner>();
       let registered = false;
 
-      const updates = yield* Effect.acquireRelease(PubSub.unbounded<void>(), PubSub.shutdown);
+      const updates = yield* Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown);
 
       const events = yield* Effect.acquireRelease(PubSub.unbounded<RunnerEvent>(), PubSub.shutdown);
 
@@ -181,11 +182,18 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
             }),
           );
         }),
-        schedule: (binding) => Effect.flatMap(find(binding), (runner) => runner.schedule(binding)),
-        retry: (target) =>
-          Effect.flatMap(find(target), (runner) =>
-            runner.retry(Predicate.isString(target) || "at" in target ? undefined : target),
-          ),
+        schedule: Effect.fn("Projection.Registry.schedule")(function* (binding: Binding) {
+          const runner = yield* find(binding);
+          yield* runner.schedule(binding);
+        }),
+        retry: Effect.fn("Projection.Registry.retry")(function* (
+          target: string | Declaration | Binding,
+        ) {
+          const runner = yield* find(target);
+          return yield* runner.retry(
+            Predicate.isString(target) || "at" in target ? undefined : target,
+          );
+        }),
         changes: Stream.unwrap(
           Effect.gen(function* () {
             // Subscribe before the initial read, so a pass cannot fall into a gap.
@@ -194,10 +202,7 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
             return Stream.concat(
               Stream.fromEffect(snapshot),
               Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => snapshot)),
-            ).pipe(
-              Stream.filter(Option.isSome),
-              Stream.map((value) => value.value),
-            );
+            ).pipe(Stream.filterMap((value) => Result.fromOption(value, () => undefined)));
           }),
         ),
       });
