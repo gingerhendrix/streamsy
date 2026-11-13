@@ -15,5 +15,6 @@ export {
   type ListScope,
   type CountScope,
   type PruneOptions,
+  type RequeueOptions,
   type EnqueueReport,
 } from "./store.ts";

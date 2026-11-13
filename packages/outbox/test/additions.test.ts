@@ -5,9 +5,11 @@ import {
   guardedSettlement,
   filteredReads,
   boundedPruning,
+  deadRequeue,
 } from "./addition-contracts.ts";
 
 for (const mode of ["memory", "sqlite"] as const) {
+  test(`${mode}: dead requeue and fresh attempt accounting`, () => withStore(mode, deadRequeue));
   test(`${mode}: bounded pruning and reenqueuing`, () => withStore(mode, boundedPruning));
   test(`${mode}: filtered inspection and counts`, () => withStore(mode, filteredReads));
   test(`${mode}: settlement refuses missing and terminal entries`, () =>

@@ -1,5 +1,5 @@
 import { Array, Effect, Layer, Option } from "effect";
-import { validateOptions, validatePrune } from "./validation.ts";
+import { validateOptions, validatePrune, validateRequeue } from "./validation.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import {
   OutboxStore,
@@ -128,6 +128,31 @@ function makeStore(): OutboxBacking {
               )
               .slice(0, scope.limit),
           ),
+        ),
+      ),
+    requeue: (id, { atMs }) =>
+      validateRequeue(id, atMs).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const existing = entries.get(id);
+            if (existing === undefined || existing.state !== "dead")
+              return Effect.fail(
+                new OutboxUnavailable({
+                  operation: "requeue",
+                  detail: `outbox entry ${id} does not exist or is not dead`,
+                }),
+              );
+            entries.set(id, {
+              ...existing,
+              state: "pending",
+              attempts: 0,
+              nextAttemptAtMs: atMs,
+              lastError: undefined,
+              deadLetterReason: undefined,
+              settledAtMs: undefined,
+            });
+            return Effect.void;
+          }),
         ),
       ),
     prune: (options) =>

@@ -38,3 +38,16 @@ export const validatePrune = (options: PruneOptions): Effect.Effect<void, Outbox
         }),
       )
     : Effect.void;
+
+export const validateRequeue = (
+  id: number,
+  atMs: number,
+): Effect.Effect<void, OutboxUnavailable> =>
+  Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(atMs)
+    ? Effect.void
+    : Effect.fail(
+        new OutboxUnavailable({
+          operation: "requeue",
+          detail: "requeue requires a positive safe integer id and safe integer atMs",
+        }),
+      );

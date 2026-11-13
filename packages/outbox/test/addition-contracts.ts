@@ -172,3 +172,52 @@ export const boundedPruning = (store: OutboxBacking) =>
     expect(yield* store.enqueue([draft("a")])).toEqual({ enqueued: 1, absorbed: 0 });
     expect((yield* store.list({ name })).at(-1)?.id).toBeGreaterThan(alien.id);
   });
+
+export const deadRequeue = (store: OutboxBacking) =>
+  Effect.gen(function* () {
+    yield* store.enqueue([draft("dead"), draft("delivered"), draft("pending")]);
+    const initial = yield* store.list({ name });
+    const dead = initial[0]!;
+    yield* store.settle(
+      dead.id,
+      Settlement.Dead({ attempts: 3, reason: "attempts-exhausted", detail: "failed", atMs: 200 }),
+    );
+    yield* store.settle(initial[1]!.id, Settlement.Delivered({ attempts: 1, atMs: 200 }));
+    for (const id of [999, initial[1]!.id, initial[2]!.id])
+      expect(yield* store.requeue(id, { atMs: 500 }).pipe(Effect.flip)).toMatchObject({
+        _tag: "OutboxUnavailable",
+        operation: "requeue",
+      });
+    for (const atMs of [Infinity, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(yield* store.requeue(dead.id, { atMs }).pipe(Effect.flip)).toBeInstanceOf(
+        OutboxUnavailable,
+      );
+    yield* Outbox.requeue(dead.id, { atMs: 500 }).pipe(Effect.provideService(OutboxStore, store));
+    expect((yield* store.list({ name }))[0]).toEqual({
+      ...dead,
+      state: "pending",
+      attempts: 0,
+      nextAttemptAtMs: 500,
+      lastError: undefined,
+      deadLetterReason: undefined,
+      settledAtMs: undefined,
+    });
+    expect((yield* store.readDue({ name }, 499, 10)).map((row) => row.idempotencyKey)).toEqual([
+      "pending",
+    ]);
+    expect((yield* store.readDue({ name }, 500, 10)).map((row) => row.idempotencyKey)).toEqual([
+      "dead",
+      "pending",
+    ]);
+    expect(yield* store.enqueue([draft("dead", "changed")])).toEqual({ enqueued: 0, absorbed: 1 });
+    expect(yield* store.requeue(dead.id, { atMs: 0 }).pipe(Effect.flip)).toBeInstanceOf(
+      OutboxUnavailable,
+    );
+    yield* store.settle(dead.id, Settlement.Delivered({ attempts: 1, atMs: 500 }));
+    expect((yield* store.list({ name }))[0]).toMatchObject({
+      state: "delivered",
+      attempts: 1,
+      deadLetterReason: undefined,
+      lastError: undefined,
+    });
+  });

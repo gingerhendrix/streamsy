@@ -17,6 +17,7 @@ import {
   guardedSettlement,
   filteredReads,
   boundedPruning,
+  deadRequeue,
 } from "./addition-contracts.ts";
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
@@ -74,6 +75,14 @@ const withOutbox = <A, E>(
 for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`the ${dialect.name} outbox`, () => {
+    test(
+      "dead requeue and fresh attempt accounting",
+      async () => {
+        if (url === undefined) return;
+        await withOutbox(dialect, url, deadRequeue);
+      },
+      TIMEOUT_MS,
+    );
     test(
       "bounded pruning and reenqueuing",
       async () => {

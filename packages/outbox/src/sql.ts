@@ -12,7 +12,7 @@ import {
   type OutboxEntry,
 } from "./store.ts";
 
-import { validateOptions, validatePrune } from "./validation.ts";
+import { validateOptions, validatePrune, validateRequeue } from "./validation.ts";
 
 const TABLE = "streamsy_outbox";
 
@@ -336,6 +336,28 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
               ...(scope.state === undefined ? [] : [sql`state = ${scope.state}`]),
               ...(scope.afterId === undefined ? [] : [sql`id > ${scope.afterId}`]),
             ])} ORDER BY id ${scope.limit === undefined ? sql`` : sql`LIMIT ${scope.limit}`}`,
+          ),
+        ),
+      ),
+    requeue: (id, { atMs }) =>
+      validateRequeue(id, atMs).pipe(
+        Effect.andThen(
+          changed(
+            "requeue",
+            sql`UPDATE streamsy_outbox SET state = 'pending', attempts = 0,
+        next_attempt_at_ms = ${atMs}, last_error = NULL, dead_letter_reason = NULL, settled_at_ms = NULL
+        WHERE id = ${id} AND state = 'dead'`,
+          ).pipe(
+            Effect.flatMap((count) =>
+              count > 0
+                ? Effect.void
+                : Effect.fail(
+                    new OutboxUnavailable({
+                      operation: "requeue",
+                      detail: `outbox entry ${id} does not exist or is not dead`,
+                    }),
+                  ),
+            ),
           ),
         ),
       ),

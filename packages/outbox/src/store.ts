@@ -77,6 +77,10 @@ export interface PruneOptions {
   readonly limit: number;
 }
 
+export interface RequeueOptions {
+  readonly atMs: number;
+}
+
 /** The recorded outcome of one attempt. `attempts` is the new persisted count. */
 export type Settlement = Data.TaggedEnum<{
   Delivered: { readonly attempts: number; readonly atMs: number };
@@ -109,6 +113,7 @@ export interface OutboxBacking {
   readonly list: (scope: ListScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
   readonly count: (scope: CountScope) => Effect.Effect<number, StoreFailure>;
   readonly prune: (options: PruneOptions) => Effect.Effect<number, StoreFailure>;
+  readonly requeue: (id: number, options: RequeueOptions) => Effect.Effect<void, StoreFailure>;
 }
 
 export class OutboxStore extends Context.Service<OutboxStore, OutboxBacking>()(
