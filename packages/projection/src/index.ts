@@ -60,4 +60,4 @@ export { ProjectionRetry } from "./retry.ts";
 
 export { ProjectionWakeup } from "./wakeup.ts";
 
-export type { RegistryApi, RunnerEvent, RunnerStatus } from "./registry.ts";
+export { RunnerEvent, type RegistryApi, type RunnerStatus } from "./registry.ts";

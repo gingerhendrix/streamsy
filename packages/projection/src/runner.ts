@@ -241,7 +241,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const interruptedDelay = Queue.peek(wake).pipe(Effect.asVoid);
     let active = 0;
 
-    const runActive = (key: string, binding: Binding) =>
+    const runActive = (binding: Binding) =>
       Effect.acquireUseRelease(
         Effect.sync(() => {
           active += 1;
@@ -256,7 +256,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
                   publish(
                     RunnerEvent.Ran({
                       projection: declaration.id,
-                      params: key,
+                      params: binding.params,
                       status: progress.status,
                       units: progress.units,
                       offsets: progress.offsets,
@@ -332,7 +332,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       return yield* marks === undefined ? take : waitDue(marks);
     });
 
-    const dropped = (key: string) =>
+    const dropped = (key: string, binding: Binding) =>
       Effect.logWarning(
         `Projection ${declaration.id} dropped binding ${key}: its source was removed before its first run`,
       ).pipe(
@@ -342,7 +342,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
             : publish(
                 RunnerEvent.Dropped({
                   projection: declaration.id,
-                  params: key,
+                  params: binding.params,
                 }),
               ),
         ),
@@ -359,7 +359,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       for (const [key, entry] of Array.fromIterable(pending)) {
         pending.delete(key);
         const { binding } = entry;
-        const exit = yield* Effect.exit(runActive(key, binding));
+        const exit = yield* Effect.exit(runActive(binding));
 
         if (Exit.isSuccess(exit)) {
           entry.attempts = 0;
@@ -369,7 +369,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         }
 
         if (yield* sourceGone(binding.inputs, exit.cause)) {
-          yield* dropped(key);
+          yield* dropped(key, binding);
           continue;
         }
 
@@ -380,7 +380,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           yield* publish(
             RunnerEvent.Failed({
               projection: declaration.id,
-              params: key,
+              params: binding.params,
               attempts: entry.attempts,
               dueAt: Option.none(),
             }),
@@ -432,7 +432,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         for (const [key, entry] of work) {
           const { binding } = entry;
           working.delete(key);
-          const exit = yield* Effect.exit(runActive(key, binding));
+          const exit = yield* Effect.exit(runActive(binding));
           const state = states.get(key);
 
           if (Exit.isSuccess(exit)) {
@@ -443,7 +443,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           }
 
           if (yield* sourceGone(binding.inputs, exit.cause)) {
-            yield* dropped(key);
+            yield* dropped(key, binding);
             yield* store.remove(id, key);
 
             continue;
@@ -458,7 +458,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
             yield* publish(
               RunnerEvent.Failed({
                 projection: id,
-                params: key,
+                params: binding.params,
                 attempts,
                 dueAt: Option.some(dueAt),
               }),

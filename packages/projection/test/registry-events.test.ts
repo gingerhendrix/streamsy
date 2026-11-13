@@ -1,3 +1,4 @@
+import { canonicalParams } from "../src/unit.ts";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import {
@@ -15,7 +16,7 @@ import {
 import { compare, Streamsy } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
-import { Commit, Projection, ProjectionWakeup, type RunnerEvent } from "@streamsy/projection";
+import { Commit, Projection, ProjectionWakeup, RunnerEvent } from "@streamsy/projection";
 import { TestClock } from "effect/testing";
 import { memoryHost } from "./support/memory-host.ts";
 
@@ -28,8 +29,6 @@ const local = memoryHost({ readLimit: 1 });
 
 const host = Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
 
-const paramsKey = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ id: Schema.String })));
-
 const projection = (id: string, process: Effect.Effect<void, string> = Effect.void) =>
   Projection.process({
     id,
@@ -40,13 +39,38 @@ const projection = (id: string, process: Effect.Effect<void, string> = Effect.vo
   });
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
+  it.effect("isFor matches encoded params by value and tagged matchers are exported", () =>
+    Effect.sync(() => {
+      const binding = { id: "encoded", params: { tenant: "01", name: "ann" } };
+      const event = RunnerEvent.Dropped({
+        projection: "encoded",
+        params: { name: "ann", tenant: "01" },
+      });
+      expect(Projection.Registry.isFor(binding)(event)).toBe(true);
+      expect(Projection.Registry.isFor({ ...binding, id: "other" })(event)).toBe(false);
+      expect(
+        Projection.Registry.isFor({ ...binding, params: { tenant: "1", name: "ann" } })(event),
+      ).toBe(false);
+      expect(Projection.Registry.isFor({ ...binding, params: { tenant: "01" } })(event)).toBe(
+        false,
+      );
+      expect(Projection.RunnerEvent.$is("Dropped")(event)).toBe(true);
+      expect(
+        RunnerEvent.$match(event, {
+          Ran: () => "ran",
+          Failed: () => "failed",
+          Dropped: () => "dropped",
+        }),
+      ).toBe("dropped");
+    }),
+  );
+
   for (const durable of [false, true]) {
     it.effect(
       `Ran reports each bounded run's status, units and offsets (durable: ${durable})`,
       () =>
         Effect.gen(function* () {
           const params = { id: `ran-${durable}` };
-          const key = paramsKey(params);
           const source = yield* Source;
           yield* source.create(params);
           const first = yield* source.append(params, ["one"]);
@@ -66,7 +90,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             {
               _tag: "Ran",
               projection: declaration.id,
-              params: key,
+              params,
               status: "limit-reached",
               units: 1,
               offsets: { source: first.offset },
@@ -74,7 +98,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             {
               _tag: "Ran",
               projection: declaration.id,
-              params: key,
+              params,
               status: "limit-reached",
               units: 1,
               offsets: { source: second.offset },
@@ -82,7 +106,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             {
               _tag: "Ran",
               projection: declaration.id,
-              params: key,
+              params,
               status: "caught-up",
               units: 0,
               offsets: { source: second.offset },
@@ -95,7 +119,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   it.effect("durable Failed uses the persisted mark's attempts and due time", () =>
     Effect.gen(function* () {
       const params = { id: `durable-failed` };
-      const key = paramsKey(params);
+      const key = canonicalParams(params);
       const source = yield* Source;
       yield* source.create(params);
       yield* source.append(params, ["one"]);
@@ -111,7 +135,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       expect(event).toEqual({
         _tag: "Failed",
         projection: declaration.id,
-        params: key,
+        params,
         attempts: mark.attempts,
         dueAt: Option.some(mark.dueAt),
       });
@@ -165,7 +189,6 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       () =>
         Effect.gen(function* () {
           const params = { id: `memory-failed-${exhausted}` };
-          const key = paramsKey(params);
           const source = yield* Source;
           yield* source.create(params);
           yield* source.append(params, ["one"]);
@@ -181,7 +204,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           expect((yield* pull)[0]).toEqual({
             _tag: "Failed",
             projection: declaration.id,
-            params: key,
+            params,
             attempts: 1,
             dueAt: Option.none(),
           });
@@ -191,7 +214,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           expect((yield* pull)[0]).toEqual({
             _tag: "Failed",
             projection: declaration.id,
-            params: key,
+            params,
             attempts: 2,
             dueAt: Option.none(),
           });
@@ -206,7 +229,6 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         Effect.gen(function* () {
           const source = yield* Source;
           const params = { id: `removed-${durable}` };
-          const key = paramsKey(params);
           yield* source.create(params);
           yield* source.append(params, ["one"]);
           yield* source.remove(params);
@@ -215,9 +237,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           const pull = yield* Stream.toPull(registry.events);
           yield* Layer.build(Projection.attach(declaration, { durable }));
           yield* registry.schedule(declaration.at(params));
-          expect(yield* pull).toEqual([
-            { _tag: "Dropped", projection: declaration.id, params: key },
-          ]);
+          expect(yield* pull).toEqual([{ _tag: "Dropped", projection: declaration.id, params }]);
           expect(yield* registry.retry(declaration)).toBe(0);
         }),
     );
@@ -226,7 +246,6 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   it.effect("events combines two runners and a late subscriber sees only later runs", () =>
     Effect.gen(function* () {
       const params = { id: `two-runners` };
-      const key = paramsKey(params);
       const source = yield* Source;
       yield* source.create(params);
       const receipt = yield* source.append(params, ["one"]);
@@ -260,7 +279,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         {
           _tag: "Ran",
           projection: "one",
-          params: key,
+          params,
           status: "caught-up",
           units: 0,
           offsets: { source: receipt.offset },
@@ -273,7 +292,6 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     it.effect(`read-your-writes subscribes before checking the checkpoint (${race})`, () =>
       Effect.gen(function* () {
         const params = { id: `read-write-${race}` };
-        const key = paramsKey(params);
         const source = yield* Source;
         yield* source.create(params);
         const receipt = yield* source.append(params, ["one"]);
@@ -307,7 +325,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             (event) =>
               event._tag === "Ran" &&
               event.projection === binding.id &&
-              event.params === key &&
+              Projection.Registry.isFor(binding)(event) &&
               event.offsets.source !== undefined &&
               caughtUp(event.offsets.source),
           ),
@@ -341,7 +359,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       );
 
       expect(events).toHaveLength(100);
-      expect(Array.every(events, (event) => event._tag === "Ran")).toBe(true);
+      expect(Array.every(events, RunnerEvent.$is("Ran"))).toBe(true);
     }),
   );
 });

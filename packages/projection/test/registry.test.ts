@@ -1,3 +1,4 @@
+import { canonicalParams } from "../src/unit.ts";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import {
@@ -70,8 +71,6 @@ const only = (statuses: ReadonlyArray<RunnerStatus>) => {
 
   return statuses[0]!;
 };
-
-const paramsKey = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ id: Schema.String })));
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
   for (const durable of [false, true]) {
@@ -236,8 +235,8 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host())))((it) => {
         const source = yield* Source;
         yield* TestClock.setTime(0);
         const id = `durable-storage-${request}`;
-        const keyA = paramsKey({ id: `${id}-a` });
-        const keyB = paramsKey({ id: `${id}-b` });
+        const keyA = canonicalParams({ id: `${id}-a` });
+        const keyB = canonicalParams({ id: `${id}-b` });
 
         for (const key of ["a", "b"]) {
           yield* source.create({ id: `${id}-${key}` });

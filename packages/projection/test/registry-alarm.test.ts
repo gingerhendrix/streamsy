@@ -1,3 +1,4 @@
+import { canonicalParams } from "../src/unit.ts";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schedule, Schema, Stream } from "effect";
@@ -17,8 +18,6 @@ class Source extends Streamsy.json<Source>()("RegistryAlarm/Source", "source/:id
 const local = memoryHost({ readLimit: 1 });
 
 const host = Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
-
-const paramsKey = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ id: Schema.String })));
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   for (const failure of ["binding", "storage"] as const) {
@@ -179,7 +178,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         yield* registry.schedule(declaration.at({ id }));
         yield* Effect.exit(wakeup.run);
         const marks = yield* ProjectionMarks;
-        const before = yield* marks.read(id, [paramsKey({ id })]);
+        const before = yield* marks.read(id, [canonicalParams({ id })]);
         yield* wakeup.bind({
           reconcile: Effect.void,
           retry: Effect.void,
@@ -187,11 +186,11 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         });
         expect(yield* registry.retry(declaration.at({ id }))).toBe(1);
         expect(yield* registry.retry(declaration)).toBe(durable ? 0 : 1);
-        const after = yield* marks.read(id, [paramsKey({ id })]);
+        const after = yield* marks.read(id, [canonicalParams({ id })]);
 
         if (durable) {
-          expect(after.get(paramsKey({ id }))).toEqual({
-            ...before.get(paramsKey({ id })),
+          expect(after.get(canonicalParams({ id }))).toEqual({
+            ...before.get(canonicalParams({ id })),
             dueAt: 0,
           });
         } else expect(after).toEqual(before);

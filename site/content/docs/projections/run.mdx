@@ -144,7 +144,7 @@ export const orderTotals = Projection.emit({
 // ---cut---
 import { Layer } from "effect";
 import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, RunnerEvent } from "@streamsy/projection";
 import { orderTotals } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
@@ -237,7 +237,7 @@ export const orderTotals = Projection.emit({
 // ---cut---
 import { Array, Effect, Layer, Option, Stream } from "effect";
 import { compare, MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, RunnerEvent } from "@streamsy/projection";
 import { orderTotals } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
@@ -295,9 +295,8 @@ const awaitTotals = (receipt: { readonly offset: string }) =>
       yield* Stream.fromPull(Effect.succeed(pull)).pipe(
         Stream.filter(
           (event) =>
-            event._tag === "Ran" &&
-            event.projection === binding.id &&
-            event.params === "{}" &&
+            RunnerEvent.$is("Ran")(event) &&
+            Projection.Registry.isFor(binding)(event) &&
             event.offsets.input !== undefined &&
             compare(event.offsets.input, receipt.offset) >= 0,
         ),
@@ -322,7 +321,7 @@ Pass a declaration to retry all its failed bindings, or a binding to select one.
 
 Both methods resolve the runner by projection id and fail with `NotAttached`, exported from `@streamsy/projection`, if that id is not registered. Attaching an id already present in the same registry dies at layer build with an error naming the id. A binding supplies encoded params, which the runner decodes with its declaration. A missing attachment writes no mark. Storage failures are reported as `StorageFault`.
 
-`registry.events` is a `Stream<RunnerEvent>` combining binding observations from all registered runners, on both hosts. Each event has `projection` (the declaration id) and `params` (canonical JSON of the binding's encoded params, with keys sorted). The cases are:
+`registry.events` is a `Stream<RunnerEvent>` combining binding observations from all registered runners, on both hosts. Each event has `projection` (the declaration id) and `params` (the binding's encoded param record). `RunnerEvent` exports constructors, `$is` and `$match`. Use `Projection.Registry.isFor(binding)` to match an event by id and encoded params. The cases are:
 
 - `Ran`: every binding run that returns, including runs with zero units or `limit-reached`. It includes the run's `status`, committed `units` count and reached `offsets`, keyed by input name.
 - `Failed`: a failed binding run, with consecutive binding `attempts` and `dueAt: Option<number>`. For durable bindings these come from the deferred mark, with `Some(dueAt)`. Non-durable failures publish immediately with `dueAt: None`; those bindings retry with their pass, at `RunnerStatus.retryAt`. A successful run resets non-durable binding attempts.

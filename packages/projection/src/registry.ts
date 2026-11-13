@@ -1,4 +1,5 @@
 import {
+  Array,
   Context,
   Data,
   Effect,
@@ -6,6 +7,7 @@ import {
   Option,
   Predicate,
   PubSub,
+  Record,
   Stream,
   type Scope,
 } from "effect";
@@ -21,25 +23,27 @@ type Binding = Pick<Identity, "id" | "params">;
 
 type Declaration = Attachable<Binding>;
 
-/** Live binding observations; params is the canonical JSON of encoded params. */
-export type RunnerEvent =
-  | {
-      readonly _tag: "Ran";
-      readonly projection: string;
-      readonly params: string;
-      readonly status: Progress<unknown>["status"];
-      readonly units: number;
-      readonly offsets: Readonly<Record<string, string>>;
-    }
-  | {
-      readonly _tag: "Failed";
-      readonly projection: string;
-      readonly params: string;
-      readonly attempts: number;
-      /** Durable binding deadline; None for non-durable bindings, which retry with their pass. */
-      readonly dueAt: Option.Option<number>;
-    }
-  | { readonly _tag: "Dropped"; readonly projection: string; readonly params: string };
+/** Live binding observations with the binding's encoded params. */
+export type RunnerEvent = Data.TaggedEnum<{
+  Ran: {
+    readonly projection: string;
+    readonly params: Readonly<Record<string, string>>;
+    readonly status: Progress<unknown>["status"];
+    readonly units: number;
+    readonly offsets: Readonly<Record<string, string>>;
+  };
+  Failed: {
+    readonly projection: string;
+    readonly params: Readonly<Record<string, string>>;
+    readonly attempts: number;
+    /** Durable binding deadline; None for non-durable bindings, which retry with their pass. */
+    readonly dueAt: Option.Option<number>;
+  };
+  Dropped: {
+    readonly projection: string;
+    readonly params: Readonly<Record<string, string>>;
+  };
+}>;
 
 export const RunnerEvent = Data.taggedEnum<RunnerEvent>();
 
@@ -92,6 +96,14 @@ const registrations = new WeakMap<RegistryApi, Registration>();
 export class Registry extends Context.Service<Registry, RegistryApi>()(
   "@streamsy/projection/Registry",
 ) {
+  /** Match a binding's projection id and encoded params, independent of key order. */
+  static readonly isFor =
+    (binding: Binding) =>
+    (event: RunnerEvent): boolean =>
+      event.projection === binding.id &&
+      Record.size(event.params) === Record.size(binding.params) &&
+      Array.every(Record.toEntries(binding.params), ([key, value]) => event.params[key] === value);
+
   /** Provide below the attach layers so they see this same registry. */
   static readonly layer: Layer.Layer<Registry> = Layer.effect(
     this,

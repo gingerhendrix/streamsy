@@ -114,7 +114,7 @@ for (const kind of ["durable", "memory"]) {
     const event = Schema.decodeUnknownSync(
       Schema.TaggedStruct("Ran", {
         projection: Schema.String,
-        params: Schema.String,
+        params: Schema.Record(Schema.String, Schema.String),
         status: Schema.String,
         units: Schema.Finite,
         offsets: Schema.Struct({ source: Schema.String }),
@@ -124,7 +124,7 @@ for (const kind of ["durable", "memory"]) {
     expect(event).toMatchObject({
       _tag: "Ran",
       projection: "workerd-registry",
-      params: '{"id":"a"}',
+      params: { id: "a" },
       status: "caught-up",
       units: 1,
     });
@@ -140,7 +140,7 @@ for (const kind of ["durable", "memory"]) {
     const event = Schema.decodeUnknownSync(
       Schema.TaggedStruct("Failed", {
         projection: Schema.String,
-        params: Schema.String,
+        params: Schema.Record(Schema.String, Schema.String),
         attempts: Schema.Finite,
         dueAt: RetryAt,
       }),
@@ -149,7 +149,7 @@ for (const kind of ["durable", "memory"]) {
     expect(event).toMatchObject({
       _tag: "Failed",
       projection: "workerd-registry",
-      params: '{"id":"a"}',
+      params: { id: "a" },
       attempts: 1,
     });
     const snapshot = await statusOf(send(`${path}/status`));
