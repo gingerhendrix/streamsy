@@ -261,6 +261,7 @@ layer(host)((it) => {
 describe("accepted declaration validation", () => {
   const message = "accepted requires Commit.transaction or Commit.producer";
   test("rejects the fold default, checkpoint, atLeastOnce, custom and unsupported compensation", () => {
+    // @ts-expect-error JavaScript callers still get the runtime validation backstop
     expect(() => Projection.fold(definition)).toThrow(message);
 
     for (const commit of [

@@ -44,6 +44,8 @@ This works through `Projection.run`, `Projection.follow`, `Projection.attach`, a
 
 The accepted stream cannot be an input of the same projection or duplicate a declared output. Its parameter names and decoded types must be projection parameters, as for `Projection.wake` outputs. Give each projection its own accepted stream. When bindings share a source, include the parameters that distinguish those bindings in the accepted stream template so their rows cannot overwrite each other.
 
+A fold with `accepted` requires an explicit `commit` at compile time. An omitted commit or unsupported strategy still throws a `RangeError` at runtime for JavaScript callers.
+
 ## Wait across owners
 
 After writing a source, wait for its row to reach the receipt offset:

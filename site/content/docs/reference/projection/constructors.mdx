@@ -268,15 +268,17 @@ declare function fold<
   Q = CheckpointStore,
   W extends WakeOutput | undefined = undefined,
 >(
-  definition: Common<C, I, W> & {
-    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
-    readonly commit?: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q>;
-    readonly fold: (
-      state: NoInfer<A>,
-      entry: Entry<Addresses<I>>,
-      unit: Unit<StreamRoute.Params<C>>,
-    ) => Step<A, E, R>;
-  },
+  definition: Common<C, I, W> &
+    ([W] extends [undefined]
+      ? { readonly commit?: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q> }
+      : { readonly commit: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q> }) & {
+      readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+      readonly fold: (
+        state: NoInfer<A>,
+        entry: Entry<Addresses<I>>,
+        unit: Unit<StreamRoute.Params<C>>,
+      ) => Step<A, E, R>;
+    },
 ): RunningDeclaration<C, I, E, R, Folded<A>, P, Q, A, AcceptedServices<W>>;
 // ---cut-after---
 same<
@@ -288,7 +290,7 @@ same<
 `fold` declares a projection that folds each entry of a unit into one state value. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
 
 - `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
-- `commit` is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also fits `fold`.
+- `commit` is required when `accepted` is set; use `Commit.transaction` or `Commit.producer`. Otherwise it is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also fits `fold`.
 - After each unit, the runner encodes the value with `state.schema`. When the value does not encode, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 - When the runner retries a unit, it calls the handler again for each entry. Keep the handler free of external effects. With `Commit.transaction`, the SQL of the handler commits with the checkpoint.
 
@@ -1907,15 +1909,17 @@ declare function fold<
   Q = CheckpointStore,
   W extends WakeOutput | undefined = undefined,
 >(
-  definition: Common<C, I, W> & {
-    readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
-    readonly commit?: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q>;
-    readonly fold: (
-      state: NoInfer<A>,
-      entry: Entry<Addresses<I>>,
-      unit: Unit<StreamRoute.Params<C>>,
-    ) => Step<A, E, R>;
-  },
+  definition: Common<C, I, W> &
+    ([W] extends [undefined]
+      ? { readonly commit?: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q> }
+      : { readonly commit: Commit.Commit<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q> }) & {
+      readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
+      readonly fold: (
+        state: NoInfer<A>,
+        entry: Entry<Addresses<I>>,
+        unit: Unit<StreamRoute.Params<C>>,
+      ) => Step<A, E, R>;
+    },
 ): RunningDeclaration<C, I, E, R, Folded<A>, P, Q, A, AcceptedServices<W>>;
 same<Flat<Item<typeof Workspace>>, Flat<NonNullable<Emits<O0>["workspace"]>[number]>>(true);
 same<Item<typeof Notes>, NonNullable<Emits<O0>["copies"]>[number]>(true);

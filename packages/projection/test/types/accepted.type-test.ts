@@ -49,3 +49,24 @@ Projection.process({
   accepted: Source,
   process: () => Effect.void,
 });
+
+// @ts-expect-error accepted requires an explicit supported commit strategy
+Projection.fold({
+  id: "missing-commit",
+  params: { id: Schema.String },
+  inputs: { source: Source },
+  accepted: Accepted,
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (state) => state,
+});
+
+Projection.fold({
+  id: "wrong-commit",
+  params: { id: Schema.String },
+  inputs: { source: Source },
+  accepted: Accepted,
+  // @ts-expect-error checkpoint does not publish accepted rows
+  commit: Commit.checkpoint,
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (state) => state,
+});
