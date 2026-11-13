@@ -366,6 +366,7 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
         Effect.andThen(
           Effect.suspend(() => {
             const eligible = sql`name = ${options.name} AND state = ${options.state} AND settled_at_ms < ${options.settledBeforeMs}`;
+
             return changed(
               "prune",
               sql.onDialectOrElse({

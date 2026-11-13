@@ -78,6 +78,7 @@ for (const mode of ["memory", "sqlite"] as const) {
           ...definition,
           notBefore: (value) => (value.id === "future" ? 1000 : 0),
         });
+
         yield* Outbox.enqueue(scheduled, [
           { id: "future", lane: "main" },
           { id: "now", lane: "main" },
@@ -89,6 +90,7 @@ for (const mode of ["memory", "sqlite"] as const) {
         expect((yield* store.list({ name: scheduled.name }))[0]?.nextAttemptAtMs).toBe(1000);
       }),
     ));
+
   for (const value of [
     NaN,
     Infinity,
@@ -104,10 +106,13 @@ for (const mode of ["memory", "sqlite"] as const) {
             ...definition,
             notBefore: (payload) => {
               if (payload.id === "valid") return 1000;
+
               if (value === "throw") throw new Error("bad time");
+
               return value;
             },
           });
+
           expect(
             yield* Outbox.enqueue(scheduled, [
               { id: "valid", lane: "main" },

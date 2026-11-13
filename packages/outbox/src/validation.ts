@@ -12,6 +12,7 @@ export function validateOptions(
   },
 ): Effect.Effect<void, OutboxUnavailable> {
   const { limit, afterId, dueBeforeMs } = options;
+
   const detail =
     limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)
       ? "limit must be a positive safe integer"
@@ -20,6 +21,7 @@ export function validateOptions(
         : dueBeforeMs !== undefined && !Number.isSafeInteger(dueBeforeMs)
           ? "dueBeforeMs must be safe integer epoch milliseconds"
           : undefined;
+
   return detail === undefined
     ? Effect.void
     : Effect.fail(new OutboxUnavailable({ operation, detail }));

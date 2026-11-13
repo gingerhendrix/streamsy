@@ -264,6 +264,7 @@ for (const mode of ["memory", "sqlite"] as const) {
         Effect.gen(function* () {
           yield* Outbox.enqueue(definition, [note("a"), note("b")]);
           const calls: string[] = [];
+
           const conflicted = Outbox.drain(definition, (delivery) =>
             Effect.gen(function* () {
               calls.push(delivery.idempotencyKey);
@@ -272,15 +273,15 @@ for (const mode of ["memory", "sqlite"] as const) {
                 .pipe(Effect.orDie);
             }),
           );
+
           expect(yield* conflicted.pipe(Effect.flip)).toMatchObject({
             _tag: "OutboxUnavailable",
             operation: "settle",
           });
           expect(calls).toEqual(["a"]);
-          expect((yield* store.list({ name: definition.name })).map((row) => row.state)).toEqual([
-            "delivered",
-            "pending",
-          ]);
+          expect(
+            Array.map(yield* store.list({ name: definition.name }), (row) => row.state),
+          ).toEqual(["delivered", "pending"]);
           expect(yield* Outbox.drain(definition, () => Effect.void)).toMatchObject({
             delivered: 1,
           });

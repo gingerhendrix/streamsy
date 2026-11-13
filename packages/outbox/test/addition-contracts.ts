@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Array, Effect, Option } from "effect";
 import { expect } from "vitest";
 import {
   Outbox,
@@ -11,6 +11,7 @@ import {
 } from "../src/index.ts";
 
 const name = "additions";
+
 const draft = (key: string, partitionId = "main"): OutboxDraft => ({
   name,
   partitionId,
@@ -28,10 +29,9 @@ export const dueTimes = (store: OutboxBacking) =>
     ]);
     expect(yield* store.nextDue({ name })).toEqual(Option.some(100));
     expect(yield* store.nextDue({ name, ordered: true })).toEqual(Option.some(1000));
-    expect((yield* store.readDue({ name }, 999, 10)).map((row) => row.idempotencyKey)).toEqual([
-      "past",
-      "now",
-    ]);
+    expect(Array.map(yield* store.readDue({ name }, 999, 10), (row) => row.idempotencyKey)).toEqual(
+      ["past", "now"],
+    );
     expect((yield* store.readDue({ name, ordered: true }, 999, 10))[0]?.idempotencyKey).toBe(
       "future",
     );
@@ -61,6 +61,7 @@ export const guardedSettlement = (store: OutboxBacking) =>
       Settlement.Dead({ attempts: 1, reason: "permanent", detail: "gone", atMs: 200 }),
     );
     const before = yield* store.list({ name });
+
     for (const entry of before) {
       for (const settlement of [
         delivered,
@@ -71,6 +72,7 @@ export const guardedSettlement = (store: OutboxBacking) =>
           OutboxUnavailable,
         );
     }
+
     expect(yield* store.list({ name })).toEqual(before);
   });
 
@@ -89,22 +91,27 @@ export const filteredReads = (store: OutboxBacking) =>
     );
     expect(yield* store.list({ name, state: "delivered" })).toEqual([]);
     expect(
-      (yield* store.list({ name, state: "pending", afterId: 0, limit: 1 })).map(
+      Array.map(
+        yield* store.list({ name, state: "pending", afterId: 0, limit: 1 }),
         (row) => row.idempotencyKey,
       ),
     ).toEqual(["a"]);
     expect(
-      (yield* store.list({ name, state: "pending", afterId: initial[0]!.id, limit: 1 })).map(
+      Array.map(
+        yield* store.list({ name, state: "pending", afterId: initial[0]!.id, limit: 1 }),
         (row) => row.idempotencyKey,
       ),
     ).toEqual(["c"]);
     expect(
-      (yield* store.list({
-        name,
-        state: "dead",
-        partitionId: "other",
-        afterId: initial[0]!.id,
-      })).map((row) => row.idempotencyKey),
+      Array.map(
+        yield* store.list({
+          name,
+          state: "dead",
+          partitionId: "other",
+          afterId: initial[0]!.id,
+        }),
+        (row) => row.idempotencyKey,
+      ),
     ).toEqual(["b"]);
     expect(yield* store.count({ name })).toBe(3);
     expect(yield* store.count({ name, state: "pending" })).toBe(2);
@@ -115,6 +122,7 @@ export const filteredReads = (store: OutboxBacking) =>
       yield* store.count({ name, state: "dead", partitionId: "other", dueBeforeMs: 100 }),
     ).toBe(1);
     expect(yield* store.count({ name, partitionId: "missing" })).toBe(0);
+
     for (const limit of [0, -1, 1.5, Infinity, NaN])
       expect(yield* store.list({ name, limit }).pipe(Effect.flip)).toBeInstanceOf(
         OutboxUnavailable,
@@ -139,6 +147,7 @@ export const boundedPruning = (store: OutboxBacking) =>
       { ...draft("alien"), name: "other" },
     ]);
     const entries = yield* store.list({ name });
+
     for (const entry of entries.slice(0, 3))
       yield* store.settle(entry.id, Settlement.Delivered({ attempts: 1, atMs: 100 }));
     yield* store.settle(
@@ -149,16 +158,20 @@ export const boundedPruning = (store: OutboxBacking) =>
     const alien = (yield* store.list({ name: "other" }))[0]!;
     yield* store.settle(alien.id, Settlement.Delivered({ attempts: 1, atMs: 100 }));
     const options: PruneOptions = { name, state: "delivered", settledBeforeMs: 200, limit: 2 };
+
     for (const invalid of [
       { ...options, limit: 0 },
       { ...options, limit: 1.5 },
       { ...options, limit: Infinity },
       { ...options, settledBeforeMs: NaN },
-      { ...options, state: "pending" as PruneOptions["state"] },
     ])
       expect(yield* store.prune(invalid).pipe(Effect.flip)).toBeInstanceOf(OutboxUnavailable);
+    // @ts-expect-error Pending rows must be protected even from untyped callers.
+    const pendingPrune = store.prune({ ...options, state: "pending" });
+
+    expect(yield* pendingPrune.pipe(Effect.flip)).toBeInstanceOf(OutboxUnavailable);
     expect(yield* Outbox.prune(options).pipe(Effect.provideService(OutboxStore, store))).toBe(2);
-    expect((yield* store.list({ name })).map((row) => row.idempotencyKey)).toEqual([
+    expect(Array.map(yield* store.list({ name }), (row) => row.idempotencyKey)).toEqual([
       "c",
       "dead",
       "boundary",
@@ -183,11 +196,13 @@ export const deadRequeue = (store: OutboxBacking) =>
       Settlement.Dead({ attempts: 3, reason: "attempts-exhausted", detail: "failed", atMs: 200 }),
     );
     yield* store.settle(initial[1]!.id, Settlement.Delivered({ attempts: 1, atMs: 200 }));
+
     for (const id of [999, initial[1]!.id, initial[2]!.id])
       expect(yield* store.requeue(id, { atMs: 500 }).pipe(Effect.flip)).toMatchObject({
         _tag: "OutboxUnavailable",
         operation: "requeue",
       });
+
     for (const atMs of [Infinity, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1])
       expect(yield* store.requeue(dead.id, { atMs }).pipe(Effect.flip)).toBeInstanceOf(
         OutboxUnavailable,
@@ -202,13 +217,12 @@ export const deadRequeue = (store: OutboxBacking) =>
       deadLetterReason: undefined,
       settledAtMs: undefined,
     });
-    expect((yield* store.readDue({ name }, 499, 10)).map((row) => row.idempotencyKey)).toEqual([
-      "pending",
-    ]);
-    expect((yield* store.readDue({ name }, 500, 10)).map((row) => row.idempotencyKey)).toEqual([
-      "dead",
-      "pending",
-    ]);
+    expect(Array.map(yield* store.readDue({ name }, 499, 10), (row) => row.idempotencyKey)).toEqual(
+      ["pending"],
+    );
+    expect(Array.map(yield* store.readDue({ name }, 500, 10), (row) => row.idempotencyKey)).toEqual(
+      ["dead", "pending"],
+    );
     expect(yield* store.enqueue([draft("dead", "changed")])).toEqual({ enqueued: 0, absorbed: 1 });
     expect(yield* store.requeue(dead.id, { atMs: 0 }).pipe(Effect.flip)).toBeInstanceOf(
       OutboxUnavailable,

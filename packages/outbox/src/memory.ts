@@ -120,13 +120,12 @@ function makeStore(): OutboxBacking {
       validateOptions("list", scope).pipe(
         Effect.andThen(
           Effect.sync(() =>
-            scoped(scope)
-              .filter(
-                (entry) =>
-                  (scope.state === undefined || entry.state === scope.state) &&
-                  (scope.afterId === undefined || entry.id > scope.afterId),
-              )
-              .slice(0, scope.limit),
+            Array.filter(
+              scoped(scope),
+              (entry) =>
+                (scope.state === undefined || entry.state === scope.state) &&
+                (scope.afterId === undefined || entry.id > scope.afterId),
+            ).slice(0, scope.limit),
           ),
         ),
       ),
@@ -135,6 +134,7 @@ function makeStore(): OutboxBacking {
         Effect.andThen(
           Effect.suspend(() => {
             const existing = entries.get(id);
+
             if (existing === undefined || existing.state !== "dead")
               return Effect.fail(
                 new OutboxUnavailable({
@@ -151,6 +151,7 @@ function makeStore(): OutboxBacking {
               deadLetterReason: undefined,
               settledAtMs: undefined,
             });
+
             return Effect.void;
           }),
         ),
@@ -159,18 +160,19 @@ function makeStore(): OutboxBacking {
       validatePrune(options).pipe(
         Effect.andThen(
           Effect.sync(() => {
-            const eligible = scoped({ name: options.name })
-              .filter(
-                (entry) =>
-                  entry.state === options.state &&
-                  entry.settledAtMs !== undefined &&
-                  entry.settledAtMs < options.settledBeforeMs,
-              )
-              .slice(0, options.limit);
+            const eligible = Array.filter(
+              scoped({ name: options.name }),
+              (entry) =>
+                entry.state === options.state &&
+                entry.settledAtMs !== undefined &&
+                entry.settledAtMs < options.settledBeforeMs,
+            ).slice(0, options.limit);
+
             for (const entry of eligible) {
               entries.delete(entry.id);
               identities.get(entry.name)?.delete(entry.idempotencyKey);
             }
+
             return eligible.length;
           }),
         ),
@@ -180,7 +182,8 @@ function makeStore(): OutboxBacking {
         Effect.andThen(
           Effect.sync(
             () =>
-              scoped(scope).filter(
+              Array.filter(
+                scoped(scope),
                 (entry) =>
                   (scope.state === undefined || entry.state === scope.state) &&
                   (scope.dueBeforeMs === undefined || entry.nextAttemptAtMs <= scope.dueBeforeMs),
