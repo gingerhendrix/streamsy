@@ -17,6 +17,7 @@ import {
   type OutboxBacking,
   type OutboxDraft,
   type EnqueueReport,
+  type PruneOptions,
 } from "./store.ts";
 
 export interface RetryPolicy {
@@ -307,3 +308,6 @@ export const drain = Effect.fn("Outbox.drain")(function* <Payload, Requirements 
     }),
   );
 });
+
+/** Delete at most limit settled entries, oldest id first. Pruned keys may enqueue again. */
+export const prune = (options: PruneOptions) => OutboxStore.use((store) => store.prune(options));

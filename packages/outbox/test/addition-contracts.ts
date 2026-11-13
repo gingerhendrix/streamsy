@@ -1,6 +1,9 @@
 import { Effect, Option } from "effect";
 import { expect } from "vitest";
 import {
+  Outbox,
+  OutboxStore,
+  type PruneOptions,
   Settlement,
   OutboxUnavailable,
   type OutboxBacking,
@@ -122,4 +125,50 @@ export const filteredReads = (store: OutboxBacking) =>
     expect(yield* store.count({ name, dueBeforeMs: Infinity }).pipe(Effect.flip)).toBeInstanceOf(
       OutboxUnavailable,
     );
+  });
+
+export const boundedPruning = (store: OutboxBacking) =>
+  Effect.gen(function* () {
+    yield* store.enqueue([
+      draft("a"),
+      draft("b"),
+      draft("c"),
+      draft("dead"),
+      draft("boundary"),
+      draft("pending"),
+      { ...draft("alien"), name: "other" },
+    ]);
+    const entries = yield* store.list({ name });
+    for (const entry of entries.slice(0, 3))
+      yield* store.settle(entry.id, Settlement.Delivered({ attempts: 1, atMs: 100 }));
+    yield* store.settle(
+      entries[3]!.id,
+      Settlement.Dead({ attempts: 1, reason: "permanent", detail: "gone", atMs: 100 }),
+    );
+    yield* store.settle(entries[4]!.id, Settlement.Delivered({ attempts: 1, atMs: 200 }));
+    const alien = (yield* store.list({ name: "other" }))[0]!;
+    yield* store.settle(alien.id, Settlement.Delivered({ attempts: 1, atMs: 100 }));
+    const options: PruneOptions = { name, state: "delivered", settledBeforeMs: 200, limit: 2 };
+    for (const invalid of [
+      { ...options, limit: 0 },
+      { ...options, limit: 1.5 },
+      { ...options, limit: Infinity },
+      { ...options, settledBeforeMs: NaN },
+      { ...options, state: "pending" as PruneOptions["state"] },
+    ])
+      expect(yield* store.prune(invalid).pipe(Effect.flip)).toBeInstanceOf(OutboxUnavailable);
+    expect(yield* Outbox.prune(options).pipe(Effect.provideService(OutboxStore, store))).toBe(2);
+    expect((yield* store.list({ name })).map((row) => row.idempotencyKey)).toEqual([
+      "c",
+      "dead",
+      "boundary",
+      "pending",
+    ]);
+    expect(yield* store.prune(options)).toBe(1);
+    expect(yield* store.prune(options)).toBe(0);
+    expect(yield* store.prune({ ...options, state: "dead" })).toBe(1);
+    expect(yield* store.count({ name: "other" })).toBe(1);
+    expect(yield* store.count({ name, state: "pending" })).toBe(1);
+    expect(yield* store.enqueue([draft("a")])).toEqual({ enqueued: 1, absorbed: 0 });
+    expect((yield* store.list({ name })).at(-1)?.id).toBeGreaterThan(alien.id);
   });

@@ -1,5 +1,5 @@
 import { Array, Effect, Layer, Option } from "effect";
-import { validateOptions } from "./validation.ts";
+import { validateOptions, validatePrune } from "./validation.ts";
 import { OutboxUnavailable } from "./errors.ts";
 import {
   OutboxStore,
@@ -128,6 +128,26 @@ function makeStore(): OutboxBacking {
               )
               .slice(0, scope.limit),
           ),
+        ),
+      ),
+    prune: (options) =>
+      validatePrune(options).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const eligible = scoped({ name: options.name })
+              .filter(
+                (entry) =>
+                  entry.state === options.state &&
+                  entry.settledAtMs !== undefined &&
+                  entry.settledAtMs < options.settledBeforeMs,
+              )
+              .slice(0, options.limit);
+            for (const entry of eligible) {
+              entries.delete(entry.id);
+              identities.get(entry.name)?.delete(entry.idempotencyKey);
+            }
+            return eligible.length;
+          }),
         ),
       ),
     count: (scope) =>

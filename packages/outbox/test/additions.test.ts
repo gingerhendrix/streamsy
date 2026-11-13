@@ -1,8 +1,14 @@
 import { test } from "vitest";
 import { withStore } from "./support.ts";
-import { dueTimes, guardedSettlement, filteredReads } from "./addition-contracts.ts";
+import {
+  dueTimes,
+  guardedSettlement,
+  filteredReads,
+  boundedPruning,
+} from "./addition-contracts.ts";
 
 for (const mode of ["memory", "sqlite"] as const) {
+  test(`${mode}: bounded pruning and reenqueuing`, () => withStore(mode, boundedPruning));
   test(`${mode}: filtered inspection and counts`, () => withStore(mode, filteredReads));
   test(`${mode}: settlement refuses missing and terminal entries`, () =>
     withStore(mode, guardedSettlement));

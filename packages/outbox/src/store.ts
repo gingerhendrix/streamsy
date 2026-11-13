@@ -69,6 +69,14 @@ export interface CountScope extends OutboxScope {
   readonly dueBeforeMs?: number;
 }
 
+/** Explicit, bounded retention. Pending entries are never eligible. */
+export interface PruneOptions {
+  readonly name: string;
+  readonly state: "delivered" | "dead";
+  readonly settledBeforeMs: number;
+  readonly limit: number;
+}
+
 /** The recorded outcome of one attempt. `attempts` is the new persisted count. */
 export type Settlement = Data.TaggedEnum<{
   Delivered: { readonly attempts: number; readonly atMs: number };
@@ -100,6 +108,7 @@ export interface OutboxBacking {
   readonly settle: (id: number, settlement: Settlement) => Effect.Effect<void, StoreFailure>;
   readonly list: (scope: ListScope) => Effect.Effect<readonly OutboxEntry[], StoreFailure>;
   readonly count: (scope: CountScope) => Effect.Effect<number, StoreFailure>;
+  readonly prune: (options: PruneOptions) => Effect.Effect<number, StoreFailure>;
 }
 
 export class OutboxStore extends Context.Service<OutboxStore, OutboxBacking>()(

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { PruneOptions } from "./store.ts";
 import { OutboxUnavailable } from "./errors.ts";
 
 /** Keep SQL and memory bounds identical; refuse unsafe numbers before a query. */
@@ -23,3 +24,17 @@ export function validateOptions(
     ? Effect.void
     : Effect.fail(new OutboxUnavailable({ operation, detail }));
 }
+
+export const validatePrune = (options: PruneOptions): Effect.Effect<void, OutboxUnavailable> =>
+  (options.state !== "delivered" && options.state !== "dead") ||
+  !Number.isSafeInteger(options.settledBeforeMs) ||
+  !Number.isSafeInteger(options.limit) ||
+  options.limit <= 0
+    ? Effect.fail(
+        new OutboxUnavailable({
+          operation: "prune",
+          detail:
+            "prune requires a delivered or dead state, safe integer settledBeforeMs and positive safe integer limit",
+        }),
+      )
+    : Effect.void;

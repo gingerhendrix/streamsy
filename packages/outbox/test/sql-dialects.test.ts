@@ -12,7 +12,12 @@ import { OutboxStore, Settlement, type OutboxBacking, type OutboxDraft } from ".
 import { layerSql, migrateOutbox } from "../src/sql.ts";
 import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./dialect-support.ts";
 
-import { dueTimes, guardedSettlement, filteredReads } from "./addition-contracts.ts";
+import {
+  dueTimes,
+  guardedSettlement,
+  filteredReads,
+  boundedPruning,
+} from "./addition-contracts.ts";
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
@@ -69,6 +74,14 @@ const withOutbox = <A, E>(
 for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`the ${dialect.name} outbox`, () => {
+    test(
+      "bounded pruning and reenqueuing",
+      async () => {
+        if (url === undefined) return;
+        await withOutbox(dialect, url, boundedPruning);
+      },
+      TIMEOUT_MS,
+    );
     test(
       "filtered inspection and counts",
       async () => {

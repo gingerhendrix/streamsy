@@ -14,5 +14,6 @@ export {
   type DueScope,
   type ListScope,
   type CountScope,
+  type PruneOptions,
   type EnqueueReport,
 } from "./store.ts";

@@ -12,7 +12,7 @@ import {
   type OutboxEntry,
 } from "./store.ts";
 
-import { validateOptions } from "./validation.ts";
+import { validateOptions, validatePrune } from "./validation.ts";
 
 const TABLE = "streamsy_outbox";
 
@@ -337,6 +337,23 @@ function makeStore(sql: SqlClient.SqlClient): OutboxBacking {
               ...(scope.afterId === undefined ? [] : [sql`id > ${scope.afterId}`]),
             ])} ORDER BY id ${scope.limit === undefined ? sql`` : sql`LIMIT ${scope.limit}`}`,
           ),
+        ),
+      ),
+    prune: (options) =>
+      validatePrune(options).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const eligible = sql`name = ${options.name} AND state = ${options.state} AND settled_at_ms < ${options.settledBeforeMs}`;
+            return changed(
+              "prune",
+              sql.onDialectOrElse({
+                mysql: () =>
+                  sql`DELETE FROM streamsy_outbox WHERE ${eligible} ORDER BY id LIMIT ${options.limit}`,
+                orElse: () => sql`DELETE FROM streamsy_outbox WHERE ${eligible} AND id IN
+          (SELECT id FROM streamsy_outbox WHERE ${eligible} ORDER BY id LIMIT ${options.limit})`,
+              }),
+            );
+          }),
         ),
       ),
     count: (scope) =>
