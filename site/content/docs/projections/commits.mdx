@@ -78,7 +78,7 @@ For the producer position of each output and the output rules, see [Output strea
 
 `Commit.atLeastOnce` pins the input ranges and recorded due time of the unit, runs the handler, and then saves the new offsets and any returned `wakeAt`. It fits `process`. When the handler or the last save fails, the next pass runs the same items again with the same `unit.key`.
 
-Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. A due unit's key includes its recorded due time: retries keep it, and different deadlines have different keys. Units without a due time retain their existing keys. For durable delivery of external effects, use an [outbox](/docs/outbox).
+Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. A due unit's key includes its recorded due time: retries keep it, and different deadlines have different keys. Units without a due time retain their existing keys. Set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](/docs/projections/process#timers) for a deferred retry or a snooze.
 
 ## Compensation
 

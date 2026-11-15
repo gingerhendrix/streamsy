@@ -33,8 +33,6 @@ export {
 
 export { alarmSlotLayer } from "./cloudflare/alarm.ts";
 
-export { OutboxWakeup } from "./cloudflare/outbox.ts";
-
 export { Placement };
 
 export {

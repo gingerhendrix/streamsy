@@ -1,13 +1,3 @@
 {
-  "pages": [
-    "index",
-    "streams",
-    "projections",
-    "outbox",
-    "storage",
-    "servers",
-    "reference",
-    "examples",
-    "..."
-  ]
+  "pages": ["index", "streams", "projections", "storage", "servers", "reference", "examples", "..."]
 }

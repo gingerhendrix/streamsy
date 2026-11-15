@@ -22,8 +22,6 @@ export {
 
 export { alarmSlotLayer } from "./cloudflare/alarm.ts";
 
-export { OutboxWakeup } from "./cloudflare/outbox.ts";
-
 export {
   ObjectStreams,
   type ObjectFetch,

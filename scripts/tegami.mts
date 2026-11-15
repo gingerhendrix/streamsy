@@ -66,7 +66,6 @@ const paper = tegami({
   },
   packages: {
     "@streamsy/core": { group: "streamsy" },
-    "@streamsy/outbox": { group: "streamsy" },
     "@streamsy/projection": { group: "streamsy" },
     "@streamsy/serve": { group: "streamsy" },
     "@streamsy/storage": { group: "streamsy" },

@@ -140,14 +140,6 @@ Pass `durable: false` to keep pending marks and binding backoff and stops in pri
 
 Only commits through this object's storage choose bindings. A projection with inputs on another object does not see their writes. To write a wake stream on another object, link that stream. See [Connect Durable Objects](/docs/servers/cloudflare/objects). For the projection itself, see [Attach](/docs/projections/run#attach) and [Commits](/docs/projections/commits).
 
-## Outbox
-
-`OutboxWakeup.make(definition, deliver, options)` from `@streamsy/serve/cloudflare` drains an [outbox](/docs/outbox) in alarm turns. `@streamsy/serve/alchemy` exports the same adapter. Its `next` is the due time of the next outbox entry. Its `run` is a drain pass in the same acquired context as requests. The object's `layer` must provide `OutboxStore` and the services of the delivery function.
-
-A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind the oldest pending retry in the selected scope. The default lets later due entries pass a future retry. With `partitionId`, the wakeup drains that partition only, and its name is `streamsy/outbox/<name>/<partition>`. Without it, the name is `streamsy/outbox/<name>` and the scope is the whole outbox name.
-
-Request drains and alarm drains share a permit when they use the same store object. A delivery function must not drain its own outbox name. Across store objects or processes, keep one owner for overlapping scopes, because the outbox acquires no distributed leases. See [Schedule the next pass](/docs/outbox#schedule-the-next-pass) and [`OutboxWakeup`](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup).
-
 ## Wake streams and alarms
 
 A wake stream and the alarm are different mechanisms. A [wake stream](/docs/streams/wake) is a Durable State stream that tells readers which source streams changed. The alarm is the host's scheduler for this object. Under `ProjectionWakeup.attach`, a `Projection.wake` binding writes its wake rows in an alarm turn. A reader of the wake stream reads it as any State stream, on any host.

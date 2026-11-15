@@ -1,6 +1,6 @@
 # Releasing Streamsy
 
-Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its five public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection`, `@streamsy/outbox` and `@streamsy/serve`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
+Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its four public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection` and `@streamsy/serve`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
 
 ## Release notes
 
@@ -23,7 +23,7 @@ packages:
 The remote client now resumes from the last offset it received.
 ```
 
-Use `patch`, `minor` or `major` in the frontmatter. The five packages share a version, so a note for one package bumps all five. Target `"group:streamsy"` when the note is about every package.
+Use `patch`, `minor` or `major` in the frontmatter. The four packages share a version, so a note for one package bumps all four. Target `"group:streamsy"` when the note is about every package.
 
 ### Write one note for each user-facing change
 

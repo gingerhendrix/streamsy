@@ -44,6 +44,4 @@ test("Cloudflare entries expose wakeups and the slot layer without the raw slot 
 
   for (const name of ["Alarm", "AlarmSlot", "alarmLayer", "alarm", "reconcileAlarm"])
     expect(Record.keys(alchemy)).not.toContain(name);
-
-  expect(alchemy.OutboxWakeup.make).toBeTypeOf("function");
 });

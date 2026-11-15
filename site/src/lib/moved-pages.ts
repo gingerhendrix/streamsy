@@ -30,12 +30,18 @@ export const movedPages = new Map([
   ["hosting/host-contract", "servers/process"],
   ["hosting/storage-adapter", "storage/adapter"],
   ["tutorial", "examples"],
-  ["projections/actions", "outbox"],
-  ["reference/serve/action", "reference/outbox/outbox"],
-  ["reference/serve/action-outbox", "reference/outbox/outbox"],
-  ["reference/serve/action-runtime", "reference/outbox/outbox"],
-  ["reference/serve/action-sql", "reference/outbox/sql"],
-  ["reference/serve/action-errors", "reference/outbox/errors"],
+  // The outbox was removed in Y10; the effects guide replaces these targets later.
+  ["outbox", "projections/commits"],
+  ["projections/actions", "projections/commits"],
+  ["reference/outbox/outbox", "reference/projection/commit"],
+  ["reference/outbox/sql", "reference/projection/commit"],
+  ["reference/outbox/memory", "reference/projection/commit"],
+  ["reference/outbox/errors", "reference/projection/commit"],
+  ["reference/serve/action", "reference/projection/commit"],
+  ["reference/serve/action-outbox", "reference/projection/commit"],
+  ["reference/serve/action-runtime", "reference/projection/commit"],
+  ["reference/serve/action-sql", "reference/projection/commit"],
+  ["reference/serve/action-errors", "reference/projection/commit"],
 ]);
 
 /**

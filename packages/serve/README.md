@@ -1,7 +1,7 @@
 # @streamsy/serve
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
-Node, Deno and Cloudflare host glue and outbox wakeups. Requires Effect
+Node, Deno and Cloudflare host glue and projection wakeups. Requires Effect
 `4.1.2`.
 
 ```ts
@@ -85,11 +85,10 @@ The Durable Object host does not get a stop signal and uses neither.
 | `/bun`        | `listener`, its options and defaults                                                                                                                               |
 | `/node`       | `listener`, its options and defaults                                                                                                                               |
 | `/deno`       | `listener`, its options and defaults; `nodeSqliteCompat`                                                                                                           |
-| `/cloudflare` | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`, `OutboxWakeup`                                                             |
-| `/alchemy`    | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`, `OutboxWakeup`                                                               |
+| `/cloudflare` | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`                                                                             |
+| `/alchemy`    | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`                                                                               |
 
 Seven physical entries expose the routes, contracts and runtime hosts.
-Outbox declarations, stores and delivery live in `@streamsy/outbox`.
 State/stream recovery is `replay-from-start`; state consumers clear their local
 collection before replay. Old sink headers and snapshot reset exports are gone.
 Fingerprints cover route/address metadata and an optional `contract` revision;
