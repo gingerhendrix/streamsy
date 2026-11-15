@@ -68,3 +68,5 @@ export {
 } from "./registry.ts";
 
 export type { WakeOutput } from "./wake.ts";
+
+export type { WakeAt } from "./wake-at.ts";

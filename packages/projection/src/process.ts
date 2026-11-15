@@ -17,7 +17,15 @@ import {
   type OutputsWithin,
 } from "./declaration.ts";
 import type { RoutedMap } from "./outputs.ts";
+import type { WakeAt } from "./wake-at.ts";
 import type { Unit } from "./unit.ts";
+
+/** void unless the handler result can be a WakeAt. */
+type TimerResult<A> = 0 extends 1 & A
+  ? void
+  : [Extract<A, WakeAt>] extends [never]
+    ? void
+    : void | WakeAt;
 
 /** The third argument of `process`. */
 export interface ProcessContext<Prepared = void> {
@@ -45,9 +53,10 @@ export function process<
   W extends WakeOutput | undefined = undefined,
   HE = never,
   HR = never,
+  A = void,
 >(
   definition: Common<C, I, W, HE, HR> &
-    Committing<AcceptedResult<void, W>, P, Q> & {
+    Committing<AcceptedResult<TimerResult<A>, W>, P, Q> & {
       readonly outputs?: never;
       readonly prepare?: (
         batch: Slices<Addresses<I>>,
@@ -57,9 +66,21 @@ export function process<
         batch: Slices<Addresses<I>>,
         unit: Unit<StreamRoute.Params<C>>,
         context: ProcessContext<Prepared>,
-      ) => Effect.Effect<void, E, R>;
+      ) => Effect.Effect<A, E, R>;
     },
-): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR, never, AcceptedServices<W>, HE, HR>;
+): RunningDeclaration<
+  C,
+  I,
+  E | PE,
+  R,
+  TimerResult<A>,
+  P,
+  Q | PR,
+  never,
+  AcceptedServices<W>,
+  HE,
+  HR
+>;
 // The outputs overload is last, so the compiler reports a mistake in `outputs` against it.
 export function process<
   C extends StreamRoute.ParamCodecs,
@@ -74,9 +95,10 @@ export function process<
   W extends WakeOutput | undefined = undefined,
   HE = never,
   HR = never,
+  A = void,
 >(
   definition: Common<C, I, W, HE, HR> &
-    Committing<AcceptedResult<void, W>, SqlClient.SqlClient, Q> & {
+    Committing<AcceptedResult<TimerResult<A>, W>, SqlClient.SqlClient, Q> & {
       readonly outputs: O & OutputsWithin<C, O>;
       readonly prepare?: (
         batch: Slices<Addresses<I>>,
@@ -87,7 +109,7 @@ export function process<
         batch: Slices<Addresses<I>>,
         unit: Unit<StreamRoute.Params<C>>,
         context: ProcessContext<Prepared> & OutputsContext<O>,
-      ) => Effect.Effect<void, E, R>;
+      ) => Effect.Effect<A, E, R>;
     },
 ): OutputDeclaration<
   C,
@@ -95,7 +117,7 @@ export function process<
   O,
   E | PE,
   R,
-  void,
+  TimerResult<A>,
   SqlClient.SqlClient,
   Q | PR,
   never,

@@ -11,6 +11,7 @@ import {
   Projection,
   Transaction,
   type Folded,
+  type WakeAt,
   type Emitted,
   type Accumulated,
 } from "@streamsy/projection";
@@ -122,7 +123,7 @@ const directCompensation = Commit.withCompensation(Commit.transaction, () => Eff
 
 const voidCompensation = Commit.atLeastOnce.pipe(
   Commit.withCompensation((result, _cause, unit) => {
-    const value: void = result;
+    const value: void | WakeAt = result;
     const key: string = unit.key;
     void key;
 
@@ -132,7 +133,9 @@ const voidCompensation = Commit.atLeastOnce.pipe(
 
 export type CompensationChecks = [
   Assert<Same<typeof compensation, typeof directCompensation>>,
-  Assert<Same<typeof voidCompensation, Commit.Commit<void, never, CheckpointStore | Audit>>>,
+  Assert<
+    Same<typeof voidCompensation, Commit.Commit<void | WakeAt, never, CheckpointStore | Audit>>
+  >,
 ];
 
 const badCompensation = Commit.atLeastOnce.pipe(

@@ -5,6 +5,7 @@ import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
 import { acceptedKey, validateAccepted } from "./accepted.ts";
+import type { WakeAt } from "./wake-at.ts";
 import type { WakeOutput } from "./wake.ts";
 import { supportsPrepare } from "./commit/range.ts";
 import * as Commit from "./commit.ts";
@@ -86,7 +87,9 @@ export type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accep
 export type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Commit.Folded<infer A>
     ? Commit.Accumulated<A, {}>
-    : Commit.Emitted<{}>
+    : Result extends WakeAt
+      ? Commit.Emitted<{}> & Pick<WakeAt, "wakeAt">
+      : Commit.Emitted<{}>
   : Result;
 
 /** Binding retry timing and budget, shared by both attach hosts. */

@@ -1,11 +1,12 @@
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
 import { Effect } from "effect";
+import type { WakeAt } from "../wake-at.ts";
 import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
 import { beforeRecord, detailsOf, load, remove, pin } from "./internal.ts";
 
 export const atLeastOnce = pin(
-  make<void, never, CheckpointStore>({
+  make<void | WakeAt, never, CheckpointStore>({
     name: "atLeastOnce",
     guarantee: "at-least-once",
     load,

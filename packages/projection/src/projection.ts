@@ -52,3 +52,5 @@ export {
   type RunnerStatus,
   type RunnerFailure,
 } from "./registry.ts";
+
+export { wakeAt, type WakeAt } from "./wake-at.ts";

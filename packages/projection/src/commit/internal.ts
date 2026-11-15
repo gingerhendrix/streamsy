@@ -5,10 +5,12 @@ import type { StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, Writer } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
 import type { Commit, Pending, Folded, Emitted, Accumulated, OutputNames } from "./model.ts";
+import type { WakeAt } from "../wake-at.ts";
 import type { PinnedRange } from "../unit.ts";
 
 export type Result =
   | void
+  | WakeAt
   | Folded<unknown>
   | Emitted<OutputNames>
   | Accumulated<unknown, OutputNames>;
