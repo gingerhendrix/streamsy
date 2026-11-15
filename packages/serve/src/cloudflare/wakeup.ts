@@ -50,8 +50,8 @@ export interface Wakeup<R = never> {
   /** Timing only. The runner calls the schedule once per failed pass with no input. */
   readonly retry?: Schedule.Schedule<unknown>;
   /**
-   * Units of work that failed and wait on their own backoff, for `status`.
-   * A durable `ProjectionWakeup` counts its deferred bindings here.
+   * Units of work that failed and await another attempt, for `status`.
+   * A durable `ProjectionWakeup` counts retry-due, backing-off and stopped marks here.
    */
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
   /** Called once at acquire, before the initial alarm reconciliation. */
@@ -114,7 +114,7 @@ export class Wakeups extends Context.Service<
         readonly failures: number;
         /** The backoff floor. The wakeup does not run before this instant. */
         readonly retryAt: Option.Option<number>;
-        /** Units that wait on their own backoff, such as failed projection bindings. */
+        /** Units awaiting another attempt after failure, including stopped projection marks. */
         readonly deferred: number;
       }>
     >;

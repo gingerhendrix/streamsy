@@ -521,7 +521,7 @@ same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 | `next`     | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, in durable mode, the earliest due time of the marks. `None` when no binding has work |
 | `run`      | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                                 |
 | `retry`    | `options.retry`, or the `ProjectionRetry` schedule                                                                                                                                |
-| `deferred` | The number of bindings whose marks wait on their own backoff after a failure. It is always `0` when `durable` is `false`                                                          |
+| `deferred` | The sum of retry-due, backing-off and stopped marks after a binding failure. It is always `0` when `durable` is `false`                                                           |
 
 ## Reads
 

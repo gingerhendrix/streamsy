@@ -63,6 +63,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           fresh: 0,
           retryDue: 0,
           backingOff: 0,
+          stopped: 0,
           nextDueAt: Option.none(),
         }),
       );
@@ -114,6 +115,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             fresh: 0,
             retryDue: 0,
             backingOff: 0,
+            stopped: 0,
             nextDueAt: Option.none(),
           }),
         );
@@ -142,8 +144,16 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         yield* Deferred.await(entered);
         const marks = yield* ProjectionMarks;
         yield* Effect.orDie(marks.mark("counts", ["fresh"]));
-        yield* marks.defer("counts", "due", 1, 0);
-        yield* marks.defer("counts", "later", 2, 1_000);
+        yield* marks.fail("counts", "due", {
+          attempts: 1,
+          dueAt: Option.some(0),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
+        yield* marks.fail("counts", "later", {
+          attempts: 2,
+          dueAt: Option.some(1_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
         const status = only(yield* registry.status);
         expect(status.active).toBe(1);
         expect(status.marks).toEqual(
@@ -151,6 +161,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             fresh: 2,
             retryDue: 1,
             backingOff: 1,
+            stopped: 0,
             nextDueAt: Option.some(0),
           }),
         );
@@ -469,6 +480,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
               fresh: 0,
               retryDue: 0,
               backingOff: 0,
+              stopped: 0,
               nextDueAt: Option.none(),
             }),
           );

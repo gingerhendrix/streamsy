@@ -137,7 +137,11 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       const registry = yield* Projection.Registry;
       const pull = yield* Stream.toPull(registry.events);
       const marks = yield* ProjectionMarks;
-      yield* marks.defer(declaration.id, key, 3, 60_000);
+      yield* marks.fail(declaration.id, key, {
+        attempts: 3,
+        dueAt: Option.some(60_000),
+        failure: { at: 1, reason: Option.none(), message: "failed" },
+      });
       yield* Layer.build(Projection.attach(declaration, { durable: true }));
       yield* registry.retry(declaration);
       const event = (yield* pull)[0];

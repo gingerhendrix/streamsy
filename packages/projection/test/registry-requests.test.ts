@@ -207,8 +207,16 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         );
 
         const marks = yield* ProjectionMarks;
-        yield* marks.defer(declaration.id, '{"id":"a"}', 3, 60_000);
-        yield* marks.defer(declaration.id, '{"id":"b"}', 2, 60_000);
+        yield* marks.fail(declaration.id, '{"id":"a"}', {
+          attempts: 3,
+          dueAt: Option.some(60_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
+        yield* marks.fail(declaration.id, '{"id":"b"}', {
+          attempts: 2,
+          dueAt: Option.some(60_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
         yield* Layer.build(Projection.attach(declaration, { durable: true }));
         const registry = yield* Projection.Registry;
         expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(1);

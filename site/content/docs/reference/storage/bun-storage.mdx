@@ -192,14 +192,21 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       seq: number,
     ) => Effect.Effect<void, StorageFault>;
     readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
-    readonly defer: (
+    readonly fail: (
       projection: string,
       params: string,
-      attempts: number,
-      dueAt: number,
+      options: {
+        readonly attempts: number;
+        readonly failure: MarkFailure;
+        readonly dueAt: Option.Option<number>;
+      },
     ) => Effect.Effect<void, StorageFault>;
-    readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
     readonly retry: (projection: string, params?: string) => Effect.Effect<number, StorageFault>;
+    readonly resume: (projection: string) => Effect.Effect<number, StorageFault>;
+    readonly failed: (
+      projection: string,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMark>, StorageFault>;
   }
 > {}
 
@@ -208,6 +215,7 @@ interface ProjectionMarkSummary {
   readonly fresh: number;
   readonly retryDue: number;
   readonly backingOff: number;
+  readonly stopped: number;
   readonly nextDueAt: Option.Option<number>;
 }
 
@@ -217,12 +225,21 @@ interface PendingMark {
   readonly seq: number;
   readonly attempts: number;
   readonly dueAt: number;
+  readonly stopped: boolean;
+  readonly failure: Option.Option<MarkFailure>;
+}
+
+interface MarkFailure {
+  readonly at: number;
+  readonly reason: Option.Option<string>;
+  readonly message: string;
 }
 // ---cut-after---
 same<OwnerRecords, Internal.OwnerRecords>(true);
 same<CommitHooks, Internal.CommitHooks>(true);
 same<ProjectionMarks, Internal.ProjectionMarks>(true);
 same<PendingMark, Internal.PendingMark>(true);
+same<MarkFailure, Internal.MarkFailure>(true);
 same<ProjectionMarkSummary, Internal.ProjectionMarkSummary>(true);
 ```
 
@@ -230,5 +247,9 @@ The rules for these services are those of [`SqlStorage`](/docs/reference/storage
 
 `ProjectionMarks.mark` runs inside the commit hook and fails with `SqlError`; the other mark operations fail with `StorageFault`.
 
-- `summary(projection, now)` returns disjoint counts of fresh marks, failed marks due now, and failed marks backing off, plus the earliest due time across all marks.
-- `retry(projection, params?)` makes failed marks due now, preserving attempts and sequence numbers; it returns the number changed and can select one binding by its canonical params.
+- `summary(projection, now)` returns four disjoint counts: fresh, retry due, backing off and stopped. Its earliest due time excludes stopped marks, as do `nextDue` and `due`.
+- `mark` raises the sequence without changing attempts, due time, stop or failure. `fail(projection, params, { attempts, failure, dueAt })` preserves the sequence, inserts an absent mark, and records the failure with its message cut to 1,000 characters. `Some(dueAt)` backs off; `None` stops.
+- `clear` deletes on a matching sequence; a moved sequence keeps the row but resets attempts, due time, stop and failure.
+- `retry(projection, params?)` makes failed or stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed; a repeat before the marks run returns zero. It can select one binding by canonical params.
+- `resume(projection)` makes only stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed.
+- `failed(projection, limit)` lists at most `limit` marks with failed attempts, stopped first, then by due time and params. The old marks-level `deferred` count is `summary.retryDue + summary.backingOff + summary.stopped`.

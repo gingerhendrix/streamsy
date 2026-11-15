@@ -120,6 +120,9 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 - Only files in the current storage format are accepted. Older Streamsy files,
   including those from earlier 0.4 builds, and newer unknown schemas are
   rejected without being changed. Use a fresh database path.
+- Opening a schema version 2 database upgrades it to version 3, adding explicit
+  stops and last-failure fields to projection marks. Sequence numbers, attempts
+  and due times survive the upgrade. A schema version 2 release cannot reopen it.
 - Stream ids are limited to 512 characters, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
 - Projection checkpoint keys have no length limit. MySQL stores 512 key

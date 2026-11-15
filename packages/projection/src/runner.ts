@@ -466,7 +466,18 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           const attempts = (state?.attempts ?? 0) + 1;
           const delay = deferDelay(attempts);
           const dueAt = (yield* Clock.currentTimeMillis) + delay;
-          yield* store.defer(id, key, attempts, dueAt);
+          yield* store.fail(id, key, {
+            attempts,
+            dueAt: Option.some(dueAt),
+            failure: {
+              at: dueAt - delay,
+              reason: Cause.findErrorOption(exit.cause).pipe(
+                Option.filter(Schema.is(ProjectionFault)),
+                Option.map((fault) => fault.reason),
+              ),
+              message: Cause.pretty(exit.cause),
+            },
+          });
 
           if (publish !== undefined)
             yield* publish(
@@ -565,7 +576,14 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           marks: summary,
         };
       }),
-      deferred: marks === undefined ? Effect.succeed(0) : marks.deferred(declaration.id),
+      deferred:
+        marks === undefined
+          ? Effect.succeed(0)
+          : Effect.gen(function* () {
+              const summary = yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis);
+
+              return summary.retryDue + summary.backingOff + summary.stopped;
+            }),
     };
   });
 };

@@ -161,9 +161,10 @@ export const makeBoundary = (
         writeMarks((table) => Marks.clear(table, projection, params, seq)),
       remove: (projection, params) =>
         writeMarks((table) => Marks.remove(table, projection, params)),
-      defer: (projection, params, attempts, dueAt) =>
-        writeMarks((table) => Marks.defer(table, projection, params, attempts, dueAt)),
-      deferred: (projection) => readMarks((table) => Marks.deferred(table, projection)),
+      fail: (projection, params, options) =>
+        writeMarks((table) => Marks.fail(table, projection, params, options)),
+      resume: (projection) => writeMarks((table) => Marks.resume(table, projection)),
+      failed: (projection, limit) => readMarks((table) => Marks.failed(table, projection, limit)),
       retry: (projection, params) => writeMarks((table) => Marks.retry(table, projection, params)),
     });
 

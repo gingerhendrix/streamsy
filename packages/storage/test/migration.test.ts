@@ -5,6 +5,7 @@ import { expect, test } from "vitest";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import { SqlClient as SqlClientTag } from "effect/sql";
+import { ProjectionMarks } from "@streamsy/core/internal";
 import { BunStorage } from "@streamsy/storage/bun";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { migrate } from "../src/migrations.ts";
@@ -131,6 +132,53 @@ test("upgrades a nonempty v1 database to the current version", async () => {
       .query("SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_pending'")
       .get(),
   ).toEqual({ name: "streamsy_projection_pending" });
+  upgraded.close(false);
+});
+
+test("public Bun acquisition upgrades v2 marks without changing seq, attempts or dueAt", async () => {
+  const path = filename("reopen-v2");
+  const db = new Database(path, { create: true });
+  db.run(
+    `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
+  );
+
+  for (const migration of STORAGE_MIGRATIONS.slice(0, 2))
+    for (const statement of migration.sqlite) db.run(statement);
+  db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (1, 1), (2, 2)`);
+  db.run("INSERT INTO streamsy_projection_pending VALUES ('kept', 'a', 7, 3, 1234567890123)");
+  db.close(false);
+
+  const row = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* Layer.build(
+          BunStorage.layerProtocol({ client: { filename: path } }),
+        );
+
+        return (yield* Context.get(context, ProjectionMarks).read("kept", ["a"])).get("a");
+      }),
+    ),
+  );
+
+  expect(row).toEqual({
+    params: "a",
+    seq: 7,
+    attempts: 3,
+    dueAt: 1234567890123,
+    stopped: false,
+    failure: Option.none(),
+  });
+  const upgraded = new Database(path, { readonly: true });
+  expect(
+    upgraded.query(`SELECT MAX(version) AS version FROM ${STORAGE_VERSION_TABLE}`).get(),
+  ).toEqual({ version: 3 });
+  expect(
+    upgraded
+      .query(
+        "SELECT stopped, failed_at, failure_reason, failure_message FROM streamsy_projection_pending",
+      )
+      .get(),
+  ).toEqual({ stopped: 0, failed_at: null, failure_reason: null, failure_message: null });
   upgraded.close(false);
 });
 

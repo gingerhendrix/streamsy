@@ -397,7 +397,11 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     Effect.gen(function* () {
       const marks = yield* ProjectionMarks;
       const id = "durable-deadline-floor";
-      yield* marks.defer(id, '{"id":"a"}', 4, 60_000);
+      yield* marks.fail(id, '{"id":"a"}', {
+        attempts: 4,
+        dueAt: Option.some(60_000),
+        failure: { at: 1, reason: Option.none(), message: "failed" },
+      });
       let broken = true;
       const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
       let armed = Option.none<number>();

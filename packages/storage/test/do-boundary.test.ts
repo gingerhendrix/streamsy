@@ -118,11 +118,53 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
       outcome: "Applied",
       present: true,
       capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
+      marksContractPassed: true,
       markSummaries: {
-        empty: { fresh: 0, retryDue: 0, backingOff: 0, nextDueAt: null },
-        mixed: { fresh: 1, retryDue: 2, backingOff: 1, nextDueAt: 0 },
-        allDue: { fresh: 0, retryDue: 3, backingOff: 0, nextDueAt: 2_000 },
+        empty: { fresh: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: null },
+        mixed: { fresh: 1, retryDue: 2, backingOff: 1, stopped: 0, nextDueAt: 0 },
+        allDue: { fresh: 0, retryDue: 3, backingOff: 0, stopped: 0, nextDueAt: 2_000 },
       },
     },
   });
+});
+
+test("Durable Object acquisition upgrades v2 marks and can reopen v3", async () => {
+  const root = mkdtempSync(".streamsy-storage-upgrade-");
+
+  const built = await Bun.build({
+    entrypoints: [join(import.meta.dirname, "support/do-worker.ts")],
+    outdir: join(root, "bundle"),
+    target: "browser",
+    format: "esm",
+    external: ["cloudflare:workers"],
+  });
+
+  expect(built.success).toBe(true);
+
+  const miniflare = new Miniflare({
+    scriptPath: built.outputs[0]!.path,
+    modules: true,
+    compatibilityDate: "2026-08-06",
+    durableObjects: { STORAGE: { className: "StorageObject", useSQLite: true } },
+    durableObjectsPersist: join(root, "state"),
+  });
+
+  open.push({ miniflare, root });
+  await miniflare.ready;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await miniflare.dispatchFetch("http://storage.test/upgrade");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      version: 3,
+      row: {
+        params: "a",
+        seq: 7,
+        attempts: 3,
+        dueAt: 1234567890123,
+        stopped: false,
+        failure: { _id: "Option", _tag: "None" },
+      },
+    });
+  }
 });

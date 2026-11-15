@@ -19,6 +19,7 @@ export {
 
 export {
   ProjectionMarks,
+  type MarkFailure,
   type PendingMark,
   type ProjectionMarkSummary,
   type ProjectionMarksApi,
@@ -26,3 +27,5 @@ export {
 
 /** The parameter names from the route grammar, shared with projection binding. */
 export { compileSegments } from "../toolkit/route-internal.ts";
+
+export { memoryProjectionMarks } from "../storage/memory/marks.ts";

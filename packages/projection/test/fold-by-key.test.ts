@@ -649,7 +649,8 @@ for (const durable of [true, false]) {
           expect(yield* eventually(readGood, (events) => events.length === 1)).toHaveLength(1);
           expect(attempts).toBeGreaterThan(0);
 
-          if (durable) expect(yield* (yield* ProjectionMarks).deferred(declaration.id)).toBe(1);
+          if (durable)
+            expect((yield* (yield* ProjectionMarks).failed(declaration.id, 1_000)).length).toBe(1);
           fixed = true;
           yield* TestClock.adjust("1 second");
           expect(yield* eventually(readGood, (events) => events.length === 2)).toHaveLength(2);

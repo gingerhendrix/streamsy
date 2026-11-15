@@ -2,10 +2,11 @@
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Effect, Layer, ManagedRuntime, Option } from "effect";
-import { Storage, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { CommitBoundary, Storage, StreamId, ZERO_OFFSET } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../../src/boundary.ts";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { STORAGE_MIGRATIONS, STORAGE_VERSION_TABLE_DDL } from "../../src/schema.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
 import {
   finishOwnerCleanupProof,
@@ -13,6 +14,11 @@ import {
   runBoundaryScenarios,
   runExternalRepair,
 } from "./storage-boundary-scenarios.ts";
+
+import {
+  projectionMarksContract,
+  projectionMarksTransactionContract,
+} from "../../../core/src/testing/projection-marks-contract.ts";
 
 interface ObjectId {
   readonly toString: () => string;
@@ -27,7 +33,11 @@ interface Env {
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
-    return env.STORAGE.get(env.STORAGE.idFromName("batch-b")).fetch(request.url);
+    return env.STORAGE.get(
+      env.STORAGE.idFromName(
+        new URL(request.url).pathname === "/upgrade" ? "migration" : "batch-b",
+      ),
+    ).fetch(request.url);
   },
 };
 
@@ -46,7 +56,44 @@ export class StorageObject {
     return layerWithTestProbe({ repairIntervalMs }, probe).pipe(Layer.provideMerge(client));
   }
 
-  async fetch(): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === "/upgrade") {
+      const sql = this.#ctx.storage.sql;
+
+      if (
+        sql.exec("SELECT name FROM sqlite_master WHERE name = 'streamsy_schema'").toArray()
+          .length === 0
+      ) {
+        sql.exec(STORAGE_VERSION_TABLE_DDL.sqlite);
+
+        for (const migration of STORAGE_MIGRATIONS.slice(0, 2))
+          for (const statement of migration.sqlite) sql.exec(statement);
+        sql.exec("INSERT INTO streamsy_schema VALUES (1, 1), (2, 2)");
+        sql.exec(
+          "INSERT INTO streamsy_projection_pending VALUES ('kept', 'a', 7, 3, 1234567890123)",
+        );
+      }
+
+      const runtime = ManagedRuntime.make(
+        DurableObjectStorage.layerProtocol({ client: { storage: this.#ctx.storage } }),
+      );
+
+      const row = await runtime.runPromise(
+        Effect.gen(function* () {
+          const marks = yield* ProjectionMarks;
+
+          return (yield* marks.read("kept", ["a"])).get("a");
+        }),
+      );
+
+      await runtime.dispose();
+
+      return Response.json({
+        row,
+        version: sql.exec("SELECT MAX(version) AS version FROM streamsy_schema").one().version,
+      });
+    }
+
     const boundaryProbe = makeBoundaryTestProbe();
     boundaryProbe.repairsPaused = true;
     const boundaryRuntime = ManagedRuntime.make(this.#layer(60_000, boundaryProbe));
@@ -100,13 +147,32 @@ export class StorageObject {
 
         const empty = yield* summary(3_000);
         yield* Effect.orDie(marks.mark("summary", ["fresh"]));
-        yield* marks.defer("summary", "past", 1, 2_000);
-        yield* marks.defer("summary", "now", 2, 3_000);
-        yield* marks.defer("summary", "future", 3, 4_000);
-        yield* marks.defer("other", "future", 1, 5_000);
+        yield* marks.fail("summary", "past", {
+          attempts: 1,
+          dueAt: Option.some(2_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
+        yield* marks.fail("summary", "now", {
+          attempts: 2,
+          dueAt: Option.some(3_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
+        yield* marks.fail("summary", "future", {
+          attempts: 3,
+          dueAt: Option.some(4_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
+        yield* marks.fail("other", "future", {
+          attempts: 1,
+          dueAt: Option.some(5_000),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
         const mixed = yield* summary(3_000);
         yield* marks.remove("summary", "fresh");
         const allDue = yield* summary(4_000);
+
+        yield* projectionMarksContract(marks);
+        yield* projectionMarksTransactionContract(marks, yield* CommitBoundary);
 
         const outcome = yield* storage.mutate({
           operations: [
@@ -128,6 +194,7 @@ export class StorageObject {
           present: Option.isSome(yield* storage.record(StreamId.make("exported-entry"))),
           capabilities: storage.capabilities,
           markSummaries: { empty, mixed, allDue },
+          marksContractPassed: true,
         };
       }),
     );

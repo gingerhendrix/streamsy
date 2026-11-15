@@ -167,9 +167,18 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         });
 
         const marks = yield* ProjectionMarks;
-        yield* marks.defer(id, keyA, 3, 0);
+        yield* marks.fail(id, keyA, {
+          attempts: 3,
+          dueAt: Option.some(0),
+          failure: { at: 1, reason: Option.none(), message: "failed" },
+        });
 
-        if (request === "retry") yield* marks.defer(id, keyB, 4, 60_000);
+        if (request === "retry")
+          yield* marks.fail(id, keyB, {
+            attempts: 4,
+            dueAt: Option.some(60_000),
+            failure: { at: 1, reason: Option.none(), message: "failed" },
+          });
         let broken = true;
         yield* Layer.build(
           Projection.attach(declaration, { durable: true, retry: Schedule.spaced("1 second") }),

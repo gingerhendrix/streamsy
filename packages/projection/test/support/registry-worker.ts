@@ -153,12 +153,11 @@ const app = Layer.mergeAll(
     "GET",
     "/defer",
     Effect.gen(function* () {
-      yield* (yield* ProjectionMarks).defer(
-        declaration.id,
-        '{"id":"a"}',
-        4,
-        (yield* Clock.currentTimeMillis) + 60_000,
-      );
+      yield* (yield* ProjectionMarks).fail(declaration.id, '{"id":"a"}', {
+        attempts: 4,
+        dueAt: Option.some((yield* Clock.currentTimeMillis) + 60_000),
+        failure: { at: 1, reason: Option.none(), message: "failed" },
+      });
       yield* (yield* Wakeups).reconcile;
 
       return HttpServerResponse.text("deferred");

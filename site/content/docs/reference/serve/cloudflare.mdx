@@ -305,7 +305,7 @@ same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 | `next`     | The next due time in epoch milliseconds, or `None` when there is no work                                       |
 | `run`      | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
 | `retry`    | Timing only. The runner calls the schedule once per failed pass with no input                                  |
-| `deferred` | The number of units that failed and wait on their own backoff. Without it, `status` reports `0`                |
+| `deferred` | The number of failed units awaiting another attempt, including stopped units. Without it, `status` reports `0` |
 | `bind`     | Receives the wakeup's host once at acquisition, before the initial alarm reconciliation                        |
 | `changed`  | Runs after a run or failed deadline read updates the host's retry state                                        |
 
