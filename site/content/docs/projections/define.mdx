@@ -28,19 +28,19 @@ export const orderTotalsProjection = orderTotals.at({});
 
 A declaration is inert. It reads and writes nothing. `orderTotals.at({})` binds the parameters and returns a bound projection, and a runner takes the bound projection. See [Run a projection](/docs/projections/run).
 
-| Field        | Value                                                                                                                                                                                              |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | The projection name. It is part of the checkpoint record key                                                                                                                                       |
-| `version`    | A whole number, default 1. It is part of the record key and of the producer id of the outputs, so a new version starts a new record from the start of each input                                   |
-| `generation` | A whole number, default 1. It is part of the record key and is the producer epoch of the outputs. See [Checkpoints and generations](/docs/projections/checkpoints)                                 |
-| `params`     | The parameter codecs, keyed by parameter name. `{}` for none. See [Parameters and binding](#parameters-and-binding)                                                                                |
-| `inputs`     | A record of stream classes or fixed addresses. See [Inputs](#inputs)                                                                                                                               |
-| `outputs`    | Required for `emit`, `mapAccum`, and `mapAccumBatch`, and not accepted by the others. A record of JSON or State stream classes or fixed addresses. See [Output streams](/docs/projections/outputs) |
-| `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                                 |
-| `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)               |
-| `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)                                        |
-| `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                        |
-| The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                                 |
+| Field        | Value                                                                                                                                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | The projection name. It is part of the checkpoint record key                                                                                                                                 |
+| `version`    | A whole number, default 1. It is part of the record key and of the producer id of the outputs, so a new version starts a new record from the start of each input                             |
+| `generation` | A whole number, default 1. It is part of the record key and is the producer epoch of the outputs. See [Checkpoints and generations](/docs/projections/checkpoints)                           |
+| `params`     | The parameter codecs, keyed by parameter name. `{}` for none. See [Parameters and binding](#parameters-and-binding)                                                                          |
+| `inputs`     | A record of stream classes or fixed addresses. See [Inputs](#inputs)                                                                                                                         |
+| `outputs`    | Required for `emit`, `mapAccum`, and `mapAccumBatch`; optional for transactional `process`. JSON or State stream classes or fixed addresses. See [Output streams](/docs/projections/outputs) |
+| `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                           |
+| `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)         |
+| `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)                                  |
+| `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                  |
+| The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                           |
 
 `Projection.wake` takes `input` and `output` in place of `inputs`, `outputs`, `commit`, and a handler. See [Wake streams](/docs/streams/wake#write-rows).
 
@@ -123,13 +123,13 @@ Each constructor takes its handler in a field with the name of the constructor.
 
 `process` must return an Effect. The other handlers return the result, or an Effect of it. An entry handler runs over the entries of the unit in order, and each call gets the value that the call before it returned.
 
-| Argument  | Contents                                                                                                                                                                   |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entry`   | `{ input, item, index }`. `input` is the input name, `item` is the decoded item, and `index` is the position of the entry in the whole unit                                |
-| `batch`   | One slice for each input, with `from`, `items`, optional `offsets`, `nextOffset`, `upToDate`, and `closed`. A slice of an input that is gone also has `gone: true`         |
-| `unit`    | `projectionId`, `version`, `generation`, `params`, `ranges`, `due`, and `key`                                                                                              |
-| `state`   | The current value. The first call of a unit gets the stored value, or `initial` when no value is stored                                                                    |
-| `context` | `{ prepared }`, the result of `prepare`. A declaration with `outputs` also gets `outputs`, the bound output addresses. See [Tables and effects](/docs/projections/process) |
+| Argument  | Contents                                                                                                                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `entry`   | `{ input, item, index }`. `input` is the input name, `item` is the decoded item, and `index` is the position of the entry in the whole unit                        |
+| `batch`   | One slice for each input, with `from`, `items`, optional `offsets`, `nextOffset`, `upToDate`, and `closed`. A slice of an input that is gone also has `gone: true` |
+| `unit`    | `projectionId`, `version`, `generation`, `params`, `ranges`, `due`, and `key`                                                                                      |
+| `state`   | The current value. The first call of a unit gets the stored value, or `initial` when no value is stored                                                            |
+| `context` | `{ prepared, attempt }`: the prepared result and run attempt. With `outputs`, also the bound output addresses. See [Tables and effects](/docs/projections/process) |
 
 For local inputs, `batch.input.offsets[i]` and `entry.offset` are the storage offset of the corresponding item. A read from `entry.offset` resumes after that entry; the last offset of a non-empty local slice equals its `nextOffset`. Non-empty HTTP reads have `offsets` undefined and omit `entry.offset`, because HTTP provides page boundaries only. All empty slices have `offsets: []`, including skipped inputs and timer-only units.
 

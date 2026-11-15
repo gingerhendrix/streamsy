@@ -12,4 +12,4 @@ gets no further versions. `OutboxWakeup` is removed from
 Use a projection with `Commit.atLeastOnce` and `unit.key` as the idempotency key,
 the declaration's `retry` policy for a retry budget and `onExhausted`, and
 `Projection.wakeAt` for a deferred retry or a snooze. On Cloudflare, attach it with
-`ProjectionWakeup.attach`. See [Commits](https://streamsy.dev/docs/projections/commits).
+`ProjectionWakeup.attach`. See [Effects](https://streamsy.dev/docs/projections/effects).

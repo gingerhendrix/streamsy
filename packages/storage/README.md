@@ -2,7 +2,7 @@
 
 SQL storage for `@streamsy/core`, built on Effect SQL. One entry for Bun
 SQLite, one for SQLite Durable Objects, and a driver-free root for your own
-SQLite or Postgres `SqlClient`. Version 0.4.0 requires `effect@4.0.1`.
+SQLite, Postgres or MySQL `SqlClient`. Requires `effect@4.1.2`.
 
 ```sh
 bun add @streamsy/storage @streamsy/core effect
@@ -30,7 +30,7 @@ exports `SqlStorage`, with `layer` over a `SqlClient` you supply and
 
 `SqlStorage.clientLayer` builds a client from its `make` function and provides it with the
 `Reactivity` it captured, so the client and the storage share one change graph.
-The root entry imports no driver. Add the one you use, at `4.0.1`.
+The root entry imports no driver. Add the one you use, at `4.1.2`.
 
 ```ts
 import { Layer, Redacted } from "effect";

@@ -10,9 +10,10 @@ description: Write each unit of input to your own SQL tables in the checkpoint t
 `process(batch, unit, context)` gets the whole unit and returns an `Effect` of `void` or a [`WakeAt`](/docs/reference/projection/constructors#projectionwakeat) request. `batch` has one `Slice` for each input, with its `items` in stream order. `context` is an object:
 
 - `context.prepared` is the result of `prepare`, or `undefined` when the declaration has none. See [Prepare](#prepare).
+- `context.attempt` is the binding run attempt, starting at 1 and increasing after failed attached runs. Direct `run` and `follow` always supply 1.
 - `context.outputs` holds the bound addresses of the declared outputs. It exists only when the declaration lists `outputs`. See [Declared outputs](#declared-outputs).
 
-Destructure the fields that the handler uses, as in `process: (batch, unit, { prepared }) => ...`. A handler that uses neither can take `(batch, unit)`.
+Destructure the fields that the handler uses, as in `process: (batch, unit, { prepared }) => ...`. A handler that uses none can take `(batch, unit)`.
 
 To handle one entry at a time, wrap an entry handler in `Projection.each`. It runs the handler for every entry in order, one after another: all entries of the first declared input, then those of the next. It discards the results.
 
