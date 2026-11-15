@@ -26,6 +26,13 @@ These apps store what happened instead of the current state. A write appends a d
 
 [How projections work](/docs/projections) explains folds, checkpoints and output streams.
 
+## Background work
+
+These two examples are Bun processes with smoke tests and no UI. In each, a projection does the work and writes to SQLite.
+
+- [Command stream](/docs/examples/command-stream) performs a request once for each caller key. An attached process projection runs the effect and appends an accepted receipt, and the caller waits for that receipt. The [command stream guide](/docs/projections/command-streams) covers the pattern and its delivery rules.
+- [Timer stream](/docs/examples/timer-stream) keeps one-shot and cron timers as rows in a State stream. A fire projection keeps a SQLite due table and appends a fact when a timer fires. Every timer in a binding shares one wake, set with `Projection.wakeAt` to the earliest deadline.
+
 ## Browser sync
 
 These apps put [Durable State](https://durablestreams.com/durable-state) on the wire. The server writes keyed row changes to a stream and serves it over HTTP. The browser reads the stream from the start, folds it into rows and then follows it live, so every open tab sees each change. When the browser writes, it posts to a JSON API and waits for the write's txid on the stream to confirm it. [Durable State streams](/docs/streams/durable-state) describes the stream format.
@@ -53,7 +60,7 @@ These apps append with `expectedOffset`, the stream offset that the writer last 
 
 - The [Issue tracker](/docs/examples/issue-tracker) reads the workspace again and retries. A project allows three issues in progress, so two tabs that race for the last place get one success and one rollback.
 - [Hacker News newest](/docs/examples/hackernews-newest-stream) retries the whole poll pass.
-- [Folder sync](/docs/examples/folder-sync) answers a stale edit with 412. The CLI keeps the stale bytes as a conflict copy, and the browser keeps the draft.
+- [Folder sync](/docs/examples/folder-sync) accepts both edits. Each edit records the version it started from as its parent, the last append becomes the head, and the file history keeps both.
 - [Fold agent](/docs/examples/fold-agent) uses the failure as a fence. When a second process resumes a session, the first process can no longer write to it.
 
 ## Agents
