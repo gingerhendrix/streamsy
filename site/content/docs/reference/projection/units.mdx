@@ -385,6 +385,8 @@ type Input = StreamDeclaration | Streamsy.Address<any, any>;
 // ---cut-end---
 interface Attachable<B> {
   readonly id: string;
+  readonly version: number;
+  readonly generation: number;
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
   at(params: Readonly<Record<string, unknown>>): B;

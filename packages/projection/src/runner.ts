@@ -10,7 +10,7 @@ import type { StreamRoute } from "@streamsy/core/protocol";
 import { inputEntries, type InputMap } from "./batch.ts";
 import { isDeclaration, type Inputs } from "./declaration.ts";
 import type { Executable } from "./executable.ts";
-import { ProjectionFault } from "./fault.ts";
+import { InvalidBinding, ProjectionFault } from "./fault.ts";
 import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
 import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
@@ -42,6 +42,8 @@ export interface RunnerOptions {
 /** The part of a projection declaration that the attach runner reads. */
 export interface Attachable<B> {
   readonly id: string;
+  readonly version: number;
+  readonly generation: number;
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
   // Method syntax: a declaration with typed params is assignable here.
@@ -432,6 +434,15 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         // Read before any run, so a write during a run raises `seq` past this value.
         const states = yield* store.read(id, [...work.keys()]);
 
+        // A commit records work without shortening a failed binding's backoff.
+        // Its mark holds the work until due; keeping it pending would wake every pass.
+        for (const [key, state] of states) {
+          if (state.dueAt > now) {
+            work.delete(key);
+            working.delete(key);
+          }
+        }
+
         for (const [key, entry] of work) {
           const { binding } = entry;
           working.delete(key);
@@ -507,13 +518,20 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           const key = canonicalParams(binding.params);
           const bound = bindingOf(declaration, key);
 
-          if (Option.isNone(bound)) return yield* Effect.die(new Error(`Invalid binding ${key}`));
+          if (Option.isNone(bound))
+            return yield* new InvalidBinding({
+              projection: declaration.id,
+              params: binding.params,
+            });
 
           // Persist before exposing pending work, so a fault cannot enqueue an unrecorded request.
-          if (marks !== undefined)
+          if (marks !== undefined) {
             yield* marks
               .mark(declaration.id, [key])
               .pipe(Effect.mapError(storageFault("marks.mark")));
+            yield* marks.retry(declaration.id, key);
+          }
+
           pending.set(key, { binding: bound.value, attempts: pending.get(key)?.attempts ?? 0 });
           yield* signal;
 

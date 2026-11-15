@@ -6,6 +6,12 @@ export class NotAttached extends Schema.TaggedError<NotAttached>()("NotAttached"
   projection: Schema.String,
 }) {}
 
+/** Encoded params do not round-trip through the attached declaration's codecs. */
+export class InvalidBinding extends Schema.TaggedError<InvalidBinding>()("InvalidBinding", {
+  projection: Schema.String,
+  params: Schema.Record(Schema.String, Schema.String),
+}) {}
+
 /** Phase says where the run stopped; a `checkpoint` failure means processing already completed. */
 export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("ProjectionFault", {
   phase: Schema.Literals(["load", "read", "pin", "process", "checkpoint"]),

@@ -243,7 +243,8 @@ mark for each binding it touches, in the same transaction, to
 unless a write during the run marked it again. When the layer starts, it runs
 the bindings that still have marks, up to `batch` (default 25) per pass. A
 binding that fails waits alone, from 1 s doubling to 1 hour, and its
-neighbours keep running. Durable mode needs a local memory or SQL storage
+neighbours keep running. A local commit or trigger row does not shorten that backoff;
+`registry.retry` or `registry.schedule` makes the binding due now. Durable mode needs a local memory or SQL storage
 layer.
 
 On Cloudflare, acquire a wakeup in the object's layer scope. Local commits

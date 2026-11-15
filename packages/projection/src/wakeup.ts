@@ -48,6 +48,8 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
       ? Effect.void
       : yield* registerRunner(registry.value, {
           id: projection.id,
+          version: projection.version,
+          generation: projection.generation,
           status: Effect.gen(function* () {
             const state =
               host === undefined

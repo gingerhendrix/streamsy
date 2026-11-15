@@ -16,7 +16,7 @@ import { compare, type StorageFault } from "@streamsy/core";
 import type { ProjectionMarkSummary } from "@streamsy/core/internal";
 import { read, type Readable } from "./snapshot.ts";
 import type { InputMap } from "./batch.ts";
-import { NotAttached, type ProjectionFault } from "./fault.ts";
+import { InvalidBinding, NotAttached, ProjectionFault } from "./fault.ts";
 import type { Identity } from "./checkpoint-store.ts";
 import type { Attachable } from "./runner.ts";
 import type { Progress } from "./run.ts";
@@ -71,9 +71,14 @@ export interface RegistryApi {
   readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>>;
   /** Future events only. Unbounded buffering keeps slow consumers off the runner's path. */
   readonly events: Stream.Stream<RunnerEvent>;
-  /** Queue this binding and wake its runner, without another source commit. */
-  readonly schedule: (binding: Binding) => Effect.Effect<void, NotAttached | StorageFault>;
-  /** Wait for an attached binding's checkpoint, subscribing before the first read. No timeout. */
+  /** Queue this binding now, overriding backoff. Invalid encoded params fail with InvalidBinding. */
+  readonly schedule: (
+    binding: Binding,
+  ) => Effect.Effect<void, InvalidBinding | NotAttached | StorageFault>;
+  /**
+   * Wait for the attached identity's checkpoint, subscribing before the first read.
+   * Matching failed runs prompt a reread for committed progress. No timeout.
+   */
   readonly awaitOffset: <Inputs extends InputMap, S = never, Q = never>(
     binding: Readable<Inputs, S, Q>,
     input: keyof Inputs & string,
@@ -87,8 +92,10 @@ export interface RegistryApi {
 
 interface RegisteredRunner {
   readonly id: string;
+  readonly version: number;
+  readonly generation: number;
   readonly status: Effect.Effect<RunnerStatus, StorageFault>;
-  readonly schedule: (binding: Binding) => Effect.Effect<void, StorageFault>;
+  readonly schedule: (binding: Binding) => Effect.Effect<void, InvalidBinding | StorageFault>;
   readonly retry: (binding?: Binding) => Effect.Effect<number, StorageFault>;
 }
 
@@ -168,16 +175,31 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
 
           return yield* Effect.scoped(
             Effect.gen(function* () {
-              yield* find(binding);
+              const runner = yield* find(binding);
+
+              if (runner.version !== binding.version || runner.generation !== binding.generation)
+                return yield* new ProjectionFault({
+                  phase: "load",
+                  reason: "identity-mismatch",
+                  message: `Attached identity of ${binding.id} is version ${runner.version}, generation ${runner.generation}; binding is version ${binding.version}, generation ${binding.generation}`,
+                });
+
               const pull = yield* Stream.toPull(observations);
               const checkpoint = yield* read(binding);
 
-              if (reached(checkpoint.offsets[input])) return;
+              if (reached(checkpoint.offsets[input])) return yield* Effect.void;
 
-              yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+              return yield* Stream.fromPull(Effect.succeed(pull)).pipe(
                 Stream.filter(Registry.isFor(binding)),
-                Stream.filter(RunnerEvent.$is("Ran")),
-                Stream.filter((event) => reached(event.offsets[input])),
+                Stream.mapEffect(
+                  RunnerEvent.$match({
+                    Ran: (event) => Effect.succeed(reached(event.offsets[input])),
+                    Failed: () =>
+                      read(binding).pipe(Effect.map((value) => reached(value.offsets[input]))),
+                    Dropped: () => Effect.succeed(false),
+                  }),
+                ),
+                Stream.filter((satisfied) => satisfied),
                 Stream.runHead,
                 Effect.flatMap((event) => (Option.isSome(event) ? Effect.void : Effect.never)),
               );

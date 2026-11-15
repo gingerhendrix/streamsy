@@ -69,7 +69,7 @@ A fault in the table also fails every fold that writes the stream with the same 
 
 The first release has a known gap in that recovery:
 
-- **A fix does not resume a deferred binding.** A durable binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. The binding runs again at its due time, or sooner when a commit through this process writes its source.
+- **A fix does not resume a deferred binding.** A durable binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. A source commit records work without shortening that backoff. The binding runs again at its due time, or sooner after `registry.retry` or `registry.schedule`.
 - **A health check that counts only fresh marks stays green.** When the table fails, every binding that writes the stream defers. A check that looks only at marks with no failed attempts still reports the host as ready. On a Durable Object, read the `deferred` count of [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) to see deferred bindings.
 
 ## SQLite only

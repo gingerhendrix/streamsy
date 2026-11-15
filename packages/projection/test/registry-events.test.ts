@@ -5,6 +5,7 @@ import {
   Array,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
@@ -349,6 +350,111 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         yield* registry.awaitOffset(binding, "source", "-1");
       }),
     );
+  }
+
+  for (const durable of [false, true]) {
+    it.effect(
+      `awaitOffset rereads progress committed before a later unit fails (durable: ${durable})`,
+      () =>
+        Effect.gen(function* () {
+          const declaration = Projection.process({
+            id: "partial-progress",
+            params: { id: Schema.String },
+            inputs: { source: Source },
+            commit: Commit.atLeastOnce,
+            process: (batch) =>
+              batch.source.items[0] === "two" ? Effect.fail("offline") : Effect.void,
+          });
+
+          const source = yield* Source;
+          const params = { id: `partial-${durable}` };
+          yield* source.create(params);
+          const receipt = yield* source.append(params, ["one"]);
+          yield* source.append(params, ["two"]);
+          const registry = yield* Projection.Registry;
+          const wakeup = yield* ProjectionWakeup.attach(declaration, { durable });
+          const binding = declaration.at(params);
+          const readDone = yield* Deferred.make<void>();
+
+          const readable = {
+            ...binding,
+            commit: {
+              ...binding.commit,
+              load: (key: Parameters<typeof binding.commit.load>[0]) =>
+                binding.commit
+                  .load(key)
+                  .pipe(Effect.tap(() => Deferred.succeed(readDone, undefined))),
+            },
+          };
+
+          const waiting = yield* registry
+            .awaitOffset(readable, "source", receipt.offset)
+            .pipe(Effect.forkScoped);
+
+          yield* Deferred.await(readDone);
+          expect(waiting.pollUnsafe()).toBeUndefined();
+          yield* registry.schedule(binding);
+          const exit = yield* Effect.exit(wakeup.run);
+          expect(Exit.isSuccess(exit)).toBe(durable);
+          yield* Fiber.join(waiting);
+          expect((yield* Projection.read(binding)).offsets.source).toBe(receipt.offset);
+        }),
+    );
+  }
+
+  for (const objectHost of [false, true]) {
+    for (const [attached, requested] of [
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      for (const field of ["version", "generation"] as const) {
+        const declare = (identity: number) =>
+          Projection.process({
+            id: "wait-identity",
+            [field]: identity,
+            params: { id: Schema.String },
+            inputs: { source: Source },
+            commit: Commit.atLeastOnce,
+            process: () => Effect.void,
+          });
+
+        it.effect(
+          `awaitOffset rejects ${field} ${requested} against attached ${attached} (object host: ${objectHost})`,
+          () =>
+            Effect.gen(function* () {
+              const declaration = declare(attached);
+
+              if (objectHost) yield* ProjectionWakeup.attach(declaration);
+              else yield* Layer.build(Projection.attach(declaration));
+              const binding = declare(requested).at({ id: "a" });
+              let read = false;
+
+              const readable = {
+                ...binding,
+                commit: {
+                  ...binding.commit,
+                  load: (key: Parameters<typeof binding.commit.load>[0]) =>
+                    Effect.suspend(() => {
+                      read = true;
+
+                      return binding.commit.load(key);
+                    }),
+                },
+              };
+
+              const registry = yield* Projection.Registry;
+              // Even an already-reached offset cannot hide a declaration mismatch.
+              const fault = yield* Effect.flip(registry.awaitOffset(readable, "source", "-1"));
+              expect(fault).toMatchObject({
+                _tag: "ProjectionFault",
+                phase: "load",
+                reason: "identity-mismatch",
+              });
+              expect(read).toBe(false);
+            }),
+        );
+      }
+    }
   }
 
   it.effect("awaitOffset fails with NotAttached and preserves checkpoint read failures", () =>

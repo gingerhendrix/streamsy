@@ -2,7 +2,13 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Array, Deferred, Effect, Exit, Layer, Option, Schedule, Schema, Scope } from "effect";
 import { ProjectionMarks } from "@streamsy/core/internal";
-import { Commit, NotAttached, Projection, ProjectionWakeup } from "@streamsy/projection";
+import {
+  Commit,
+  InvalidBinding,
+  NotAttached,
+  Projection,
+  ProjectionWakeup,
+} from "@streamsy/projection";
 import { Source, NumericSource, host, projection, only } from "./support/registry.ts";
 import { eventually } from "./support/eventually.ts";
 
@@ -60,11 +66,60 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     }),
   );
 
+  for (const objectHost of [false, true]) {
+    it.effect(
+      `schedule rejects invalid encoded params with InvalidBinding (object host: ${objectHost})`,
+      () =>
+        Effect.gen(function* () {
+          const declaration = Projection.process({
+            id: "invalid-params",
+            params: { id: Schema.FiniteFromString },
+            inputs: { source: NumericSource },
+            commit: Commit.atLeastOnce,
+            process: () => Effect.void,
+          });
+
+          if (objectHost) yield* ProjectionWakeup.attach(declaration);
+          else yield* Layer.build(Projection.attach(declaration, { durable: true }));
+          const registry = yield* Projection.Registry;
+
+          const cases: ReadonlyArray<Readonly<Record<string, string>>> = [
+            {},
+            { id: "not-a-number" },
+            { id: "1.0" },
+            { id: "1", other: "x" },
+          ];
+
+          for (const params of cases) {
+            const binding = { id: declaration.id, params };
+            expect(yield* Effect.flip(registry.schedule(binding))).toEqual(
+              new InvalidBinding({ projection: declaration.id, params }),
+            );
+            expect(yield* registry.retry(binding)).toBe(0);
+          }
+
+          const marks = yield* ProjectionMarks;
+          expect(yield* marks.nextDue(declaration.id)).toEqual(Option.none());
+          expect(only(yield* registry.status).queued).toBe(0);
+        }),
+    );
+  }
+
   it.effect("requests resolve by id and NotAttached writes nothing after scope closure", () =>
     Effect.gen(function* () {
       const registry = yield* Projection.Registry;
       const declaration = projection("identity");
-      const other = projection("identity");
+
+      const other = Projection.process({
+        id: "identity",
+        version: 99,
+        generation: 99,
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: () => Effect.void,
+      });
+
       const scope = yield* Scope.make();
       yield* Layer.build(Projection.attach(declaration, { durable: true })).pipe(
         Scope.provide(scope),
