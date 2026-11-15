@@ -2,6 +2,7 @@
 import {
   Array,
   Clock,
+  Cause,
   Context,
   Duration,
   Effect,
@@ -47,8 +48,10 @@ export interface Wakeup<R = never> {
    * name is not reentrant, so a run must not call its own wakeup's `run`.
    */
   readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
-  /** Timing only. The runner calls the schedule once per failed pass with no input. */
+  /** Timing only. The runner calls the schedule once per retryable failed pass with no input. */
   readonly retry?: Schedule.Schedule<unknown>;
+  /** Return false to stop automatic run retries until WakeupHost.retry or a new acquisition. */
+  readonly retryable?: (cause: Cause.Cause<unknown>) => boolean;
   /**
    * Units of work that failed and await another attempt, for `status`.
    * A durable `ProjectionWakeup` counts retry-due, backing-off and stopped marks here.
@@ -135,6 +138,9 @@ export const expiry: Wakeup<Storage> = Wakeup.make({
   run: Protocol.expireDue().pipe(Effect.asVoid),
 });
 
+const deadlineRetryable = (cause: Cause.Cause<StorageFault>) =>
+  !Array.some(cause.reasons, (reason) => Cause.isFailReason(reason) && !reason.error.retryable);
+
 /** Internal object owner. Its context closes over the same services as fetch. */
 export const makeWakeups = <R>(
   context: Context.Context<Storage | AlarmSlot | R>,
@@ -190,19 +196,21 @@ export const makeWakeups = <R>(
         ),
       );
 
-    const backOff = (state: State, at: number) =>
+    const backOff = (state: State, at: number, retryable = true) =>
       Effect.gen(function* () {
         state.failures += 1;
 
-        const delay = yield* Effect.suspend(() => state.step(at, undefined)).pipe(
-          Effect.map(([, duration]) => Option.some(duration)),
-          Pull.catchDone(() => Effect.succeedNone),
-          Effect.catchCause((cause) =>
-            Effect.logError(`Wakeup ${state.wakeup.name} retry schedule failed`, cause).pipe(
-              Effect.as(Option.none<Duration.Duration>()),
-            ),
-          ),
-        );
+        const delay = yield* !retryable
+          ? Effect.succeedNone
+          : Effect.suspend(() => state.step(at, undefined)).pipe(
+              Effect.map(([, duration]) => Option.some(duration)),
+              Pull.catchDone(() => Effect.succeedNone),
+              Effect.catchCause((cause) =>
+                Effect.logError(`Wakeup ${state.wakeup.name} retry schedule failed`, cause).pipe(
+                  Effect.as(Option.none<Duration.Duration>()),
+                ),
+              ),
+            );
 
         state.exhausted = Option.isNone(delay);
         state.floor = Option.isSome(delay) ? at + Duration.toMillis(delay.value) : 0;
@@ -241,7 +249,9 @@ export const makeWakeups = <R>(
             Effect.map(Option.map((next) => Math.max(next, state.floor))),
             Effect.catchCause((cause) => {
               return Effect.gen(function* () {
-                if (state.floor <= now) yield* backOff(state, now);
+                const retryable = deadlineRetryable(cause);
+
+                if (!retryable || state.floor <= now) yield* backOff(state, now, retryable);
                 yield* Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
 
                 return state.exhausted ? Option.none<number>() : Option.some(state.floor);
@@ -322,7 +332,11 @@ export const makeWakeups = <R>(
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
-              yield* backOff(state, yield* Clock.currentTimeMillis);
+              yield* backOff(
+                state,
+                yield* Clock.currentTimeMillis,
+                state.wakeup.retryable?.(exit.cause) ?? true,
+              );
               yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
 
               return;
@@ -345,7 +359,7 @@ export const makeWakeups = <R>(
             Effect.catchCause((cause) =>
               Clock.currentTimeMillis.pipe(
                 Effect.flatMap((at) =>
-                  backOff(state, at).pipe(
+                  backOff(state, at, deadlineRetryable(cause)).pipe(
                     Effect.andThen(
                       Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause),
                     ),

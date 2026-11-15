@@ -1,5 +1,6 @@
-import { Array, Effect, Record } from "effect";
+import { Array, Effect, Predicate, Record } from "effect";
 import { SqlClient } from "effect/sql";
+import { isStreamsFault } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";
@@ -78,7 +79,11 @@ export const transaction = withPrepare(
                     (cause) =>
                       new ProjectionFault({
                         phase: "process",
-                        reason: "invalid-output",
+                        reason: isStreamsFault(cause)
+                          ? "storage-failure"
+                          : Predicate.isTagged(cause, "StreamBusy")
+                            ? "output-busy"
+                            : "invalid-output",
                         message: `Cannot append to ${output.address.id}`,
                         cause,
                       }),

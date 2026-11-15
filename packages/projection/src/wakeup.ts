@@ -2,6 +2,7 @@ import { Clock, Effect, Option } from "effect";
 import type { InputMap } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
+import { retryable } from "./failure.ts";
 import { ProjectionRetry } from "./retry.ts";
 import type { AttachOptions } from "./attach.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
@@ -24,7 +25,8 @@ interface WakeupHost {
  * Durable by default: each commit writes a pending mark for its bindings in
  * the same transaction, so an eviction or a deploy between the commit and the
  * alarm loses no work. The host's acquire reconcile reads the marks and arms
- * the alarm. Pass `durable: false` for private memory marks that reset on eviction.
+ * the alarm. A start makes stopped marks due once; a still-broken binding
+ * stops again. Stopped marks alone arm no alarm. Pass `durable: false` for private memory marks that reset on eviction.
  */
 const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
@@ -38,7 +40,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   });
 
   return Effect.gen(function* () {
-    const { next, drain, deferred, status, schedule, retry } = yield* runner;
+    const { next, drain, deferred, status, schedule, retry, failed } = yield* runner;
     let host: WakeupHost | undefined;
     let running = false;
     let lastPassAt = Option.none<number>();
@@ -71,6 +73,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
               ...(yield* status),
             } satisfies RunnerStatus;
           }),
+          failed,
           schedule: (binding) =>
             schedule(binding).pipe(Effect.andThen(request), Effect.uninterruptible),
           retry: (binding) =>
@@ -90,6 +93,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     return {
       name: `streamsy/projection/${encodeURIComponent(projection.id)}`,
       next,
+      retryable,
       run: Effect.suspend(() => {
         running = true;
 

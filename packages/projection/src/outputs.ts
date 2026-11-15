@@ -121,7 +121,7 @@ export const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
       StreamGone: () => pin("invalid-output", `Output ${output.id} is gone`),
       StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
       AppendConflict: () => pin("invalid-output", `Output ${output.id} refused the append`),
-      StreamBusy: () => pin("invalid-output", `Output ${output.id} is busy`),
+      StreamBusy: () => pin("output-busy", `Output ${output.id} is busy`),
     }),
   );
 });

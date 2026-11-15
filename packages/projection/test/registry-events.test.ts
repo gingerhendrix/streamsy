@@ -152,6 +152,8 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         params,
         attempts: mark.attempts,
         dueAt: Option.some(mark.dueAt),
+        stopped: false,
+        failure: { ...Option.getOrThrow(mark.failure), retryable: true },
       });
       expect(mark).toMatchObject({ attempts: 4, dueAt: 8_000 });
     }),
@@ -216,7 +218,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             }),
           );
           yield* registry.schedule(declaration.at(params));
-          expect((yield* pull)[0]).toEqual({
+          expect((yield* pull)[0]).toMatchObject({
             _tag: "Failed",
             projection: declaration.id,
             params,
@@ -225,7 +227,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           });
 
           yield* TestClock.adjust(1_000);
-          expect((yield* pull)[0]).toEqual({
+          expect((yield* pull)[0]).toMatchObject({
             _tag: "Failed",
             projection: declaration.id,
             params,

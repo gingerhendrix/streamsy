@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { StorageFault, TransportFault } from "@streamsy/core";
 import { ProjectionFault } from "../src/fault.ts";
 
-test("ProjectionFault retries only storage failures with a retryable or unknown cause", () => {
+test("ProjectionFault storage failures preserve the cause retryability", () => {
   const causes = [
     { cause: undefined, retryable: true },
     { cause: new Error("store unavailable"), retryable: true },
@@ -35,3 +35,23 @@ test("ProjectionFault retries only storage failures with a retryable or unknown 
     ).toBe(false);
   }
 });
+
+for (const reason of [
+  "history-unavailable",
+  "identity-mismatch",
+  "invalid-record",
+  "invalid-source",
+  "invalid-options",
+  "invalid-output",
+  "token-conflict",
+  "output-busy",
+  "range-unreproducible",
+  "stale-epoch",
+  "unsupported-composition",
+] as const) {
+  test(`ProjectionFault classifies ${reason}`, () => {
+    expect(new ProjectionFault({ phase: "load", reason, message: "failed" }).retryable).toBe(
+      reason === "token-conflict" || reason === "output-busy",
+    );
+  });
+}

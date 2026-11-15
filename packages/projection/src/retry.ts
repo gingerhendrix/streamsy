@@ -13,7 +13,7 @@ const defaultRetry = Schedule.exponential("200 millis").pipe(
 
 /**
  * Default retry for following and attached runners; an explicit options.retry takes precedence.
- * For attached runners: timing only. The runner calls the schedule once per failed pass with no input.
+ * For attached runners: timing only. The runner calls the schedule once per retryable failed pass with no input.
  */
 export const ProjectionRetry = Context.Reference<Schedule.Schedule<unknown>>(
   "@streamsy/projection/ProjectionRetry",

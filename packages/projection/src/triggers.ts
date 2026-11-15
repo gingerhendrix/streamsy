@@ -1,4 +1,4 @@
-import { Array, Effect, Option, Schema } from "effect";
+import { Array, Cause, Clock, Effect, Option, Schema } from "effect";
 import {
   CommitBoundary,
   Offset,
@@ -10,6 +10,8 @@ import {
   ZERO_OFFSET,
 } from "@streamsy/core";
 import { OwnerRecords, type ProjectionMarksApi } from "@streamsy/core/internal";
+import { runnerFailure } from "./failure.ts";
+import type { RunnerFailure } from "./registry.ts";
 import { ProjectionFault } from "./fault.ts";
 import { encodeKey } from "./unit.ts";
 import { storageFault } from "./storage-fault.ts";
@@ -44,6 +46,7 @@ export const triggersOf = <B>(
     const owner = records.value;
     const transaction = boundary.value;
     const cursors = new Map<string, Offset>();
+    const stopped = new Map<string, RunnerFailure>();
 
     const streams = new Map(
       Array.map(declarations, (declaration) => {
@@ -81,6 +84,7 @@ export const triggersOf = <B>(
 
     const next = Effect.gen(function* () {
       for (const [id, key] of streams) {
+        if (stopped.has(id)) continue;
         const record = yield* storage.record(id);
 
         if (
@@ -96,6 +100,7 @@ export const triggersOf = <B>(
 
     const read = Effect.gen(function* () {
       for (const [id, key] of streams) {
+        if (stopped.has(id)) continue;
         // Durable marks join this transaction. Private marks can survive a rollback,
         // leaving harmless work for a pass that finds nothing new.
         yield* transaction
@@ -121,7 +126,7 @@ export const triggersOf = <B>(
                       new ProjectionFault({
                         phase: "read",
                         reason: "invalid-source",
-                        message: `Cannot decode trigger ${id}`,
+                        message: `Cannot decode trigger ${id} at offset ${message.offset}`,
                         cause,
                       }),
                   ),
@@ -163,9 +168,25 @@ export const triggersOf = <B>(
               }),
             ),
             Effect.onError(() => Effect.sync(() => cursors.delete(key))),
+            Effect.catchTag("ProjectionFault", (fault) =>
+              Effect.gen(function* () {
+                const failure = runnerFailure(Cause.fail(fault), yield* Clock.currentTimeMillis);
+                stopped.set(id, failure);
+                yield* Effect.logError(`Projection ${projection} trigger ${id} stopped`, fault);
+              }),
+            ),
           );
       }
     });
 
-    return { next, read };
+    return {
+      next,
+      read,
+      retry: () => stopped.clear(),
+      status: () =>
+        Array.map([...streams.keys()], (stream) => ({
+          stream,
+          failure: Option.fromUndefinedOr(stopped.get(stream)),
+        })),
+    };
   });

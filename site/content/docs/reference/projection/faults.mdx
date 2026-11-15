@@ -28,6 +28,7 @@ interface ProjectionFault {
     | "invalid-options"
     | "invalid-output"
     | "token-conflict"
+    | "output-busy"
     | "range-unreproducible"
     | "stale-epoch"
     | "storage-failure"
@@ -57,13 +58,14 @@ same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
 | `invalid-source`          | An input read is invalid, does not advance, or does not decode                                               |
 | `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                                 |
 | `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append                |
+| `output-busy`             | An output stream is busy; retry later                                                                        |
 | `token-conflict`          | Another writer changed the record first                                                                      |
 | `range-unreproducible`    | A pinned range cannot be read again                                                                          |
 | `stale-epoch`             | A newer generation has written to an output                                                                  |
 | `storage-failure`         | Storage, transport, or SQL failed                                                                            |
 | `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                 |
 
-`retryable` is `true` when `reason` is `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
+`retryable` is `true` for `token-conflict` and `output-busy`. It is also `true` for `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. Every other reason is non-retryable. Attached runners stop the binding, trigger stream or runner that hit a non-retryable fault; handler errors and defects retry. `follow` fails its stream on handler errors, defects and non-retryable faults. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
 
 ## `ProjectionRetry`
 
@@ -80,7 +82,7 @@ same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
 
 `ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
 
-For attached runners the schedule controls timing only: the runner calls it once per failed pass with no input. A dying step is logged and treated as exhaustion. Binding failures back off separately, from 1 s doubling to 1 hour, in both durability modes; a finite pass policy does not stop them.
+For attached runners the schedule controls timing only: the runner calls it once per retryable failed pass with no input. A dying step is logged and treated as exhaustion. Retryable binding failures back off separately, from 1 s doubling to 1 hour, in both durability modes; a finite pass policy does not stop them.
 
 The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
 

@@ -11,7 +11,7 @@ import type { Offsets, StateValue } from "./snapshot.ts";
 export interface FollowOptions extends RunOptions {
   /** Upper bound on one wake wait; default 30000. */
   readonly repairIntervalMs?: number;
-  /** Override the forever, capped exponential retry for retryable storage failures. */
+  /** Override the forever, capped exponential retry for retryable projection faults. */
   readonly retry?: Schedule.Schedule<unknown>;
 }
 

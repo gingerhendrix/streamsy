@@ -96,13 +96,20 @@ const isEffect = <A, E, R>(step: Step<A, E, R>): step is Effect.Effect<A, E, R> 
   Effect.isEffect(step);
 
 const fault =
-  (reason: "invalid-record" | "invalid-output" | "storage-failure", message: string) =>
+  (
+    reason: "invalid-record" | "invalid-output" | "output-busy" | "storage-failure",
+    message: string,
+  ) =>
   (cause: unknown) =>
     new ProjectionFault({ phase: "process", reason, message, cause });
 
 const writeFault = (id: string) => (cause: StreamsFault | CreateError | AppendError) =>
   fault(
-    isStreamsFault(cause) ? "storage-failure" : "invalid-output",
+    isStreamsFault(cause)
+      ? "storage-failure"
+      : Predicate.isTagged(cause, "StreamBusy")
+        ? "output-busy"
+        : "invalid-output",
     `Cannot write output ${id}`,
   )(cause);
 

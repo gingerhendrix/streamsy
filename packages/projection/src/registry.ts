@@ -13,7 +13,7 @@ import {
   type Scope,
 } from "effect";
 import { compare, type StorageFault } from "@streamsy/core";
-import type { ProjectionMarkSummary } from "@streamsy/core/internal";
+import type { MarkFailure, ProjectionMarkSummary } from "@streamsy/core/internal";
 import { read, type Readable } from "./snapshot.ts";
 import type { InputMap } from "./batch.ts";
 import { InvalidBinding, NotAttached, ProjectionFault } from "./fault.ts";
@@ -25,6 +25,14 @@ import type { Progress } from "./run.ts";
 type Binding = Pick<Identity, "id" | "params">;
 
 type Declaration = Attachable<Binding>;
+
+/** Last failure of a binding, trigger stream or runner pass. */
+export interface RunnerFailure {
+  readonly at: number;
+  readonly retryable: boolean;
+  readonly reason: Option.Option<ProjectionFault["reason"]>;
+  readonly message: string;
+}
 
 /** Live binding observations with the binding's encoded params. */
 export type RunnerEvent = Data.TaggedEnum<{
@@ -39,8 +47,10 @@ export type RunnerEvent = Data.TaggedEnum<{
     readonly projection: string;
     readonly params: Readonly<Record<string, string>>;
     readonly attempts: number;
-    /** Binding backoff deadline in either durability mode. */
+    /** Binding backoff deadline; None while stopped. */
     readonly dueAt: Option.Option<number>;
+    readonly failure: RunnerFailure;
+    readonly stopped: boolean;
   };
   Dropped: {
     readonly projection: string;
@@ -63,6 +73,13 @@ export interface RunnerStatus {
   readonly lastPassAt: Option.Option<number>;
   /** Binding marks in either durability mode. The four counts are disjoint. */
   readonly marks: ProjectionMarkSummary;
+  /** Last pass failure, cleared by a successful drain. */
+  readonly failure: Option.Option<RunnerFailure>;
+  readonly stopped: number;
+  readonly triggers: ReadonlyArray<{
+    readonly stream: string;
+    readonly failure: Option.Option<RunnerFailure>;
+  }>;
 }
 
 export interface RegistryApi {
@@ -71,7 +88,7 @@ export interface RegistryApi {
   readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>>;
   /** Future events only. Unbounded buffering keeps slow consumers off the runner's path. */
   readonly events: Stream.Stream<RunnerEvent>;
-  /** Queue this binding now, overriding backoff. Invalid encoded params fail with InvalidBinding. */
+  /** Queue this binding now, overriding backoff and a stop. Invalid encoded params fail with InvalidBinding. */
   readonly schedule: (
     binding: Binding,
   ) => Effect.Effect<void, InvalidBinding | NotAttached | StorageFault>;
@@ -84,7 +101,21 @@ export interface RegistryApi {
     input: keyof Inputs & string,
     offset: string,
   ) => Effect.Effect<void, NotAttached | ProjectionFault, Q>;
-  /** Make failed work due now. Returns the number of failed bindings selected. */
+  /** Stored failed bindings, stopped first, then by deadline. Default limit 100, maximum 1,000. */
+  readonly failed: (
+    target: string | Declaration | Binding,
+    options?: { readonly limit?: number },
+  ) => Effect.Effect<
+    ReadonlyArray<{
+      readonly params: Readonly<Record<string, string>>;
+      readonly attempts: number;
+      readonly dueAt: Option.Option<number>;
+      readonly stopped: boolean;
+      readonly failure: Option.Option<MarkFailure>;
+    }>,
+    NotAttached | StorageFault
+  >;
+  /** Make failed and stopped work due now; a projection target also resumes its triggers. Returns the number of failed bindings selected. */
   readonly retry: (
     target: string | Declaration | Binding,
   ) => Effect.Effect<number, NotAttached | StorageFault>;
@@ -97,6 +128,7 @@ interface RegisteredRunner {
   readonly status: Effect.Effect<RunnerStatus, StorageFault>;
   readonly schedule: (binding: Binding) => Effect.Effect<void, InvalidBinding | StorageFault>;
   readonly retry: (binding?: Binding) => Effect.Effect<number, StorageFault>;
+  readonly failed: (limit: number, binding?: Binding) => ReturnType<RegistryApi["failed"]>;
 }
 
 interface Registration {
@@ -209,6 +241,23 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
         schedule: Effect.fn("Projection.Registry.schedule")(function* (binding: Binding) {
           const runner = yield* find(binding);
           yield* runner.schedule(binding);
+        }),
+        failed: Effect.fn("Projection.Registry.failed")(function* (
+          target: string | Declaration | Binding,
+          options: { readonly limit?: number } = {},
+        ) {
+          const limit = options.limit ?? 100;
+
+          if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000)
+            return yield* Effect.die(
+              new RangeError("failed limit must be an integer from 1 to 1,000"),
+            );
+          const runner = yield* find(target);
+
+          return yield* runner.failed(
+            limit,
+            Predicate.isString(target) || "at" in target ? undefined : target,
+          );
         }),
         retry: Effect.fn("Projection.Registry.retry")(function* (
           target: string | Declaration | Binding,

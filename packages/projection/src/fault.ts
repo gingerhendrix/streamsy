@@ -23,6 +23,7 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
     "invalid-options",
     "invalid-output",
     "token-conflict",
+    "output-busy",
     "range-unreproducible",
     "stale-epoch",
     "storage-failure",
@@ -33,8 +34,24 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
   cause: Schema.optionalKey(Schema.Defect()),
 }) {
   get retryable(): boolean {
-    return (
-      this.reason === "storage-failure" && (!isStreamsFault(this.cause) || this.cause.retryable)
-    );
+    switch (this.reason) {
+      case "storage-failure":
+        return !isStreamsFault(this.cause) || this.cause.retryable;
+      case "token-conflict":
+      case "output-busy":
+        return true;
+      case "history-unavailable":
+      case "identity-mismatch":
+      case "invalid-record":
+      case "invalid-source":
+      case "invalid-options":
+      case "invalid-output":
+      case "range-unreproducible":
+      case "stale-epoch":
+      case "unsupported-composition":
+        return false;
+    }
+
+    return false;
   }
 }

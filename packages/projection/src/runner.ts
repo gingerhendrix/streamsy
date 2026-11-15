@@ -1,5 +1,17 @@
-import { Array, Cause, Clock, Effect, Exit, Option, PubSub, Queue, Record, Schema } from "effect";
-import { Storage, type StreamId } from "@streamsy/core";
+import {
+  Array,
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  Option,
+  PubSub,
+  Queue,
+  Record,
+  Schema,
+  Semaphore,
+} from "effect";
+import { Storage, StorageFault, type StreamId } from "@streamsy/core";
 import {
   CommitHooks,
   ProjectionMarks,
@@ -14,7 +26,8 @@ import type { Executable } from "./executable.ts";
 import { InvalidBinding, ProjectionFault } from "./fault.ts";
 import { canonicalParams } from "./unit.ts";
 import { run } from "./run.ts";
-import { Registry, RunnerEvent, eventPublisher } from "./registry.ts";
+import { Registry, RunnerEvent, eventPublisher, type RunnerFailure } from "./registry.ts";
+import { runnerFailure } from "./failure.ts";
 import { triggersOf } from "./triggers.ts";
 import { storageFault } from "./storage-fault.ts";
 import type { WakeOutput } from "./wake.ts";
@@ -26,7 +39,7 @@ export const DEFAULT_BATCH = 25;
 
 const MAX_DEFER_MS = 60 * 60 * 1_000;
 
-/** The wait before a failed binding runs again: 1 s, doubling, at most 1 hour. */
+/** The wait before a retryable failed binding runs again: 1 s, doubling, at most 1 hour. */
 export const deferDelay = (attempts: number): number =>
   Math.min(1_000 * 2 ** Math.max(0, attempts - 1), MAX_DEFER_MS);
 
@@ -215,7 +228,8 @@ const durableMarks = (
  * that catches up clears its mark with a `seq` compare, so a write during the
  * run keeps it. After a restart, `next`, `wait` and `drain` find the marks in
  * storage. Otherwise marks are private to this runner. In both modes a failed
- * binding defers its own mark, and its neighbours run.
+ * binding backs off or stops its own mark, and its neighbours run. A start
+ * makes stopped marks due once before answering next, wait or drain.
  */
 export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
   declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
@@ -283,6 +297,30 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         ? yield* durableMarks(declaration.id, match)
         : memoryProjectionMarks();
 
+    let failure = Option.none<RunnerFailure>();
+    let started = false;
+    const startPermit = yield* Semaphore.make(1);
+
+    // Retry a failed resume on the next request, without failing layer acquisition.
+    const start = startPermit.withPermit(
+      Effect.gen(function* () {
+        if (started) return;
+        yield* marks.resume(declaration.id);
+        started = true;
+      }),
+    );
+
+    const observeFailure = <A, EA, RA>(effect: Effect.Effect<A, EA, RA>) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            failure = Option.some(runnerFailure(cause, yield* Clock.currentTimeMillis));
+
+            return yield* Effect.failCause(cause);
+          }),
+        ),
+      );
+
     const triggers =
       options.triggers === undefined || options.triggers.length === 0
         ? undefined
@@ -313,6 +351,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     );
 
     const next = Effect.gen(function* () {
+      yield* start;
       yield* absorb;
 
       if (
@@ -341,6 +380,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
     /** Wait for a commit or the next due mark. */
     const wait = Effect.gen(function* () {
+      yield* start;
       yield* absorb;
 
       if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next))) return undefined;
@@ -366,8 +406,8 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
     /**
      * The in-memory set plus up to `batch` due marks. A binding that catches up
-     * clears its mark by `seq`. A failed binding defers its own mark and does
-     * not fail the pass.
+     * clears its mark by `seq`. A failed binding backs off or stops its own
+     * mark without failing the pass.
      */
     const drainMarks = Effect.gen(function* () {
       const id = declaration.id;
@@ -399,7 +439,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       // A commit records work without shortening a failed binding's backoff.
       // Its mark holds the work until due; keeping it pending would wake every pass.
       for (const [key, state] of states) {
-        if (state.dueAt > now) {
+        if (state.stopped || state.dueAt > now) {
           work.delete(key);
           working.delete(key);
         }
@@ -425,20 +465,13 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         }
 
         const attempts = (state?.attempts ?? 0) + 1;
-        const delay = deferDelay(attempts);
-        const dueAt = (yield* Clock.currentTimeMillis) + delay;
-        yield* marks.fail(id, key, {
-          attempts,
-          dueAt: Option.some(dueAt),
-          failure: {
-            at: dueAt - delay,
-            reason: Cause.findErrorOption(exit.cause).pipe(
-              Option.filter(Schema.is(ProjectionFault)),
-              Option.map((fault) => fault.reason),
-            ),
-            message: Cause.pretty(exit.cause),
-          },
-        });
+        const failed = runnerFailure(exit.cause, yield* Clock.currentTimeMillis);
+
+        const dueAt = failed.retryable
+          ? Option.some(failed.at + deferDelay(attempts))
+          : Option.none<number>();
+
+        yield* marks.fail(id, key, { attempts, dueAt, failure: failed });
 
         if (publish !== undefined)
           yield* publish(
@@ -446,11 +479,13 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
               projection: id,
               params: binding.params,
               attempts,
-              dueAt: Option.some(dueAt),
+              dueAt,
+              failure: failed,
+              stopped: !failed.retryable,
             }),
           );
         yield* Effect.logWarning(
-          `Projection ${id} binding ${key} failed (attempt ${attempts}); it runs again in ${delay} ms`,
+          `Projection ${id} binding ${key} failed (attempt ${attempts}); ${failed.retryable ? `it runs again in ${deferDelay(attempts)} ms` : "stopped until retry or restart"}`,
           exit.cause,
         );
       }
@@ -464,6 +499,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     });
 
     const drain = Effect.fn("Projection.drain")(function* () {
+      yield* start;
       yield* Queue.clear(wake);
       yield* absorb;
 
@@ -471,12 +507,14 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
       const result = yield* drainMarks;
 
+      failure = Option.none();
+
       return { more: result.more || (triggers !== undefined && (yield* triggers.next)) };
     });
 
     return {
-      next,
-      wait,
+      next: observeFailure(next),
+      wait: observeFailure(wait),
       resume: requested,
       /** True when a consumed request permits a pass without another wait. */
       interruptDelay: (duration: number) =>
@@ -508,11 +546,54 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           const key = binding === undefined ? undefined : canonicalParams(binding.params);
           const count = yield* marks.retry(declaration.id, key);
 
+          if (binding === undefined) triggers?.retry();
+
           yield* signal;
 
           return count;
         }).pipe(Effect.uninterruptible),
-      drain: drain().pipe(Effect.ensuring(Effect.sync(() => working.clear()))),
+      failed: (
+        failureLimit: number,
+        binding?: { readonly params: Readonly<Record<string, string>> },
+      ) =>
+        Effect.gen(function* () {
+          const rows =
+            binding === undefined
+              ? yield* marks.failed(declaration.id, failureLimit)
+              : Array.filter(
+                  [
+                    ...(yield* marks.read(declaration.id, [
+                      canonicalParams(binding.params),
+                    ])).values(),
+                  ],
+                  (row) => row.attempts > 0,
+                );
+
+          return yield* Effect.forEach(rows, (row) =>
+            Effect.gen(function* () {
+              const params = yield* Schema.decodeEffect(ParamsJson)(row.params).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StorageFault({
+                      operation: "marks.failed",
+                      retryable: false,
+                      message: "Invalid stored binding params",
+                      cause,
+                    }),
+                ),
+              );
+
+              return {
+                params,
+                attempts: row.attempts,
+                dueAt: row.stopped ? Option.none<number>() : Option.some(row.dueAt),
+                stopped: row.stopped,
+                failure: row.failure,
+              };
+            }),
+          );
+        }),
+      drain: observeFailure(drain()).pipe(Effect.ensuring(Effect.sync(() => working.clear()))),
       status: Effect.gen(function* () {
         const summary = yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis);
 
@@ -520,6 +601,9 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           active,
           queued: new Set([...pending.keys(), ...working]).size,
           marks: summary,
+          failure,
+          stopped: summary.stopped,
+          triggers: triggers?.status() ?? [],
         };
       }),
       deferred: Effect.gen(function* () {

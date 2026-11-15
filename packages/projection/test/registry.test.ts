@@ -36,6 +36,9 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           active: 0,
           queued: 0,
           lastPassAt: Option.none(),
+          failure: Option.none(),
+          stopped: 0,
+          triggers: [],
           marks: { fresh: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: Option.none() },
         },
       ];

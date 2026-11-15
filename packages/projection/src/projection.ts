@@ -45,4 +45,10 @@ export { forget } from "./forget.ts";
 
 export { wake, type WakeOutput } from "./wake.ts";
 
-export { Registry, type RegistryApi, RunnerEvent, type RunnerStatus } from "./registry.ts";
+export {
+  Registry,
+  type RegistryApi,
+  RunnerEvent,
+  type RunnerStatus,
+  type RunnerFailure,
+} from "./registry.ts";

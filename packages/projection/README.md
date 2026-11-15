@@ -231,9 +231,11 @@ never commit here, so they never trigger. Do not also run an attached binding
 under `Projection.follow`.
 
 By default `Projection.attach` keeps pending binding marks and backoff in private memory.
-In both modes a failed binding waits alone, from 1 s doubling to 1 hour, while
-its neighbours run. A local commit or trigger row does not shorten backoff;
-`registry.retry` or `registry.schedule` makes it due now.
+In both modes a retryable failed binding waits alone, from 1 s doubling to 1 hour, while
+its neighbours run. A non-retryable projection or storage fault stops only the binding that failed.
+Handler errors and defects retry. A local commit or trigger row does not shorten backoff or end a stop;
+`registry.retry` or `registry.schedule` makes it due now. `registry.failed` lists
+failed bindings with their stored cause. A runner start makes stopped marks due once.
 If the process stops after a commit and before the run, the binding is late
 until its source gets its next write. The next run catches up from the
 checkpoint while the source history remains available. Removal before that run
@@ -262,7 +264,7 @@ StreamsyObject.make({
 ```
 
 Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner calls
-the schedule once per failed pass with no input. Bun waits for its delays; the
+the schedule once per retryable failed pass with no input. Bun waits for its delays; the
 alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.
 A finite schedule stops pass retries when exhausted. Binding failures use their own
 backoff; the pass policy paces failures reading marks, cursors or triggers.
@@ -304,7 +306,7 @@ already run. Any number of `current` and `decide` calls can run beside the
 follower, including inside a caller transaction. Table and stateless output
 projections are follow-only; wait on their output to see a command.
 
-`follow` retries only `storage-failure`: `options.retry` overrides the
+`follow` retries `token-conflict`, `output-busy`, and retryable `storage-failure`: `options.retry` overrides the
 `ProjectionRetry` context reference, whose default is jittered exponential
 backoff from 200 ms, capped at 30 s. `run` does not retry. Handler errors retain
 their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.

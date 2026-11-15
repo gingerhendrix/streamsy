@@ -1,9 +1,10 @@
 import { Clock, Duration, Effect, Exit, Layer, Option, Pull, Schedule, Schema } from "effect";
-import type { Storage } from "@streamsy/core";
+import type { Storage, StorageFault } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
+import { retryable } from "./failure.ts";
 import { ProjectionRetry } from "./retry.ts";
 import type { WakeOutput } from "./wake.ts";
 
@@ -15,16 +16,17 @@ export interface AttachOptions {
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
   /**
-   * Timing only. The runner calls the schedule once per failed pass with no input.
-   * Paces failures reading marks, cursors or triggers; binding failures back off alone,
-   * 1 s doubling to 1 hour. Defaults to capped, jittered exponential backoff.
+   * Timing only. The runner calls the schedule once per retryable failed pass with no input.
+   * Paces retryable failures reading marks, cursors or triggers. Retryable binding
+   * failures back off alone, 1 s doubling to 1 hour. Non-retryable faults stop their unit.
+   * Defaults to capped, jittered exponential backoff.
    */
   readonly retry?: Schedule.Schedule<unknown>;
   /**
    * Keep a pending mark for each binding in the storage owner, written in the
    * transaction of the commit that needs the run. After a restart or an
    * eviction, the runner finds the marks and runs those bindings. Otherwise
-   * pending work and binding backoff live only for this runner.
+   * pending work, binding backoff and stops live only for this runner.
    * Needs a local memory or SQL storage layer.
    *
    * Default: false for `Projection.attach`, true for `ProjectionWakeup.attach`.
@@ -77,7 +79,9 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain, status, schedule, retry, interruptDelay, resume } = yield* runner;
+      const { wait, drain, status, schedule, retry, failed, interruptDelay, resume } =
+        yield* runner;
+
       const policy = options.retry ?? (yield* ProjectionRetry);
       const step = yield* Schedule.toStep(policy);
 
@@ -107,6 +111,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             generation: projection.generation,
             schedule,
             retry,
+            failed,
             status: status.pipe(
               Effect.map((runnerStatus): RunnerStatus => ({
                 projection: projection.id,
@@ -127,12 +132,13 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           current.state = "running";
           current.retryAt = Option.none();
 
-          const exit = yield* Effect.exit(
-            (requested ? Effect.void : wait).pipe(
-              Effect.andThen(drain),
-              Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
-            ),
-          );
+          const exit: Exit.Exit<{ readonly more: boolean }, StorageFault | PassDefect> =
+            yield* Effect.exit(
+              (requested ? Effect.void : wait).pipe(
+                Effect.andThen(drain),
+                Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
+              ),
+            );
 
           requested = false;
 
@@ -150,16 +156,18 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
           const now = yield* Clock.currentTimeMillis;
 
-          const delay = yield* Effect.suspend(() => current.step(now, undefined)).pipe(
-            Effect.map(([, duration]) => Option.some(Duration.toMillis(duration))),
-            Pull.catchDone(() => Effect.succeedNone),
-            Effect.catchCause((cause) =>
-              Effect.logError(
-                `Projection.attach ${projection.id} retry schedule failed`,
-                cause,
-              ).pipe(Effect.as(Option.none<number>())),
-            ),
-          );
+          const delay: Option.Option<number> = yield* !retryable(exit.cause)
+            ? Effect.succeedNone
+            : Effect.suspend(() => current.step(now, undefined)).pipe(
+                Effect.map(([, duration]) => Option.some(Duration.toMillis(duration))),
+                Pull.catchDone(() => Effect.succeedNone),
+                Effect.catchCause((cause) =>
+                  Effect.logError(
+                    `Projection.attach ${projection.id} retry schedule failed`,
+                    cause,
+                  ).pipe(Effect.as(Option.none<number>())),
+                ),
+              );
 
           if (Option.isSome(delay)) {
             current.state = "retrying";
