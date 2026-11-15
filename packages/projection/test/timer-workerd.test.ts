@@ -1,12 +1,13 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Miniflare owns this local workerd lifecycle; state is retained across eviction. */
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { Array, Config, Effect, Schema } from "effect";
 import { Miniflare } from "miniflare";
 
 const scratch = Effect.runSync(
-  Config.String("STREAMSY_PROJECTION_SCRATCH").pipe(Config.withDefault(".")),
+  Config.String("STREAMSY_PROJECTION_SCRATCH").pipe(Config.withDefault(tmpdir())),
 );
 
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -53,7 +54,13 @@ test("workerd snooze moves, cancels, arms at sleep time and survives eviction", 
   };
 
   let mf = new Miniflare(options);
-  cleanup.push(() => mf.dispose());
+  cleanup.push(async () => {
+    try {
+      await mf.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   await mf.ready;
 
   const send = async (path: string) => {
