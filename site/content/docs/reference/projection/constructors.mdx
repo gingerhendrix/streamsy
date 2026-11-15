@@ -93,7 +93,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -375,7 +377,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -570,6 +574,11 @@ interface ProcessContext<Prepared = void> {
 interface OutputsContext<O extends RoutedMap> {
   readonly outputs: Addresses<O>;
 }
+type TimerResult<A> = 0 extends 1 & A
+  ? void
+  : [Extract<A, import("@streamsy/projection").WakeAt>] extends [never]
+    ? void
+    : void | import("@streamsy/projection").WakeAt;
 // Without `outputs`.
 declare function process<
   C extends StreamRoute.ParamCodecs,
@@ -584,9 +593,10 @@ declare function process<
   W extends WakeOutput | undefined = undefined,
   HE = never,
   HR = never,
+  A = void,
 >(
   definition: Common<C, I, W, HE, HR> & {
-    readonly commit: Commit.Commit<AcceptedResult<void, W>, P, Q>;
+    readonly commit: Commit.Commit<AcceptedResult<TimerResult<A>, W>, P, Q>;
     readonly outputs?: never;
     readonly prepare?: (
       batch: Slices<Addresses<I>>,
@@ -596,9 +606,21 @@ declare function process<
       batch: Slices<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
       context: ProcessContext<Prepared>,
-    ) => Effect.Effect<void, E, R>;
+    ) => Effect.Effect<A, E, R>;
   },
-): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR, never, AcceptedServices<W>, HE, HR>;
+): RunningDeclaration<
+  C,
+  I,
+  E | PE,
+  R,
+  TimerResult<A>,
+  P,
+  Q | PR,
+  never,
+  AcceptedServices<W>,
+  HE,
+  HR
+>;
 // With `outputs`.
 declare function process<
   C extends StreamRoute.ParamCodecs,
@@ -613,9 +635,10 @@ declare function process<
   W extends WakeOutput | undefined = undefined,
   HE = never,
   HR = never,
+  A = void,
 >(
   definition: Common<C, I, W, HE, HR> & {
-    readonly commit: Commit.Commit<AcceptedResult<void, W>, SqlClient.SqlClient, Q>;
+    readonly commit: Commit.Commit<AcceptedResult<TimerResult<A>, W>, SqlClient.SqlClient, Q>;
     readonly outputs: O & OutputsWithin<C, O>;
     readonly prepare?: (
       batch: Slices<Addresses<I>>,
@@ -626,7 +649,7 @@ declare function process<
       batch: Slices<Addresses<I>>,
       unit: Unit<StreamRoute.Params<C>>,
       context: ProcessContext<Prepared> & OutputsContext<O>,
-    ) => Effect.Effect<void, E, R>;
+    ) => Effect.Effect<A, E, R>;
   },
 ): OutputDeclaration<
   C,
@@ -634,7 +657,7 @@ declare function process<
   O,
   E | PE,
   R,
-  void,
+  TimerResult<A>,
   SqlClient.SqlClient,
   Q | PR,
   never,
@@ -666,6 +689,31 @@ same<Flat<Shown[3]>, Flat<Real[3]>>(true);
 - `prepare` is optional and needs `Commit.transaction`, alone or wrapped by `Commit.withCompensation`. With another Commit, the `process` call throws a `RangeError`.
 - `Commit.transaction` runs `prepare` before it opens the transaction, and passes its result to `process` as `context.prepared`. A retry of the unit runs `prepare` again.
 - `outputs` is optional. It names the streams that the handler appends to, by name, with the same param rule as `inputs`. Only a Commit that provides `SqlClient`, such as `Commit.transaction`, accepts it. The Commit checks every output before the handler runs. `prepare` and `process` get the bound addresses as `context.outputs`. The Commit appends nothing itself, so the handler writes the outputs. See [Declared outputs](/docs/projections/process#declared-outputs).
+
+### `Projection.wakeAt`
+
+```ts
+// ---cut-start---
+import { Projection, type WakeAt as RealWakeAt } from "@streamsy/projection";
+import type { DateTime } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+interface WakeAt {
+  readonly _tag: "WakeAt";
+  readonly wakeAt: number;
+}
+declare function wakeAt(time: number | DateTime.DateTime): WakeAt;
+// ---cut-after---
+same<WakeAt, RealWakeAt>(true);
+same<typeof wakeAt, typeof Projection.wakeAt>(true);
+```
+
+Return this request from `process` to replace its recorded wake; returning void
+clears it. The time must convert to non-negative safe integer epoch milliseconds,
+otherwise `wakeAt` throws `RangeError`. Timers require `Commit.atLeastOnce` or
+`Commit.transaction`, including compensation wrappers. A typed wake request does
+not fit a custom `Commit<void>`. Other handler results are discarded. See
+[Timers](/docs/projections/process#timers) for due units and runner timing.
 
 ### `Projection.emit`
 
@@ -718,7 +766,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -998,7 +1048,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -1299,7 +1351,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -1600,7 +1654,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,
@@ -1887,7 +1943,9 @@ type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W 
 type AcceptedResult<Result, W> = W extends WakeOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
-    : Emitted<{}>
+    : Result extends import("@streamsy/projection").WakeAt
+      ? Emitted<{}> & Pick<import("@streamsy/projection").WakeAt, "wakeAt">
+      : Emitted<{}>
   : Result;
 interface Common<
   C extends StreamRoute.ParamCodecs,

@@ -276,8 +276,10 @@ interface CheckpointRecord {
         readonly gone?: true;
       };
     };
+    readonly due?: number;
     readonly seqs?: { readonly [x: string]: number };
   };
+  readonly wakeAt?: number;
   readonly closed?: { readonly [x: string]: boolean };
   readonly ended?: true;
   readonly state?: string;
@@ -297,14 +299,15 @@ same<Flat<typeof Real.CheckpointRecord.Encoded>, Flat<CheckpointRecord>>(true);
 
 A `CheckpointRecord` is the stored progress of a projection key. `CheckpointRecord` is also the `Schema.Struct` of the record. Its encoded form is the same object, so `Schema.fromJsonString(CheckpointRecord)` gives its JSON codec.
 
-| Field      | Meaning                                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------------------ |
-| `identity` | The stream id and content type of each input. A change stops the projection with reason `identity-mismatch`  |
-| `inputs`   | The accepted offset of each input. The next pass reads after it                                              |
-| `pending`  | A pinned unit: the range and item count of each input, and the sequence of each output for `Commit.producer` |
-| `closed`   | The inputs whose close the projection has handled                                                            |
-| `ended`    | `true` when the final unit of a removed input committed. The next pass deletes the record                    |
-| `state`    | The state as JSON                                                                                            |
-| `adapters` | The producer epoch and the next sequence of each output of `Commit.producer`                                 |
+| Field      | Meaning                                                                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity` | The stream id and content type of each input. A change stops the projection with reason `identity-mismatch`                                    |
+| `inputs`   | The accepted offset of each input. The next pass reads after it                                                                                |
+| `pending`  | A pinned unit: its optional recorded `due` time, the range and item count of each input, and the sequence of each output for `Commit.producer` |
+| `wakeAt`   | Next process deadline in epoch milliseconds; absent when no timer is recorded                                                                  |
+| `closed`   | The inputs whose close the projection has handled                                                                                              |
+| `ended`    | `true` when the final unit of a removed input committed. The next pass deletes the record                                                      |
+| `state`    | The state as JSON                                                                                                                              |
+| `adapters` | The producer epoch and the next sequence of each output of `Commit.producer`                                                                   |
 
 A change to an input name, stream id, or content type fails the next load with phase `load` and reason `identity-mismatch`. A codec change with the same content type is not detected. Declare a new `generation` to start again.

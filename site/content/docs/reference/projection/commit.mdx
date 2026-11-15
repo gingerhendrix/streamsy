@@ -31,7 +31,7 @@ A Commit takes the unit that a runner read, runs the handler, and writes the che
 | `Commit.checkpoint`  | `Folded`                 | Exactly once for the saved value    | `CheckpointStore`                |
 | `Commit.transaction` | Any                      | Exactly once in the SQL transaction | `CheckpointStore`, `Transaction` |
 | `Commit.producer`    | `Emitted`, `Accumulated` | Effectively once for the outputs    | `CheckpointStore`                |
-| `Commit.atLeastOnce` | `void`                   | At least once                       | `CheckpointStore`                |
+| `Commit.atLeastOnce` | `void` or `WakeAt`       | At least once                       | `CheckpointStore`                |
 
 ## Commits
 
@@ -61,11 +61,13 @@ import {
   type Emitted,
   type Folded,
   type Transaction,
+  type WakeAt,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare const transaction: Commit.Commit<
   | void
+  | WakeAt
   | Folded<unknown>
   | Emitted<Readonly<Record<string, never>>>
   | Accumulated<unknown, Readonly<Record<string, never>>>,
@@ -76,7 +78,7 @@ declare const transaction: Commit.Commit<
 same<typeof transaction, typeof Commit.transaction>(true);
 ```
 
-`transaction` runs the handler, the output appends, and the checkpoint write in one SQL transaction of the storage owner. It fits every constructor. The handler gets the `SqlClient` of the transaction, so its SQL commits or rolls back with the checkpoint.
+`transaction` runs the handler, the output appends, and the checkpoint write (including the returned wake request) in one SQL transaction of the storage owner. It fits every constructor. The handler gets the `SqlClient` of the transaction, so its SQL commits or rolls back with the checkpoint.
 
 - Every declared output must be on the storage owner of the transaction. When one is not, the unit fails with phase `load` and reason `unsupported-composition`.
 - A stream append in the handler to a stream on another owner fails with phase `process` and reason `unsupported-composition`.
@@ -128,15 +130,15 @@ Storage refuses a producer id over 255 code points. When the `producerId` above 
 
 ```ts
 // ---cut-start---
-import { Commit, type CheckpointStore } from "@streamsy/projection";
+import { Commit, type CheckpointStore, type WakeAt } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
-declare const atLeastOnce: Commit.Commit<void, never, CheckpointStore>;
+declare const atLeastOnce: Commit.Commit<void | WakeAt, never, CheckpointStore>;
 // ---cut-after---
 same<typeof atLeastOnce, typeof Commit.atLeastOnce>(true);
 ```
 
-`atLeastOnce` saves the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last write fails, the next pass runs the same unit again, with the same `unit.key`. Use `unit.key` as the idempotency key of an external call, or deliver the effects through an [outbox](/docs/outbox).
+`atLeastOnce` saves the input ranges and recorded due time of the unit, runs the handler, and then saves the new offsets and returned wake request. It fits `process`. When the handler or the last write fails, the next pass runs the same unit again, with the same `unit.key`. A due unit's key includes its recorded deadline, so different deadlines have different keys. Use `unit.key` as the idempotency key of an external call, or deliver the effects through an [outbox](/docs/outbox).
 
 ### `Commit.make`
 
@@ -151,6 +153,8 @@ declare function make<Result, Provides = never, Requires = never>(
 // ---cut-after---
 same<typeof make, typeof Commit.make>(true);
 ```
+
+Custom Commits do not support timer handlers in this release. A typed `WakeAt` result does not fit a custom `Commit<void>`; use `Commit.atLeastOnce` or `Commit.transaction`, including compensation wrappers, for timers.
 
 `make` returns a custom Commit from its `name`, `guarantee`, `load`, `apply`, and optional `remove`. `make` infers the result and the required services from `apply` and `load`. When the Commit provides handler services, write the `Result`, `Provides`, and `Requires` type arguments.
 

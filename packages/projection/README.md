@@ -5,13 +5,13 @@ step. Its `commit:` value defines how results and offsets become durable.
 
 ## Constructors
 
-| Constructor                | Handler                  | Result           | Commit                          |
-| -------------------------- | ------------------------ | ---------------- | ------------------------------- |
-| `Projection.fold`          | `(state, entry, unit)`   | Next value       | Defaults to `Commit.checkpoint` |
-| `Projection.process`       | `(batch, unit, context)` | Effect of void   | Required                        |
-| `Projection.emit`          | `(entry, unit)`          | Output items     | Required                        |
-| `Projection.mapAccum`      | `(state, entry, unit)`   | `[state, emits]` | Required                        |
-| `Projection.mapAccumBatch` | `(state, batch, unit)`   | `[state, emits]` | Required                        |
+| Constructor                | Handler                  | Result                     | Commit                          |
+| -------------------------- | ------------------------ | -------------------------- | ------------------------------- |
+| `Projection.fold`          | `(state, entry, unit)`   | Next value                 | Defaults to `Commit.checkpoint` |
+| `Projection.process`       | `(batch, unit, context)` | Effect of void or `WakeAt` | Required                        |
+| `Projection.emit`          | `(entry, unit)`          | Output items               | Required                        |
+| `Projection.mapAccum`      | `(state, entry, unit)`   | `[state, emits]`           | Required                        |
+| `Projection.mapAccumBatch` | `(state, batch, unit)`   | `[state, emits]`           | Required                        |
 
 Except for `process`, steps return a value or an Effect. A missing output key
 emits nothing. `Projection.each` adapts an entry handler for `process`.
@@ -308,6 +308,26 @@ SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.
 Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`.
 
+## Timers
+
+A `Projection.process` handler can return `Projection.wakeAt(time)`, with epoch
+milliseconds or an Effect `DateTime`, under `Commit.atLeastOnce` or
+`Commit.transaction` (including compensation wrappers). Returning void clears the
+previous timer; new input before the deadline can replace or cancel it. Other
+return values are discarded. A custom `Commit<void>` does not fit a timer handler.
+
+When the recorded time is due, the handler receives `unit.due: Some(time)`. Without
+new input, the slices and `unit.ranges` are empty. With new input, one unit carries
+both the items and the due time. The key includes the recorded due time, so pinned
+retries keep it and distinct deadlines have different keys. Decide what is due
+from `unit.due`; read `Clock` only to choose a late policy.
+
+`run`, `pass` and `follow` handle due timers when they next run. They do not wait
+for the deadline; `follow` can discover it on an input change or repair cycle.
+A `run` cycle makes at most one due unit without input, even if its handler returns
+a time already passed. Return a time after `unit.due` for the next wake.
+Hosts waking at the deadline follow in the same release.
+
 ## Run and recover
 
 `declaration.at(params)` binds a projection. `pass` runs one unit; `run` continues
@@ -316,10 +336,10 @@ that runs to caught up, then waits for changes, with a default repair interval o
 30 seconds. Remote inputs work with `follow` and `run`.
 
 `run` and each `follow` element give a `Progress`: the `state` and `offsets` that
-the last pass left, plus `status`, `units`, and `items`. The stream
+the last pass left, plus `status`, `units`, `items`, and `wakeAt: Option<number>`. The stream
 emits after the first cycle, after each cycle that commits a unit or reaches
-`limit`, and after the last cycle when every input is closed; then it ends. A wake
-that finds no input emits nothing. Invalid options fail the stream at its first pull.
+`limit`, and after the last cycle when every input is closed; then it ends. A cycle
+that finds no input or due timer emits nothing. Invalid options fail the stream at its first pull.
 
 ```ts
 // Forks the follower into the caller's scope; closing the scope stops it.

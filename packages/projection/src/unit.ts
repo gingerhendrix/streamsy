@@ -1,4 +1,4 @@
-import { Array, Order, Record, Schema } from "effect";
+import { Array, Option, Order, Record, Schema } from "effect";
 
 /** Length-safe encoding of inert string components; no persistence decoding here. */
 export const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -25,9 +25,11 @@ export const PinnedRange = Schema.Struct({
 
 export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
 
-/** An outputs unit that was pinned before its append; settled by the next pass. */
+/** A unit pinned before its handler or append; settled by the next pass. */
 export const PendingUnit = Schema.Struct({
   ranges: Schema.Record(Schema.String, PinnedRange),
+  /** Recorded wake time, preserved across retries. */
+  due: Schema.optionalKey(Counter),
   seqs: Schema.optionalKey(Schema.Record(Schema.String, Counter)),
 });
 
@@ -42,6 +44,8 @@ export interface Unit<P = Record<string, string>> {
   readonly params: P;
   /** The inputs that contributed items or a terminal outcome; retries reproduce these. */
   readonly ranges: Record<string, Range>;
+  /** Recorded wake time, rather than the clock time when this unit runs. */
+  readonly due: Option.Option<number>;
   readonly key: string;
 }
 
@@ -93,17 +97,20 @@ export const unitOf = (
   generation: number,
   params: Record<string, string>,
   ranges: Record<string, Range>,
+  due?: number,
 ): Unit => ({
   projectionId,
   version,
   generation,
   params,
   ranges,
+  due: Option.fromUndefinedOr(due),
   key: encodeKey([
     projectionId,
     String(generation),
     canonicalParams(params),
     canonicalRanges(ranges),
+    ...(due === undefined ? [] : [String(due)]),
   ]),
 });
 

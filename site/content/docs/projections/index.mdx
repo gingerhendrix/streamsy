@@ -9,7 +9,7 @@ A pass of a projection makes at most one unit:
 
 1. The Commit loads the checkpoint record of the projection.
 2. The runner reads one page of each input after its checkpoint offset, in declaration order. When the record holds the saved ranges of an unfinished unit, the runner reads those ranges again.
-3. When no input has new items, and no input has newly closed or gone, the pass ends. The handler does not run.
+3. When no input has new items, no input has newly closed or gone, and no process timer is due, the pass ends. The handler does not run.
 4. Otherwise the Commit runs the handler over the unit and saves the new offsets with the handler result.
 
 To declare a projection and its handler, see [Define a projection](/docs/projections/define). To run passes, see [Run a projection](/docs/projections/run).

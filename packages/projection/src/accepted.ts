@@ -80,7 +80,11 @@ export const acceptedResult = (result: Result, output: ReturnType<typeof accepte
       ? { ...result.outputs, [acceptedKey]: output }
       : { [acceptedKey]: output };
 
-  return result !== undefined && "encoded" in result
-    ? Accumulated({ value: result.value, encoded: result.encoded, outputs })
-    : Emitted({ outputs });
+  if (result !== undefined && "encoded" in result)
+    return Accumulated({ value: result.value, encoded: result.encoded, outputs });
+  const emitted = Emitted({ outputs });
+
+  return result !== undefined && "wakeAt" in result
+    ? { ...emitted, wakeAt: result.wakeAt }
+    : emitted;
 };

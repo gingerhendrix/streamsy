@@ -9,7 +9,7 @@ A runner reads each input of a bound projection after its checkpoint offset, run
 
 | Runner                                     | Takes              | Returns                     | Runs                                                           |
 | ------------------------------------------ | ------------------ | --------------------------- | -------------------------------------------------------------- |
-| `Projection.pass(projection)`              | A bound projection | An Effect of a `PassResult` | One unit, or nothing when no input has new items               |
+| `Projection.pass(projection)`              | A bound projection | An Effect of a `PassResult` | One unit for input or a due timer, or nothing                  |
 | `Projection.run(projection, options?)`     | A bound projection | An Effect of a `Progress`   | Units until the inputs are caught up or closed, or `limit`     |
 | `Projection.follow(projection, options?)`  | A bound projection | A `Stream` of `Progress`    | One `run` cycle, then a wait for a change, then the next cycle |
 | `Projection.attach(declaration, options?)` | A declaration      | A `Layer`                   | `run` for each binding whose input a local commit writes       |
@@ -48,6 +48,21 @@ const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 `limit` is the most units that a `run` call commits. With no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with a `ProjectionFault` with phase `load` and reason `invalid-options`. See [`RunOptions`](/docs/reference/projection/units#runoptions).
 
+### Recorded wakes
+
+A [`process` timer](/docs/projections/process#timers) makes a due unit when `pass`,
+`run` or a `follow` cycle runs at or after the recorded deadline. Without new input,
+the slices and ranges are empty; with input, one unit carries both the input and
+`unit.due`. This also works after all inputs close. These calls do not wait for a
+future deadline, and `follow` discovers one on an input change or repair cycle.
+Deadline scheduling in the attach hosts follows in the same release.
+
+Each `run` or `follow` cycle makes at most one due unit without input. A handler
+that returns a time already passed therefore cannot loop forever inside a cycle.
+Return a time after `unit.due` for the next wake. Units with input are not limited
+by this rule. `Progress.wakeAt` is the timer recorded after the cycle, including
+when the cycle stops at its limit.
+
 ### Results
 
 `pass` gives a [`PassResult`](/docs/reference/projection/units#passresult). `run` and each `follow` element give a [`Progress`](/docs/reference/projection/units#progress).
@@ -58,9 +73,10 @@ const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
 | `units`   | `1` when the pass committed a unit, else `0` | The units that the cycle committed                                                 |
 | `items`   | The input items in the unit                  | The input items in those units                                                     |
 | `offsets` | The offset of each input after the pass      | The offsets that the last pass left                                                |
+| `wakeAt`  | Not present                                  | Next recorded wake as `Option<number>` in epoch milliseconds                       |
 | `state`   | Not present                                  | The state that the last pass left. `undefined` when the projection has no `state:` |
 
-`state` and `offsets` in a `Progress` come from the same checkpoint record, so they always match.
+`state`, `offsets` and `wakeAt` in a `Progress` come from the same checkpoint record, so they always match.
 
 | Status          | Returned by        | Meaning                                             |
 | --------------- | ------------------ | --------------------------------------------------- |
@@ -111,7 +127,7 @@ const consumer = Effect.gen(function* () {
 - after each later cycle that commits a unit or reaches `limit`,
 - after the last cycle, when every input is closed and read or an input is gone. Then the stream ends.
 
-A wait that ends with no new input emits nothing. `limit` applies to each cycle. After a cycle that reaches `limit`, the next cycle starts at the next pull, with no wait.
+A wait that ends with no new input or due timer emits nothing. `limit` applies to each cycle. After a cycle that reaches `limit`, the next cycle starts at the next pull, with no wait.
 
 After a cycle that is caught up, `follow` makes one long-poll read on each input from its offset. The first input with new items, or an input that is removed, ends the wait, and the next cycle runs. A close with no new items does not end the wait. `repairIntervalMs` bounds each wait. When the interval ends with no change, `follow` runs a cycle anyway, and that cycle sees any close. The default is 30000 ms. A value that is not a positive safe integer fails the stream with reason `invalid-options`. `follow` checks its options at the first pull, not when you call it.
 

@@ -121,7 +121,7 @@ same<typeof pass, typeof Projection.pass>(true);
 
 `pass` runs at most one unit and returns a [`PassResult`](/docs/reference/projection/units#passresult). It loads the checkpoint through the Commit, reads one page of each input in declaration order, runs the handler, and passes the unit to the Commit.
 
-- When no input has items and no input reached a new close or removal, `pass` commits nothing. Its status is `source-closed` when every input is closed, and `caught-up` otherwise.
+- When no input has items, no input reached a new close or removal, and no timer is due, `pass` commits nothing. Its status is `source-closed` when every input is closed, and `caught-up` otherwise.
 - When the checkpoint holds a pinned unit, `pass` reads the pinned ranges again and runs that unit first. A Commit that does not pin fails with reason `invalid-record`.
 - When an input is gone, `pass` runs one final unit with `gone` on its slice, then forgets the binding. Its status is `source-closed`.
 - A handler failure fails `pass` with the error of the handler. `pass` does not wrap it.
@@ -213,7 +213,7 @@ declare function run<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR 
 same<typeof run, typeof Projection.run>(true);
 ```
 
-`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state once.
+`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state once. It handles recorded wakes when due but does not wait for a future deadline. A cycle commits at most one due unit without input; return a time after `unit.due` for the next wake.
 
 - With no `limit`, `run` continues until the inputs are caught up or closed.
 - When `limit` is not a positive safe integer, `run` fails with a `ProjectionFault` with phase `load` and reason `invalid-options`.

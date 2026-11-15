@@ -159,6 +159,7 @@ interface Unit<P = Record<string, string>> {
   readonly generation: number;
   readonly params: P;
   readonly ranges: Record<string, Range>;
+  readonly due: import("effect").Option.Option<number>;
   readonly key: string;
 }
 // ---cut-after---
@@ -168,14 +169,17 @@ same<Unit, Real.Unit>(true);
 
 A `Unit` identifies the unit that a handler runs. A handler gets the decoded params as `params`.
 
-| Field          | Meaning                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------ |
-| `projectionId` | The `id` of the projection                                                                 |
-| `version`      | The declared version                                                                       |
-| `generation`   | The declared generation                                                                    |
-| `params`       | The params that the declaration was bound with                                             |
-| `ranges`       | The range of each input that gave items, a close, or a removal. Other inputs have no entry |
-| `key`          | A string made from the id, the generation, the encoded params, and `ranges`                |
+| Field          | Meaning                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------ |
+| `projectionId` | The `id` of the projection                                                                             |
+| `version`      | The declared version                                                                                   |
+| `generation`   | The declared generation                                                                                |
+| `params`       | The params that the declaration was bound with                                                         |
+| `ranges`       | The range of each input that gave items, a close, or a removal. Other inputs have no entry             |
+| `due`          | `Some(recordedTime)` for a due process unit, otherwise `None`                                          |
+| `key`          | A string made from the id, the generation, the encoded params, `ranges`, and the due time when present |
+
+A due unit without new input has empty slices and ranges. `due` is the recorded deadline, not the clock time at execution. Its key includes that time; units without a due time keep their existing key encoding.
 
 A Commit that pins the unit, such as `Commit.producer` or `Commit.atLeastOnce`, reads the same ranges on a retry, so `key` stays the same. A `Commit.transaction` retry reads the inputs again, and a longer tail changes `key`. In an entry handler, `ranges` describes the whole unit, not the entry.
 
@@ -277,6 +281,7 @@ import { same, type Flat } from "./reference-check.ts";
 // ---cut-end---
 interface Progress<S, Inputs extends InputMap = InputMap> extends Snapshot<S, Inputs> {
   readonly status: "caught-up" | "limit-reached" | "source-closed";
+  readonly wakeAt: import("effect").Option.Option<number>;
   readonly units: number;
   readonly items: number;
 }
@@ -286,7 +291,7 @@ same<Progress<number, In>, Real.Progress<number, In>>(true);
 same<Progress<number>, Real.Progress<number>>(true);
 ```
 
-`Progress` is the result of a cycle of [`Projection.run`](/docs/reference/projection/runners#projectionrun), and an element of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow). `state` and `offsets` are the ones that the last pass of the cycle left. `units` counts the units that the cycle committed, and `items` counts their input items.
+`Progress` is the result of a cycle of [`Projection.run`](/docs/reference/projection/runners#projectionrun), and an element of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow). `state` and `offsets` are the ones that the last pass of the cycle left. `units` counts the units that the cycle committed, and `items` counts their input items. `wakeAt` is the next recorded process wake in epoch milliseconds, or `None`. A cycle makes at most one due unit without input; return a time after `unit.due` for the next wake.
 
 | Status          | Meaning                                             |
 | --------------- | --------------------------------------------------- |

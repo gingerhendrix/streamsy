@@ -85,7 +85,8 @@ const hint = Effect.fn("Projection.hint")(function* <R>(
  * after each cycle that commits a unit or reaches `limit`, and after the last cycle
  * when every input is closed or an input is gone; then it ends. After a gone input, the
  * last element holds the state that the final unit committed, and the kernel then
- * deletes the record. A wake that finds no input emits nothing.
+ * deletes the record. A cycle that finds no input or due timer emits nothing.
+ * Recorded timers run on the next cycle; follow does not wait for their deadlines.
  * Options are checked at the first pull. On HTTP backends a parked hint is cancelled
  * and replaced once per `repairIntervalMs` until an input changes. One
  * `Projection.follow` span covers the whole stream.

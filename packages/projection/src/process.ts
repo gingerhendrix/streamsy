@@ -39,7 +39,9 @@ export interface OutputsContext<O extends RoutedMap> {
   readonly outputs: Addresses<O>;
 }
 
-/** Run side effects once per unit. prepare runs at least once, outside the transaction. */
+/** Run side effects once per unit, including recorded wakes. Return wakeAt(time) to
+ * replace the timer, or void to clear it. Timers require atLeastOnce or transaction.
+ * prepare runs at least once, outside the transaction. */
 export function process<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,

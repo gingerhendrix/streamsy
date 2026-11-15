@@ -17,3 +17,6 @@ export const wakeAt = (time: number | DateTime.DateTime): WakeAt => {
 
   return request({ wakeAt: millis });
 };
+
+/** Internal: discard ordinary process return values while keeping wake requests. */
+export const isWakeAt = (value: unknown): value is WakeAt => Predicate.isTagged(value, "WakeAt");
