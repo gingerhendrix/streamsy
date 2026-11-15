@@ -37,7 +37,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, 
   const runner = runnerOf(projection, options, true);
 
   return Effect.gen(function* () {
-    const { next, drain, deferred, status, schedule, retry, failed } = yield* runner;
+    const { next, drain, deferred, status, schedule, rescan, retry, failed } = yield* runner;
     let host: WakeupHost | undefined;
     let running = false;
     let lastPassAt = Option.none<number>();
@@ -73,6 +73,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, 
           failed,
           schedule: (binding) =>
             schedule(binding).pipe(Effect.andThen(request), Effect.uninterruptible),
+          rescan: (stream) => rescan(stream).pipe(Effect.andThen(request), Effect.uninterruptible),
           retry: (binding) =>
             retry(binding).pipe(
               Effect.tap(() => request),

@@ -79,7 +79,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = 
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain, status, schedule, retry, failed, interruptDelay, resume } =
+      const { wait, drain, status, schedule, rescan, retry, failed, interruptDelay, resume } =
         yield* runner;
 
       const policy = options.passRetry ?? (yield* ProjectionRetry);
@@ -110,6 +110,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = 
             version: projection.version,
             generation: projection.generation,
             schedule,
+            rescan,
             retry,
             failed,
             status: status.pipe(

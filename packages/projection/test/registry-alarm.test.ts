@@ -1,8 +1,19 @@
 import { canonicalParams } from "../src/unit.ts";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Option, Schedule, Schema, Stream } from "effect";
-import { StorageFault, Streamsy } from "@streamsy/core";
+import {
+  Array,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
+import { DurableState, Offset, StorageFault, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
 import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
@@ -15,9 +26,103 @@ class Source extends Streamsy.json<Source>()("RegistryAlarm/Source", "source/:id
   schema: Schema.String,
 }) {}
 
+class FamilyWake extends Streamsy.wake<FamilyWake>()("RegistryAlarm/FamilyWake", "family-wake", {
+  params: {},
+}) {}
+
 const local = memoryHost({ readLimit: 1 });
 
-const host = Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
+const host = Protocol.bind(local, Streamsy.group(Source, FamilyWake)).pipe(
+  Layer.provideMerge(local),
+);
+
+for (const durable of [false, true]) {
+  layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
+    it.effect(`array schedule and rescan arm the alarm and run (${durable})`, () =>
+      Effect.gen(function* () {
+        const source = yield* Source;
+
+        for (const id of ["family-a", "family-b"]) {
+          yield* source.create({ id });
+          yield* source.append({ id }, ["one"]);
+        }
+
+        const wake = yield* FamilyWake;
+        yield* wake.create({});
+        const seen: Array<string> = [];
+
+        const projection = Projection.process({
+          id: `alarm-family-${durable}`,
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: (_batch, unit) =>
+            Effect.sync(() => {
+              seen.push(unit.params.id);
+            }),
+        });
+
+        let armed = Option.none<number>();
+        const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+
+        const scheduler = yield* makeWakeups(
+          Context.add(context, AlarmSlot, {
+            current: Effect.sync(() => armed),
+            arm: (at) =>
+              Effect.sync(() => {
+                armed = Option.some(at);
+              }),
+            clear: Effect.sync(() => {
+              armed = Option.none();
+            }),
+          }),
+          [ProjectionWakeup.attach(projection, { durable, triggers: [FamilyWake] })],
+        );
+
+        const registry = yield* Projection.Registry;
+        yield* registry.schedule([
+          projection.at({ id: "family-a" }),
+          projection.at({ id: "family-b" }),
+        ]);
+        expect(armed).toEqual(Option.some(1));
+        yield* scheduler.alarm;
+        expect(seen).toEqual(["family-a", "family-b"]);
+        expect(armed).toEqual(Option.none());
+        yield* wake.append(
+          {},
+          DurableState.changes(
+            FamilyWake.address({}),
+            {},
+            Array.map(["family-a", "family-b"] as const, (id) =>
+              DurableState.upsert("stream", {
+                stream: Source.at({ id }).id,
+                offset: Offset.make(ZERO_OFFSET),
+              }),
+            ),
+          ),
+        );
+        yield* scheduler.alarm; // Ingest and save the original cursor.
+        expect(armed).toEqual(Option.none());
+        const pull = yield* Stream.toPull(registry.events);
+        yield* registry.rescan(projection, FamilyWake);
+        expect(armed).toEqual(Option.some(1));
+        yield* scheduler.alarm;
+
+        const events = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+          Stream.take(2),
+          Stream.runCollect,
+        );
+
+        expect(Array.map(events, (event) => [event._tag, event.params.id])).toEqual([
+          ["Ran", "family-a"],
+          ["Ran", "family-b"],
+        ]);
+        expect(armed).toEqual(Option.none());
+        expect(seen).toEqual(["family-a", "family-b"]);
+      }),
+    );
+  });
+}
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   it.effect(

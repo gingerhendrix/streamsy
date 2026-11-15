@@ -18,6 +18,7 @@ import { read, type Readable } from "./snapshot.ts";
 import type { InputMap } from "./batch.ts";
 import { InvalidBinding, NotAttached, ProjectionFault } from "./fault.ts";
 import type { Identity } from "./checkpoint-store.ts";
+import type { WakeOutput } from "./wake.ts";
 import type { Attachable } from "./runner.ts";
 import type { Progress } from "./run.ts";
 
@@ -90,10 +91,24 @@ export interface RegistryApi {
   readonly changes: Stream.Stream<ReadonlyArray<RunnerStatus>>;
   /** Future events only. Unbounded buffering keeps slow consumers off the runner's path. */
   readonly events: Stream.Stream<RunnerEvent>;
-  /** Queue this binding now, overriding backoff and a stop. Invalid encoded params fail with InvalidBinding. */
+  /**
+   * Queue bindings of one projection now, overriding backoff and stops, with one wake.
+   * All params are validated before writing; invalid params fail with InvalidBinding.
+   * Duplicates coalesce. Empty arrays do nothing;
+   * mixed projection ids die with RangeError. A later storage fault can leave earlier
+   * chunks marked; repeating the request is safe. Returns before processing finishes.
+   */
   readonly schedule: (
-    binding: Binding,
+    binding: Binding | ReadonlyArray<Binding>,
   ) => Effect.Effect<void, InvalidBinding | NotAttached | StorageFault>;
+  /** Reset one trigger cursor in storage to the start, clear its stop, and wake the runner.
+   * Use after a fold fix. The cursor survives restart in both durability modes.
+   * An unknown trigger stream dies with RangeError. First attach already reads from the start.
+   */
+  readonly rescan: (
+    target: string | Declaration,
+    trigger: WakeOutput<{}> | string,
+  ) => Effect.Effect<void, NotAttached | StorageFault>;
   /**
    * Wait for the attached identity's checkpoint, subscribing before the first read.
    * Matching failed runs prompt a reread for committed progress. No timeout.
@@ -130,7 +145,10 @@ interface RegisteredRunner {
   readonly version: number;
   readonly generation: number;
   readonly status: Effect.Effect<RunnerStatus, StorageFault>;
-  readonly schedule: (binding: Binding) => Effect.Effect<void, InvalidBinding | StorageFault>;
+  readonly schedule: (
+    bindings: ReadonlyArray<Binding>,
+  ) => Effect.Effect<void, InvalidBinding | StorageFault>;
+  readonly rescan: (stream: string) => Effect.Effect<void, StorageFault>;
   readonly retry: (binding?: Binding) => Effect.Effect<number, StorageFault>;
   readonly failed: (limit: number, binding?: Binding) => ReturnType<RegistryApi["failed"]>;
 }
@@ -242,9 +260,29 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
             }),
           );
         }),
-        schedule: Effect.fn("Projection.Registry.schedule")(function* (binding: Binding) {
-          const runner = yield* find(binding);
-          yield* runner.schedule(binding);
+        schedule: Effect.fn("Projection.Registry.schedule")(function* (
+          binding: Binding | ReadonlyArray<Binding>,
+        ) {
+          const bindings = "id" in binding ? [binding] : binding;
+          const first = bindings[0];
+
+          if (first === undefined) return yield* Effect.void;
+
+          if (Array.some(bindings, (item) => item.id !== first.id))
+            return yield* Effect.die(
+              new RangeError("schedule bindings must have one projection id"),
+            );
+          const runner = yield* find(first);
+          yield* runner.schedule(bindings);
+
+          return undefined;
+        }),
+        rescan: Effect.fn("Projection.Registry.rescan")(function* (
+          target: string | Declaration,
+          trigger: WakeOutput<{}> | string,
+        ) {
+          const runner = yield* find(target);
+          yield* runner.rescan(Predicate.isString(trigger) ? trigger : trigger.address({}).id);
         }),
         failed: Effect.fn("Projection.Registry.failed")(function* (
           target: string | Declaration | Binding,

@@ -38,6 +38,8 @@ import type { WakeOutput } from "./wake.ts";
 /** Re-read wall time after a suspended host resumes, even for distant deadlines. */
 const MAX_DUE_WAIT_MS = 30_000;
 
+const SCHEDULE_CHUNK = 100;
+
 export const DEFAULT_LIMIT = 100;
 
 /** Due marks that one drain pass adds to the in-memory set. */
@@ -598,24 +600,44 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
       /** True when a consumed request permits a pass without another wait. */
       interruptDelay: (duration: number) =>
         requested.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.succeed(false) })),
-      schedule: (binding: { readonly params: Readonly<Record<string, string>> }) =>
+      schedule: (bindings: ReadonlyArray<{ readonly params: Readonly<Record<string, string>> }>) =>
         Effect.gen(function* () {
-          const key = canonicalParams(binding.params);
-          const bound = bindingOf(declaration, key);
+          const validated = new Map<string, ReturnType<typeof declaration.at>>();
 
-          if (Option.isNone(bound))
-            return yield* new InvalidBinding({
-              projection: declaration.id,
-              params: binding.params,
-            });
+          for (const binding of bindings) {
+            const key = canonicalParams(binding.params);
+            const bound = bindingOf(declaration, key);
 
-          // Persist before exposing pending work, so a fault cannot enqueue an unrecorded request.
-          yield* marks
-            .mark(declaration.id, [key])
-            .pipe(Effect.mapError(storageFault("marks.mark")));
-          yield* marks.retry(declaration.id, key);
+            if (Option.isNone(bound))
+              return yield* new InvalidBinding({
+                projection: declaration.id,
+                params: binding.params,
+              });
+            validated.set(key, bound.value);
+          }
 
-          pending.set(key, bound.value);
+          // Persist every chunk before exposing pending work. Earlier chunks may remain
+          // marked if a later storage operation fails; repeating a request is safe.
+          for (const keys of Array.chunksOf([...validated.keys()], SCHEDULE_CHUNK)) {
+            yield* marks
+              .mark(declaration.id, keys)
+              .pipe(Effect.mapError(storageFault("marks.mark")));
+
+            for (const key of keys) yield* marks.retry(declaration.id, key);
+          }
+
+          for (const [key, bound] of validated) pending.set(key, bound);
+          yield* signal;
+
+          return undefined;
+        }).pipe(Effect.uninterruptible),
+      rescan: (stream: string) =>
+        Effect.gen(function* () {
+          if (triggers === undefined)
+            return yield* Effect.die(
+              new RangeError(`Projection ${declaration.id} has no trigger ${stream}`),
+            );
+          yield* triggers.rescan(stream);
           yield* signal;
 
           return undefined;

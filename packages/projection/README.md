@@ -309,6 +309,24 @@ SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.
 Layer authors use `EncodedStore` and `fromStore` from `@streamsy/projection/checkpoint`.
 
+`Projection.Registry.layer` exposes attached runners through `status`, `changes`,
+`events`, `failed` and `awaitOffset`. `registry.schedule(binding)` also accepts an
+array of bindings of one projection and wakes the runner once. Mixed projection
+ids die with `RangeError`; empty arrays do nothing and duplicates coalesce. Every
+binding is validated before any marks are written. Invalid params fail with
+`InvalidBinding`. Marks are written in chunks of 100; a later storage failure can
+leave earlier chunks marked, so repeat the request safely. The call returns before
+processing finishes. `registry.retry(target)` makes failed work due now.
+
+After a fold fix, `registry.rescan(projectionOrId, WakeClassOrStreamId)` resets one
+trigger cursor to `ZERO_OFFSET`, clears its stop and wakes the runner. It does not
+reset binding checkpoints; use the appropriate version or generation for the fix.
+A row that still fails to decode stops that stream again. The cursor is stored in
+both durability modes and survives restart; ingested marks survive only in durable
+mode. An unknown projection fails with `NotAttached`; an unknown trigger dies with
+`RangeError`. A first attach already reads a trigger stream from its start, so a new
+family needs no rescan. See [runner requests](https://streamsy.dev/docs/projections/run#observe-attached-runners).
+
 ## Timers
 
 A `Projection.process` handler can return `Projection.wakeAt(time)`, with epoch
