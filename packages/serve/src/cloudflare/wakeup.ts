@@ -47,7 +47,7 @@ export interface Wakeup<R = never> {
    * name is not reentrant, so a run must not call its own wakeup's `run`.
    */
   readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
-  /** Alarm retries use this schedule's delays without sleeping in an alarm. */
+  /** Timing only. The runner calls the schedule once per failed pass with no input. */
   readonly retry?: Schedule.Schedule<unknown>;
   /**
    * Units of work that failed and wait on their own backoff, for `status`.
@@ -56,7 +56,7 @@ export interface Wakeup<R = never> {
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
   /** Called once at acquire, before the initial alarm reconciliation. */
   readonly bind?: (host: WakeupHost) => Effect.Effect<void>;
-  /** Notification after an attempted run updates the host's retry state. */
+  /** Notification after a run or failed deadline read updates the host's retry state. */
   readonly changed?: Effect.Effect<void>;
 }
 
@@ -183,17 +183,30 @@ export const makeWakeups = <R>(
 
     type State = (typeof states)[number];
 
+    const changed = (state: State) =>
+      (state.wakeup.changed ?? Effect.void).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError(`Wakeup ${state.wakeup.name} notification failed`, cause),
+        ),
+      );
+
     const backOff = (state: State, at: number) =>
       Effect.gen(function* () {
         state.failures += 1;
 
-        const delay = yield* state.step(at, undefined).pipe(
+        const delay = yield* Effect.suspend(() => state.step(at, undefined)).pipe(
           Effect.map(([, duration]) => Option.some(duration)),
           Pull.catchDone(() => Effect.succeedNone),
+          Effect.catchCause((cause) =>
+            Effect.logError(`Wakeup ${state.wakeup.name} retry schedule failed`, cause).pipe(
+              Effect.as(Option.none<Duration.Duration>()),
+            ),
+          ),
         );
 
         state.exhausted = Option.isNone(delay);
         state.floor = Option.isSome(delay) ? at + Duration.toMillis(delay.value) : 0;
+        yield* changed(state);
       });
 
     const recover = (state: State) =>
@@ -290,8 +303,6 @@ export const makeWakeups = <R>(
         yield* slot.arm(now + 30_000);
 
         for (const state of states) {
-          let ran = false;
-
           const attempt = Effect.gen(function* () {
             if (state.exhausted || state.floor > (yield* Clock.currentTimeMillis)) return;
             const next = yield* state.wakeup.next;
@@ -299,7 +310,6 @@ export const makeWakeups = <R>(
             const at = yield* Clock.currentTimeMillis;
 
             if (Option.isNone(next) || next.value > at) return;
-            ran = true;
             state.requested = false;
             state.requestedAt = 0;
             const exit = yield* Effect.exit(state.wakeup.run);
@@ -318,7 +328,10 @@ export const makeWakeups = <R>(
 
             if (!reportsMore(exit.value) && Option.isSome(after) && after.value <= at)
               yield* backOff(state, yield* Clock.currentTimeMillis);
-            else yield* recover(state);
+            else {
+              yield* recover(state);
+              yield* changed(state);
+            }
           });
 
           yield* attempt.pipe(
@@ -332,11 +345,6 @@ export const makeWakeups = <R>(
                   ),
                 ),
               ),
-            ),
-          );
-          yield* (ran ? (state.wakeup.changed ?? Effect.void) : Effect.void).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError(`Wakeup ${state.wakeup.name} notification failed`, cause),
             ),
           );
         }

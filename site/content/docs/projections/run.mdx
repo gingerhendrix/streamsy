@@ -159,10 +159,12 @@ Each input must give every projection parameter, so that one stream id picks one
 | Option     | Default           | Effect                                                                              |
 | ---------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `limit`    | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
-| `retry`    | `ProjectionRetry` | The schedule for a retry after a failed pass                                        |
+| `retry`    | `ProjectionRetry` | Timing only. Called once per failed pass with no input                              |
 | `durable`  | `false`           | Keep a pending mark for each binding with work in storage                           |
 | `triggers` | `[]`              | Local fixed-address wake declarations whose rows request binding runs               |
 | `batch`    | `25`              | With `durable`, the most due marks that a pass reads                                |
+
+A retry schedule that dies is logged and treated as exhausted. A registry request still permits another pass.
 
 By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`. A handler that throws fails the pass the same way: the runner logs the defect and retries.
 

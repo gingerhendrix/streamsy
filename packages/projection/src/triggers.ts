@@ -94,93 +94,91 @@ export const triggersOf = <B>(
       return false;
     });
 
-    const read = Effect.gen(function* () {
-      const ready = new Map<string, B>();
+    const read = (committed: (bindings: ReadonlyMap<string, B>) => void) =>
+      Effect.gen(function* () {
+        for (const [id, key] of streams) {
+          // Return bindings only after the marks and cursor have committed. An interruption
+          // before enqueue loses only non-durable work, exactly like a process stop.
+          const { bindings } = yield* transaction
+            .withTransaction(
+              Effect.gen(function* () {
+                const record = yield* storage.record(id);
+                const found = new Map<string, B>();
 
-      for (const [id, key] of streams) {
-        // Return bindings only after the marks and cursor have committed. An interruption
-        // before enqueue loses only non-durable work, exactly like a process stop.
-        const { bindings } = yield* transaction
-          .withTransaction(
-            Effect.gen(function* () {
-              const record = yield* storage.record(id);
-              const found = new Map<string, B>();
+                if (Option.isNone(record) || record.value.lifecycle.softDeleted)
+                  return { bindings: found, offset: undefined };
+                const from = yield* cursor(key);
 
-              if (Option.isNone(record) || record.value.lifecycle.softDeleted)
-                return { bindings: found, offset: undefined };
-              const from = yield* cursor(key);
+                const messages = yield* storage.messages(id, {
+                  after: from,
+                  until: record.value.currentOffset,
+                  limit: DEFAULT_LIMIT,
+                });
 
-              const messages = yield* storage.messages(id, {
-                after: from,
-                until: record.value.currentOffset,
-                limit: DEFAULT_LIMIT,
-              });
-
-              for (const message of messages) {
-                const event = yield* decodeWakeMessage(decoder.decode(message.data)).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectionFault({
-                        phase: "read",
-                        reason: "invalid-source",
-                        message: `Cannot decode trigger ${id}`,
-                        cause,
-                      }),
-                  ),
-                );
-
-                // Deletes request cleanup too (Projection.wake emits them for removed sources).
-                if (!StreamAddress.isChange(event)) continue;
-
-                const binding = match(
-                  StreamAddress.isUpsert(event) ? event.value.stream : StreamId.make(event.key),
-                );
-
-                if (Option.isSome(binding)) found.set(...binding.value);
-                else
-                  yield* Effect.logWarning(
-                    `Projection ${projection} skipped unmatched trigger source ${event.key} from ${id}`,
+                for (const message of messages) {
+                  const event = yield* decodeWakeMessage(decoder.decode(message.data)).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProjectionFault({
+                          phase: "read",
+                          reason: "invalid-source",
+                          message: `Cannot decode trigger ${id}`,
+                          cause,
+                        }),
+                    ),
                   );
-              }
 
-              const last = messages.at(-1);
+                  // Deletes request cleanup too (Projection.wake emits them for removed sources).
+                  if (!StreamAddress.isChange(event)) continue;
 
-              if (last === undefined) return { bindings: found, offset: from };
+                  const binding = match(
+                    StreamAddress.isUpsert(event) ? event.value.stream : StreamId.make(event.key),
+                  );
 
-              if (marks !== undefined && found.size > 0)
-                yield* marks.mark(projection, [...found.keys()]);
-              yield* owner.write(key, last.offset);
+                  if (Option.isSome(binding)) found.set(...binding.value);
+                  else
+                    yield* Effect.logWarning(
+                      `Projection ${projection} skipped unmatched trigger source ${event.key} from ${id}`,
+                    );
+                }
 
-              if (marks !== undefined && found.size > 0) {
-                const states = yield* marks.read(projection, [...found.keys()]);
-                const now = yield* Clock.currentTimeMillis;
+                const last = messages.at(-1);
 
-                // A new row keeps the binding's existing backoff, as mark() does.
-                for (const [params, state] of states) if (state.dueAt > now) found.delete(params);
-              }
+                if (last === undefined) return { bindings: found, offset: from };
 
-              return { bindings: found, offset: last.offset };
-            }),
-          )
-          .pipe(
-            Effect.catchTag("SqlError", (cause) =>
-              Effect.fail(storageFault("projection.triggers")(cause)),
-            ),
-            // Publish the cached position only after commit. On interruption or rollback,
-            // reload storage in case the transaction committed before it was interrupted.
-            Effect.tap(({ offset }) =>
-              Effect.sync(() => {
-                if (offset !== undefined) cursors.set(key, offset);
+                if (marks !== undefined && found.size > 0)
+                  yield* marks.mark(projection, [...found.keys()]);
+                yield* owner.write(key, last.offset);
+
+                if (marks !== undefined && found.size > 0) {
+                  const states = yield* marks.read(projection, [...found.keys()]);
+                  const now = yield* Clock.currentTimeMillis;
+
+                  // A new row keeps the binding's existing backoff, as mark() does.
+                  for (const [params, state] of states) if (state.dueAt > now) found.delete(params);
+                }
+
+                return { bindings: found, offset: last.offset };
               }),
-            ),
-            Effect.onError(() => Effect.sync(() => cursors.delete(key))),
-          );
+            )
+            .pipe(
+              Effect.catchTag("SqlError", (cause) =>
+                Effect.fail(storageFault("projection.triggers")(cause)),
+              ),
+              // Publish the cached position only after commit. On interruption or rollback,
+              // reload storage in case the transaction committed before it was interrupted.
+              Effect.tap(({ offset }) =>
+                Effect.sync(() => {
+                  if (offset !== undefined) cursors.set(key, offset);
+                }),
+              ),
+              Effect.onError(() => Effect.sync(() => cursors.delete(key))),
+            );
 
-        for (const [params, binding] of bindings) ready.set(params, binding);
-      }
-
-      return ready;
-    });
+          // Hand off this stream before a later stream can fail after its cursor committed.
+          committed(bindings);
+        }
+      });
 
     return { next, read };
   });

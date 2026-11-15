@@ -6,6 +6,7 @@ import {
   DurableState,
   CommitBoundary,
   Offset,
+  Storage,
   StorageFault,
   StreamId,
   Streamsy,
@@ -33,6 +34,20 @@ class OtherWake extends Streamsy.wake<OtherWake>()("Triggers/OtherWake", "other-
 const group = Streamsy.group(Files, Wake, OtherWake);
 
 const options = { triggers: [Wake, OtherWake] };
+
+const readTriggers = <B>(triggers: {
+  readonly read: (
+    committed: (bindings: ReadonlyMap<string, B>) => void,
+  ) => Effect.Effect<void, StorageFault | import("@streamsy/projection").ProjectionFault>;
+}) =>
+  Effect.gen(function* () {
+    const ready = new Map<string, B>();
+    yield* triggers.read((bindings) => {
+      for (const [key, binding] of bindings) ready.set(key, binding);
+    });
+
+    return ready;
+  });
 
 const key = (folderId: string) => JSON.stringify({ folderId });
 
@@ -123,14 +138,14 @@ for (const [name, host] of [
           yield* request("docs");
           yield* request("later", OtherWake);
           expect(yield* triggers.next).toBe(true);
-          expect((yield* triggers.read).size).toBe(2);
+          expect((yield* readTriggers(triggers)).size).toBe(2);
           expect(yield* triggers.next).toBe(false);
-          expect((yield* triggers.read).size).toBe(0);
+          expect((yield* readTriggers(triggers)).size).toBe(0);
           expect([...reads.values()]).toEqual([1, 1]);
 
           const restarted = yield* attach;
           expect(yield* restarted.next).toBe(false);
-          expect((yield* restarted.read).size).toBe(0);
+          expect((yield* readTriggers(restarted)).size).toBe(0);
           expect([...reads.values()]).toEqual([2, 2]);
         }),
     ),
@@ -158,9 +173,50 @@ for (const [name, host] of [
 
         // Prime the in-memory cursor before the transaction advances the durable cursor.
         expect(yield* triggers.next).toBe(true);
-        expect(Exit.isFailure(yield* Effect.exit(triggers.read))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(readTriggers(triggers)))).toBe(true);
         expect(yield* triggers.next).toBe(false);
         expect((yield* marks.summary("interrupted-cursor", 0)).fresh).toBe(1);
+      }),
+    ),
+  );
+
+  layer(bound)((it) =>
+    it.effect(`${name}: a later trigger read failure retains bindings already committed`, () =>
+      Effect.gen(function* () {
+        const { projection, runs } = counting("partial-trigger-read");
+        yield* source("docs");
+        yield* (yield* Wake).create({});
+        yield* (yield* OtherWake).create({});
+        yield* request("docs");
+        const storage = yield* Storage;
+        let broken = true;
+
+        const runner = yield* ProjectionWakeup.attach(projection, {
+          ...options,
+          durable: false,
+        }).pipe(
+          Effect.provideService(Storage, {
+            ...storage,
+            record: (id) =>
+              Effect.suspend(() => {
+                if (id !== OtherWake.address({}).id || !broken) return storage.record(id);
+                broken = false;
+
+                return Effect.fail(
+                  new StorageFault({
+                    operation: "test.trigger",
+                    message: "offline",
+                    retryable: true,
+                  }),
+                );
+              }),
+          }),
+        );
+
+        expect(Exit.isFailure(yield* Effect.exit(runner.run))).toBe(true);
+        expect(runs).toEqual([]);
+        yield* runner.run;
+        expect(runs).toEqual(["docs"]);
       }),
     ),
   );

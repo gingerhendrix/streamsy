@@ -261,9 +261,9 @@ StreamsyObject.make({
 });
 ```
 
-Both forms accept `retry: Schedule.Schedule<unknown>`. Bun applies it with
-`Effect.retry` to a drain pass; the alarm host uses its delays to re-arm instead
-of sleeping inside an alarm. The default is capped, jittered exponential backoff.
+Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner calls
+the schedule once per failed pass with no input. Bun waits for its delays; the
+alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.
 A finite schedule stops retries when exhausted.
 
 SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables

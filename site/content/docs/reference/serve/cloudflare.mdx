@@ -304,14 +304,14 @@ same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 | `name`     | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
 | `next`     | The next due time in epoch milliseconds, or `None` when there is no work                                       |
 | `run`      | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
-| `retry`    | The schedule whose delays set the earliest retry time after a failure                                          |
+| `retry`    | Timing only. The runner calls the schedule once per failed pass with no input                                  |
 | `deferred` | The number of units that failed and wait on their own backoff. Without it, `status` reports `0`                |
 | `bind`     | Receives the wakeup's host once at acquisition, before the initial alarm reconciliation                        |
-| `changed`  | Runs after an attempted `run` updates the host's retry state; skipped wakeups receive no notification          |
+| `changed`  | Runs after a run or failed deadline read updates the host's retry state                                        |
 
 The host runs stream expiry first, and then the other wakeups in declaration order. Two wakeups with the same name fail the acquisition. When one wakeup fails in `next` or `run`, the others still run.
 
-Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends, the host stops retrying. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
+Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends or its step dies, the host stops retrying. A dying step is logged. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
 
 ### `Cloudflare.WakeupHost`
 

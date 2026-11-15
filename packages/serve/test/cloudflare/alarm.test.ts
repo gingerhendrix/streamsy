@@ -222,7 +222,7 @@ layer(
     }),
   );
 
-  it.effect("changed runs only when that wakeup's run was attempted", () =>
+  it.effect("changed runs after a run or failed deadline read updates retry state", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();
       const observed: Array<string> = [];
@@ -253,7 +253,7 @@ layer(
       ]);
 
       yield* scheduler.alarm;
-      expect(observed).toEqual(["backoff", "exhausted", "due"]);
+      expect(observed).toEqual(["unreadable", "backoff", "exhausted", "due"]);
       observed.length = 0;
       yield* scheduler.alarm;
       expect(observed).toEqual([]);

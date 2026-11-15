@@ -239,8 +239,9 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const working = new Set<string>();
     const wake = yield* Queue.sliding<void>(1);
     const signal = Queue.offer(wake, undefined).pipe(Effect.asVoid);
-    // Retain a request through backoff and wait; drain consumes the level-triggered signal.
+    // Normal waits retain the request until drain; backoff waits consume it and request a pass.
     const interruptedDelay = Queue.peek(wake).pipe(Effect.asVoid);
+    const requested = Queue.take(wake).pipe(Effect.as(true));
     let active = 0;
 
     const runActive = (binding: Binding) =>
@@ -484,8 +485,10 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       yield* absorb;
 
       if (triggers !== undefined)
-        for (const [key, binding] of yield* triggers.read)
-          pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
+        yield* triggers.read((bindings) => {
+          for (const [key, binding] of bindings)
+            pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
+        });
 
       const result = yield* marks === undefined ? drainInMemory : drainDurable(marks);
 
@@ -495,10 +498,10 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     return {
       next,
       wait,
-      resume: interruptedDelay,
-      /** Also used by attach's retry schedule; the queue retains a signal until consumed. */
+      resume: requested,
+      /** True when a consumed request permits a pass without another wait. */
       interruptDelay: (duration: number) =>
-        interruptedDelay.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.void })),
+        requested.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.succeed(false) })),
       schedule: (binding: { readonly params: Readonly<Record<string, string>> }) =>
         Effect.gen(function* () {
           const key = canonicalParams(binding.params);

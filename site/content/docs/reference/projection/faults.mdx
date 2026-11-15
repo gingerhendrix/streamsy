@@ -80,6 +80,8 @@ same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
 
 `ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
 
+For attached runners the schedule controls timing only: the runner calls it once per failed pass with no input. A dying step is logged and treated as exhaustion.
+
 The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
 
 ```ts

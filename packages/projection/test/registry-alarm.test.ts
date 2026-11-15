@@ -7,7 +7,7 @@ import { ProjectionMarks } from "@streamsy/core/internal";
 import { Protocol } from "@streamsy/core/protocol";
 import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { AlarmSlot } from "../../serve/src/cloudflare/alarm.ts";
-import { makeWakeups } from "../../serve/src/cloudflare/wakeup.ts";
+import { makeWakeups, Wakeups } from "../../serve/src/cloudflare/wakeup.ts";
 import { memoryHost } from "./support/memory-host.ts";
 
 class Source extends Streamsy.json<Source>()("RegistryAlarm/Source", "source/:id", {
@@ -20,6 +20,129 @@ const local = memoryHost({ readLimit: 1 });
 const host = Protocol.bind(local, Streamsy.group(Source)).pipe(Layer.provideMerge(local));
 
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
+  it.effect(
+    "a dying alarm retry schedule exhausts the runner and registry.retry starts a pass",
+    () =>
+      Effect.gen(function* () {
+        const id = "dying-alarm-policy";
+        const source = yield* Source;
+        yield* source.create({ id });
+        yield* source.append({ id }, ["one"]);
+        let broken = true;
+        let runs = 0;
+
+        const declaration = Projection.process({
+          id,
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: () =>
+            Effect.suspend(() => {
+              runs += 1;
+
+              return broken ? Effect.fail("offline") : Effect.void;
+            }),
+        });
+
+        const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+
+        const scheduler = yield* makeWakeups(
+          Context.add(context, AlarmSlot, {
+            current: Effect.succeedNone,
+            arm: () => Effect.void,
+            clear: Effect.void,
+          }),
+          [
+            ProjectionWakeup.attach(declaration, {
+              durable: false,
+              retry: Schedule.spaced("1 hour").pipe(
+                Schedule.modifyDelay(() => Effect.die("broken policy")),
+              ),
+            }),
+          ],
+        );
+
+        const registry = yield* Projection.Registry;
+        yield* registry.schedule(declaration.at({ id }));
+        yield* scheduler.alarm;
+        expect((yield* registry.status)[0]).toMatchObject({
+          state: "failed",
+          failures: 1,
+          retryAt: Option.none(),
+        });
+        yield* scheduler.alarm;
+        expect(runs).toBe(1);
+        broken = false;
+        expect(yield* registry.retry(declaration)).toBe(1);
+        yield* scheduler.alarm;
+        expect(runs).toBe(2);
+        expect((yield* registry.status)[0]).toMatchObject({ state: "running", failures: 0 });
+      }),
+  );
+
+  for (const stage of ["reconcile", "alarm"] as const) {
+    it.effect(`registry.changes reports a failed next read during ${stage}`, () =>
+      Effect.gen(function* () {
+        const id = `next-notification-${stage}`;
+
+        const declaration = Projection.process({
+          id,
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: () => Effect.void,
+        });
+
+        const marks = yield* ProjectionMarks;
+        let broken = false;
+        const context = yield* Effect.context<Layer.Success<typeof host> | Projection.Registry>();
+
+        const scheduler = yield* makeWakeups(
+          Context.add(context, AlarmSlot, {
+            current: Effect.succeedNone,
+            arm: () => Effect.void,
+            clear: Effect.void,
+          }),
+          [
+            ProjectionWakeup.attach(declaration, { retry: Schedule.spaced("1 hour") }).pipe(
+              Effect.provideService(ProjectionMarks, {
+                ...marks,
+                nextDue: (projection) =>
+                  Effect.suspend(() =>
+                    broken
+                      ? Effect.fail(
+                          new StorageFault({
+                            operation: "marks.nextDue",
+                            message: "offline",
+                            retryable: true,
+                          }),
+                        )
+                      : marks.nextDue(projection),
+                  ),
+              }),
+            ),
+          ],
+        );
+
+        const registry = yield* Projection.Registry;
+        const changes = yield* Stream.toPull(registry.changes);
+        yield* changes;
+        broken = true;
+
+        if (stage === "alarm") yield* scheduler.alarm;
+        else
+          yield* Effect.flatMap(Wakeups, (wakeups) => wakeups.reconcile).pipe(
+            Effect.provideContext(scheduler.context),
+          );
+        expect((yield* changes)[0][0]).toMatchObject({
+          failures: 1,
+          state: "retrying",
+          retryAt: Option.some(3_600_000),
+        });
+      }),
+    );
+  }
+
   for (const failure of ["binding", "storage"] as const) {
     for (const exhausted of [false, true]) {
       it.effect(

@@ -15,7 +15,7 @@ export interface AttachOptions {
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
   /**
-   * Retry a failed drain pass, whether it failed with a typed error or a defect.
+   * Timing only. The runner calls the schedule once per failed pass with no input.
    * Defaults to capped, jittered exponential backoff.
    */
   readonly retry?: Schedule.Schedule<unknown>;
@@ -33,7 +33,7 @@ export interface AttachOptions {
   readonly batch?: number;
 }
 
-/** A defect of one drain pass, as a failure that the retry schedule sees. */
+/** A defect of one drain pass, captured for logging with typed failures. */
 class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique symbol }>()(
   "PassDefect",
   {
@@ -118,16 +118,20 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
 
       // A durable wait reads marks, so a failed read retries like a failed drain.
       yield* Effect.gen(function* () {
+        let requested = false;
+
         while (true) {
           current.state = "running";
           current.retryAt = Option.none();
 
           const exit = yield* Effect.exit(
-            wait.pipe(
+            (requested ? Effect.void : wait).pipe(
               Effect.andThen(drain),
               Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
             ),
           );
+
+          requested = false;
 
           current.lastPassAt = Option.some(yield* Clock.currentTimeMillis);
 
@@ -141,21 +145,29 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           current.failures += 1;
           yield* Effect.logError(`Projection.attach ${projection.id} failed`, exit.cause);
 
-          const delay = yield* current.step(yield* Clock.currentTimeMillis, undefined).pipe(
+          const now = yield* Clock.currentTimeMillis;
+
+          const delay = yield* Effect.suspend(() => current.step(now, undefined)).pipe(
             Effect.map(([, duration]) => Option.some(Duration.toMillis(duration))),
             Pull.catchDone(() => Effect.succeedNone),
+            Effect.catchCause((cause) =>
+              Effect.logError(
+                `Projection.attach ${projection.id} retry schedule failed`,
+                cause,
+              ).pipe(Effect.as(Option.none<number>())),
+            ),
           );
 
           if (Option.isSome(delay)) {
             current.state = "retrying";
             current.retryAt = Option.some((yield* Clock.currentTimeMillis) + delay.value);
             yield* changed;
-            yield* interruptDelay(delay.value);
+            requested = yield* interruptDelay(delay.value);
           } else {
             current.state = "failed";
             yield* changed;
             // Exhaustion stops automatic retries; every request permits one more pass.
-            yield* resume;
+            requested = yield* resume;
           }
         }
       }).pipe(Effect.withSpan("Projection.attach"), Effect.forkScoped);
