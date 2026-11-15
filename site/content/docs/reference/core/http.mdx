@@ -255,6 +255,82 @@ same<typeof securityHeaders, typeof Http.securityHeaders>(true);
 
 `securityHeaders` is the frozen record of the headers that `app`, `routes`, and `read` add to every response.
 
+## Live sockets
+
+`live=websocket` is a Streamsy extension. Only the Cloudflare object host accepts the upgrade. See [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets). `read` and `app` answer `live=websocket` with `426 Upgrade Required` after the offset checks, so a client falls back to long-poll. These exports hold the frames and close codes of the `streamsy-live.v1` protocol, for hosts and clients.
+
+### `Http.LiveCloseCode`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const LiveCloseCode: {
+  readonly StreamClosed: 1000;
+  readonly InternalError: 1011;
+  readonly Restart: 1012;
+  readonly CatchUpRequired: 4100;
+  readonly BadMessage: 4400;
+  readonly NotFound: 4404;
+  readonly Gone: 4410;
+};
+type LiveCloseCode = (typeof LiveCloseCode)[keyof typeof LiveCloseCode];
+// ---cut-after---
+same<typeof LiveCloseCode, typeof Http.LiveCloseCode>(true);
+same<LiveCloseCode, Http.LiveCloseCode>(true);
+```
+
+`LiveCloseCode` names the close codes of a live socket. `closeCodeForStatus` maps a read status to one: 404 to `NotFound`, 410 to `Gone`, and any other status to `InternalError`.
+
+### `Http.openFrame` and `Http.controlFrame`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare const LIVE_SOCKET_PROTOCOL: "streamsy-live.v1";
+declare function openFrame(contentType: string, streamNextOffset: string): string;
+declare function controlFrame(batch: Http.LiveBatch): string;
+declare function closeCodeForStatus(status: number): Http.LiveCloseCode;
+
+interface LiveBatch {
+  readonly nextOffset: string;
+  readonly cursor: string;
+  readonly upToDate: boolean;
+  readonly closed: boolean;
+}
+// ---cut-after---
+same<typeof LIVE_SOCKET_PROTOCOL, typeof Http.LIVE_SOCKET_PROTOCOL>(true);
+same<typeof openFrame, typeof Http.openFrame>(true);
+same<typeof controlFrame, typeof Http.controlFrame>(true);
+same<typeof closeCodeForStatus, typeof Http.closeCodeForStatus>(true);
+same<LiveBatch, Http.LiveBatch>(true);
+```
+
+`openFrame` returns the JSON text of the first frame, `{ type: "open", protocol, contentType, streamNextOffset }`. `controlFrame` returns the JSON text of a `control` frame. It follows the SSE control rules: a closed batch has `streamClosed` and no `streamCursor` or `upToDate`. `Http.nextCursor(previous)` is an Effect that returns the cursor a long-poll response would carry after `previous`.
+
+### `Http.isLiveUpgrade` and `Http.upgradeRequired`
+
+```ts
+// ---cut-start---
+import { Http } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function isLiveUpgrade(request: Request): boolean;
+declare function upgradeRequired(): Response;
+declare const LIVE_PING: "ping";
+declare const LIVE_PONG: "pong";
+// ---cut-after---
+same<typeof isLiveUpgrade, typeof Http.isLiveUpgrade>(true);
+same<typeof upgradeRequired, typeof Http.upgradeRequired>(true);
+same<typeof LIVE_PING, typeof Http.LIVE_PING>(true);
+same<typeof LIVE_PONG, typeof Http.LIVE_PONG>(true);
+```
+
+`isLiveUpgrade` is true for a `GET` with `Upgrade: websocket` and `live=websocket`. `upgradeRequired` returns the `426` answer, with `Upgrade: websocket` and `Cache-Control: no-store`. `LIVE_PING` is the client heartbeat, and `LIVE_PONG` is the runtime's answer.
+
 ## Shutdown
 
 `ShutdownSignal` lets a host stop live reads before it closes. When the host starts to drain, a parked long poll answers 204 with its offset and cursor, and an open SSE body ends after its last whole batch. The client then reconnects as after a timeout. `Serve.layer` from `@streamsy/serve` provides the signal and drains it. See [Clean shutdown](/docs/servers/process#clean-shutdown).

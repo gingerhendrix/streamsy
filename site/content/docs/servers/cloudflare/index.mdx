@@ -136,7 +136,7 @@ An object acquires its storage on first access and keeps it until the platform e
 
 Only the platform starts an alarm turn. No URL or request header can.
 
-A Durable Object gets no stop signal, and the platform can evict it between requests. So the process pattern does not carry over. `Serve.layer`, `Serve.teardown`, and a long-lived `Projection.follow` fiber do not suit an object. The object serves through `HttpRouter.toWebHandler`, and it runs background work in alarm turns.
+A Durable Object gets no stop signal, and the platform can evict it between requests. So the process pattern does not carry over. `Serve.layer`, `Serve.teardown`, and a long-lived `Projection.follow` fiber do not suit an object. The object serves through `HttpRouter.toWebHandler`, and it runs background work in alarm turns. A long-poll or SSE reader keeps the object in memory while it waits. To let an object with idle readers hibernate, see [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets).
 
 The object expires streams in an alarm at their deadline. See [Expiry](/docs/streams/create#expiry).
 

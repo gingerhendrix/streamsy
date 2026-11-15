@@ -1,4 +1,4 @@
 {
   "title": "Cloudflare",
-  "pages": ["index", "alarms", "objects"]
+  "pages": ["index", "alarms", "objects", "live-sockets"]
 }

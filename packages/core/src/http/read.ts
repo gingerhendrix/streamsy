@@ -13,6 +13,7 @@ import type { ReadNextError } from "../protocol/errors.ts";
 import type { ReadNextResult } from "../protocol/results.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
 import { ShutdownSignal, type ShutdownSignalService } from "./shutdown-signal.ts";
+import { upgradeRequired } from "./live-frames.ts";
 
 const responses = Responses;
 
@@ -100,6 +101,9 @@ export const read = Effect.fn("Http.read")(function* (
   }
 
   if (query.live && !offset) return responses.badRequest("offset required for live modes");
+
+  // A host that serves the socket transport takes the upgrade before this program runs.
+  if (query.live === "websocket") return upgradeRequired();
   const signal = yield* Effect.serviceOption(ShutdownSignal);
 
   if (query.live === "sse" && offset) {

@@ -163,7 +163,7 @@ const BrowserApp = Layer.mergeAll(App, Cors);
 | DELETE  | Remove                                             |
 | OPTIONS | Preflight                                          |
 
-A long poll that times out answers 204 with a cursor. An SSE response ends at `sseDeadlineMs`, and the client reconnects from its last offset. The request headers, status codes, and response headers are in [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). The Streams pages describe each operation over HTTP: [create](/docs/streams/create#over-http), [read](/docs/streams/read#over-http), and [write](/docs/streams/write#over-http).
+A long poll that times out answers 204 with a cursor. An SSE response ends at `sseDeadlineMs`, and the client reconnects from its last offset. A read with `live=websocket` answers `426`, so the client falls back to long-poll. Only a Cloudflare object with live sockets turned on accepts that upgrade. See [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets). The request headers, status codes, and response headers are in [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). The Streams pages describe each operation over HTTP: [create](/docs/streams/create#over-http), [read](/docs/streams/read#over-http), and [write](/docs/streams/write#over-http).
 
 ## Extensions
 

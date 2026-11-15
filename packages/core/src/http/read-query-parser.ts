@@ -1,4 +1,5 @@
-export type HttpLiveMode = "long-poll" | "sse";
+/** `websocket` is a Streamsy extension. Only a host that accepts the upgrade serves it. */
+export type HttpLiveMode = "long-poll" | "sse" | "websocket";
 
 export type ReadQueryResult =
   | { ok: true; offset?: string; live?: HttpLiveMode; cursor?: string }
@@ -9,7 +10,11 @@ export const readQueryParser = (isValidOffset: (offset: string) => boolean) => (
     const offset = url.searchParams.get("offset") ?? undefined;
     const liveParam = url.searchParams.get("live");
     const cursor = url.searchParams.get("cursor") ?? undefined;
-    const live = liveParam === "long-poll" || liveParam === "sse" ? liveParam : undefined;
+
+    const live =
+      liveParam === "long-poll" || liveParam === "sse" || liveParam === "websocket"
+        ? liveParam
+        : undefined;
 
     if (offset !== undefined && offset !== "-1" && offset !== "now" && !isValidOffset(offset)) {
       return { ok: false, response: new Response("Invalid offset format", { status: 400 }) };

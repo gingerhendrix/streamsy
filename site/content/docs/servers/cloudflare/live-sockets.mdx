@@ -1,0 +1,107 @@
+---
+title: Follow streams over WebSockets
+description: Let readers follow a stream over a hibernatable WebSocket, so a Durable Object whose readers are idle can hibernate between commits.
+---
+
+A long-poll or SSE reader keeps a request open on the object, so the object stays in memory and accrues duration charges while the reader waits. With `live=websocket`, the object accepts the reader's socket with the WebSocket Hibernation API instead. Between commits nothing runs on the object, and the platform can evict it while the socket stays open. The next commit wakes the object, and the object pushes the new messages to the socket.
+
+`live=websocket` is a Streamsy extension. Durable Streams HTTP has no WebSocket mode, so the standard Durable Streams clients do not use it. A client that gets `426` falls back to long-poll.
+
+## Turn on live sockets
+
+To accept sockets, set `live` in the object configuration:
+
+```ts
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Http, Streamsy } from "@streamsy/core";
+import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+
+const streams = Streamsy.group(Streamsy.Wildcard);
+
+interface Env {
+  readonly STREAMS: DurableObjectNamespace;
+}
+
+export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof streams>>({
+  app: Http.routes(streams, { prefix: "/streams", access: "append" }),
+  layer: (state) => DurableObjectStorage.layer(streams, { client: { storage: state.storage } }),
+  live: { websocket: { prefix: "/streams" } },
+}) {}
+
+export default router<Env>({ prefix: "/streams", namespace: (env) => env.STREAMS });
+```
+
+Set `prefix` to the prefix of `Http.routes`. The object uses it to find the stream id in the socket URL. With the default prefix `/`, `live: { websocket: true }` is enough. The router needs no change, because it forwards the upgrade request like any other request.
+
+The object answers the client heartbeat `ping` with `pong` without waking. It relies on the runtime to answer close frames, so set the Worker's compatibility date to `2026-04-07` or later.
+
+## Connect a reader
+
+To follow a stream, send a `GET` with `Upgrade: websocket` to the stream URL, with `live=websocket` and an offset:
+
+```js
+const socket = new WebSocket(
+  "wss://example.com/streams/orders?offset=now&live=websocket",
+  "streamsy-live.v1",
+);
+socket.binaryType = "arraybuffer";
+```
+
+The object reads the stream through its own routes, as a catch-up `GET` at the same URL would. A request that such a `GET` rejects gets the same HTTP answer, and no socket opens. Routes, `access`, and your middleware therefore check the upgrade too.
+
+The first frame is `open`, with the content type of the stream. Then, for each batch, the object sends a binary `data` frame with the exact body of a catch-up `GET` for that batch, and a `control` frame:
+
+```json
+{
+  "type": "control",
+  "streamNextOffset": "0000000000000003_0000000000000000",
+  "streamCursor": "8312",
+  "upToDate": true
+}
+```
+
+Move the reader's offset only on a `control` frame. To resume after a disconnect, connect again with `offset` set to the `streamNextOffset` of the last `control` frame. The reader then gets no gap and no duplicate.
+
+Send the text `ping` every 30 s or so to detect a dead connection. The object closes the socket with `4400` on any other client message.
+
+## Handle a close
+
+The close code tells the reader what to do next:
+
+| Close code                 | Meaning                                                       | Reader action                                                     |
+| -------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1000                       | The stream closed. A `control` with `streamClosed` came first | Stop                                                              |
+| 1011                       | Internal error                                                | Reconnect with backoff                                            |
+| 1012                       | The object restarted or cannot read the socket's state        | Reconnect at once, with jitter                                    |
+| 4100                       | The reader fell behind the byte cap                           | Read over HTTP from the last `control` offset, then connect again |
+| 4400                       | The client sent a message other than `ping`                   | Stop. This is a client bug                                        |
+| 4404                       | The stream was removed or expired                             | Stop, as for HTTP `404`                                           |
+| 4410                       | The stream was soft-deleted                                   | Stop, as for HTTP `410`                                           |
+| Any other code, or no code | Network loss or a deploy                                      | Reconnect with backoff and jitter                                 |
+
+A deploy that replaces a running object closes its sockets, so readers reconnect. Jitter spreads the reconnects.
+
+## Limits
+
+Catch-up belongs on HTTP, where pages have ETags and caches can serve them. Connect near the tail. The options of `live.websocket` bound the work of each socket:
+
+| Option            | Default | Over the limit                                       |
+| ----------------- | ------- | ---------------------------------------------------- |
+| `maxSockets`      | 1,000   | The upgrade gets `503` with `Retry-After: 1`         |
+| `maxCatchUpBytes` | 4 MiB   | The connect sends a last `control` and closes `4100` |
+| `maxPushBytes`    | 1 MiB   | The push closes the socket with `4100`               |
+
+The object pushes in the event that committed, before that event returns. A `PUT`, `POST`, or `DELETE`, a link request, and an alarm turn all push their commits. One push reads each stream once for each distinct offset, and sends the result to every socket at that offset. Each request that appends gives one frame. The object does not merge appends from separate requests, because that needs a timer, and a timer keeps the object in memory.
+
+A route whose streamed response body commits after the handler returned is pushed at the end of the next event.
+
+## What keeps an object awake
+
+An object hibernates only when nothing is in progress. An open long-poll or SSE request, a pending timer, or a `waitUntil` keeps it in memory. The socket path starts none of these. Your own layers and wakeups can. An Effect `sleep` or `timeout` that is still pending when the event ends keeps the object awake.
+
+The pushes use internal `GET` requests without the client's headers. A route that needs a request header on every read must not turn on live sockets.
+
+## Other hosts
+
+Only the Cloudflare object host serves `live=websocket`. The Bun, Node, and Deno hosts, and an object without `live`, answer `426 Upgrade Required`. A client treats `426` as an answer to use long-poll.
