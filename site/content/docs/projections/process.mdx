@@ -220,4 +220,4 @@ const copyTotals = Projection.process({
 
 `Commit.atLeastOnce` needs only the `CheckpointStore` service, so it works on a memory host.
 
-When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. Use `unit.key` as the external call's idempotency key, set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](#timers) for a deferred retry or a snooze.
+When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. Use `unit.key` as the external call's idempotency key, set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](#timers) for a deferred retry or a snooze. See the [effects guide](/docs/projections/effects) for the complete pattern.

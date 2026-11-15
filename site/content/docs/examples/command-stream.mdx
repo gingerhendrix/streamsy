@@ -1,0 +1,136 @@
+---
+title: Command stream
+description: A local command worker with caller-key idempotency and accepted receipts.
+---
+
+This Bun example submits a request, performs a local effect in an attached process projection, and waits for its receipt. It submits the same caller key again and verifies one request, one effect and one receipt. See the [command stream guide](/docs/projections/command-streams) for the pattern and its delivery rules.
+
+## Run
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run smoke:command-stream
+bun run --cwd examples/command-stream test:unit
+```
+
+The smoke uses no network, Docker or credentials. Each run creates a SQLite file in a scoped temporary directory under `examples/command-stream/.data/`. Closing the scope interrupts the attached workers, closes SQLite, then removes that directory, including on failure. The whole flow has an eight-second timeout; the receipt wait has a five-second timeout. The `start` script runs this same finite flow.
+
+## Streams
+
+A request has a caller key and some text. The effect stores the uppercased text. `CommandChanges` requests worker runs; `Accepted` records committed input progress.
+
+```ts title="src/streams.ts"
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export const Request = Schema.Struct({ key: Schema.String, text: Schema.String });
+
+export type Request = typeof Request.Type;
+
+export class Commands extends Streamsy.json<Commands>()("Command/Requests", "commands", {
+  params: {},
+  schema: Request,
+}) {}
+
+export class CommandChanges extends Streamsy.wake<CommandChanges>()(
+  "Command/Changes",
+  "command-changes",
+  {
+    params: {},
+  },
+) {}
+
+export class Accepted extends Streamsy.wake<Accepted>()("Command/Accepted", "command-accepted", {
+  params: {},
+}) {}
+```
+
+## Worker
+
+The worker inserts its result with a unique request key. `Commit.transaction` commits that row, the checkpoint and the accepted row together on the same SQLite connection. The application creates the `results` table and all three streams before submitting requests.
+
+```ts title="src/app.ts"
+export const perform = Projection.process({
+  id: "perform-commands",
+  params: {},
+  inputs: { commands: Commands },
+  accepted: Accepted,
+  commit: Commit.transaction,
+  process: (batch) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      for (const request of batch.commands.items) {
+        yield* sql`INSERT INTO results (request_key, result) VALUES (${request.key}, ${request.text.toUpperCase()})
+        ON CONFLICT (request_key) DO NOTHING`;
+      }
+    }),
+});
+```
+
+`Projection.wake` publishes command progress into `CommandChanges`. Both attachments share the storage and registry. Local writes request runs directly; `triggers` also lets the worker discover sources from retained wake history at startup.
+
+```ts title="src/app.ts"
+const local = Protocol.bind(Storage, Streamsy.group(Commands, CommandChanges, Accepted)).pipe(
+  Layer.provideMerge(Storage),
+);
+
+const host = Layer.mergeAll(
+  Projection.attach(commandChanges, { durable: true }),
+  Projection.attach(perform, { durable: true, triggers: [CommandChanges] }),
+).pipe(Layer.provideMerge(Projection.Registry.layer), Layer.provideMerge(local));
+```
+
+The `Storage` Layer in `src/host.ts` provides `CheckpointStore.layer` and `Transaction.layer` over one `BunStorage.layerProtocol`. Keep the SQLite file and initialize application tables before attaching runners in a persistent application.
+
+## Client
+
+The requested-key fold supplies `Projection.decide` with the keys already written. The conditional append retries lost offset races. The repeated caller key appends no request and waits for the existing offset.
+
+```ts title="src/app.ts"
+const requested = Projection.fold({
+  id: "requested-keys",
+  params: {},
+  inputs: { commands: Commands },
+  state: { schema: Schema.Array(Schema.String), initial: [] },
+  fold: (keys, { item }) => Array.append(keys, item.key),
+});
+```
+
+```ts title="src/app.ts"
+export const submit = (request: Request) =>
+  Effect.gen(function* () {
+    const receipt = yield* Projection.decide(requested.at({}), {
+      input: "commands",
+      decide: ({ state }) =>
+        Effect.succeed({
+          value: request.key,
+          items: state.includes(request.key) ? [] : [request],
+        }),
+    });
+
+    yield* Streamsy.awaitWake(
+      Accepted,
+      {},
+      {
+        stream: Commands.at({}).id,
+        offset: receipt.offset,
+      },
+    ).pipe(Effect.timeout("5 seconds"));
+
+    return receipt;
+  });
+```
+
+`Streamsy.awaitWake` waits for the accepted offset to equal or pass the request's offset. A failing or stopped worker writes no receipt, so clients must choose a timeout. It reads wake history from the start unless supplied a saved wake cursor. See [Accepted stream](/docs/projections/accepted).
+
+## What the smoke checks
+
+Submitting `caller-1/request-1` with `hello` twice leaves one command item, one `HELLO` result row and one accepted row. The repeated submission reports `appended: false` and returns the original offset. The vitest test runs the same flow on fresh storage.
+
+Caller keys identify the original request, so reusing a key with different text retains the first request. This small fold retains every key: a larger application needs a retention policy. The result table also has a unique request key so a replay cannot add a second result row.
+
+Accepted rows describe input progress, not business outcomes. One unit containing several requests produces one accepted row for that input. A direct append that bypasses the client's key check may create another input receipt, even if the worker's result insert deduplicates the effect. For external calls, use destination idempotency and the [effects guide](/docs/projections/effects).

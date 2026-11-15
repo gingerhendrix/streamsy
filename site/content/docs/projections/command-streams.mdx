@@ -1,0 +1,36 @@
+---
+title: Command streams
+description: Append requests to a stream, perform them in a process projection and wait for an accepted receipt.
+---
+
+A command stream records requests as ordinary stream items. A process projection performs each request. Its `accepted` stream publishes the input offset it has committed, and the client waits for that receipt with `Streamsy.awaitWake`.
+
+Use this pattern when the caller and the worker run independently. The [runnable command stream example](/docs/examples/command-stream) uses a local SQLite result row as the effect. It needs no server or network service.
+
+## Requests and receipts
+
+Give each request a caller key. The example uses `Projection.decide` over a fold of requested keys to append a key only once. A repeated key returns the existing input offset and waits for its receipt. Keys identify the original request: reusing a key with different content does not replace the request. Choose a key retention policy before using this small fold state for a large ledger.
+
+The worker is a `Projection.process` declaration with `commit: Commit.transaction` and `accepted: Accepted`. It inserts the result under a unique request key. The result row, checkpoint and accepted row commit together on the same SQL owner. A failed transaction leaves none of those writes committed.
+
+An accepted row is a receipt for **input progress**. It is keyed by source stream id and holds the accepted offset; it is not a separate business result for every command. One unit can accept several commands with one row. Put business outcomes in a result table or result stream. A worker that records a rejection and returns successfully has also accepted that request.
+
+`accepted` requires `Commit.transaction` or `Commit.producer`; it cannot be added to `Commit.atLeastOnce`. For an external effect, use the [effects pattern](/docs/projections/effects) with destination idempotency, then record an explicit result fact. An input receipt alone cannot make an external call atomic with a checkpoint.
+
+## Wake the worker
+
+The example attaches a `Projection.wake` declaration that publishes command input progress to a fixed-address `CommandChanges` wake stream. The worker attaches with `triggers: [CommandChanges]`. An upsert names the source whose binding should run. Local input commits also request runs directly; the trigger stream lets a runner discover existing sources when it starts.
+
+Both attachments share one `Projection.Registry.layer` and use `durable: true`. Build them before the client writes. Create the commands, changes and accepted streams first. On restart, persistent marks recover pending work, while a first trigger attach reads the wake history from its start.
+
+On a process host the trigger can live on another owner, supplied through its remote stream service. `ProjectionWakeup.attach` on Cloudflare accepts only local triggers. The example stays on one owner; see [Trigger streams](/docs/projections/run#trigger-streams) for remote setup, cursor recovery and `registry.rescan`.
+
+## Wait for completion
+
+After an append, pass its returned offset to `Streamsy.awaitWake(Accepted, params, { stream, offset })`. The example's `submit` function does this after `Projection.decide`, including when a duplicate appended nothing. Waiting accepts equality or a later accepted offset. Set a timeout: a stopped or failing worker may never publish a receipt.
+
+The wait reads wake history from the start by default and catches up before answering. A saved wake cursor can be passed as `{ from: cursor }` in the fourth argument; only observations after that cursor can satisfy the wait. A fresh receipt address per projection generation prevents an old receipt from satisfying a new wait. See [Accepted stream](/docs/projections/accepted) for the copyable declaration and wait signatures, and the [example client](/docs/examples/command-stream#client) for the complete checked implementation.
+
+## Verify idempotency
+
+Run `bun run smoke:command-stream` from the repository root. The client submits the same key twice. The smoke checks one request item, one result row containing `HELLO`, one accepted row, and an unchanged offset on the repeated submission. Its timeout and assertions make a missing receipt or duplicate effect fail the process.

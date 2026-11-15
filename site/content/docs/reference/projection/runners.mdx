@@ -1349,9 +1349,87 @@ Provide `Projection.Registry.layer` below attach layers to share one in-process 
 
 Runner attachment requires `Registry.layer`. A hand-built `Registry.of(...)` value has no private registration support, so attachment dies with a clear error.
 
+### `registry.schedule`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StorageFault } from "@streamsy/core";
+import type { Identity, InvalidBinding, NotAttached, RegistryApi } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Binding = Pick<Identity, "id" | "params">;
+declare function schedule(
+  binding: Binding | ReadonlyArray<Binding>,
+): Effect.Effect<void, InvalidBinding | NotAttached | StorageFault>;
+// ---cut-after---
+same<typeof schedule, RegistryApi["schedule"]>(true);
+```
+
 The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` or `registry.schedule(bindings)` resolves by projection id and decodes every binding's encoded params with the attached declaration before writing any marks. Arrays must name one projection; mixed ids die with `RangeError` before writing. Empty arrays do nothing and duplicates coalesce. Marks are written in chunks of 100, followed by one runner wake. A later storage fault may leave earlier chunks marked; repeating the request is safe. The call returns before processing finishes. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. `schedule` fails with the exported `InvalidBinding { projection, params }` tagged error when encoded params do not round-trip through the attached declaration, including missing or extra keys. `retry` with those params returns zero. Schedule and retry resolve the attached identity without checking version or generation. Schedule, retry and rescan end the current wait and start one pass. A projection-level retry also resumes stopped trigger streams. The return count includes only changed binding marks. Requests retain the pass schedule; after exhaustion another failed requested pass returns to `failed` with no automatic delay. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
 
+For an attached family, schedule several members in one call:
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+class Members extends Streamsy.json<Members>()("Schedule/Members", "members/:id", {
+  params: { id: Schema.String },
+  schema: Schema.Finite,
+}) {}
+const family = Projection.fold({
+  id: "member-totals",
+  params: { id: Schema.String },
+  inputs: { members: Members },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+});
+export const backfill = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.schedule([family.at({ id: "one" }), family.at({ id: "two" })]);
+});
+```
+
+### `registry.rescan`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StorageFault } from "@streamsy/core";
+import type {
+  Attachable,
+  Identity,
+  NotAttached,
+  RegistryApi,
+  WakeOutput,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Binding = Pick<Identity, "id" | "params">;
+type Declaration = Omit<Attachable<Binding>, "retry">;
+declare function rescan(
+  target: string | Declaration,
+  trigger: WakeOutput<{}> | string,
+): Effect.Effect<void, NotAttached | StorageFault>;
+// ---cut-after---
+same<typeof rescan, RegistryApi["rescan"]>(true);
+```
+
 `registry.rescan(target, trigger)` takes a projection id or declaration and a wake class from its `triggers` option or the stream id shown in `RunnerStatus.triggers`. It resets that stream's owner-record cursor to `ZERO_OFFSET` in a transaction, clears only that stream's stop, and wakes the runner. An unattached projection fails with `NotAttached`; a trigger not attached to that projection dies with `RangeError` naming both ids. A concurrent trigger read finishes before the reset, so the next pass rereads from zero. The cursor lives in storage and the reset survives restart in both durability modes; ingested binding marks survive restart only with `durable: true`. Use rescan after a fold fix with the appropriate version or generation: it does not reset binding checkpoints or override binding backoff or stops. A first attach with no saved cursor already reads from the start, so a new family needs no rescan. A still-invalid trigger row stops the stream again. See [Trigger streams](/docs/projections/run#trigger-streams).
+
+For example, reset a trigger by the stream id reported in `RunnerStatus.triggers`:
+
+```ts
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+
+export const rescanMembers = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.rescan("member-totals", "member-wake");
+});
+```
 
 `registry.events` streams future `RunnerEvent` observations. The exported `RunnerEvent` value provides constructors, `$is` and `$match`. `Ran`, `Failed` and `Dropped` all carry `projection: string` and `params: Readonly<Record<string, string>>`. `Projection.Registry.isFor(binding)` matches both the id and encoded params, regardless of key order. `Ran` adds status, units, offsets and `wakeAt: Option<number>` from the completed run; `Failed` adds attempts, `dueAt`, `failure` and `stopped`. A backoff has `Some(dueAt)` in both modes; a stop has `None`. Events use unbounded buffering; scope subscriptions to release them.
 
