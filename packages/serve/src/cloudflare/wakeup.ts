@@ -255,6 +255,7 @@ export const makeWakeups = <R>(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           let target = Infinity;
+          let kept = false;
           const requested = new Map<State, number>();
 
           for (const state of states) {
@@ -271,17 +272,23 @@ export const makeWakeups = <R>(
           else {
             const current = yield* slot.current;
 
-            const keep =
+            kept =
               !force && Option.isSome(current) && now < current.value && current.value <= target;
 
-            if (!keep) {
+            if (!kept) {
               if (Option.isSome(current) && current.value <= now) yield* slot.clear;
               yield* slot.arm(Math.max(target, now + 1));
             }
           }
 
-          // Publish requested deadlines only after reconciliation succeeds.
-          for (const state of states) state.requestedAt = requested.get(state) ?? 0;
+          // Publish only after reconciliation succeeds. A kept alarm retains its
+          // matching request time rather than reporting a newly computed deadline.
+          for (const state of states) {
+            const at = requested.get(state);
+
+            state.requestedAt =
+              at === undefined ? 0 : kept && state.requestedAt > 0 ? state.requestedAt : at;
+          }
         }),
       );
 

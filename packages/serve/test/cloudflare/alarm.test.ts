@@ -1,5 +1,6 @@
 import { expect, layer } from "@effect/vitest";
-import { Array, Effect, Layer, Option, Schedule, Stream } from "effect";
+import { Array, Clock, Context, Effect, Layer, Option, Schedule, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import { AlarmSlot } from "../../src/cloudflare/alarm.ts";
 
@@ -68,6 +69,65 @@ layer(
     }),
   ),
 )((it) => {
+  it.effect(
+    "a kept alarm retains its requested retry deadline when reconciliation runs later",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(0);
+        const context = yield* Effect.context<Storage | AlarmSlot>();
+        let host: WakeupHost | undefined;
+        let armed = Option.none<number>();
+        let requested = false;
+        let arms = 0;
+
+        const scheduler = yield* makeWakeups(
+          Context.add(context, AlarmSlot, {
+            current: Effect.sync(() => armed),
+            arm: (at) =>
+              Effect.sync(() => {
+                armed = Option.some(at);
+                arms += 1;
+              }),
+            clear: Effect.sync(() => {
+              armed = Option.none();
+            }),
+          }),
+          [
+            {
+              name: "retained-request",
+              retry: Schedule.spaced("1 hour"),
+              // Moving future work allows a later reconciliation to retain the earlier alarm.
+              next: Clock.currentTimeMillis.pipe(
+                Effect.map((now) => Option.some(requested ? now + 100 : 0)),
+              ),
+              run: Effect.fail("offline"),
+              bind: (bound) =>
+                Effect.sync(() => {
+                  host = bound;
+                }),
+            },
+          ],
+        );
+
+        yield* scheduler.alarm;
+        requested = true;
+        yield* host!.retry;
+        yield* host!.reconcile;
+        expect(armed).toEqual(Option.some(100));
+        expect((yield* host!.state).retryAt).toEqual(armed);
+        const before = arms;
+        yield* TestClock.adjust(1);
+        yield* host!.reconcile;
+        expect(arms).toBe(before);
+        expect(armed).toEqual(Option.some(100));
+        expect((yield* host!.state).retryAt).toEqual(armed);
+        yield* TestClock.adjust(100);
+        yield* host!.reconcile;
+        expect(armed).toEqual(Option.some(201));
+        expect((yield* host!.state).retryAt).toEqual(armed);
+      }).pipe(Effect.ensuring(TestClock.setTime(0))),
+  );
+
   it.effect("status reports each wakeup's deferred count, 0 when it has none", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<Storage | AlarmSlot>();
