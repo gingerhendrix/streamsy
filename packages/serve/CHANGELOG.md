@@ -1,3 +1,77 @@
+## @streamsy/serve@0.12.0
+
+### Follow streams over hibernatable WebSockets on Cloudflare
+
+A Durable Object made with `StreamsyObject.make` can now serve `live=websocket`, a Streamsy extension to Durable Streams HTTP. Set `live: { websocket: true }`, or `live: { websocket: { prefix: "/streams" } }` when the routes have a prefix. The object accepts the socket with the WebSocket Hibernation API, keeps each socket's offset in its attachment, and pushes the new messages in the event that committed them. An object whose readers all hold sockets can hibernate between commits.
+
+Each `data` frame holds the exact body of a catch-up `GET`, and a `control` frame with the SSE control fields follows it. The option is off by default, and an object without it behaves as before.
+
+`Http.read` and `Http.app` now answer `live=websocket` with `426 Upgrade Required` on every host that does not take the upgrade, so a client falls back to long-poll. `@streamsy/core/http` exports the frame helpers and close codes. See [Follow streams over WebSockets](https://streamsy.dev/docs/servers/cloudflare/live-sockets).
+
+### Observe, retry and trigger attached projections
+
+`Projection.Registry` is a new in-process view of the runners that `Projection.attach` and `ProjectionWakeup.attach` start. Use it to check runner health, inspect failed bindings, request runs and wait until a projection has read your write. Trigger streams request projection runs from a wake stream; accepted streams publish how far a projection has read each input.
+
+Provide `Projection.Registry.layer` below your attach layers so every attachment sees the same registry. On a Durable Object, put it in the object's `layer` next to `CheckpointStore.layer`. Each runner registers under its projection id and unregisters when its attach scope closes. Two attachments with the same id in one registry fail the layer build. See [Observe attached runners](https://streamsy.dev/docs/projections/run#observe-attached-runners).
+
+The registry has these members:
+
+- `status` reports each runner's `state`, consecutive pass `failures`, `retryAt`, `active`, `queued` and `lastPassAt`. Both modes include a `marks` summary with disjoint `fresh`, `sleeping`, `retryDue`, `backingOff` and `stopped` counts, plus `nextDueAt`. The runner's `failure`, `stopped` count and `triggers` expose pass, binding and trigger-stream stops. `status` fails with `StorageFault` if it cannot read the mark counts.
+- `changes` emits the status list on subscription and after runner changes. A slow subscriber keeps at most one pending notification. The stream logs and skips failed snapshots and stays open.
+- `schedule(binding)` makes that binding due for the next pass, overriding its backoff or stop. It returns before processing finishes and fails with `InvalidBinding` when encoded params do not round-trip through the attached declaration.
+- `retry(target)` makes failed and stopped bindings due now and returns the number of changed marks. A repeat before execution returns zero. Pass an id or declaration to select its failed bindings and resume stopped trigger streams, or a binding to select one mark. Resuming a trigger stream or failed pass adds nothing to the count.
+- `failed(target, { limit })` lists failed bindings, stopped first, then by deadline. Entries include encoded `params`, `attempts`, `dueAt` (`None` while stopped), `stopped` and the stored failure's time, optional reason and message. The limit defaults to 100 and accepts integers from 1 to 1,000. Durable failures remain readable after eviction.
+- `events` emits future binding observations. `Ran` carries status, unit count and input offsets. `Failed` carries attempts, failure, stopped state and a retry deadline in either mode (`None` for a stop). `Dropped` reports a source removed before the binding's first run. Events have no replay and buffer without a limit, so close subscriptions when finished.
+- `awaitOffset(binding, input, offset)` subscribes before reading the checkpoint, then waits for the requested input offset. A matching failed run prompts a checkpoint reread for units already committed. A different attached version or generation fails with `ProjectionFault` reason `identity-mismatch`. Add `Effect.timeout` to bound the wait.
+
+Requests resolve by projection id and fail with `NotAttached` when it is missing. `schedule` and `retry` end the runner's current wait and permit one pass, including after a finite pass policy is exhausted. They preserve that policy: another failed pass after exhaustion returns straight to `failed`, with no automatic delay. On an object, both methods reconcile the host alarm before returning. `Projection.Registry.isFor(binding)` matches events by id and encoded params; `RunnerEvent` exports constructors, `$is` and `$match`.
+
+Pass `triggers: [FolderWake]` to request source bindings from a fixed-address wake stream; the process host also supports remote triggers, while the alarm host accepts only its own storage owner's triggers. See [Trigger streams](https://streamsy.dev/docs/projections/run#trigger-streams) for ownership, cursor recovery and validation rules.
+
+Set `accepted` to a wake class on a declaration to publish the offset of each input that moved in a unit. State tables use `StateTable.define(State, { accepted: TotalsAccepted })`. Accepted offsets require `Commit.transaction` or `Commit.producer`, including on folds. Transactional rows commit with the checkpoint; producer rows can be visible before checkpoint settlement and deduplicate on retry. `Streamsy.awaitWake(Wake, params, { stream, offset })` waits over local or remote storage. It reads from the start unless a fourth argument supplies `{ from: savedWakeCursor }`; only rows after that cursor can satisfy the wait. See [Accepted stream](https://streamsy.dev/docs/projections/accepted).
+
+In `@streamsy/serve`, `Wakeup.bind(host)` receives `reconcile`, `retry` and retry `state` effects that work outside requests. An optional `retryable(cause)` returning `false` stops automatic run retries without stepping the schedule. A non-retryable `StorageFault` from `next` does the same. `changed` runs after a run or failed deadline read updates retry state. `ProjectionWakeup` supplies these hooks for the registry. A cold start makes stopped durable bindings due once; a still-broken binding stops again. Stopped marks alone arm no alarm. See [Projections on alarms](https://streamsy.dev/docs/servers/cloudflare/alarms#projections).
+
+### Changed behaviour
+
+**Breaking change:** Attached runners call the `passRetry` schedule for timing only, once per retryable failed pass with no failure input. A source write or trigger row records work without shortening backoff or ending a stop. In both durability modes, a retryable failed binding waits alone, by default from 1 s doubling to 1 hour; a finite pass schedule no longer bounds non-durable binding retries. See [binding retry](https://streamsy.dev/docs/reference/projection/runners#binding-retry) for the declaration's policy. The runner stops the binding, trigger stream or pass that hits a known non-retryable fault and reports the cause. `registry.retry` or the next runner start resumes it; `registry.schedule` also resumes a selected binding. Handler errors and defects retry on attached runners. `Projection.follow` now retries `token-conflict` and `output-busy` on its schedule, while other handler errors and defects still fail its stream. Structurally typed wake outputs must supply `paramCodecs`, as `Streamsy.wake` classes already do; structural `Attachable` values must include `version` and `generation`.
+
+**Breaking change:** Opening SQL storage upgrades the schema to version 3, including each existing Durable Object on its next acquisition. Projection marks gain `stopped`, `failed_at`, `failure_reason`, `failure_message` and nullable `wake_at`; existing sequence numbers, attempts and due times remain intact. There is no downgrade from schema version 3: a release that supports only version 2 refuses the database, so returning to it requires restoring a pre-upgrade backup. Custom durable-mark adapters must implement the updated internal `ProjectionMarksApi`: `summary`, stopped-aware reads and `retry`, `fail` in place of `defer`, plus `resume`, bounded `failed` and `sleep`; the marks-level `deferred` method is removed. `clear` resets failure state when a newer sequence keeps the mark. The storage contract checks these rules. See the [marks contract](https://streamsy.dev/docs/reference/core/memory-storage#types-with-no-exported-name) and [SQL migration rules](https://streamsy.dev/docs/reference/storage/sql-storage#sqlstoragelayer).
+
+### Request a process wake with its checkpoint
+
+Return `Projection.wakeAt(time)` from a `Projection.process` handler to record its
+next wake, using epoch milliseconds or an Effect `DateTime`. Returning nothing
+clears it. Use `Commit.atLeastOnce` or `Commit.transaction`, including compensation
+wrappers, so the request commits with the checkpoint.
+
+A due unit carries the recorded time as `unit.due`, and its key includes that time
+for idempotent retries. Without new input it has empty slices and ranges.
+`Progress.wakeAt` reports the next recorded deadline. `run`, `pass` and `follow`
+handle due timers when they run; each cycle makes at most one due unit without
+input. Attached process and Durable Object hosts wake at the deadline. A process
+wait rechecks wall time every 30 seconds while a deadline exists, including after
+host suspend. Backoff delays a wake; stops keep it until retry or restart. With
+`durable: false`, restart or eviction loses the wake until the next input. Return
+a time after `unit.due` to avoid repeatedly running an immediately due timer.
+
+`RunnerStatus.marks.sleeping` counts sleeping bindings separately from pending and
+failed work. `RunnerEvent.Ran.wakeAt` reports the next recorded wake. Schema
+version 3 adds nullable `wake_at` to projection marks on every SQL host.
+
+See [process timers](https://streamsy.dev/docs/projections/process#timers).
+
+### Run external deliveries as projections
+
+**Breaking change:** `@streamsy/outbox` is no longer released with Streamsy and
+gets no further versions. `OutboxWakeup` is removed from
+`@streamsy/serve/cloudflare` and `@streamsy/serve/alchemy`.
+
+Use a projection with `Commit.atLeastOnce` and `unit.key` as the idempotency key,
+the declaration's `retry` policy for a retry budget and `onExhausted`, and
+`Projection.wakeAt` for a deferred retry or a snooze. On Cloudflare, attach it with
+`ProjectionWakeup.attach`. See [Effects](https://streamsy.dev/docs/projections/effects).
+
 ## @streamsy/serve@0.9.0
 
 ### Require Effect 4.1.2 and Alchemy beta.85
