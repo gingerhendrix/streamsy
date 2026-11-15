@@ -170,7 +170,9 @@ layer(host())((it) => {
             }),
         });
 
-        yield* Layer.build(Projection.attach(projection, { retry: Schedule.spaced("1 second") }));
+        yield* Layer.build(
+          Projection.attach(projection, { passRetry: Schedule.spaced("1 second") }),
+        );
         const files = yield* Files;
         yield* files.create(docs);
         yield* files.append(docs, ["a"]);
@@ -217,7 +219,7 @@ layer(host())((it) => {
           }),
       });
 
-      yield* Layer.build(Projection.attach(projection, { retry: Schedule.spaced("1 second") }));
+      yield* Layer.build(Projection.attach(projection, { passRetry: Schedule.spaced("1 second") }));
       const files = yield* Files;
       yield* files.create(docs);
       yield* files.append(docs, ["a"]);

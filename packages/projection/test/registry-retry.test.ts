@@ -56,7 +56,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           });
 
           yield* Layer.build(
-            Projection.attach(declaration, { retry: Schedule.spaced("1 second") }),
+            Projection.attach(declaration, { passRetry: Schedule.spaced("1 second") }),
           );
           const registry = yield* Projection.Registry;
           yield* registry.schedule(declaration.at({ id: `${id}-a` }));
@@ -119,7 +119,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         });
 
         yield* Layer.build(
-          Projection.attach(declaration, { retry: Schedule.exponential("1 second") }),
+          Projection.attach(declaration, { passRetry: Schedule.exponential("1 second") }),
         );
         const registry = yield* Projection.Registry;
         yield* registry.schedule(declaration.at({ id }));
@@ -194,7 +194,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           });
         let broken = true;
         yield* Layer.build(
-          Projection.attach(declaration, { durable: true, retry: Schedule.spaced("1 second") }),
+          Projection.attach(declaration, { durable: true, passRetry: Schedule.spaced("1 second") }),
         ).pipe(
           Effect.provideService(ProjectionMarks, {
             ...marks,
@@ -256,7 +256,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           yield* Layer.build(
             Projection.attach(declaration, {
               durable: true,
-              retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+              passRetry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
             }),
           ).pipe(
             Effect.provideService(ProjectionMarks, {
@@ -309,7 +309,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           }),
       });
 
-      yield* Layer.build(Projection.attach(declaration, { retry: Schedule.recurs(0) }));
+      yield* Layer.build(Projection.attach(declaration, { passRetry: Schedule.recurs(0) }));
       const registry = yield* Projection.Registry;
       yield* registry.schedule(declaration.at({ id }));
       expect(

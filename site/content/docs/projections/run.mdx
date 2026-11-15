@@ -156,17 +156,17 @@ Build the Layer before the application writes. A commit before the subscription 
 
 Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
 
-| Option     | Default           | Effect                                                                              |
-| ---------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `limit`    | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
-| `retry`    | `ProjectionRetry` | Timing only. Called once per retryable failed pass with no input                    |
-| `durable`  | `false`           | Keep a pending mark for each binding with work in storage                           |
-| `triggers` | `[]`              | Local fixed-address wake declarations whose rows request binding runs               |
-| `batch`    | `25`              | The most due marks that a pass reads                                                |
+| Option      | Default           | Effect                                                                              |
+| ----------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `limit`     | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
+| `passRetry` | `ProjectionRetry` | Timing only. Called once per retryable failed pass with no input                    |
+| `durable`   | `false`           | Keep a pending mark for each binding with work in storage                           |
+| `triggers`  | `[]`              | Local fixed-address wake declarations whose rows request binding runs               |
+| `batch`     | `25`              | The most due marks that a pass reads                                                |
 
 A retry schedule that dies is logged and treated as exhausted. A registry request still permits another pass.
 
-`durable` chooses whether pending binding work, backoff and stored failures survive a restart. By default these live in private memory and reset when the runner restarts. A crash after a commit and before the run leaves that binding late until its source gets its next write. In both modes a retryable failed binding waits alone, from 1 s doubling to 1 hour, while its neighbours run. Handler errors and defects retry too. A non-retryable `ProjectionFault` or `StorageFault` stops only the binding that failed. A local commit or trigger row records work without shortening backoff or ending a stop; `registry.retry` or `registry.schedule` makes the binding due now. The `retry` schedule paces retryable failures in the runner's own marks, cursor or trigger operations; a finite pass policy does not bound binding retries.
+`durable` chooses whether pending binding work, backoff and stored failures survive a restart. By default these live in private memory and reset when the runner restarts. A crash after a commit and before the run leaves that binding late until its source gets its next write. In both modes a retryable failed binding waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), while its neighbours run. Handler errors and defects retry too. A non-retryable `ProjectionFault` or `StorageFault` stops only the binding that failed. A local commit or trigger row records work without shortening backoff or ending a stop; `registry.retry` or `registry.schedule` makes the binding due now. The `passRetry` schedule paces retryable failures in the runner's own marks, cursor or trigger operations; a finite pass policy does not bound binding retries.
 
 With `durable: true`, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. Before its first deadline read, wait or drain, the runner makes stopped marks due once. When the Layer starts, it runs the bindings that have due marks. A binding that catches up deletes its mark, unless a write during the run marked it again. A failed binding logs a warning and backs off or stops as in non-durable mode. `durable: true` needs a local memory or SQL storage Layer. Over other storage, building the Layer dies. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 
@@ -318,7 +318,7 @@ Each status includes the projection id, `active` bindings executing now, `queued
 
 Pass a projection id or declaration to retry all its failed and stopped bindings and resume its trigger streams, or a binding to select one. Requests preserve the retry schedule and can resume an exhausted finite policy. Retry excludes bindings that only reached their unit limit. Retry preserves attempts, stored failures and sequence numbers, clears stops and sets due times to zero in both modes; a repeat before the marks run returns zero.
 
-`registry.failed(target, { limit: 100 })` lists failed bindings, stopped first and then by deadline. The default limit is 100; it must be an integer from 1 to 1,000. Use a projection id or declaration for its failed bindings, or a binding to select one. Each entry has encoded `params`, `attempts`, `dueAt` (`None` while stopped), `stopped` and the optional stored `failure` (`at`, `reason`, `message`). Durable failures remain readable after eviction; attempts and the failure remain until the binding catches up and clears its mark, or it is dropped.
+`registry.failed(target, { limit: 100 })` lists failed bindings, stopped first and then by deadline. The default limit is 100; it must be an integer from 1 to 1,000. Use a projection id or declaration for its failed bindings, or a binding to select one. Each entry has encoded `params`, `attempts`, `dueAt` (`None` while stopped), `stopped`, `exhausted` and the optional stored `failure` (`at`, `reason`, `message`). Durable failures remain readable after eviction; attempts and the failure remain until the binding catches up and clears its mark, or it is dropped.
 
 These methods resolve the runner by projection id and fail with `NotAttached`, exported from `@streamsy/projection`, if that id is not registered. Attaching an id already present in the same registry dies at layer build with an error naming the id. A binding supplies encoded params, which the runner decodes with its declaration. A missing attachment writes no mark. `schedule` fails with `InvalidBinding`, exported from `@streamsy/projection`, when params do not decode and re-encode to the same binding, including missing or extra keys. `retry` with such params selects nothing and returns zero. Storage failures are reported as `StorageFault`.
 

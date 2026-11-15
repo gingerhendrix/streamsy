@@ -37,7 +37,17 @@ type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 // ---cut-end---
-interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
+interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound, HE = never, HR = never> {
+  readonly retry?:
+    | {
+        readonly schedule?: import("effect").Schedule.Schedule<unknown>;
+        readonly maxAttempts?: number;
+        readonly onExhausted?: (
+          unit: import("@streamsy/projection").Unit<StreamRoute.Params<Codecs>>,
+          failure: import("@streamsy/projection").RunnerFailure,
+        ) => import("effect").Effect.Effect<void, HE, HR>;
+      }
+    | undefined;
   readonly id: string;
   readonly version: number;
   readonly generation: number;
@@ -58,15 +68,16 @@ same<Declaration<{}, string>, Real.Declaration<{}, string>>(true);
 
 A `Declaration` is the inert value that a constructor returns. It reads no stream and holds no resource. `Bound` is the bound projection that `at` returns, which the [runners](/docs/reference/projection/runners) take.
 
-| Field        | Meaning                                                                       |
-| ------------ | ----------------------------------------------------------------------------- |
-| `id`         | The projection name                                                           |
-| `version`    | The declared version, `1` when the definition leaves it out                   |
-| `generation` | The declared generation, `1` when the definition leaves it out                |
-| `params`     | The param codecs, by name                                                     |
-| `inputs`     | The declared inputs, before `at` binds them                                   |
-| `at`         | The method that binds the params and returns the bound projection             |
-| `parse`      | The method that returns the params of a stream id that one of the inputs owns |
+| Field        | Meaning                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `id`         | The projection name                                                                                          |
+| `version`    | The declared version, `1` when the definition leaves it out                                                  |
+| `generation` | The declared generation, `1` when the definition leaves it out                                               |
+| `params`     | The param codecs, by name                                                                                    |
+| `retry`      | Optional [binding retry policy](/docs/reference/projection/runners#binding-retry), used by both attach hosts |
+| `inputs`     | The declared inputs, before `at` binds them                                                                  |
+| `at`         | The method that binds the params and returns the bound projection                                            |
+| `parse`      | The method that returns the params of a stream id that one of the inputs owns                                |
 
 `at` encodes each param with its codec, and throws a `RangeError` when a param does not encode. For a declaration with outputs, `at` also checks the outputs. See [`Projection.emit`](/docs/reference/projection/constructors#projectionemit).
 

@@ -30,7 +30,7 @@ import {
   type Snapshot,
   type StateValue,
 } from "./snapshot.ts";
-import { unitOf } from "./unit.ts";
+import { unitOf, type Unit } from "./unit.ts";
 
 /** The result of one `pass`: one committed unit (`progress`), or no input to commit. */
 export interface PassResult<Inputs extends InputMap = InputMap> {
@@ -62,6 +62,12 @@ export type Cycle<Inputs extends InputMap = InputMap> = Omit<Progress<unknown, I
   readonly encoded: string | undefined;
 };
 
+/** Internal run metadata, never exposed as Projection.run options. */
+export interface RunContext {
+  readonly attempt: number;
+  readonly unit: (unit: Unit | undefined) => void;
+}
+
 /**
  * Internal: one pass that also returns the encoded state it committed, or the stored
  * state when it found no input.
@@ -76,11 +82,13 @@ const step = Effect.fn("Projection.pass")(function* <
   OR = never,
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+  context?: RunContext,
 ): Effect.fn.Return<
   Step<Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
+  context?.unit(undefined);
   const before = yield* restore(projection, projection.commit);
 
   if (before.record.ended) {
@@ -167,6 +175,8 @@ const step = Effect.fn("Projection.pass")(function* <
     ranges,
   );
 
+  context?.unit(unit);
+
   const { pending: _pending, ...record } = before.record;
   const closed = { ...record.closed };
 
@@ -198,7 +208,7 @@ const step = Effect.fn("Projection.pass")(function* <
   let result: Result | undefined;
 
   const processed = Effect.suspend(() =>
-    projection.process(batch, unit, before.record.state, prepared),
+    projection.process(batch, unit, before.record.state, prepared, context?.attempt ?? 1),
   ).pipe(
     Effect.map((value) => {
       if (projection.accepted === undefined) return value;
@@ -311,6 +321,7 @@ export const catchUp = Effect.fnUntraced(function* <
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: RunOptions,
+  context?: RunContext,
 ): Effect.fn.Return<
   Cycle<Inputs>,
   E | ProjectionFault,
@@ -323,7 +334,7 @@ export const catchUp = Effect.fnUntraced(function* <
   let encoded: string | undefined;
 
   do {
-    const result = yield* step(projection);
+    const result = yield* step(projection, context);
     units += result.units;
     items += result.items;
     offsets = result.offsets;

@@ -85,6 +85,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -177,6 +178,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -269,6 +271,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -362,6 +365,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -384,10 +388,10 @@ type Readable<Inputs extends InputMap, S, Q> = Identity & {
   readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
 };
 // ---cut-end---
-declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options?: AttachOptions,
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>>;
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>>;
 // ---cut-after---
 same<typeof attach, typeof Projection.attach>(true);
 ```
@@ -398,11 +402,59 @@ same<typeof attach, typeof Projection.attach>(true);
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
 - `attach` throws a `RangeError` when `limit`, `batch` or `concurrency` is not a positive safe integer.
-- A retryable failed pass in marks, cursor or trigger operations logs an error and runs again under `retry`. A binding with a retryable failure backs off alone, from 1 s doubling to 1 hour, in either mode. A binding that reaches `limit` runs again next.
+- A retryable failed pass in marks, cursor or trigger operations logs an error and runs again under `passRetry`. A binding with a retryable failure uses its declaration's `retry` policy, defaulting to 1 s doubling to 1 hour in either mode. A binding that reaches `limit` runs again next.
 - By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
 - With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding backs off or stops its own mark and does not fail the pass. Non-retryable projection or storage faults stop only their unit; handler errors and defects retry. A start makes stopped marks due once. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 - Inputs on another owner need a local [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
 - A binding whose source was removed before its first run is dropped, with a warning.
+
+### Binding retry
+
+All five constructors (`fold`, `process`, `emit`, `mapAccum` and `mapAccumBatch`)
+accept a binding `retry` policy on the declaration. Both attach hosts use it.
+`run` and `follow` do not apply this policy.
+
+```ts
+// ---cut-start---
+import { Effect, Schedule } from "effect";
+import type { Unit, RunnerFailure } from "@streamsy/projection";
+declare function recordFailure(key: string, failure: RunnerFailure): Effect.Effect<void>;
+// ---cut-end---
+const retry = {
+  schedule: Schedule.exponential("1 second"),
+  maxAttempts: 3,
+  onExhausted: (unit: Unit<{ id: string }>, failure: RunnerFailure) =>
+    recordFailure(unit.key, failure),
+};
+```
+
+- `schedule` controls timing only. The default doubles from 1 s to 1 hour, with no limit.
+  On each retryable failure, a fresh `Schedule.toStep` is stepped `attempts` times
+  with no input and a fixed timestamp. The last delay sets the stored `dueAt`.
+  Schedules that depend on input or elapsed time are unsupported. A finite schedule
+  that ends exhausts the binding; a dying schedule is logged and treated as ended.
+- `maxAttempts` limits failed runs, including load or read failures before a unit forms.
+  With `3`, the third failed run stops. The default is unlimited. New input during
+  backoff preserves the attempt count and deadline. Success clears the count.
+- `onExhausted(unit, failure)` runs before the exhausted binding stops. The unit has
+  the declaration's decoded params. The hook runs at least once: dedupe with `unit.key`.
+  If the exhausting failure occurs before any unit forms, the hook is skipped and the
+  runner logs why. A hook failure is logged and the binding stops anyway. The hook
+  does not run for a non-retryable fault, which already has its own fault reason.
+  Hooks run outside the handler transaction and may overlap other bindings' handlers.
+
+Exhaustion keeps the failed unit and stops its mark with `dueAt: None`.
+`registry.failed` lists it with `exhausted: true` when stopped and either the attempt
+budget or schedule has ended. No exhaustion flag is stored: changing a declaration's
+policy changes this derived view. A non-retryable fault after earlier retryable failures
+can also meet this definition. `registry.retry` permits one more run; another failure
+stops it again if the budget is still exhausted. A runner start also makes stopped marks
+due once. Durable backoff retains its stored deadline across restarts without stepping
+the schedule again.
+
+The attach option `passRetry` separately paces failed drain passes in marks, cursors
+or triggers. Both hosts reject the removed attach option `retry` with a `RangeError`
+naming `passRetry`. The returned wakeup's `retry` field and `Wakeup.bind` keep their names.
 
 ### Binding concurrency
 
@@ -479,6 +531,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -510,8 +563,8 @@ interface WakeupHost {
 }
 // ---cut-end---
 declare const ProjectionWakeup: {
-  attach: <I extends InputMap, E, R, Q, Result, P, OR = never>(
-    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+  attach: <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
     options?: AttachOptions,
   ) => Effect.Effect<
     {
@@ -521,7 +574,7 @@ declare const ProjectionWakeup: {
       run: Effect.Effect<
         { more: boolean },
         StorageFault,
-        Exclude<R, P> | Q | OR | InputServices<I>
+        Exclude<R, P> | Q | OR | HR | InputServices<I>
       >;
       bind: (host: WakeupHost) => Effect.Effect<void>;
       changed: Effect.Effect<void>;
@@ -543,7 +596,7 @@ same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 | `name`      | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                 |
 | `next`      | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, the earliest due time of the marks. `None` when no binding has work |
 | `run`       | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                |
-| `retry`     | `options.retry`, or the `ProjectionRetry` schedule                                                                                                               |
+| `retry`     | `options.passRetry`, or the `ProjectionRetry` schedule                                                                                                           |
 | `retryable` | Classifies pass failures: known non-retryable projection or storage faults stop automatic retries                                                                |
 | `deferred`  | The sum of retry-due, backing-off and stopped marks after a binding failure. It counts private memory marks when `durable` is `false`                            |
 
@@ -600,6 +653,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -686,6 +740,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -773,6 +828,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -886,6 +942,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -974,6 +1031,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1056,6 +1114,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1138,6 +1197,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1221,6 +1281,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1264,7 +1325,7 @@ A bound projection from any constructor is an `Executable`. `BoundState` is the 
 
 `RunnerStatus` reports the pass `failure`, stopped binding count and each trigger stream's optional failure, alongside `state`, `failures`, `retryAt`, `active`, `queued`, `lastPassAt` and the mark summary in both modes. `RunnerFailure` holds `at`, `retryable`, optional projection-fault `reason` and a message capped at 1,000 characters. A good drain clears the pass failure.
 
-`registry.failed(target, { limit })` lists failed bindings, stopped first and then by deadline. Targets are projection ids, declarations or bindings. Each result has encoded `params`, `attempts`, optional `dueAt`, `stopped` and the stored failure (`at`, optional `reason`, `message`). The limit defaults to 100 and must be an integer from 1 to 1,000; an invalid limit dies with `RangeError`. Durable failures survive eviction.
+`registry.failed(target, { limit })` lists failed bindings, stopped first and then by deadline. Targets are projection ids, declarations or bindings. Each result has encoded `params`, `attempts`, optional `dueAt`, `stopped`, `exhausted` and the stored failure (`at`, optional `reason`, `message`). The limit defaults to 100 and must be an integer from 1 to 1,000; an invalid limit dies with `RangeError`. Durable failures survive eviction.
 
 Provide `Projection.Registry.layer` below attach layers to share one in-process registry. Its `status` effect reads the attached runners and `changes` streams full snapshots, starting with the current snapshot. A slow consumer retains at most one pending notification and reads the latest snapshot when it resumes. Runners unregister when their attach scope closes.
 

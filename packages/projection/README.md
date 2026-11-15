@@ -232,7 +232,7 @@ never commit here, so they never trigger. Do not also run an attached binding
 under `Projection.follow`.
 
 By default `Projection.attach` keeps pending binding marks and backoff in private memory.
-In both modes a retryable failed binding waits alone, from 1 s doubling to 1 hour, while
+In both modes a retryable failed binding waits alone, by default from 1 s doubling to 1 hour, while
 its neighbours run. A non-retryable projection or storage fault stops only the binding that failed.
 Handler errors and defects retry. A local commit or trigger row does not shorten backoff or end a stop;
 `registry.retry` or `registry.schedule` makes it due now. `registry.failed` lists
@@ -284,11 +284,25 @@ lock short: units serialize from that append until commit. Units that lock strea
 in opposite orders across separate appends can deadlock on Postgres or MySQL; the
 database aborts one transaction and its binding backs off before retrying.
 
-Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner calls
+All five constructors accept `retry: { schedule?, maxAttempts?, onExhausted? }`.
+The default binding retry doubles from 1 s to 1 hour without a limit. A finite schedule
+or `maxAttempts` stops the binding when exhausted; `registry.failed` includes
+`exhausted: true`. `registry.retry` permits one more run. New input during backoff
+keeps the attempt count and deadline; success clears them. The runner replays a fresh
+schedule for the failure count, so use step-count schedules, without input or elapsed-time
+dependence. Stored deadlines survive durable restarts without recomputation.
+`onExhausted(unit, failure)` runs at least once before stopping; dedupe with `unit.key`.
+It receives decoded params. If no unit formed before the exhausting failure, the hook
+is skipped and logged. A failing hook is logged and the binding stops anyway.
+Non-retryable faults stop without the hook. Hooks run outside the handler transaction.
+A `process` context includes `attempt`, starting at 1 and increasing on failed attached
+runs. Direct `run` and `follow` always use 1. See [binding retry](https://streamsy.dev/docs/reference/projection/runners#binding-retry).
+
+Both forms accept `passRetry: Schedule.Schedule<unknown>`. Timing only: the runner calls
 the schedule once per retryable failed pass with no input. Bun waits for its delays; the
 alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.
-A finite schedule stops pass retries when exhausted. Binding failures use their own
-backoff; the pass policy paces failures in marks, cursor or trigger operations.
+An attach call that still passes the removed `retry` option throws a `RangeError` naming `passRetry`.
+A finite schedule stops pass retries when exhausted. Binding failures use the declaration's `retry` policy; the pass policy paces failures in marks, cursor or trigger operations.
 
 SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.

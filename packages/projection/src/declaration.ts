@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- This internal binding implementation erases the handler and prepared-value types already checked by the constructor overloads. */
 /* oxlint-disable typescript/no-explicit-any, anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Declarations are the checked bridge between stream declarations and their mapped projection inputs; each assertion is documented at its use. */
-import { Array, Option, Record, Schema, type Effect } from "effect";
+import { Array, Option, Record, Schema, type Effect, type Schedule } from "effect";
 import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
@@ -9,6 +9,7 @@ import type { WakeOutput } from "./wake.ts";
 import { supportsPrepare } from "./commit/range.ts";
 import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
+import type { RunnerFailure } from "./registry.ts";
 import type { ProjectionFault } from "./fault.ts";
 import type { InputMap, Slices } from "./batch.ts";
 import { bindState, type StateDefinition, type BoundState } from "./state.ts";
@@ -61,7 +62,13 @@ export type OneWithin<C extends StreamRoute.ParamCodecs, X> =
 export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
 
 /** Inert: `at` binds the params and returns the value runners take. */
-export interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound> {
+export interface Declaration<
+  Codecs extends StreamRoute.ParamCodecs,
+  Bound,
+  HE = never,
+  HR = never,
+> {
+  readonly retry?: BindingRetry<StreamRoute.Params<Codecs>, HE, HR> | undefined;
   readonly id: string;
   readonly version: number;
   readonly generation: number;
@@ -82,7 +89,32 @@ export type AcceptedResult<Result, W> = W extends WakeOutput
     : Commit.Emitted<{}>
   : Result;
 
-export interface Common<C extends StreamRoute.ParamCodecs, I extends Inputs, W = undefined> {
+/** Binding retry timing and budget, shared by both attach hosts. */
+export interface BindingRetry<Params, E = never, R = never> {
+  /**
+   * Timing only: defaults to 1 s doubling to 1 hour. A fresh schedule replays the
+   * failure count; input- or elapsed-time-dependent schedules are unsupported.
+   * A schedule that ends exhausts the binding.
+   */
+  readonly schedule?: Schedule.Schedule<unknown>;
+  /** Failed runs before stopping. Default: unlimited. */
+  readonly maxAttempts?: number;
+  /**
+   * Runs at least once before exhaustion stops the binding; dedupe with unit.key.
+   * Skipped and logged when no unit formed. Hook failures are logged and the binding
+   * stops anyway. Non-retryable faults stop without calling the hook.
+   */
+  readonly onExhausted?: (unit: Unit<Params>, failure: RunnerFailure) => Effect.Effect<void, E, R>;
+}
+
+export interface Common<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  W = undefined,
+  HE = never,
+  HR = never,
+> {
+  readonly retry?: BindingRetry<StreamRoute.Params<C>, HE, HR>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -128,13 +160,14 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
   return built as Addresses<I>;
 };
 
-export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
+export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR = never>(
   definition: {
     readonly id: string;
     readonly version?: number;
     readonly generation?: number;
     readonly params: C;
     readonly inputs: Inputs;
+    readonly retry?: BindingRetry<StreamRoute.Params<C>, HE, HR>;
   },
   bind: (key: {
     readonly id: string;
@@ -143,11 +176,12 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound>(
     readonly params: Record<string, string>;
     readonly decoded: StreamRoute.Params<C>;
   }) => Bound,
-): Declaration<C, Bound> => {
+): Declaration<C, Bound, HE, HR> => {
   const version = definition.version ?? 1;
   const generation = definition.generation ?? 1;
 
-  const declaration: Declaration<C, Bound> = {
+  const declaration: Declaration<C, Bound, HE, HR> = {
+    retry: definition.retry,
     id: definition.id,
     version,
     generation,
@@ -191,6 +225,8 @@ export type RunningDeclaration<
   Q,
   S = never,
   OR = never,
+  HE = never,
+  HR = never,
 > = Declaration<
   C,
   Omit<
@@ -203,7 +239,9 @@ export type RunningDeclaration<
       unit: Unit,
       encoded?: string,
     ) => Effect.Effect<Result, E | ProjectionFault, R>;
-  }
+  },
+  HE,
+  HR
 >;
 
 export type StatefulDeclaration<
@@ -216,7 +254,9 @@ export type StatefulDeclaration<
   P,
   Q,
   OR = never,
-> = RunningDeclaration<C, I, E, R, Result, P, Q, A, OR>;
+  HE = never,
+  HR = never,
+> = RunningDeclaration<C, I, E, R, Result, P, Q, A, OR, HE, HR>;
 
 export type OutputDeclaration<
   C extends StreamRoute.ParamCodecs,
@@ -229,9 +269,11 @@ export type OutputDeclaration<
   Q,
   A = never,
   OR = never,
-> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR>, "at"> & {
+  HE = never,
+  HR = never,
+> = Omit<RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR, HE, HR>, "at"> & {
   readonly at: (params: StreamRoute.Params<C>) => ReturnType<
-    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR>["at"]
+    RunningDeclaration<C, I, E, R, Result, P, Q, A, Services<O> | OR, HE, HR>["at"]
   > & {
     readonly streams: Readonly<Record<string, Streamsy.Address<unknown, Services<O> | OR>>>;
   };
@@ -247,7 +289,9 @@ export type AccumulatingDeclaration<
   P,
   Q,
   OR = never,
-> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A, OR>;
+  HE = never,
+  HR = never,
+> = OutputDeclaration<C, I, O, E, R, Commit.Accumulated<A, O>, P, Q, A, OR, HE, HR>;
 
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 
@@ -255,7 +299,9 @@ type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 export interface BuildDefinition extends Common<
   StreamRoute.ParamCodecs,
   Inputs,
-  WakeOutput | undefined
+  WakeOutput | undefined,
+  any,
+  any
 > {
   readonly commit?: Commit.Commit<any, any, any>;
   readonly state?: StateDefinition<any, any, any>;
@@ -305,7 +351,13 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
           ? undefined
           : (batch: Slices<InputMap>, unit: Unit) =>
               definition.prepare!(batch, withParams(unit, decoded), { outputs: streams }),
-      process: (batch: Slices<InputMap>, unit: Unit, encoded?: string, prepared?: unknown) =>
+      process: (
+        batch: Slices<InputMap>,
+        unit: Unit,
+        encoded?: string,
+        prepared?: unknown,
+        attempt = 1,
+      ) =>
         adapt(
           kind,
           key,
@@ -316,6 +368,7 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
           withParams(unit, decoded),
           encoded,
           prepared,
+          attempt,
         ),
     };
   });

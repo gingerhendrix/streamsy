@@ -19,7 +19,9 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)), { excludeTestSer
           const marks = yield* ProjectionMarks;
           let reads = 0;
           let drains = 0;
-          yield* Layer.build(Projection.attach(declaration, { durable: true, retry })).pipe(
+          yield* Layer.build(
+            Projection.attach(declaration, { durable: true, passRetry: retry }),
+          ).pipe(
             Effect.provideService(ProjectionMarks, {
               ...marks,
               nextDue: () =>
@@ -77,7 +79,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       yield* Layer.build(
         Projection.attach(declaration, {
           durable: true,
-          retry: Schedule.spaced("1 hour").pipe(
+          passRetry: Schedule.spaced("1 hour").pipe(
             Schedule.modifyDelay(() => Effect.die("broken policy")),
           ),
         }),

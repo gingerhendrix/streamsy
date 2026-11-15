@@ -28,17 +28,11 @@ interface WakeupHost {
  * the alarm. A start makes stopped marks due once; a still-broken binding
  * stops again. Stopped marks alone arm no alarm. Pass `durable: false` for private memory marks that reset on eviction.
  */
-const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: AttachOptions = {},
 ) => {
-  const runner = runnerOf(projection, {
-    limit: options.limit,
-    durable: options.durable ?? true,
-    batch: options.batch,
-    concurrency: options.concurrency,
-    triggers: options.triggers,
-  });
+  const runner = runnerOf(projection, options, true);
 
   return Effect.gen(function* () {
     const { next, drain, deferred, status, schedule, retry, failed } = yield* runner;
@@ -114,7 +108,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
           host = bound;
         }),
       changed,
-      retry: options.retry ?? (yield* ProjectionRetry),
+      retry: options.passRetry ?? (yield* ProjectionRetry),
       deferred,
     };
   });

@@ -80,6 +80,10 @@ interface Declaration<
   readonly params: Codecs;
   readonly parse: (id: string) => Option.Option<StreamRoute.Params<Codecs>>;
   readonly at: (params: StreamRoute.Params<Codecs>) => StateTable.Bound<C, R>;
+  readonly retry?: import("@streamsy/projection").Declaration<
+    Codecs,
+    StateTable.Bound<C, R>
+  >["retry"];
   // Also `inputs`, with the State class as `state`.
 }
 // ---cut-after---

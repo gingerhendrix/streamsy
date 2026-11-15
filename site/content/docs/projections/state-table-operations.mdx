@@ -69,7 +69,7 @@ A fault in the table also fails every fold that writes the stream with the same 
 
 Recovery and health checks need to account for failed marks:
 
-- **Fixing the cause does not resume the binding.** Rebuilding the table, a source commit or a trigger row neither shortens backoff nor ends a stop. A retryable failure waits from 1 s doubling to 1 hour. A stopped binding waits for `registry.retry`, `registry.schedule` or a runner restart. After fixing the cause, request the binding when it must run sooner.
+- **Fixing the cause does not resume the binding.** Rebuilding the table, a source commit or a trigger row neither shortens backoff nor ends a stop. A retryable failure waits by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry). A stopped binding waits for `registry.retry`, `registry.schedule` or a runner restart. After fixing the cause, request the binding when it must run sooner.
 - **Count every failed mark.** In either mode, inspect `marks.retryDue`, `marks.backingOff` and `marks.stopped`, and use `registry.failed` for the causes. A Durable Object's `Wakeups.status` reports their sum as the [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) `deferred` count, including stopped bindings. Also inspect the runner's `failure` and `triggers` for pass and trigger-stream failures.
 
 ## SQLite only

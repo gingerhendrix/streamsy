@@ -18,10 +18,10 @@ export interface AttachOptions {
   /**
    * Timing only. The runner calls the schedule once per retryable failed pass with no input.
    * Paces retryable failures reading marks, cursors or triggers. Retryable binding
-   * failures back off alone, 1 s doubling to 1 hour. Non-retryable faults stop their unit.
+   * failures use the declaration's binding retry policy. Non-retryable faults stop their unit.
    * Defaults to capped, jittered exponential backoff.
    */
-  readonly retry?: Schedule.Schedule<unknown>;
+  readonly passRetry?: Schedule.Schedule<unknown>;
   /**
    * Keep a pending mark for each binding in the storage owner, written in the
    * transaction of the commit that needs the run. After a restart or an
@@ -68,24 +68,18 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * );
  * ```
  */
-export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: AttachOptions = {},
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>> => {
-  const runner = runnerOf(projection, {
-    limit: options.limit,
-    durable: options.durable ?? false,
-    batch: options.batch,
-    concurrency: options.concurrency,
-    triggers: options.triggers,
-  });
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>> => {
+  const runner = runnerOf(projection, options);
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
       const { wait, drain, status, schedule, retry, failed, interruptDelay, resume } =
         yield* runner;
 
-      const policy = options.retry ?? (yield* ProjectionRetry);
+      const policy = options.passRetry ?? (yield* ProjectionRetry);
       const step = yield* Schedule.toStep(policy);
 
       type Status = {

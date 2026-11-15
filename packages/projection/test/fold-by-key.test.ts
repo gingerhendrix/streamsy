@@ -632,7 +632,7 @@ for (const durable of [true, false]) {
           });
 
           yield* Layer.build(
-            Projection.attach(declaration, { durable, retry: Schedule.spaced("1 second") }),
+            Projection.attach(declaration, { durable, passRetry: Schedule.spaced("1 second") }),
           );
           yield* seed([{ id: "bad", n: 5 }], { workspace: "main", source: "bad" });
           yield* seed([{ id: "good", n: 7 }], { workspace: "main", source: "good" });

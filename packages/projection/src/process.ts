@@ -22,6 +22,8 @@ import type { Unit } from "./unit.ts";
 /** The third argument of `process`. */
 export interface ProcessContext<Prepared = void> {
   readonly prepared: Prepared;
+  /** Binding run attempt, starting at 1. Always 1 under run and follow. */
+  readonly attempt: number;
 }
 
 /** The bound address of each declared output, in the context of `prepare` and `process`. */
@@ -41,8 +43,10 @@ export function process<
   PE = never,
   PR = never,
   W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Common<C, I, W> &
+  definition: Common<C, I, W, HE, HR> &
     Committing<AcceptedResult<void, W>, P, Q> & {
       readonly outputs?: never;
       readonly prepare?: (
@@ -55,7 +59,7 @@ export function process<
         context: ProcessContext<Prepared>,
       ) => Effect.Effect<void, E, R>;
     },
-): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR, never, AcceptedServices<W>>;
+): RunningDeclaration<C, I, E | PE, R, void, P, Q | PR, never, AcceptedServices<W>, HE, HR>;
 // The outputs overload is last, so the compiler reports a mistake in `outputs` against it.
 export function process<
   C extends StreamRoute.ParamCodecs,
@@ -68,8 +72,10 @@ export function process<
   PE = never,
   PR = never,
   W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Common<C, I, W> &
+  definition: Common<C, I, W, HE, HR> &
     Committing<AcceptedResult<void, W>, SqlClient.SqlClient, Q> & {
       readonly outputs: O & OutputsWithin<C, O>;
       readonly prepare?: (
@@ -93,7 +99,9 @@ export function process<
   SqlClient.SqlClient,
   Q | PR,
   never,
-  AcceptedServices<W>
+  AcceptedServices<W>,
+  HE,
+  HR
 >;
 export function process(definition: Parameters<typeof build>[1]): unknown {
   return build("process", definition);

@@ -137,9 +137,9 @@ Object hosts acquire `ProjectionWakeup.attach(projection)` from
 `Storage.committed` events populate its in-memory pending set, and each commit
 writes a durable pending mark in the same transaction. Alarms drain bounded
 passes. After an eviction, acquisition reads the marks and arms the alarm.
-Retry options take an Effect `Schedule` for pass failures in marks, cursor
+`passRetry` on attach takes an Effect `Schedule` for pass failures in marks, cursor
 or trigger operations; finite schedules stop those retries on exhaustion. A retryable failed binding
-waits alone, 1 s doubling to 1 hour, in both durability modes. A non-retryable projection
+waits alone, by default 1 s doubling to 1 hour, in both durability modes; the declaration's `retry` sets a schedule, budget and exhaustion hook. A non-retryable projection
 or storage fault stops the failed unit. `Wakeups.status` includes stopped bindings
 in `deferred`; the registry reports their causes. A cold start makes stopped durable
 bindings due once, and a still-broken binding stops again without arming an alarm.

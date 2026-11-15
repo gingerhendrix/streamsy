@@ -27,7 +27,9 @@ type Definition<
   P,
   Q,
   W,
-> = Common<C, I, W> &
+  HE,
+  HR,
+> = Common<C, I, W, HE, HR> &
   Committing<Accumulated<NoInfer<A>, NoInfer<O>>, P, Q> & {
     readonly outputs: O & OutputsWithin<C, O>;
     readonly state: StateDefinition<A, SI, StreamRoute.Params<C>>;
@@ -46,8 +48,10 @@ export function mapAccum<
   P = never,
   Q = never,
   W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Definition<C, I, O, A, SI, P, Q, W> & {
+  definition: Definition<C, I, O, A, SI, P, Q, W, HE, HR> & {
     readonly mapAccum: ((
       state: NoInfer<A>,
       entry: Entry<Addresses<I>>,
@@ -57,7 +61,7 @@ export function mapAccum<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>, HE, HR>;
 export function mapAccum(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccum", definition);
 }
@@ -75,8 +79,10 @@ export function mapAccumBatch<
   P = never,
   Q = never,
   W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Definition<C, I, O, A, SI, P, Q, W> & {
+  definition: Definition<C, I, O, A, SI, P, Q, W, HE, HR> & {
     readonly mapAccumBatch: ((
       state: NoInfer<A>,
       batch: Slices<Addresses<I>>,
@@ -86,7 +92,7 @@ export function mapAccumBatch<
         ? unknown
         : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
   },
-): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>>;
+): AccumulatingDeclaration<C, I, O, A, E, R, P, Q, AcceptedServices<W>, HE, HR>;
 export function mapAccumBatch(definition: Parameters<typeof build>[1]): unknown {
   return build("mapAccumBatch", definition);
 }

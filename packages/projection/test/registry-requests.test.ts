@@ -263,7 +263,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         });
 
         yield* Layer.build(
-          Projection.attach(declaration, { limit: 1, retry: Schedule.spaced("1 hour") }),
+          Projection.attach(declaration, { limit: 1, passRetry: Schedule.spaced("1 hour") }),
         );
         const registry = yield* Projection.Registry;
 

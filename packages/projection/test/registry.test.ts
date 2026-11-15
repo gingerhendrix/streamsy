@@ -230,7 +230,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
       });
 
-      yield* Layer.build(Projection.attach(failing, { retry: Schedule.spaced("1 second") }));
+      yield* Layer.build(Projection.attach(failing, { passRetry: Schedule.spaced("1 second") }));
       const source = yield* Source;
       yield* source.create({ id: "a" });
       yield* source.append({ id: "a" }, ["hello"]);
@@ -290,7 +290,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
       });
 
-      yield* Layer.build(Projection.attach(failing, { retry: Schedule.recurs(0) }));
+      yield* Layer.build(Projection.attach(failing, { passRetry: Schedule.recurs(0) }));
       const source = yield* Source;
       yield* source.create({ id: "a" });
       yield* source.append({ id: "a" }, ["hello"]);

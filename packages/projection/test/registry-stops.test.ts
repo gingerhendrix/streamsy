@@ -313,7 +313,7 @@ for (const [storageName, local] of [
 
               const { tick } = yield* launch(declaration, {
                 durable: true,
-                retry: Schedule.spaced("1 second").pipe(
+                passRetry: Schedule.spaced("1 second").pipe(
                   Schedule.modifyDelay(({ duration }) =>
                     Effect.sync(() => {
                       steps += 1;

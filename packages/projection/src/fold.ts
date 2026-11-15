@@ -29,8 +29,10 @@ export function fold<
   P = never,
   Q = CheckpointStore,
   W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Common<C, I, W> &
+  definition: Common<C, I, W, HE, HR> &
     ([W] extends [undefined]
       ? Partial<Committing<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q>>
       : Committing<AcceptedResult<Folded<NoInfer<A>>, W>, P, Q>) & {
@@ -41,7 +43,7 @@ export function fold<
         unit: Unit<StreamRoute.Params<C>>,
       ) => Step<A, E, R>;
     },
-): StatefulDeclaration<C, I, A, E, R, Folded<A>, P, Q, AcceptedServices<W>>;
+): StatefulDeclaration<C, I, A, E, R, Folded<A>, P, Q, AcceptedServices<W>, HE, HR>;
 export function fold(definition: Parameters<typeof build>[1]): unknown {
   return build("fold", definition);
 }

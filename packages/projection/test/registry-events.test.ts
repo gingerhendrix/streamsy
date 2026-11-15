@@ -214,7 +214,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           const pull = yield* Stream.toPull(registry.events);
           yield* Layer.build(
             Projection.attach(declaration, {
-              retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 second"),
+              passRetry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 second"),
             }),
           );
           yield* registry.schedule(declaration.at(params));

@@ -9,6 +9,7 @@ import {
   Queue,
   Record,
   Schema,
+  type Schedule,
   Semaphore,
 } from "effect";
 import { Storage, StorageFault, type StreamId } from "@streamsy/core";
@@ -24,8 +25,9 @@ import { inputEntries, type InputMap } from "./batch.ts";
 import { isDeclaration, type Inputs } from "./declaration.ts";
 import type { Executable } from "./executable.ts";
 import { InvalidBinding, ProjectionFault } from "./fault.ts";
-import { canonicalParams } from "./unit.ts";
-import { run } from "./run.ts";
+import { canonicalParams, withParams, type Unit } from "./unit.ts";
+import { catchUp, progressOf, type RunContext } from "./run.ts";
+import { bindingDelay } from "./binding-retry.ts";
 import { Registry, RunnerEvent, eventPublisher, type RunnerFailure } from "./registry.ts";
 import { runnerFailure } from "./failure.ts";
 import { triggersOf } from "./triggers.ts";
@@ -56,7 +58,19 @@ export interface RunnerOptions {
 }
 
 /** The part of a projection declaration that the attach runner reads. */
-export interface Attachable<B> {
+export interface Attachable<B, HE = never, HR = never> {
+  readonly retry?:
+    | {
+        readonly schedule?: Schedule.Schedule<unknown>;
+        readonly maxAttempts?: number;
+        // Method syntax retains the declaration's decoded param type at this erased boundary.
+        onExhausted?(
+          this: void,
+          unit: Unit<unknown>,
+          failure: RunnerFailure,
+        ): Effect.Effect<void, HE, HR>;
+      }
+    | undefined;
   readonly id: string;
   readonly version: number;
   readonly generation: number;
@@ -75,7 +89,7 @@ export interface Attachable<B> {
  * param is skipped. A fixed address triggers only a projection with no params.
  */
 export const matcher = <B extends { readonly params: Readonly<Record<string, string>> }>(
-  declaration: Attachable<B>,
+  declaration: Omit<Attachable<B>, "retry">,
 ): ((id: StreamId) => Option.Option<readonly [string, B]>) => {
   const names = Record.keys(declaration.params);
   const inputs = Record.toEntries(declaration.inputs);
@@ -128,7 +142,7 @@ const ParamsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Str
  * projection's param codecs and encode back to the same key.
  */
 export const bindingOf = <B extends { readonly params: Readonly<Record<string, string>> }>(
-  declaration: Attachable<B>,
+  declaration: Omit<Attachable<B>, "retry">,
   key: string,
 ): Option.Option<B> =>
   Option.flatMap(Schema.decodeOption(ParamsJson)(key), (encoded) => {
@@ -233,10 +247,14 @@ const durableMarks = (
  * binding backs off or stops its own mark, and its neighbours run. A start
  * makes stopped marks due once before answering next, wait or drain.
  */
-export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
-  declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
+  declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: RunnerOptions = {},
+  defaultDurable = false,
 ) => {
+  if ("retry" in options) throw new RangeError("Projection.attach retry was renamed to passRetry");
+
+  const durable = options.durable ?? defaultDurable;
   const limit = options.limit ?? DEFAULT_LIMIT;
   const batch = options.batch ?? DEFAULT_BATCH;
   const concurrency = options.concurrency ?? 1;
@@ -268,13 +286,15 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const requested = Queue.take(wake).pipe(Effect.as(true));
     let active = 0;
 
-    const runActive = (binding: Binding) =>
+    const runActive = (binding: Binding, context: RunContext) =>
       Effect.acquireUseRelease(
         Effect.sync(() => {
           active += 1;
         }),
         () => {
-          const running = run(binding, { limit });
+          const running = catchUp(binding, { limit }, context).pipe(
+            Effect.flatMap((cycle) => progressOf(binding, cycle)),
+          );
 
           return publish === undefined
             ? running
@@ -298,10 +318,9 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           }),
       );
 
-    const marks: ProjectionMarksApi =
-      options.durable === true
-        ? yield* durableMarks(declaration.id, match)
-        : memoryProjectionMarks();
+    const marks: ProjectionMarksApi = durable
+      ? yield* durableMarks(declaration.id, match)
+      : memoryProjectionMarks();
 
     let failure = Option.none<RunnerFailure>();
     let started = false;
@@ -344,7 +363,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 
         // Durable commits already marked in their transaction. Private marks live
         // only for this runner and are raised when its subscription reads the commit.
-        if (options.durable !== true && bindings.size > 0)
+        if (!durable && bindings.size > 0)
           yield* marks
             .mark(declaration.id, [...bindings.keys()])
             .pipe(Effect.mapError(storageFault("marks.mark")));
@@ -454,8 +473,17 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       const runBinding = ([key, binding]: readonly [string, Binding]) =>
         Effect.gen(function* () {
           working.delete(key);
-          const exit = yield* Effect.exit(runActive(binding));
           const state = states.get(key);
+          let unit: Unit | undefined;
+
+          const exit = yield* Effect.exit(
+            runActive(binding, {
+              attempt: (state?.attempts ?? 0) + 1,
+              unit: (formed) => {
+                unit = formed;
+              },
+            }),
+          );
 
           if (Exit.isSuccess(exit)) {
             if (exit.value.status === "limit-reached") pending.set(key, binding);
@@ -474,9 +502,39 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           const attempts = (state?.attempts ?? 0) + 1;
           const failed = runnerFailure(exit.cause, yield* Clock.currentTimeMillis);
 
-          const dueAt = failed.retryable
-            ? Option.some(failed.at + deferDelay(attempts))
-            : Option.none<number>();
+          const budgetEnded =
+            attempts >= (declaration.retry?.maxAttempts ?? Number.POSITIVE_INFINITY);
+
+          const delay =
+            !failed.retryable || budgetEnded
+              ? Option.none<number>()
+              : yield* bindingDelay(declaration.retry?.schedule, attempts);
+
+          const exhausted = failed.retryable && Option.isNone(delay);
+
+          if (exhausted && declaration.retry?.onExhausted !== undefined) {
+            const hook = declaration.retry.onExhausted;
+            const failedUnit = unit;
+
+            if (failedUnit === undefined)
+              yield* Effect.logWarning(
+                `Projection ${id} binding ${key} exhausted; skipped onExhausted because no unit formed`,
+              );
+            else
+              yield* Effect.suspend(() => {
+                const decoded = Record.map(declaration.params, (codec, name) =>
+                  Schema.decodeSync(codec)(binding.params[name]!),
+                );
+
+                return hook(withParams(failedUnit, decoded), failed);
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError(`Projection ${id} binding ${key} onExhausted failed`, cause),
+                ),
+              );
+          }
+
+          const dueAt = Option.map(delay, (ms) => failed.at + ms);
 
           yield* marks.fail(id, key, { attempts, dueAt, failure: failed });
 
@@ -488,11 +546,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
                 attempts,
                 dueAt,
                 failure: failed,
-                stopped: !failed.retryable,
+                stopped: Option.isNone(dueAt),
               }),
             );
           yield* Effect.logWarning(
-            `Projection ${id} binding ${key} failed (attempt ${attempts}); ${failed.retryable ? `it runs again in ${deferDelay(attempts)} ms` : "stopped until retry or restart"}`,
+            `Projection ${id} binding ${key} failed (attempt ${attempts}); ${Option.isSome(delay) ? `it runs again in ${delay.value} ms` : "stopped until retry or restart"}`,
             exit.cause,
           );
         });
@@ -597,6 +655,10 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
                 attempts: row.attempts,
                 dueAt: row.stopped ? Option.none<number>() : Option.some(row.dueAt),
                 stopped: row.stopped,
+                exhausted:
+                  row.stopped &&
+                  (row.attempts >= (declaration.retry?.maxAttempts ?? Number.POSITIVE_INFINITY) ||
+                    Option.isNone(yield* bindingDelay(declaration.retry?.schedule, row.attempts))),
                 failure: row.failure,
               };
             }),

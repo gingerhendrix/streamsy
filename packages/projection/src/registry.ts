@@ -24,7 +24,7 @@ import type { Progress } from "./run.ts";
 /** Only identity and encoded params are needed; execution uses the runner's binding. */
 type Binding = Pick<Identity, "id" | "params">;
 
-type Declaration = Attachable<Binding>;
+type Declaration = Omit<Attachable<Binding>, "retry">;
 
 /** Last failure of a binding, trigger stream or runner pass. */
 export interface RunnerFailure {
@@ -111,6 +111,8 @@ export interface RegistryApi {
       readonly attempts: number;
       readonly dueAt: Option.Option<number>;
       readonly stopped: boolean;
+      /** Stopped and the binding retry budget or schedule has ended. */
+      readonly exhausted: boolean;
       readonly failure: Option.Option<MarkFailure>;
     }>,
     NotAttached | StorageFault

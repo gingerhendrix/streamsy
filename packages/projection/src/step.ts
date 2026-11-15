@@ -30,10 +30,11 @@ export const adapt = (
   unit: Unit<any>,
   encoded?: string,
   prepared?: unknown,
+  attempt = 1,
 ): Effect.Effect<any, any, any> =>
   Effect.gen(function* () {
     if (kind === "process")
-      return yield* Effect.asVoid(handler(batch, unit, { prepared, outputs: streams }));
+      return yield* Effect.asVoid(handler(batch, unit, { prepared, outputs: streams, attempt }));
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
 
     const buffers: Record<string, unknown[]> = Record.fromEntries(

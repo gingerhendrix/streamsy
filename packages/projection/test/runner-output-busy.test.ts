@@ -69,7 +69,7 @@ layer(host)((it) => {
           const adapter = Effect.gen(function* () {
             if (!alarm) {
               yield* Layer.build(
-                Projection.attach(declaration, { durable, retry: Schedule.recurs(0) }),
+                Projection.attach(declaration, { durable, passRetry: Schedule.recurs(0) }),
               );
 
               return { tick: Effect.yieldNow };
@@ -83,7 +83,7 @@ layer(host)((it) => {
                 arm: () => Effect.void,
                 clear: Effect.void,
               }),
-              [ProjectionWakeup.attach(declaration, { durable, retry: Schedule.recurs(0) })],
+              [ProjectionWakeup.attach(declaration, { durable, passRetry: Schedule.recurs(0) })],
             );
 
             return { tick: scheduler.alarm };

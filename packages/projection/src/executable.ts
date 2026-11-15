@@ -29,5 +29,6 @@ export interface Executable<
     encoded?: string,
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Internal transport of the declaration-typed prepare result.
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }

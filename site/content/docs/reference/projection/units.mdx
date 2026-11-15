@@ -349,7 +349,7 @@ import { same } from "./reference-check.ts";
 interface AttachOptions {
   readonly triggers?: ReadonlyArray<Real.WakeOutput<{}>>;
   readonly limit?: number;
-  readonly retry?: Schedule.Schedule<unknown>;
+  readonly passRetry?: Schedule.Schedule<unknown>;
   readonly durable?: boolean;
   readonly batch?: number;
   readonly concurrency?: number;
@@ -363,17 +363,19 @@ same<AttachOptions, Real.AttachOptions>(true);
 | Field         | Meaning                                                                                                                                                                               |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `limit`       | The most units for each binding in a run. The default is `100`                                                                                                                        |
-| `retry`       | Timing only. The runner calls the schedule once per retryable failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)        |
+| `passRetry`   | Timing only. The runner calls the schedule once per retryable failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)        |
 | `durable`     | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach` |
 | `triggers`    | Local fixed-address wake classes whose rows request binding runs. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)                                          |
 | `batch`       | The most due marks that a pass reads. The default is `25`                                                                                                                             |
 | `concurrency` | The most bindings run at once. The default is `1`; must be a positive safe integer                                                                                                    |
 
+An attach options object that still contains `retry` throws a `RangeError` naming `passRetry`.
+
 See [Binding concurrency](/docs/reference/projection/runners#binding-concurrency) for transaction, pool and handler rules.
 
-In both modes, a retryable failed binding waits alone, from 1 s doubling to 1 hour. Handler errors and defects follow the same rule. A non-retryable projection or storage fault stops its binding until retry, schedule or restart. The `retry` schedule paces retryable failures of the runner's own marks, cursor or trigger operations.
+In both modes, a retryable failed binding uses the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), defaulting to 1 s doubling to 1 hour. Handler errors and defects follow the same rule. A non-retryable projection or storage fault stops its binding until retry, schedule or restart. The `passRetry` schedule paces retryable failures of the runner's own marks, cursor or trigger operations.
 
-In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks and runs those bindings. When a binding fails, the runner backs off or stops its mark and logs a warning, and the other bindings still run. A start makes stopped marks due once. A retryable failure starts a 1 s wait, doubling with consecutive failures up to 1 hour. The runner removes a mark whose params no longer decode, and logs a warning.
+In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks and runs those bindings. When a binding fails, the runner backs off or stops its mark and logs a warning, and the other bindings still run. A start makes stopped marks due once. By default a retryable failure starts a 1 s wait, doubling with consecutive failures up to 1 hour. The declaration's `retry` can change its timing and budget. The runner removes a mark whose params no longer decode, and logs a warning.
 
 Durable mode needs a local memory or SQL storage Layer, which provides the projection marks. Over other storage, such as remote storage, acquiring the runner dies. The runner throws a `RangeError` when `batch` is not a positive safe integer.
 
@@ -389,7 +391,18 @@ type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 // ---cut-end---
-interface Attachable<B> {
+interface Attachable<B, HE = never, HR = never> {
+  readonly retry?:
+    | {
+        readonly schedule?: import("effect").Schedule.Schedule<unknown>;
+        readonly maxAttempts?: number;
+        onExhausted?(
+          this: void,
+          unit: import("@streamsy/projection").Unit<unknown>,
+          failure: import("@streamsy/projection").RunnerFailure,
+        ): import("effect").Effect.Effect<void, HE, HR>;
+      }
+    | undefined;
   readonly id: string;
   readonly version: number;
   readonly generation: number;

@@ -156,7 +156,7 @@ A `ProjectionFault` with reason `storage-failure` is retryable unless its underl
 
 ### Attach folds durably
 
-Attach every fold with `durable: true` when pending work and backoff must survive a restart. In both modes, a retryable failed binding waits alone, from 1 s doubling to 1 hour, and other bindings continue. Handler errors, including `FoldByKeyError`, and defects use that backoff too. A non-retryable projection or storage fault stops only the failed binding until `registry.retry`, `registry.schedule` or the runner next starts.
+Attach every fold with `durable: true` when pending work and backoff must survive a restart. In both modes, a retryable failed binding waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), and other bindings continue. Handler errors, including `FoldByKeyError`, and defects use that backoff too. A non-retryable projection or storage fault stops only the failed binding until `registry.retry`, `registry.schedule` or the runner next starts.
 
 On a Durable Object, `ProjectionWakeup.attach` is durable by default.
 

@@ -146,7 +146,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
                 }),
             });
 
-            const options = { durable, retry: Schedule.recurs(0) };
+            const options = { durable, passRetry: Schedule.recurs(0) };
             const wakeup = alarm ? yield* ProjectionWakeup.attach(declaration, options) : undefined;
 
             if (!alarm) yield* Layer.build(Projection.attach(declaration, options));

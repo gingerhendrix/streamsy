@@ -228,7 +228,7 @@ export class DurableRegistryObject extends StreamsyObject.make<
 >({
   layer,
   app,
-  wakeups: [ProjectionWakeup.attach(declaration, { retry: Schedule.spaced("1 hour") })],
+  wakeups: [ProjectionWakeup.attach(declaration, { passRetry: Schedule.spaced("1 hour") })],
 }) {}
 
 export class MemoryRegistryObject extends StreamsyObject.make<
@@ -238,7 +238,7 @@ export class MemoryRegistryObject extends StreamsyObject.make<
   layer,
   app,
   wakeups: [
-    ProjectionWakeup.attach(declaration, { durable: false, retry: Schedule.spaced("1 hour") }),
+    ProjectionWakeup.attach(declaration, { durable: false, passRetry: Schedule.spaced("1 hour") }),
   ],
 }) {}
 
@@ -248,7 +248,9 @@ export class ExhaustedRegistryObject extends StreamsyObject.make<
 >({
   layer,
   app,
-  wakeups: [ProjectionWakeup.attach(declaration, { durable: false, retry: Schedule.recurs(0) })],
+  wakeups: [
+    ProjectionWakeup.attach(declaration, { durable: false, passRetry: Schedule.recurs(0) }),
+  ],
 }) {}
 
 export default {

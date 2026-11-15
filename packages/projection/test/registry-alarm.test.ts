@@ -56,7 +56,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           [
             ProjectionWakeup.attach(declaration, {
               durable: true,
-              retry: Schedule.spaced("1 hour").pipe(
+              passRetry: Schedule.spaced("1 hour").pipe(
                 Schedule.modifyDelay(() => Effect.die("broken policy")),
               ),
             }).pipe(
@@ -121,7 +121,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             clear: Effect.void,
           }),
           [
-            ProjectionWakeup.attach(declaration, { retry: Schedule.spaced("1 hour") }).pipe(
+            ProjectionWakeup.attach(declaration, { passRetry: Schedule.spaced("1 hour") }).pipe(
               Effect.provideService(ProjectionMarks, {
                 ...marks,
                 nextDue: (projection) =>
@@ -220,7 +220,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
               [
                 ProjectionWakeup.attach(declaration, {
                   durable: false,
-                  retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+                  passRetry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
                 }),
               ],
             );
@@ -278,7 +278,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         [
           ProjectionWakeup.attach(declaration, {
             durable: false,
-            retry: Schedule.exponential("1 second"),
+            passRetry: Schedule.exponential("1 second"),
           }),
         ],
       );
@@ -371,7 +371,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             }),
             [
               ProjectionWakeup.attach(declaration, {
-                retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+                passRetry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
               }).pipe(
                 Effect.provideService(ProjectionMarks, {
                   ...marks,
@@ -443,7 +443,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           }),
         }),
         [
-          ProjectionWakeup.attach(declaration, { retry: Schedule.spaced("1 hour") }).pipe(
+          ProjectionWakeup.attach(declaration, { passRetry: Schedule.spaced("1 hour") }).pipe(
             Effect.provideService(ProjectionMarks, {
               ...marks,
               nextDue: (projection) =>
@@ -529,7 +529,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
               [
                 ProjectionWakeup.attach(declaration, {
                   durable: true,
-                  retry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
+                  passRetry: exhausted ? Schedule.recurs(0) : Schedule.spaced("1 hour"),
                 }).pipe(
                   Effect.provideService(ProjectionMarks, {
                     ...marks,

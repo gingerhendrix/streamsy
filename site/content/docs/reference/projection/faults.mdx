@@ -80,9 +80,9 @@ declare const ProjectionRetry: Context.Reference<Schedule.Schedule<unknown>>;
 same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
 ```
 
-`ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
+`ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of `follow` or `passRetry` of either attach host takes precedence over it.
 
-For attached runners the schedule controls timing only: the runner calls it once per retryable failed pass with no input. A dying step is logged and treated as exhaustion. Retryable binding failures back off separately, from 1 s doubling to 1 hour, in both durability modes; a finite pass policy does not stop them.
+For attached runners the schedule controls timing only: the runner calls it once per retryable failed pass with no input. A dying step is logged and treated as exhaustion. Retryable binding failures back off separately, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), in both durability modes; a finite pass policy does not stop them.
 
 The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
 
