@@ -1,6 +1,7 @@
 import { Record } from "effect";
 import { expect, test } from "vitest";
 import * as Root from "@streamsy/core";
+import * as Internal from "@streamsy/core/internal";
 import * as Protocol from "@streamsy/core/protocol";
 
 test("public root exposes fault schemas, guards and result matchers", () => {
@@ -49,5 +50,13 @@ test("Streamsy keeps declaration internals and wake classification private", () 
     "WakeApi",
   ]) {
     expect(Record.keys(Root.Streamsy)).not.toContain(name);
+  }
+});
+
+test("read offset helpers are internal exports only", () => {
+  for (const name of ["attachOffsets", "offsetsOf"]) {
+    expect(Record.keys(Internal)).toContain(name);
+    expect(Record.keys(Root)).not.toContain(name);
+    expect(Record.keys(Protocol)).not.toContain(name);
   }
 });

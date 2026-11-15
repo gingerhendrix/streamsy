@@ -16,7 +16,14 @@ step. Its `commit:` value defines how results and offsets become durable.
 Except for `process`, steps return a value or an Effect. A missing output key
 emits nothing. `Projection.each` adapts an entry handler for `process`.
 Batch handlers must give the same final rows for any unit size. In per-entry
-steps, use `unit` for parameters and offsets only.
+steps, use `unit` for parameters and unit ranges.
+
+A local input's `Slice.offsets` holds one storage offset per item, in item order;
+its last offset equals `nextOffset` when non-empty. `Entry.offset` carries the
+same offset, and a read from `entry.offset` resumes after that entry. Non-empty
+HTTP inputs have `offsets` undefined and entries omit `offset`, because HTTP
+supplies page boundaries only. Every empty slice has `offsets: []`, including
+skipped inputs and timer-only units. Pinned retries retain the entry offsets.
 
 ```ts
 import { Effect, Layer, Schema } from "effect";

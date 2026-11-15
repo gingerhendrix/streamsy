@@ -314,7 +314,7 @@ same<
 >(true);
 ```
 
-`fold` declares a projection that folds each entry of a unit into one state value. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
+`fold` declares a projection that folds each entry of a unit into one state value. Each local input entry has `entry.offset`, the storage cursor just after that item; reading from it resumes after the entry. HTTP input entries omit it. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
 
 - `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
 - `commit` is required when `accepted` is set; use `Commit.transaction` or `Commit.producer`. Otherwise it is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also fits `fold`.
@@ -683,7 +683,7 @@ same<Flat<Shown[2]>, Flat<Real[2]>>(true);
 same<Flat<Shown[3]>, Flat<Real[3]>>(true);
 ```
 
-`process` declares a projection that runs an effect for each unit. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
+`process` declares a projection that runs an effect for each unit. Local slices carry one storage offset per item in `offsets`, with the last equal to `nextOffset` when non-empty. Non-empty HTTP slices have `offsets` undefined. Every empty slice has `offsets: []`, including skipped inputs and timer-only units. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
 
 - `commit` is required. `Commit.transaction` runs `process` in the SQL transaction of the checkpoint, and `Commit.atLeastOnce` runs it at least once.
 - `prepare` is optional and needs `Commit.transaction`, alone or wrapped by `Commit.withCompensation`. With another Commit, the `process` call throws a `RangeError`.

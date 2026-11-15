@@ -16,6 +16,7 @@ import {
   type Slice,
   type Slices,
 } from "./batch.ts";
+import { offsetsOf } from "@streamsy/core/internal";
 import { ProjectionFault } from "./fault.ts";
 import { terminalOf, type PinnedRange } from "./unit.ts";
 
@@ -103,16 +104,26 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
     });
   const items = yield* decodeMessages(input, address, result.messages);
 
-  return {
-    slice: {
-      from,
-      items,
-      nextOffset: result.nextOffset,
-      upToDate: result.upToDate,
-      closed: result.closed,
-    },
+  const offsets = pageOffsets(result);
+
+  const slice = {
+    from,
+    items,
+    nextOffset: result.nextOffset,
+    upToDate: result.upToDate,
+    closed: result.closed,
   };
+
+  return { slice: offsets === undefined ? slice : { ...slice, offsets } };
 });
+
+/** Empty reads know all their offsets; malformed metadata is treated as unavailable. */
+const pageOffsets = (result: ReadResult): ReadonlyArray<string> | undefined => {
+  if (result.messages.length === 0) return [];
+  const offsets = offsetsOf(result);
+
+  return offsets?.length === result.messages.length ? offsets : undefined;
+};
 
 /**
  * A lost history is terminal only when a known input's head confirms it is gone.
@@ -215,6 +226,7 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
   }
 
   let messages: Array<ReadMessage> = [];
+  let offsets: Array<string> | undefined = [];
   let cursor = range.from;
   let last: ReadResult | undefined;
 
@@ -251,6 +263,10 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
     );
 
     if (page.messages.length === 0) return yield* unreproducible("the input ended early");
+    const pageOffsetsValue = pageOffsets(page);
+
+    if (offsets !== undefined && pageOffsetsValue !== undefined) offsets.push(...pageOffsetsValue);
+    else offsets = undefined;
     messages.push(...page.messages);
     cursor = page.nextOffset;
     last = page;
@@ -266,20 +282,21 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
       return yield* unreproducible(`the range ends at ${cursor}, not ${range.nextOffset}`);
   } else {
     messages = messages.slice(0, range.count);
+    offsets = offsets?.slice(0, range.count);
 
     if (compare(cursor, range.nextOffset) < 0)
       return yield* unreproducible("the input is shorter than the pin");
   }
 
-  return {
-    slice: {
-      from: range.from,
-      items: yield* decodeMessages(input, address, messages),
-      nextOffset: range.nextOffset,
-      upToDate: range.upToDate ?? (last.upToDate && cursor === range.nextOffset),
-      closed: range.closed === true,
-    },
+  const slice = {
+    from: range.from,
+    items: yield* decodeMessages(input, address, messages),
+    nextOffset: range.nextOffset,
+    upToDate: range.upToDate ?? (last.upToDate && cursor === range.nextOffset),
+    closed: range.closed === true,
   };
+
+  return { slice: offsets === undefined ? slice : { ...slice, offsets } };
 });
 
 export interface Pass<Inputs extends InputMap> {
@@ -312,10 +329,19 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
 export const items = <Inputs extends InputMap>(
   batch: Slices<Inputs>,
 ): ReadonlyArray<Entry<Inputs>> => {
-  const out: Array<{ readonly input: string; readonly item: unknown; readonly index: number }> = [];
+  const out: Array<{
+    readonly input: string;
+    readonly item: unknown;
+    readonly index: number;
+    readonly offset?: string;
+  }> = [];
 
   for (const [input, slice] of Record.toEntries<string, Slice<unknown>>(batch)) {
-    for (const item of slice.items) out.push({ input, item, index: out.length });
+    for (const [i, item] of slice.items.entries()) {
+      const offset = slice.offsets?.[i];
+      const entry = { input, item, index: out.length };
+      out.push(offset === undefined ? entry : { ...entry, offset });
+    }
   }
 
   // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.

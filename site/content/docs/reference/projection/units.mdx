@@ -73,6 +73,7 @@ import { same } from "./reference-check.ts";
 interface Slice<A> {
   readonly from: string;
   readonly items: ReadonlyArray<A>;
+  readonly offsets?: ReadonlyArray<string>;
   readonly nextOffset: string;
   readonly upToDate: boolean;
   readonly closed: boolean;
@@ -84,14 +85,17 @@ same<Slice<number>, Real.Slice<number>>(true);
 
 A `Slice` holds the items of an input in a unit, and the read position around them.
 
-| Field        | Meaning                                                                                |
-| ------------ | -------------------------------------------------------------------------------------- |
-| `from`       | The offset that the read started after. It equals `nextOffset` when the slice is empty |
-| `items`      | The decoded items, in stream order                                                     |
-| `nextOffset` | The offset after the last item. The checkpoint moves the input to it                   |
-| `upToDate`   | `true` when the read reached the tail of the input                                     |
-| `closed`     | `true` when the input is closed                                                        |
-| `gone`       | `true` when the input was removed or expired. The runner then forgets the binding      |
+For local storage inputs, `offsets` has one storage offset for each item, in the same order. Each offset is also the read cursor just after that item, and `offsets.at(-1) === nextOffset` for a non-empty local slice. Non-empty inputs read over HTTP have `offsets` undefined: the protocol supplies page boundaries only. Every empty slice has `offsets: []`, including skipped inputs, timer-only units, gone inputs and empty pinned ranges.
+
+| Field        | Meaning                                                                                               |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| `from`       | The offset that the read started after. It equals `nextOffset` when the slice is empty                |
+| `items`      | The decoded items, in stream order                                                                    |
+| `offsets`    | One storage offset for each item on local inputs; undefined for non-empty HTTP reads; `[]` when empty |
+| `nextOffset` | The offset after the last item. The checkpoint moves the input to it                                  |
+| `upToDate`   | `true` when the read reached the tail of the input                                                    |
+| `closed`     | `true` when the input is closed                                                                       |
+| `gone`       | `true` when the input was removed or expired. The runner then forgets the binding                     |
 
 A closed input with no new items still makes one unit, with `closed` on its slice. The checkpoint records the close, so the next pass does not repeat the empty unit. A removed input with a checkpoint makes one final unit with `gone`. When an input is missing and has no checkpoint, the pass fails with reason `history-unavailable`.
 
@@ -131,6 +135,7 @@ type Entry<Inputs extends InputMap> = {
     readonly input: K;
     readonly item: ItemOf<Inputs[K]>;
     readonly index: number;
+    readonly offset?: string;
   };
 }[keyof Inputs];
 // ---cut-after---
@@ -141,7 +146,7 @@ type In = {
 same<Entry<In>, Real.Entry<In>>(true);
 ```
 
-An `Entry` is an item of a unit, tagged with the name of its input. `index` is the position of the item in the whole unit, from `0`. Check `input` to narrow `item` to the item type of that input. An entry handler, such as `fold`, `emit`, or `mapAccum`, takes one entry at a time.
+An `Entry` is an item of a unit, tagged with the name of its input. For a local input, `offset` is the storage offset of that item. A read from `entry.offset` resumes after that entry. Entries read over HTTP omit the `offset` key. `index` is the position of the item in the whole unit, from `0`. Check `input` to narrow `item` to the item type of that input. An entry handler, such as `fold`, `emit`, or `mapAccum`, takes one entry at a time.
 
 ## Units
 

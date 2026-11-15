@@ -118,7 +118,7 @@ same<
 >(true);
 ```
 
-A `CurrentProjection` is a bound projection that has a `state:` definition. [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) and [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) take it. A projection from `fold`, `mapAccum`, or `mapAccumBatch` fits. A projection with no `state:` does not, and the compiler reports it. `current` drops the output items of the handler.
+A `CurrentProjection` is a bound projection that has a `state:` definition. [`Projection.current`](/docs/reference/projection/runners#projectioncurrent) and [`Projection.decide`](/docs/reference/projection/runners#projectiondecide) take it. A projection from `fold`, `mapAccum`, or `mapAccumBatch` fits. A projection with no `state:` does not, and the compiler reports it. `current` drops the output items of the handler. Its handlers receive the same [slices and entries](/docs/reference/projection/units#slice): local slices have per-item `offsets`, and a read from `entry.offset` resumes after that entry. Non-empty HTTP slices have `offsets` undefined and entries omit `offset`; every empty slice has `offsets: []`.
 
 ### `DecideSpec`
 

@@ -6,6 +6,8 @@ import { expect, test } from "vitest";
 import { Config, Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
+import { readSlice } from "../src/read.ts";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { Miniflare } from "miniflare";
 import { Accepted, Source, group } from "./support/accepted-streams.ts";
@@ -56,6 +58,28 @@ test("ProjectionWakeup commits accepted rows which a remote writer can await", a
         expect((yield* (yield* Accepted).collect({ id: "one" })).items).toMatchObject([
           { value: { offset: receipt.offset } },
         ]);
+        const input = Source.at({ id: "one" });
+
+        const projection = Projection.process({
+          id: "http-entry-offsets",
+          params: {},
+          inputs: { input },
+          commit: Commit.atLeastOnce,
+          process: (batch) =>
+            Effect.sync(() => {
+              expect(batch.input.items).toEqual([5]);
+              expect(batch.input.offsets).toBeUndefined();
+              expect(batch.input).not.toHaveProperty("offsets");
+              expect(Projection.items(batch)).toEqual([{ input: "input", item: 5, index: 0 }]);
+              expect(Projection.items(batch)[0]).not.toHaveProperty("offset");
+            }),
+        }).at({});
+
+        expect(
+          (yield* Projection.run(projection).pipe(Effect.provide(CheckpointStore.layerMemory)))
+            .items,
+        ).toBe(1);
+        expect((yield* readSlice("input", input, receipt.offset)).slice.offsets).toEqual([]);
       }).pipe(
         Effect.provide(
           RemoteStreams.layer(group, { baseUrl: url.origin }).pipe(

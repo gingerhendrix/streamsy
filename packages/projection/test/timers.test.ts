@@ -44,14 +44,19 @@ layer(Protocol.bind(memory, Streamsy.group(Input)).pipe(Layer.provideMerge(memor
     () =>
       Effect.gen(function* () {
         yield* seed;
-        const seen: Array<{ unit: Unit; items: ReadonlyArray<number> }> = [];
+
+        const seen: Array<{
+          unit: Unit;
+          items: ReadonlyArray<number>;
+          offsets: ReadonlyArray<string> | undefined;
+        }> = [];
 
         const timer = Projection.process({
           ...definition,
           commit: Commit.atLeastOnce,
           process: (batch, unit) =>
             Effect.sync(() => {
-              seen.push({ unit, items: batch.input.items });
+              seen.push({ unit, items: batch.input.items, offsets: batch.input.offsets });
 
               if (Option.isNone(unit.due)) return Projection.wakeAt(100);
 
@@ -74,6 +79,7 @@ layer(Protocol.bind(memory, Streamsy.group(Input)).pipe(Layer.provideMerge(memor
         expect(seen[1]?.unit.due).toEqual(Option.some(100));
         expect(seen[1]?.unit.ranges).toEqual({});
         expect(seen[1]?.items).toEqual([]);
+        expect(seen[1]?.offsets).toEqual([]);
         yield* TestClock.adjust(100);
         const last = yield* Projection.run(timer);
         expect(last.wakeAt).toEqual(Option.none());
