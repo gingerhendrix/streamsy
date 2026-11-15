@@ -168,17 +168,17 @@ const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(s
 const attached = Projection.attach(orderTotals, { durable: true }).pipe(Layer.provideMerge(host));
 ```
 
-Build the Layer before the application writes. A commit before the subscription exists does not start a run. Local input commits start runs through this process's `Storage`. For remote inputs, append a row to a local trigger stream as described below. A second process writing the same database starts no run.
+Build the Layer before the application writes. A commit before the subscription exists does not start a run. Local input commits start runs through this process's `Storage`. For remote inputs, append a row to a trigger stream as described below; the process host can follow a trigger on another owner. A second process writing the same database starts no run.
 
 Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
 
-| Option      | Default           | Effect                                                                              |
-| ----------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `limit`     | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
-| `passRetry` | `ProjectionRetry` | Timing only. Called once per retryable failed pass with no input                    |
-| `durable`   | `false`           | Keep a pending mark for each binding with work in storage                           |
-| `triggers`  | `[]`              | Local fixed-address wake declarations whose rows request binding runs               |
-| `batch`     | `25`              | The most due marks that a pass reads                                                |
+| Option      | Default           | Effect                                                                                        |
+| ----------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| `limit`     | `100`             | The most units for each binding in a run. A binding that reaches it runs again next           |
+| `passRetry` | `ProjectionRetry` | Timing only. Called once per retryable failed pass with no input                              |
+| `durable`   | `false`           | Keep a pending mark for each binding with work in storage                                     |
+| `triggers`  | `[]`              | Fixed-address wake declarations whose rows request binding runs; remote on process hosts only |
+| `batch`     | `25`              | The most due marks that a pass reads                                                          |
 
 A retry schedule that dies is logged and treated as exhausted. A registry request still permits another pass.
 
@@ -208,7 +208,7 @@ time leaves the mark due immediately and can run the handler at pass speed.
 
 ### Trigger streams
 
-Pass `triggers: [FolderWake]` to `Projection.attach` or `ProjectionWakeup.attach` when a wake stream on the runner's owner requests work for inputs on another owner. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`, typed as `WakeOutput<{}>`. `WakeOutput` is the exported type for wake classes; its type parameter describes the decoded params. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
+Pass `triggers: [FolderWake]` to request work for inputs on another owner. `Projection.attach` accepts local and remote wake streams. `ProjectionWakeup.attach` accepts only triggers on its own storage owner; a remote trigger dies at attach with a `RangeError` naming the stream. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`, typed as `WakeOutput<{}>`. `WakeOutput` is the exported type for wake classes; its type parameter describes the decoded params. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
 
 ```ts
 import { Schema } from "effect";
@@ -233,13 +233,19 @@ const attached = Projection.attach(index, { durable: true, triggers: [FolderWake
 const wakeup = ProjectionWakeup.attach(index, { triggers: [FolderWake] });
 ```
 
-At the start of each drain, the runner reads new trigger messages after its saved cursor. With no saved cursor, the first attach reads from the start, so a new family needs no rescan. Each upsert's `row.stream` is parsed by the projection's inputs to choose one binding, just as a local input commit does. A State delete requests a run for its key, so removed sources can clear their outputs. State controls advance the cursor without requesting a binding. Several requests for one binding coalesce. An unmatched source id is skipped and logged, and the cursor still advances past it. The row's `offset` is never compared: even a repeated or smaller offset requests work. Triggered bindings share the ordinary queue, registry events, and failure and retry paths. A failed binding keeps its own backoff or stop when another trigger row or a local input commit requests it. Use `registry.retry` or `registry.schedule` to run it sooner.
+At layer build, the runner resolves each trigger's stream service if provided. A service on another storage owner makes that trigger remote. A matching owner, or an absent service, keeps the local storage path. Provide a remote trigger's stream class at runtime, for example with `Protocol.bind(RemoteStreams.layerProtocol(...), Streamsy.group(FolderWake))`, or bind it to another owner's protocol layer. The `triggers` option does not add this runtime service to the attachment's required types.
 
-A trigger row that does not decode stops only that trigger stream. Its cursor stays, and `status.triggers` reports the stream and failure, including the row offset. Local commits, scheduled bindings and other trigger streams continue. `registry.retry(projectionId)` resumes stopped trigger streams; a binding target does not. Trigger stops live in memory, so a restart reads the row once more and stops again if it still does not decode.
+For each remote trigger, a scoped fiber long-polls `wire.readNext` from the locally committed cursor and signals new data without an input commit on the runner's owner. Closing the attachment scope stops the follower. Only a drain pass ingests rows: it reads one remote page outside the local transaction, then commits marks and the page's `nextOffset` together locally. Remote messages have no per-message offsets. A page with `upToDate: false` keeps the trigger ahead so the next pass reads another page; `next` itself makes no network request. The follower retries read failures with its own steps of `passRetry` and never signals a failure.
+
+A missing or deleted remote wake stream (`StreamNotFound` or `StreamGone`) leaves the cursor unchanged without failing the pass. `InvalidReadRequest`, invalid wake data or an invalid page cursor stops only that trigger with `invalid-source`. Remote `TransportFault` and `StorageFault` failures become retryable pass failures. The pass drains local bindings first and attempts every remote trigger before returning the first failure. Local commits during pass backoff wait for it to end, up to 30 seconds under the default `passRetry`; they do not shorten that wait. A failing remote owner does not make `next` report immediate work.
+
+Each drain reads local trigger messages before running bindings and one page per remote trigger after running bindings, from the saved cursor. With no saved cursor, the first attach reads from the start, so a new family needs no rescan. Each upsert's `row.stream` is parsed by the projection's inputs to choose one binding, just as a local input commit does. A State delete requests a run for its key, so removed sources can clear their outputs. State controls advance the cursor without requesting a binding. Several requests for one binding coalesce. An unmatched source id is skipped and logged, and the cursor still advances past it. The row's `offset` is never compared: even a repeated or smaller offset requests work. Triggered bindings share the ordinary queue, registry events, and failure and retry paths. A failed binding keeps its own backoff or stop when another trigger row or a local input commit requests it. Use `registry.retry` or `registry.schedule` to run it sooner.
+
+A trigger row that does not decode stops only that trigger stream. Its cursor stays, and `status.triggers` reports the stream and failure, including the row offset for local reads or the page's starting cursor for remote reads. Local commits, scheduled bindings and other trigger streams continue. `registry.retry(projectionId)` resumes stopped trigger streams; a binding target does not. Trigger stops live in memory, so a restart reads the row once more and stops again if it still does not decode.
 
 After a fold fix, call `registry.rescan(index, FolderWake)` to reset that trigger's saved cursor to `ZERO_OFFSET` and wake the runner. The next pass requests every member named by the retained trigger history again. This clears that stream's stop; a row that still does not decode stops it again. Rescan does not reset binding checkpoints or override binding backoff and stops. Use the appropriate version or generation for the fold fix. The cursor reset commits to storage in both durability modes and survives restart; only durable marks preserve work already ingested before a shutdown. A rescan during ingestion waits for that stream's read to finish, then the following pass reads from zero.
 
-The runner's next deadline is now while a non-stopped trigger tail is ahead of its cursor. A Bun attachment wakes through the trigger's local `Storage.committed` notification. On a Durable Object, the ordinary append route reconciles the alarm; acquisition also finds unread rows after an eviction. No extra wake signal is required.
+The runner's next deadline is now while a non-stopped trigger is known to be ahead of its cursor. A local trigger wakes through `Storage.committed`. On a Durable Object, the ordinary append route reconciles the alarm; acquisition also finds unread rows after an eviction. No extra wake signal is required.
 
 With `durable: true`, trigger cursors and pending binding marks commit in one owner transaction. A shutdown after ingestion leaves marks for unfinished bindings; a row written while the runner is down is read on startup. This gives restart safety on persistent storage. Use one runner for each projection id on an owner, retain trigger history, and never reuse a removed stream id.
 

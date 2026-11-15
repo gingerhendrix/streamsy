@@ -235,8 +235,29 @@ const host = Layer.mergeAll(Api, Projection.attach(filesWake)).pipe(
 
 Each input must give every projection param, so that one id picks one binding.
 `attach` throws a `RangeError` when an input does not. Inputs on another owner
-never commit here, so they never trigger. Do not also run an attached binding
+never commit here; use a wake stream in `triggers` to request their bindings. Do not also run an attached binding
 under `Projection.follow`.
+
+Pass fixed-address wake classes with `triggers: [Wake]`. A provided stream service
+on another owner makes a trigger remote; a matching owner or absent service
+uses local storage. Provide the remote class
+at runtime with `Protocol.bind(RemoteStreams.layerProtocol(...), Streamsy.group(Wake))`
+or another owner's protocol layer. `Projection.attach` starts a scoped live-read
+follower for each remote trigger, so a remote upsert wakes it without a local
+commit. `ProjectionWakeup.attach` rejects remote triggers at attach with a
+`RangeError` naming the stream; it accepts only its own storage owner's triggers.
+
+A pass reads local triggers, drains bindings, then reads one page per remote
+trigger outside the local transaction. Durable marks and the page's `nextOffset`
+commit together locally. Cursors persist in both durability modes; private marks
+can be lost after ingestion on restart. Missing or deleted remote streams leave
+the cursor unchanged without a fault. Invalid requests, data or page cursors stop
+only that trigger with `invalid-source`; `registry.rescan` and projection-level
+`registry.retry` clear the stop. Remote transport or storage read failures fail
+the pass retryably after all remote triggers are attempted. Local commits during
+pass backoff wait until it ends, up to the default 30 s cap. The follower uses its
+own `passRetry` steps and never signals a failure. `next` makes no network request.
+See [Trigger streams](https://streamsy.dev/docs/projections/run#trigger-streams).
 
 By default `Projection.attach` keeps pending binding marks, timers and backoff in private memory.
 In both modes a retryable failed binding waits alone, by default from 1 s doubling to 1 hour, while

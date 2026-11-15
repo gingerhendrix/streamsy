@@ -11,7 +11,13 @@ import type { WakeOutput } from "./wake.ts";
 export type { Attachable } from "./runner.ts";
 
 export interface AttachOptions {
-  /** Local wake streams whose source ids request binding runs. Use fixed-address wake classes. */
+  /**
+   * Fixed-address wake classes whose source ids request binding runs. A provided
+   * stream service on another storage owner is remote; an absent service or a
+   * matching owner is local. Provide the remote class through Protocol.bind.
+   * Projection.attach follows remote triggers in scope; ProjectionWakeup.attach
+   * accepts only triggers on its own owner. Cursors persist in both modes.
+   */
   readonly triggers?: ReadonlyArray<WakeOutput<{}>>;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
@@ -62,7 +68,12 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * window, and the layer runs due marks when it starts. Recorded process timers
  * wake at their deadline; after host suspend, a capped wait rechecks within 30 s.
  * Return a time after unit.due to avoid repeatedly running a passed deadline.
- * Inputs on another owner need a local wake stream in `triggers`. Do not run
+ * Inputs on another owner can use local or remote wake streams in `triggers`.
+ * A provided trigger service on another owner is read one page per pass outside
+ * the local transaction; durable marks and the page cursor then commit together.
+ * A scoped live-read follower signals new remote rows. Remote read failures use
+ * passRetry after local bindings drain; local commits during that backoff wait
+ * for it to end (up to 30 s with the default policy). Do not run
  * an attached binding under `Projection.follow` too: use one writer per key.
  *
  * ```ts
@@ -79,11 +90,22 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = 
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain, status, schedule, rescan, retry, failed, interruptDelay, resume } =
-        yield* runner;
+      const {
+        wait,
+        drain,
+        status,
+        schedule,
+        rescan,
+        retry,
+        failed,
+        interruptDelay,
+        resume,
+        follow,
+      } = yield* runner;
 
       const policy = options.passRetry ?? (yield* ProjectionRetry);
       const step = yield* Schedule.toStep(policy);
+      yield* follow(policy);
 
       type Status = {
         state: RunnerStatus["state"];

@@ -20,7 +20,9 @@ interface WakeupHost {
 /**
  * Local commits choose bindings; each alarm drains the same runner used by
  * Projection.attach. Acquire it in the object layer's scope, before any
- * request writes.
+ * request writes. Triggers must belong to this storage owner. A provided trigger
+ * service on another owner dies at attach with a RangeError naming its stream;
+ * remote trigger followers require the process host, Projection.attach.
  *
  * Durable by default: each commit writes a pending mark for its bindings in
  * the same transaction, so an eviction or a deploy between the commit and the
@@ -34,7 +36,7 @@ const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, 
   projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: AttachOptions = {},
 ) => {
-  const runner = runnerOf(projection, options, true);
+  const runner = runnerOf(projection, options, true, "wakeup");
 
   return Effect.gen(function* () {
     const { next, drain, deferred, status, schedule, rescan, retry, failed } = yield* runner;

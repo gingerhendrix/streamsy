@@ -257,6 +257,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
   declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: RunnerOptions = {},
   defaultDurable = false,
+  host: "process" | "wakeup" = "process",
 ) => {
   if ("retry" in options) throw new RangeError("Projection.attach retry was renamed to passRetry");
 
@@ -356,7 +357,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
     const triggers =
       options.triggers === undefined || options.triggers.length === 0
         ? undefined
-        : yield* triggersOf(declaration.id, options.triggers, match, marks);
+        : yield* triggersOf(declaration.id, options.triggers, match, marks, host);
 
     const add = (ids: ReadonlyArray<StreamId>) =>
       Effect.gen(function* () {
@@ -420,7 +421,13 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
       yield* start;
       yield* absorb;
 
-      if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next))) return undefined;
+      // A failed remote page gets another pass after the host's passRetry wait,
+      // without making next report immediate work while that owner is unavailable.
+      if (
+        pending.size > 0 ||
+        (triggers !== undefined && (triggers.retrying() || (yield* triggers.next)))
+      )
+        return undefined;
 
       return yield* waitDue;
     });
@@ -588,12 +595,16 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
 
       const result = yield* drainMarks;
 
+      if (triggers !== undefined) yield* triggers.readRemote;
+
       failure = Option.none();
 
       return { more: result.more || (triggers !== undefined && (yield* triggers.next)) };
     });
 
     return {
+      follow: (policy: Schedule.Schedule<unknown>) =>
+        triggers?.follow(signal, policy) ?? Effect.void,
       next: observeFailure(next),
       wait: observeFailure(wait),
       resume: requested,
@@ -647,7 +658,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
           const key = binding === undefined ? undefined : canonicalParams(binding.params);
           const count = yield* marks.retry(declaration.id, key);
 
-          if (binding === undefined) triggers?.retry();
+          if (binding === undefined && triggers !== undefined) yield* triggers.retry();
 
           yield* signal;
 
