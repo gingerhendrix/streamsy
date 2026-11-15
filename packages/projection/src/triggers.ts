@@ -1,4 +1,4 @@
-import { Array, Clock, Effect, Option, Schema } from "effect";
+import { Array, Effect, Option, Schema } from "effect";
 import {
   CommitBoundary,
   Offset,
@@ -27,7 +27,7 @@ export const triggersOf = <B>(
   projection: string,
   declarations: ReadonlyArray<WakeOutput<{}>>,
   match: (id: StreamId) => Option.Option<readonly [string, B]>,
-  marks: ProjectionMarksApi | undefined,
+  marks: ProjectionMarksApi,
 ) =>
   Effect.gen(function* () {
     const storage = yield* Storage;
@@ -94,91 +94,78 @@ export const triggersOf = <B>(
       return false;
     });
 
-    const read = (committed: (bindings: ReadonlyMap<string, B>) => void) =>
-      Effect.gen(function* () {
-        for (const [id, key] of streams) {
-          // Return bindings only after the marks and cursor have committed. An interruption
-          // before enqueue loses only non-durable work, exactly like a process stop.
-          const { bindings } = yield* transaction
-            .withTransaction(
-              Effect.gen(function* () {
-                const record = yield* storage.record(id);
-                const found = new Map<string, B>();
+    const read = Effect.gen(function* () {
+      for (const [id, key] of streams) {
+        // Durable marks join this transaction. Private marks can survive a rollback,
+        // leaving harmless work for a pass that finds nothing new.
+        yield* transaction
+          .withTransaction(
+            Effect.gen(function* () {
+              const record = yield* storage.record(id);
+              const found = new Set<string>();
 
-                if (Option.isNone(record) || record.value.lifecycle.softDeleted)
-                  return { bindings: found, offset: undefined };
-                const from = yield* cursor(key);
+              if (Option.isNone(record) || record.value.lifecycle.softDeleted)
+                return { offset: undefined };
+              const from = yield* cursor(key);
 
-                const messages = yield* storage.messages(id, {
-                  after: from,
-                  until: record.value.currentOffset,
-                  limit: DEFAULT_LIMIT,
-                });
+              const messages = yield* storage.messages(id, {
+                after: from,
+                until: record.value.currentOffset,
+                limit: DEFAULT_LIMIT,
+              });
 
-                for (const message of messages) {
-                  const event = yield* decodeWakeMessage(decoder.decode(message.data)).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ProjectionFault({
-                          phase: "read",
-                          reason: "invalid-source",
-                          message: `Cannot decode trigger ${id}`,
-                          cause,
-                        }),
-                    ),
+              for (const message of messages) {
+                const event = yield* decodeWakeMessage(decoder.decode(message.data)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectionFault({
+                        phase: "read",
+                        reason: "invalid-source",
+                        message: `Cannot decode trigger ${id}`,
+                        cause,
+                      }),
+                  ),
+                );
+
+                // Deletes request cleanup too (Projection.wake emits them for removed sources).
+                if (!StreamAddress.isChange(event)) continue;
+
+                const binding = match(
+                  StreamAddress.isUpsert(event) ? event.value.stream : StreamId.make(event.key),
+                );
+
+                if (Option.isSome(binding)) found.add(binding.value[0]);
+                else
+                  yield* Effect.logWarning(
+                    `Projection ${projection} skipped unmatched trigger source ${event.key} from ${id}`,
                   );
+              }
 
-                  // Deletes request cleanup too (Projection.wake emits them for removed sources).
-                  if (!StreamAddress.isChange(event)) continue;
+              const last = messages.at(-1);
 
-                  const binding = match(
-                    StreamAddress.isUpsert(event) ? event.value.stream : StreamId.make(event.key),
-                  );
+              if (last === undefined) return { offset: from };
 
-                  if (Option.isSome(binding)) found.set(...binding.value);
-                  else
-                    yield* Effect.logWarning(
-                      `Projection ${projection} skipped unmatched trigger source ${event.key} from ${id}`,
-                    );
-                }
+              if (found.size > 0) yield* marks.mark(projection, [...found]);
+              yield* owner.write(key, last.offset);
 
-                const last = messages.at(-1);
-
-                if (last === undefined) return { bindings: found, offset: from };
-
-                if (marks !== undefined && found.size > 0)
-                  yield* marks.mark(projection, [...found.keys()]);
-                yield* owner.write(key, last.offset);
-
-                if (marks !== undefined && found.size > 0) {
-                  const states = yield* marks.read(projection, [...found.keys()]);
-                  const now = yield* Clock.currentTimeMillis;
-
-                  // A new row keeps the binding's existing backoff, as mark() does.
-                  for (const [params, state] of states) if (state.dueAt > now) found.delete(params);
-                }
-
-                return { bindings: found, offset: last.offset };
+              return { offset: last.offset };
+            }),
+          )
+          .pipe(
+            Effect.catchTag("SqlError", (cause) =>
+              Effect.fail(storageFault("projection.triggers")(cause)),
+            ),
+            // Publish the cached position only after commit. On interruption or rollback,
+            // reload storage in case the transaction committed before it was interrupted.
+            Effect.tap(({ offset }) =>
+              Effect.sync(() => {
+                if (offset !== undefined) cursors.set(key, offset);
               }),
-            )
-            .pipe(
-              Effect.catchTag("SqlError", (cause) =>
-                Effect.fail(storageFault("projection.triggers")(cause)),
-              ),
-              // Publish the cached position only after commit. On interruption or rollback,
-              // reload storage in case the transaction committed before it was interrupted.
-              Effect.tap(({ offset }) =>
-                Effect.sync(() => {
-                  if (offset !== undefined) cursors.set(key, offset);
-                }),
-              ),
-              Effect.onError(() => Effect.sync(() => cursors.delete(key))),
-            );
-
-          // Hand off this stream before a later stream can fail after its cursor committed.
-          committed(bindings);
-        }
-      });
+            ),
+            Effect.onError(() => Effect.sync(() => cursors.delete(key))),
+          );
+      }
+    });
 
     return { next, read };
   });

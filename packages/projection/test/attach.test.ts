@@ -181,7 +181,7 @@ layer(host())((it) => {
         yield* Deferred.await(peerDone);
         expect(attempts).toBe(2);
         expect(peers).toBe(1);
-        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("2 seconds");
         yield* Deferred.await(recovered);
         expect(attempts).toBe(3);
         expect(peers).toBe(1);

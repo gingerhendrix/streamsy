@@ -36,7 +36,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           active: 0,
           queued: 0,
           lastPassAt: Option.none(),
-          marks: Option.none(),
+          marks: { fresh: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: Option.none() },
         },
       ];
 
@@ -58,15 +58,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         "one",
         "two",
       ]);
-      expect((yield* registry.status)[1]?.marks).toEqual(
-        Option.some({
-          fresh: 0,
-          retryDue: 0,
-          backingOff: 0,
-          stopped: 0,
-          nextDueAt: Option.none(),
-        }),
-      );
+      expect((yield* registry.status)[1]?.marks).toEqual({
+        fresh: 0,
+        retryDue: 0,
+        backingOff: 0,
+        stopped: 0,
+        nextDueAt: Option.none(),
+      });
       yield* Scope.close(first, Exit.void);
       expect(only(yield* registry.status).projection).toBe("two");
       yield* Scope.close(second, Exit.void);
@@ -110,15 +108,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         );
 
         expect(durable).toMatchObject({ active: 0, queued: 0, state: "running", failures: 0 });
-        expect(durable.marks).toEqual(
-          Option.some({
-            fresh: 0,
-            retryDue: 0,
-            backingOff: 0,
-            stopped: 0,
-            nextDueAt: Option.none(),
-          }),
-        );
+        expect(durable.marks).toEqual({
+          fresh: 0,
+          retryDue: 0,
+          backingOff: 0,
+          stopped: 0,
+          nextDueAt: Option.none(),
+        });
       }),
   );
 
@@ -156,15 +152,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         });
         const status = only(yield* registry.status);
         expect(status.active).toBe(1);
-        expect(status.marks).toEqual(
-          Option.some({
-            fresh: 2,
-            retryDue: 1,
-            backingOff: 1,
-            stopped: 0,
-            nextDueAt: Option.some(0),
-          }),
-        );
+        expect(status.marks).toEqual({
+          fresh: 2,
+          retryDue: 1,
+          backingOff: 1,
+          stopped: 0,
+          nextDueAt: Option.some(0),
+        });
         yield* Deferred.succeed(release, undefined);
       }),
   );
@@ -215,66 +209,72 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       expect(only(yield* registry.status)).toMatchObject({
         active: 1,
         queued: 0,
-        marks: Option.none(),
+        marks: { fresh: 1, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: Option.some(0) },
       });
     }),
   );
 
-  it.effect(
-    "failed passes report consecutive failures and the actual retry time, then reset on success",
-    () =>
-      Effect.gen(function* () {
-        const registry = yield* Projection.Registry;
-        let broken = true;
+  it.effect("binding failures report their own growing deadline and reset after success", () =>
+    Effect.gen(function* () {
+      const registry = yield* Projection.Registry;
+      let broken = true;
 
-        const failing = Projection.process({
-          id: "retry",
-          params: { id: Schema.String },
-          inputs: { source: Source },
-          commit: Commit.atLeastOnce,
-          process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
-        });
+      const failing = Projection.process({
+        id: "retry",
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        commit: Commit.atLeastOnce,
+        process: () => Effect.suspend(() => (broken ? Effect.fail("offline") : Effect.void)),
+      });
 
-        yield* Layer.build(Projection.attach(failing, { retry: Schedule.spaced("1 second") }));
-        const source = yield* Source;
-        yield* source.create({ id: "a" });
-        yield* source.append({ id: "a" }, ["hello"]);
+      yield* Layer.build(Projection.attach(failing, { retry: Schedule.spaced("1 second") }));
+      const source = yield* Source;
+      yield* source.create({ id: "a" });
+      yield* source.append({ id: "a" }, ["hello"]);
 
-        const retrying = yield* eventually(
-          registry.status,
-          (statuses) => only(statuses).state === "retrying",
-        );
+      const retrying = yield* eventually(
+        registry.status,
+        (statuses) => only(statuses).marks.backingOff === 1,
+      );
 
-        expect(only(retrying)).toMatchObject({
-          state: "retrying",
-          failures: 1,
-          retryAt: Option.some(1_000),
-          active: 0,
-          queued: 1,
-        });
-        yield* TestClock.adjust(1_000);
-        expect(
-          only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 2)),
-        ).toMatchObject({
-          failures: 2,
-          retryAt: Option.some(2_000),
-        });
-        broken = false;
-        yield* TestClock.adjust(1_000);
-        expect(
-          only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 0)),
-        ).toMatchObject({
-          state: "running",
-          failures: 0,
-          retryAt: Option.none(),
-          active: 0,
-          queued: 0,
-          lastPassAt: Option.some(2_000),
-        });
-      }),
+      expect(only(retrying)).toMatchObject({
+        state: "running",
+        failures: 0,
+        retryAt: Option.none(),
+        active: 0,
+        queued: 0,
+        marks: { backingOff: 1, nextDueAt: Option.some(1_000) },
+      });
+      yield* TestClock.adjust(1_000);
+      expect(
+        only(
+          yield* eventually(registry.status, (statuses) =>
+            Option.contains(only(statuses).marks.nextDueAt, 3_000),
+          ),
+        ),
+      ).toMatchObject({
+        failures: 0,
+        retryAt: Option.none(),
+        marks: { backingOff: 1, nextDueAt: Option.some(3_000) },
+      });
+      broken = false;
+      yield* TestClock.adjust(2_000);
+      expect(
+        only(
+          yield* eventually(registry.status, (statuses) => only(statuses).marks.backingOff === 0),
+        ),
+      ).toMatchObject({
+        state: "running",
+        failures: 0,
+        retryAt: Option.none(),
+        active: 0,
+        queued: 0,
+        lastPassAt: Option.some(3_000),
+      });
+    }),
   );
 
-  it.effect("an exhausted retry policy leaves a failed runner that explicit retry can resume", () =>
+  it.effect("a finite pass policy does not stop binding retries", () =>
     Effect.gen(function* () {
       const registry = yield* Projection.Registry;
       let broken = true;
@@ -292,18 +292,27 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       yield* source.create({ id: "a" });
       yield* source.append({ id: "a" }, ["hello"]);
       expect(
-        only(yield* eventually(registry.status, (statuses) => only(statuses).state === "failed")),
+        only(
+          yield* eventually(registry.status, (statuses) => only(statuses).marks.backingOff === 1),
+        ),
       ).toMatchObject({
-        state: "failed",
-        failures: 1,
+        state: "running",
+        failures: 0,
         retryAt: Option.none(),
         active: 0,
-        queued: 1,
+        queued: 0,
+        marks: { backingOff: 1 },
       });
       broken = false;
       expect(yield* registry.retry(failing)).toBe(1);
       expect(
-        only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 0)),
+        only(
+          yield* eventually(
+            registry.status,
+            (statuses) =>
+              only(statuses).marks.backingOff === 0 && only(statuses).marks.retryDue === 0,
+          ),
+        ),
       ).toMatchObject({ state: "running", queued: 0 });
     }),
   );
@@ -475,15 +484,13 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           yield* wakeup.changed;
           const recovered = only((yield* Fiber.join(next))[0]);
           expect(recovered).toMatchObject({ projection: declaration.id, active: 0, queued: 0 });
-          expect(recovered.marks).toEqual(
-            Option.some({
-              fresh: 0,
-              retryDue: 0,
-              backingOff: 0,
-              stopped: 0,
-              nextDueAt: Option.none(),
-            }),
-          );
+          expect(recovered.marks).toEqual({
+            fresh: 0,
+            retryDue: 0,
+            backingOff: 0,
+            stopped: 0,
+            nextDueAt: Option.none(),
+          });
         }),
     );
   }

@@ -398,7 +398,7 @@ same<typeof attach, typeof Projection.attach>(true);
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
 - `attach` throws a `RangeError` when `limit` or `batch` is not a positive safe integer.
-- A failed pass, or a failed read of the marks, logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
+- A failed pass reading marks, cursors or triggers logs an error and runs again under `retry`. A binding that fails backs off alone, from 1 s doubling to 1 hour, in either mode. A binding that reaches `limit` runs again next.
 - By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
 - With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding defers its own mark and does not fail the pass. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 - Inputs on another owner need a local [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
@@ -497,7 +497,7 @@ declare const ProjectionWakeup: {
       next: Effect.Effect<Option.Option<number>, StorageFault>;
       run: Effect.Effect<
         { more: boolean },
-        E | ProjectionFault | StorageFault,
+        ProjectionFault | StorageFault,
         Exclude<R, P> | Q | OR | InputServices<I>
       >;
       bind: (host: WakeupHost) => Effect.Effect<void>;
@@ -515,13 +515,13 @@ same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 
 `ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections) on Cloudflare.
 
-| Field      | Meaning                                                                                                                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`     | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                                  |
-| `next`     | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, in durable mode, the earliest due time of the marks. `None` when no binding has work |
-| `run`      | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                                 |
-| `retry`    | `options.retry`, or the `ProjectionRetry` schedule                                                                                                                                |
-| `deferred` | The sum of retry-due, backing-off and stopped marks after a binding failure. It is always `0` when `durable` is `false`                                                           |
+| Field      | Meaning                                                                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                 |
+| `next`     | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, the earliest due time of the marks. `None` when no binding has work |
+| `run`      | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                |
+| `retry`    | `options.retry`, or the `ProjectionRetry` schedule                                                                                                               |
+| `deferred` | The sum of retry-due, backing-off and stopped marks after a binding failure. It counts private memory marks when `durable` is `false`                            |
 
 ## Reads
 

@@ -235,7 +235,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   );
 
   it.effect(
-    "non-durable retry counts failed bindings, ignores limit-only work and interrupts pass backoff",
+    "non-durable retry counts failed bindings, ignores limit-only work and overrides binding backoff",
     () =>
       Effect.gen(function* () {
         const source = yield* Source;
@@ -270,9 +270,9 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         for (const id of ["a", "b", "limit"]) yield* registry.schedule(declaration.at({ id }));
         expect(
           only(
-            yield* eventually(registry.status, (statuses) => only(statuses).state === "retrying"),
-          ).retryAt,
-        ).toEqual(Option.some(3_600_000));
+            yield* eventually(registry.status, (statuses) => only(statuses).marks.backingOff === 2),
+          ).marks.nextDueAt,
+        ).toEqual(Option.some(1_000));
         expect(yield* registry.retry(declaration.at({ id: "limit" }))).toBe(0);
         expect(yield* registry.retry(declaration.at({ id: "absent" }))).toBe(0);
         broken = false;
@@ -284,7 +284,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
               (statuses) =>
                 only(statuses).queued === 0 &&
                 only(statuses).active === 0 &&
-                only(statuses).failures === 0,
+                only(statuses).marks.retryDue === 0,
             ),
           ),
         ).toMatchObject({ failures: 0, retryAt: Option.none(), lastPassAt: Option.some(0) });
@@ -316,7 +316,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         yield* registry.schedule(declaration.at({ id: "a" }));
         yield* Effect.exit(wakeup.run);
         expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(1);
-        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(1);
+        expect(yield* registry.retry(declaration.at({ id: "a" }))).toBe(0);
         broken = false;
         yield* wakeup.run;
         expect(yield* registry.retry(declaration)).toBe(0);

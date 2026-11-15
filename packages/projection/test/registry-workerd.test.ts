@@ -68,7 +68,12 @@ const Status = Schema.Struct({
   seen: Schema.Array(Schema.String),
   attempts: Schema.NullOr(Schema.Finite),
   alarm: Schema.NullOr(Schema.Finite),
-  status: Schema.Struct({ failures: Schema.Finite, retryAt: RetryAt, state: Schema.String }),
+  status: Schema.Struct({
+    failures: Schema.Finite,
+    retryAt: RetryAt,
+    state: Schema.String,
+    marks: Schema.Struct({ backingOff: Schema.Finite }),
+  }),
   mark: Schema.optionalKey(Schema.Struct({ attempts: Schema.Finite, dueAt: Schema.Finite })),
   host: Schema.Array(
     Schema.Struct({ name: Schema.String, failures: Schema.Finite, retryAt: RetryAt }),
@@ -131,7 +136,7 @@ for (const kind of ["durable", "memory"]) {
     expect(event.offsets.source).toMatch(/^\d{16}_\d{16}$/);
   }, 30_000);
 
-  test(`registry Failed carries only a durable binding deadline (${kind})`, async () => {
+  test(`registry Failed carries a binding deadline in both modes (${kind})`, async () => {
     const send = await start();
     const path = `/${kind}/failed-event`;
     await send(`${path}/setup`);
@@ -153,9 +158,9 @@ for (const kind of ["durable", "memory"]) {
       attempts: 1,
     });
     const snapshot = await statusOf(send(`${path}/status`));
-    expect(event.dueAt).toEqual(
-      kind === "durable" ? { _tag: "Some", value: snapshot.mark?.dueAt } : { _tag: "None" },
-    );
+    expect(event.dueAt._tag).toBe("Some");
+
+    if (kind === "durable") expect(event.dueAt.value).toBe(snapshot.mark?.dueAt);
   }, 30_000);
 
   test(`registry.schedule from a request arms and runs without another commit (${kind})`, async () => {
@@ -211,13 +216,13 @@ for (const mode of ["binding", "storage"]) {
     await send(`${path}/mode/${mode}`);
     await send(`${path}/schedule`);
     const read = () => statusOf(send(`${path}/status`));
-    const failed = await until(read, (status) => status.status.state === "retrying");
+    const failed = await until(read, (status) => status.status.marks.backingOff === 1);
 
     const host = Option.getOrThrow(
       Array.findFirst(failed.host, (entry) => entry.name.startsWith("streamsy/projection/")),
     );
 
-    expect(failed.status.failures).toBe(1);
+    expect(failed.status.failures).toBe(0);
     expect(failed.status.retryAt).toEqual(host.retryAt);
     expect(failed.status.failures).toBe(host.failures);
     await send(`${path}/mode/ok`);
@@ -225,8 +230,8 @@ for (const mode of ["binding", "storage"]) {
     expect(retried.count).toBe(1);
     expect(retried.alarm).not.toBeNull();
     expect(retried.status).toMatchObject({
-      state: "retrying",
-      retryAt: { _tag: "Some", value: retried.alarm },
+      state: "running",
+      retryAt: { _tag: "None" },
     });
 
     const recovered = await until(
@@ -253,38 +258,42 @@ for (const kind of ["memory", "exhausted"]) {
     await send(`${path}/mode/binding`);
     await send(`${path}/schedule`);
     const read = () => statusOf(send(`${path}/status`));
-    const failed = await until(read, (snapshot) => snapshot.status.failures === 1);
-    expect(failed.status.state).toBe(kind === "exhausted" ? "failed" : "retrying");
-    expect(failed.alarm === null).toBe(kind === "exhausted");
+    const failed = await until(read, (snapshot) => snapshot.status.marks.backingOff === 1);
+    expect(failed.status.state).toBe("running");
+    expect(failed.alarm).not.toBeNull();
 
     const scheduled = await scheduledOf(send(`${path}/schedule-good`));
     expect(scheduled.alarm).not.toBeNull();
     expect(scheduled.status).toMatchObject({
-      state: "retrying",
-      failures: 1,
-      retryAt: { _tag: "Some", value: scheduled.alarm },
+      state: "running",
+      failures: 0,
+      retryAt: { _tag: "None" },
     });
     const ran = await until(read, (snapshot) => snapshot.seen.includes("good"));
-    expect(ran.seen).toEqual(["a", "a", "good"]);
+    expect(ran.seen).toEqual(["a", "good"]);
   }, 30_000);
 }
 
 for (const kind of ["memory", "exhausted"]) {
   for (const request of ["schedule-good", "retry"]) {
-    test(`${request} starts one pass after a storage fault (${kind})`, async () => {
+    test(`${request} runs after a binding storage fault (${kind})`, async () => {
       const send = await start();
       const path = `/${kind}/storage-${request}`;
       await send(`${path}/setup`);
       await send(`${path}/mode/storage`);
       await send(`${path}/schedule`);
       const read = () => statusOf(send(`${path}/status`));
-      await until(read, (snapshot) => snapshot.status.failures === 1);
+      await until(read, (snapshot) => snapshot.status.marks.backingOff === 1);
       await send(`${path}/mode/ok`);
       const requested = await scheduledOf(send(`${path}/${request}`));
       expect(requested.alarm).not.toBeNull();
-      expect(requested.status).toMatchObject({ state: "retrying", retryAt: { _tag: "Some" } });
-      const recovered = await until(read, (snapshot) => snapshot.status.failures === 0);
-      expect(recovered.seen).toEqual(request === "retry" ? ["a", "a"] : ["a", "a", "good"]);
+      expect(requested.status).toMatchObject({ state: "running", retryAt: { _tag: "None" } });
+
+      const recovered = await until(read, (snapshot) =>
+        request === "retry" ? snapshot.runs >= 2 : snapshot.seen.includes("good"),
+      );
+
+      expect(recovered.seen).toEqual(request === "retry" ? ["a", "a"] : ["a", "good"]);
     }, 30_000);
   }
 }

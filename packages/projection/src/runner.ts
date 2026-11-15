@@ -4,6 +4,7 @@ import {
   CommitHooks,
   ProjectionMarks,
   compileSegments,
+  memoryProjectionMarks,
   type ProjectionMarksApi,
 } from "@streamsy/core/internal";
 import type { StreamRoute } from "@streamsy/core/protocol";
@@ -20,7 +21,7 @@ import type { WakeOutput } from "./wake.ts";
 
 export const DEFAULT_LIMIT = 100;
 
-/** Due marks that one durable drain pass adds to the in-memory set. */
+/** Due marks that one drain pass adds to the in-memory set. */
 export const DEFAULT_BATCH = 25;
 
 const MAX_DEFER_MS = 60 * 60 * 1_000;
@@ -35,7 +36,7 @@ export interface RunnerOptions {
   readonly limit?: number | undefined;
   /** Keep a pending mark for each binding in the storage owner. Default false. */
   readonly durable?: boolean | undefined;
-  /** Due marks read in one durable drain pass. Default 25. */
+  /** Due marks read in one drain pass. Default 25. */
   readonly batch?: number | undefined;
 }
 
@@ -213,7 +214,8 @@ const durableMarks = (
  * the commit's transaction. The in-memory set stays the fast path. A binding
  * that catches up clears its mark with a `seq` compare, so a write during the
  * run keeps it. After a restart, `next`, `wait` and `drain` find the marks in
- * storage. A failed binding defers its own mark, and its neighbours run.
+ * storage. Otherwise marks are private to this runner. In both modes a failed
+ * binding defers its own mark, and its neighbours run.
  */
 export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
   declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
@@ -237,7 +239,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
     const publish = Option.isSome(registry) ? eventPublisher(registry.value) : undefined;
 
     const committed = yield* storage.committed;
-    const pending = new Map<string, { binding: Binding; attempts: number }>();
+    const pending = new Map<string, Binding>();
     const working = new Set<string>();
     const wake = yield* Queue.sliding<void>(1);
     const signal = Queue.offer(wake, undefined).pipe(Effect.asVoid);
@@ -276,28 +278,38 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           }),
       );
 
-    const marks: ProjectionMarksApi | undefined =
-      options.durable === true ? yield* durableMarks(declaration.id, match) : undefined;
+    const marks: ProjectionMarksApi =
+      options.durable === true
+        ? yield* durableMarks(declaration.id, match)
+        : memoryProjectionMarks();
 
     const triggers =
       options.triggers === undefined || options.triggers.length === 0
         ? undefined
         : yield* triggersOf(declaration.id, options.triggers, match, marks);
 
-    const add = (ids: ReadonlyArray<StreamId>) => {
-      for (const id of ids) {
-        const found = match(id);
+    const add = (ids: ReadonlyArray<StreamId>) =>
+      Effect.gen(function* () {
+        const bindings = new Map<string, Binding>();
 
-        if (Option.isSome(found)) {
-          const [key, binding] = found.value;
-          pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
+        for (const id of ids) {
+          const found = match(id);
+
+          if (Option.isSome(found)) bindings.set(...found.value);
         }
-      }
-    };
 
-    const absorb = Effect.map(
-      PubSub.takeUpTo(committed, Number.POSITIVE_INFINITY),
-      Array.forEach(add),
+        // Durable commits already marked in their transaction. Private marks live
+        // only for this runner and are raised when its subscription reads the commit.
+        if (options.durable !== true && bindings.size > 0)
+          yield* marks
+            .mark(declaration.id, [...bindings.keys()])
+            .pipe(Effect.mapError(storageFault("marks.mark")));
+
+        for (const [key, binding] of bindings) pending.set(key, binding);
+      });
+
+    const absorb = PubSub.takeUpTo(committed, Number.POSITIVE_INFINITY).pipe(
+      Effect.flatMap((commits) => Effect.forEach(commits, add, { discard: true })),
     );
 
     const next = Effect.gen(function* () {
@@ -310,31 +322,30 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       )
         return Option.some(yield* Clock.currentTimeMillis);
 
-      return marks === undefined ? Option.none<number>() : yield* marks.nextDue(declaration.id);
+      return yield* marks.nextDue(declaration.id);
     });
 
-    const take = Effect.raceFirst(Effect.map(PubSub.take(committed), add), interruptedDelay);
+    const take = Effect.raceFirst(Effect.flatMap(PubSub.take(committed), add), interruptedDelay);
 
-    const waitDue = (store: ProjectionMarksApi) =>
-      Effect.gen(function* () {
-        const due = yield* store.nextDue(declaration.id);
+    const waitDue = Effect.gen(function* () {
+      const due = yield* marks.nextDue(declaration.id);
 
-        if (Option.isNone(due)) return yield* take;
-        const delay = due.value - (yield* Clock.currentTimeMillis);
+      if (Option.isNone(due)) return yield* take;
+      const delay = due.value - (yield* Clock.currentTimeMillis);
 
-        // Wake on a commit or when the earliest deferred mark falls due.
-        return yield* delay <= 0
-          ? Effect.void
-          : take.pipe(Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.void }));
-      });
+      // Wake on a commit or when the earliest deferred mark falls due.
+      return yield* delay <= 0
+        ? Effect.void
+        : take.pipe(Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.void }));
+    });
 
-    /** Wait for a commit, or in durable mode for the next due mark. */
+    /** Wait for a commit or the next due mark. */
     const wait = Effect.gen(function* () {
       yield* absorb;
 
       if (pending.size > 0 || (triggers !== undefined && (yield* triggers.next))) return undefined;
 
-      return yield* marks === undefined ? take : waitDue(marks);
+      return yield* waitDue;
     });
 
     const dropped = (key: string, binding: Binding) =>
@@ -354,165 +365,111 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       );
 
     /**
-     * Every binding runs once, even if a peer fails; failed or bounded work
-     * stays pending. A binding whose source went before its first run is
-     * dropped, because no later run can succeed.
+     * The in-memory set plus up to `batch` due marks. A binding that catches up
+     * clears its mark by `seq`. A failed binding defers its own mark and does
+     * not fail the pass.
      */
-    const drainInMemory = Effect.gen(function* () {
-      let failure: Cause.Cause<E | ProjectionFault> | undefined;
+    const drainMarks = Effect.gen(function* () {
+      const id = declaration.id;
+      const now = yield* Clock.currentTimeMillis;
+      const work = new Map(pending);
+      pending.clear();
 
-      for (const [key, entry] of Array.fromIterable(pending)) {
-        pending.delete(key);
-        const { binding } = entry;
+      for (const row of yield* marks.due(id, now, batch)) {
+        if (work.has(row.params)) continue;
+        const binding = bindingOf(declaration, row.params);
+
+        if (Option.isNone(binding)) {
+          yield* Effect.logWarning(
+            `Projection ${id} removed pending mark ${row.params}: its params no longer decode`,
+          );
+          yield* marks.remove(id, row.params);
+
+          continue;
+        }
+
+        work.set(row.params, binding.value);
+      }
+
+      for (const key of work.keys()) working.add(key);
+
+      // Read before any run, so a write during a run raises `seq` past this value.
+      const states = yield* marks.read(id, [...work.keys()]);
+
+      // A commit records work without shortening a failed binding's backoff.
+      // Its mark holds the work until due; keeping it pending would wake every pass.
+      for (const [key, state] of states) {
+        if (state.dueAt > now) {
+          work.delete(key);
+          working.delete(key);
+        }
+      }
+
+      for (const [key, binding] of work) {
+        working.delete(key);
         const exit = yield* Effect.exit(runActive(binding));
+        const state = states.get(key);
 
         if (Exit.isSuccess(exit)) {
-          entry.attempts = 0;
+          if (exit.value.status === "limit-reached") pending.set(key, binding);
+          else if (state !== undefined) yield* marks.clear(id, key, state.seq);
 
-          if (exit.value.status === "limit-reached") pending.set(key, entry);
           continue;
         }
 
         if (yield* sourceGone(binding.inputs, exit.cause)) {
           yield* dropped(key, binding);
+          yield* marks.remove(id, key);
+
           continue;
         }
 
-        pending.set(key, entry);
-        entry.attempts += 1;
+        const attempts = (state?.attempts ?? 0) + 1;
+        const delay = deferDelay(attempts);
+        const dueAt = (yield* Clock.currentTimeMillis) + delay;
+        yield* marks.fail(id, key, {
+          attempts,
+          dueAt: Option.some(dueAt),
+          failure: {
+            at: dueAt - delay,
+            reason: Cause.findErrorOption(exit.cause).pipe(
+              Option.filter(Schema.is(ProjectionFault)),
+              Option.map((fault) => fault.reason),
+            ),
+            message: Cause.pretty(exit.cause),
+          },
+        });
 
         if (publish !== undefined)
           yield* publish(
             RunnerEvent.Failed({
-              projection: declaration.id,
+              projection: id,
               params: binding.params,
-              attempts: entry.attempts,
-              dueAt: Option.none(),
+              attempts,
+              dueAt: Option.some(dueAt),
             }),
           );
-
-        if (failure === undefined) failure = exit.cause;
+        yield* Effect.logWarning(
+          `Projection ${id} binding ${key} failed (attempt ${attempts}); it runs again in ${delay} ms`,
+          exit.cause,
+        );
       }
 
       yield* absorb;
 
-      if (failure !== undefined) return yield* Effect.failCause(failure);
+      if (pending.size > 0) return { more: true };
+      const after = yield* marks.nextDue(id);
 
-      return { more: pending.size > 0 };
+      return { more: Option.isSome(after) && after.value <= (yield* Clock.currentTimeMillis) };
     });
-
-    /**
-     * The in-memory set plus up to `batch` due marks. A binding that catches up
-     * clears its mark by `seq`. A failed binding defers its own mark and does
-     * not fail the pass.
-     */
-    const drainDurable = (store: ProjectionMarksApi) =>
-      Effect.gen(function* () {
-        const id = declaration.id;
-        const now = yield* Clock.currentTimeMillis;
-        const work = new Map(pending);
-        pending.clear();
-
-        for (const row of yield* store.due(id, now, batch)) {
-          if (work.has(row.params)) continue;
-          const binding = bindingOf(declaration, row.params);
-
-          if (Option.isNone(binding)) {
-            yield* Effect.logWarning(
-              `Projection ${id} removed pending mark ${row.params}: its params no longer decode`,
-            );
-            yield* store.remove(id, row.params);
-
-            continue;
-          }
-
-          work.set(row.params, { binding: binding.value, attempts: 0 });
-        }
-
-        for (const key of work.keys()) working.add(key);
-
-        // Read before any run, so a write during a run raises `seq` past this value.
-        const states = yield* store.read(id, [...work.keys()]);
-
-        // A commit records work without shortening a failed binding's backoff.
-        // Its mark holds the work until due; keeping it pending would wake every pass.
-        for (const [key, state] of states) {
-          if (state.dueAt > now) {
-            work.delete(key);
-            working.delete(key);
-          }
-        }
-
-        for (const [key, entry] of work) {
-          const { binding } = entry;
-          working.delete(key);
-          const exit = yield* Effect.exit(runActive(binding));
-          const state = states.get(key);
-
-          if (Exit.isSuccess(exit)) {
-            if (exit.value.status === "limit-reached") pending.set(key, entry);
-            else if (state !== undefined) yield* store.clear(id, key, state.seq);
-
-            continue;
-          }
-
-          if (yield* sourceGone(binding.inputs, exit.cause)) {
-            yield* dropped(key, binding);
-            yield* store.remove(id, key);
-
-            continue;
-          }
-
-          const attempts = (state?.attempts ?? 0) + 1;
-          const delay = deferDelay(attempts);
-          const dueAt = (yield* Clock.currentTimeMillis) + delay;
-          yield* store.fail(id, key, {
-            attempts,
-            dueAt: Option.some(dueAt),
-            failure: {
-              at: dueAt - delay,
-              reason: Cause.findErrorOption(exit.cause).pipe(
-                Option.filter(Schema.is(ProjectionFault)),
-                Option.map((fault) => fault.reason),
-              ),
-              message: Cause.pretty(exit.cause),
-            },
-          });
-
-          if (publish !== undefined)
-            yield* publish(
-              RunnerEvent.Failed({
-                projection: id,
-                params: binding.params,
-                attempts,
-                dueAt: Option.some(dueAt),
-              }),
-            );
-          yield* Effect.logWarning(
-            `Projection ${id} binding ${key} failed (attempt ${attempts}); it runs again in ${delay} ms`,
-            exit.cause,
-          );
-        }
-
-        yield* absorb;
-
-        if (pending.size > 0) return { more: true };
-        const after = yield* store.nextDue(id);
-
-        return { more: Option.isSome(after) && after.value <= (yield* Clock.currentTimeMillis) };
-      });
 
     const drain = Effect.fn("Projection.drain")(function* () {
       yield* Queue.clear(wake);
       yield* absorb;
 
-      if (triggers !== undefined)
-        yield* triggers.read((bindings) => {
-          for (const [key, binding] of bindings)
-            pending.set(key, { binding, attempts: pending.get(key)?.attempts ?? 0 });
-        });
+      if (triggers !== undefined) yield* triggers.read;
 
-      const result = yield* marks === undefined ? drainInMemory : drainDurable(marks);
+      const result = yield* drainMarks;
 
       return { more: result.more || (triggers !== undefined && (yield* triggers.next)) };
     });
@@ -536,14 +493,12 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
             });
 
           // Persist before exposing pending work, so a fault cannot enqueue an unrecorded request.
-          if (marks !== undefined) {
-            yield* marks
-              .mark(declaration.id, [key])
-              .pipe(Effect.mapError(storageFault("marks.mark")));
-            yield* marks.retry(declaration.id, key);
-          }
+          yield* marks
+            .mark(declaration.id, [key])
+            .pipe(Effect.mapError(storageFault("marks.mark")));
+          yield* marks.retry(declaration.id, key);
 
-          pending.set(key, { binding: bound.value, attempts: pending.get(key)?.attempts ?? 0 });
+          pending.set(key, bound.value);
           yield* signal;
 
           return undefined;
@@ -551,13 +506,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
       retry: (binding?: { readonly params: Readonly<Record<string, string>> }) =>
         Effect.gen(function* () {
           const key = binding === undefined ? undefined : canonicalParams(binding.params);
-          let count = 0;
-
-          if (marks !== undefined) count = yield* marks.retry(declaration.id, key);
-          else
-            for (const [pendingKey, entry] of pending) {
-              if (entry.attempts > 0 && (key === undefined || key === pendingKey)) count += 1;
-            }
+          const count = yield* marks.retry(declaration.id, key);
 
           yield* signal;
 
@@ -565,10 +514,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         }).pipe(Effect.uninterruptible),
       drain: drain().pipe(Effect.ensuring(Effect.sync(() => working.clear()))),
       status: Effect.gen(function* () {
-        const summary =
-          marks === undefined
-            ? Option.none()
-            : Option.some(yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis));
+        const summary = yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis);
 
         return {
           active,
@@ -576,14 +522,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
           marks: summary,
         };
       }),
-      deferred:
-        marks === undefined
-          ? Effect.succeed(0)
-          : Effect.gen(function* () {
-              const summary = yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis);
+      deferred: Effect.gen(function* () {
+        const summary = yield* marks.summary(declaration.id, yield* Clock.currentTimeMillis);
 
-              return summary.retryDue + summary.backingOff + summary.stopped;
-            }),
+        return summary.retryDue + summary.backingOff + summary.stopped;
+      }),
     };
   });
 };

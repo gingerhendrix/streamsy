@@ -230,7 +230,10 @@ Each input must give every projection param, so that one id picks one binding.
 never commit here, so they never trigger. Do not also run an attached binding
 under `Projection.follow`.
 
-By default `Projection.attach` keeps the set of bindings with work in memory.
+By default `Projection.attach` keeps pending binding marks and backoff in private memory.
+In both modes a failed binding waits alone, from 1 s doubling to 1 hour, while
+its neighbours run. A local commit or trigger row does not shorten backoff;
+`registry.retry` or `registry.schedule` makes it due now.
 If the process stops after a commit and before the run, the binding is late
 until its source gets its next write. The next run catches up from the
 checkpoint while the source history remains available. Removal before that run
@@ -241,18 +244,14 @@ Pass `durable: true` to close that gap. Each commit then also writes a pending
 mark for each binding it touches, in the same transaction, to
 `streamsy_projection_pending`. A binding that catches up deletes its mark,
 unless a write during the run marked it again. When the layer starts, it runs
-the bindings that still have marks, up to `batch` (default 25) per pass. A
-binding that fails waits alone, from 1 s doubling to 1 hour, and its
-neighbours keep running. A local commit or trigger row does not shorten that backoff;
-`registry.retry` or `registry.schedule` makes the binding due now. Durable mode needs a local memory or SQL storage
-layer.
+the bindings that still have marks, up to `batch` (default 25) per pass. Durable mode needs a local memory or SQL storage layer.
 
 On Cloudflare, acquire a wakeup in the object's layer scope. Local commits
 fill the same runner's pending set; `next` answers "now" while it has work,
 and each alarm drains one pass (100 units per binding by default).
 `ProjectionWakeup.attach` is durable by default, because Cloudflare evicts idle
 objects. After an eviction or a deploy, the object's acquire reads the marks
-and arms the alarm. Pass `durable: false` for the in-memory set only.
+and arms the alarm. Pass `durable: false` for private memory marks that reset on eviction.
 
 ```ts
 StreamsyObject.make({
@@ -265,7 +264,8 @@ StreamsyObject.make({
 Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner calls
 the schedule once per failed pass with no input. Bun waits for its delays; the
 alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.
-A finite schedule stops retries when exhausted.
+A finite schedule stops pass retries when exhausted. Binding failures use their own
+backoff; the pass policy paces failures reading marks, cursors or triggers.
 
 SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.

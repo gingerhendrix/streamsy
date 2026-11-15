@@ -522,4 +522,4 @@ same<Exclude<keyof Fields<Real.FoldByKeyError>, "brand">, "_tag">(true);
 
 `FoldByKeyError` is a `Schema.TaggedError` in the error channel of the handler. It is not a `ProjectionFault`, so it has no `phase` and no `reason`. The handler fails with it when a folded row carries a key that differs from the key that `key` returned. `message` names both keys. Import it from the top level of `@streamsy/projection`.
 
-The runners treat it like any handler error. Under durable `attach` the binding defers on its own backoff. See [Errors](/docs/projections/fold-by-key#errors).
+The runners treat it like any handler error. Under `attach` in either durability mode the binding defers on its own backoff. See [Errors](/docs/projections/fold-by-key#errors).

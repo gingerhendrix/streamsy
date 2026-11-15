@@ -16,20 +16,21 @@ export interface AttachOptions {
   readonly limit?: number;
   /**
    * Timing only. The runner calls the schedule once per failed pass with no input.
-   * Defaults to capped, jittered exponential backoff.
+   * Paces failures reading marks, cursors or triggers; binding failures back off alone,
+   * 1 s doubling to 1 hour. Defaults to capped, jittered exponential backoff.
    */
   readonly retry?: Schedule.Schedule<unknown>;
   /**
    * Keep a pending mark for each binding in the storage owner, written in the
    * transaction of the commit that needs the run. After a restart or an
-   * eviction, the runner finds the marks and runs those bindings. A binding
-   * that fails waits alone, 1 s doubling to 1 hour, and its neighbours run.
+   * eviction, the runner finds the marks and runs those bindings. Otherwise
+   * pending work and binding backoff live only for this runner.
    * Needs a local memory or SQL storage layer.
    *
    * Default: false for `Projection.attach`, true for `ProjectionWakeup.attach`.
    */
   readonly durable?: boolean;
-  /** With `durable`, the due marks that one drain pass reads. Default 25. */
+  /** The due marks that one drain pass reads. Default 25. */
   readonly batch?: number;
 }
 
@@ -118,7 +119,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
             ),
           });
 
-      // A durable wait reads marks, so a failed read retries like a failed drain.
+      // A wait reads marks, so a failed read retries like a failed drain.
       yield* Effect.gen(function* () {
         let requested = false;
 

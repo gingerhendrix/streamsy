@@ -63,13 +63,13 @@ A checkpoint that an operator moves by hand, to skip a bad record, needs no step
 
 ## Faults and recovery
 
-The table binding, `sync` and `rebuild` fail only with a `ProjectionFault`: when SQL or the stream storage fails (reason `storage-failure`, retryable), when the history after the head is gone (`history-unavailable`), or when a stored message is not a State message (`invalid-record`). Recovery is the usual projection recovery. A durable binding retries on its own backoff. You can also fix the cause and call `StateTable.rebuild`. See [Faults](/docs/projections/checkpoints#faults).
+The table binding, `sync` and `rebuild` fail only with a `ProjectionFault`: when SQL or the stream storage fails (reason `storage-failure`, retryable), when the history after the head is gone (`history-unavailable`), or when a stored message is not a State message (`invalid-record`). Recovery is the usual projection recovery. A binding retries on its own backoff. You can also fix the cause and call `StateTable.rebuild`. See [Faults](/docs/projections/checkpoints#faults).
 
 A fault in the table also fails every fold that writes the stream with the same fault, because each fold calls `sync` before it reads rows.
 
 The first release has a known gap in that recovery:
 
-- **A fix does not resume a deferred binding.** A durable binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. A source commit records work without shortening that backoff. The binding runs again at its due time, or sooner after `registry.retry` or `registry.schedule`.
+- **A fix does not resume a deferred binding.** A binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. A source commit records work without shortening that backoff. The binding runs again at its due time, or sooner after `registry.retry` or `registry.schedule`.
 - **A health check that counts only fresh marks stays green.** When the table fails, every binding that writes the stream defers. A check that looks only at marks with no failed attempts still reports the host as ready. On a Durable Object, read the `deferred` count of [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) to see deferred bindings.
 
 ## SQLite only

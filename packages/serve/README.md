@@ -137,6 +137,8 @@ Object hosts acquire `ProjectionWakeup.attach(projection)` from
 `Storage.committed` events populate its in-memory pending set, and each commit
 writes a durable pending mark in the same transaction. Alarms drain bounded
 passes. After an eviction, acquisition reads the marks and arms the alarm.
-Retry options take an Effect `Schedule`; finite schedules stop on exhaustion.
+Retry options take an Effect `Schedule` for pass failures reading marks, cursors
+or triggers; finite schedules stop those retries on exhaustion. A failed binding
+waits alone, 1 s doubling to 1 hour, in both durability modes.
 `Wakeups.status` reports each wakeup's deferred bindings.
 See the [projections on Cloudflare guide](https://streamsy.dev/docs/servers/cloudflare/alarms#projections).

@@ -12,7 +12,7 @@ import { eventually } from "./support/eventually.ts";
 layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   for (const failure of ["binding", "storage", "projection-storage"] as const) {
     for (const request of ["schedule", "retry"] as const) {
-      it.effect(`${request} cuts pass backoff on Bun (${failure})`, () =>
+      it.effect(`${request} overrides binding backoff on Bun (${failure})`, () =>
         Effect.gen(function* () {
           const id = `backoff-${request}-${failure}`;
           const source = yield* Source;
@@ -62,8 +62,11 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           yield* registry.schedule(declaration.at({ id: `${id}-a` }));
           expect(
             only(
-              yield* eventually(registry.status, (statuses) => only(statuses).state === "retrying"),
-            ).retryAt,
+              yield* eventually(
+                registry.status,
+                (statuses) => only(statuses).marks.backingOff === 1,
+              ),
+            ).marks.nextDueAt,
           ).toEqual(Option.some(1_000));
           broken = false;
 
@@ -75,12 +78,15 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             only(
               yield* eventually(
                 registry.status,
-                (statuses) => only(statuses).failures === 0 && only(statuses).queued === 0,
+                (statuses) =>
+                  only(statuses).marks.retryDue === 0 &&
+                  only(statuses).queued === 0 &&
+                  only(statuses).active === 0,
               ),
             ),
           ).toMatchObject({ state: "running", failures: 0, queued: 0 });
           expect(seen).toEqual(
-            request === "schedule" ? [`${id}-a`, `${id}-a`, `${id}-b`] : [`${id}-a`, `${id}-a`],
+            request === "schedule" ? [`${id}-a`, `${id}-b`] : [`${id}-a`, `${id}-a`],
           );
         }).pipe(Effect.ensuring(TestClock.setTime(0))),
       );
@@ -88,7 +94,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
   }
 
   for (const request of ["schedule", "retry"] as const) {
-    it.effect(`Bun ${request} preserves the next storage-fault delay`, () =>
+    it.effect(`Bun ${request} preserves the next binding-failure delay`, () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(0);
         const id = `growing-${request}`;
@@ -118,22 +124,29 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         const registry = yield* Projection.Registry;
         yield* registry.schedule(declaration.at({ id }));
         expect(
-          only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 1))
-            .retryAt,
+          only(
+            yield* eventually(registry.status, (statuses) => only(statuses).marks.backingOff === 1),
+          ).marks.nextDueAt,
         ).toEqual(Option.some(1_000));
 
         if (request === "schedule") yield* registry.schedule(declaration.at({ id }));
         else expect(yield* registry.retry(declaration)).toBe(1);
         expect(
-          only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 2))
-            .retryAt,
+          only(
+            yield* eventually(registry.status, (statuses) =>
+              Option.contains(only(statuses).marks.nextDueAt, 2_000),
+            ),
+          ).marks.nextDueAt,
         ).toEqual(Option.some(2_000));
         yield* TestClock.adjust(1_999);
         expect(runs).toBe(2);
         yield* TestClock.adjust(1);
         expect(
-          only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 3))
-            .retryAt,
+          only(
+            yield* eventually(registry.status, (statuses) =>
+              Option.contains(only(statuses).marks.nextDueAt, 6_000),
+            ),
+          ).marks.nextDueAt,
         ).toEqual(Option.some(6_000));
       }).pipe(Effect.ensuring(TestClock.setTime(0))),
     );
@@ -273,7 +286,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
     );
   }
 
-  it.effect("Bun requests each resume one pass after a storage-fault policy is exhausted", () =>
+  it.effect("Bun requests override binding backoff despite an exhausted pass policy", () =>
     Effect.gen(function* () {
       const source = yield* Source;
       const id = "exhausted-storage";
@@ -300,17 +313,26 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       const registry = yield* Projection.Registry;
       yield* registry.schedule(declaration.at({ id }));
       expect(
-        only(yield* eventually(registry.status, (statuses) => only(statuses).state === "failed"))
-          .state,
-      ).toBe("failed");
+        only(
+          yield* eventually(registry.status, (statuses) => only(statuses).marks.backingOff === 1),
+        ).state,
+      ).toBe("running");
       expect(yield* registry.retry(declaration)).toBe(1);
       expect(
-        only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 2)),
-      ).toMatchObject({ state: "failed", failures: 2, retryAt: Option.none() });
+        only(
+          yield* eventually(registry.status, (statuses) =>
+            Option.contains(only(statuses).marks.nextDueAt, 2_000),
+          ),
+        ),
+      ).toMatchObject({ state: "running", failures: 0, retryAt: Option.none() });
       yield* registry.schedule(declaration.at({ id }));
       expect(
-        only(yield* eventually(registry.status, (statuses) => only(statuses).failures === 3)),
-      ).toMatchObject({ state: "failed", queued: 1, failures: 3, retryAt: Option.none() });
+        only(
+          yield* eventually(registry.status, (statuses) =>
+            Option.contains(only(statuses).marks.nextDueAt, 4_000),
+          ),
+        ),
+      ).toMatchObject({ state: "running", queued: 0, failures: 0, retryAt: Option.none() });
       expect(runs).toBe(3);
     }),
   );

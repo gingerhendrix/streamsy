@@ -71,16 +71,31 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       yield* source.append({ id }, ["one"]);
       let broken = true;
 
-      const declaration = projection(
-        id,
-        Effect.suspend(() => (broken ? Effect.die("offline") : Effect.void)),
-      );
+      const declaration = projection(id);
+      const marks = yield* ProjectionMarks;
 
       yield* Layer.build(
         Projection.attach(declaration, {
+          durable: true,
           retry: Schedule.spaced("1 hour").pipe(
             Schedule.modifyDelay(() => Effect.die("broken policy")),
           ),
+        }),
+      ).pipe(
+        Effect.provideService(ProjectionMarks, {
+          ...marks,
+          due: (...args) =>
+            Effect.suspend(() =>
+              broken
+                ? Effect.fail(
+                    new StorageFault({
+                      operation: "marks.due",
+                      message: "offline",
+                      retryable: true,
+                    }),
+                  )
+                : marks.due(...args),
+            ),
         }),
       );
       const registry = yield* Projection.Registry;
@@ -89,7 +104,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         only(yield* eventually(registry.status, (statuses) => only(statuses).state === "failed")),
       ).toMatchObject({ failures: 1 });
       broken = false;
-      expect(yield* registry.retry(declaration)).toBe(1);
+      expect(yield* registry.retry(declaration)).toBe(0);
       expect(
         only(
           yield* eventually(

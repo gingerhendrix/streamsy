@@ -35,20 +35,6 @@ const group = Streamsy.group(Files, Wake, OtherWake);
 
 const options = { triggers: [Wake, OtherWake] };
 
-const readTriggers = <B>(triggers: {
-  readonly read: (
-    committed: (bindings: ReadonlyMap<string, B>) => void,
-  ) => Effect.Effect<void, StorageFault | import("@streamsy/projection").ProjectionFault>;
-}) =>
-  Effect.gen(function* () {
-    const ready = new Map<string, B>();
-    yield* triggers.read((bindings) => {
-      for (const [key, binding] of bindings) ready.set(key, binding);
-    });
-
-    return ready;
-  });
-
 const key = (folderId: string) => JSON.stringify({ folderId });
 
 const request = (folderId: string, wake: typeof Wake | typeof OtherWake = Wake) =>
@@ -138,14 +124,15 @@ for (const [name, host] of [
           yield* request("docs");
           yield* request("later", OtherWake);
           expect(yield* triggers.next).toBe(true);
-          expect((yield* readTriggers(triggers)).size).toBe(2);
+          yield* triggers.read;
+          expect((yield* marks.summary("cached-cursors", 0)).fresh).toBe(2);
           expect(yield* triggers.next).toBe(false);
-          expect((yield* readTriggers(triggers)).size).toBe(0);
+          yield* triggers.read;
           expect([...reads.values()]).toEqual([1, 1]);
 
           const restarted = yield* attach;
           expect(yield* restarted.next).toBe(false);
-          expect((yield* readTriggers(restarted)).size).toBe(0);
+          yield* restarted.read;
           expect([...reads.values()]).toEqual([2, 2]);
         }),
     ),
@@ -173,7 +160,7 @@ for (const [name, host] of [
 
         // Prime the in-memory cursor before the transaction advances the durable cursor.
         expect(yield* triggers.next).toBe(true);
-        expect(Exit.isFailure(yield* Effect.exit(readTriggers(triggers)))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(triggers.read))).toBe(true);
         expect(yield* triggers.next).toBe(false);
         expect((yield* marks.summary("interrupted-cursor", 0)).fresh).toBe(1);
       }),
@@ -379,7 +366,7 @@ for (const [name, host] of [
         yield* runner.run;
         expect(snapshots).toEqual([
           { active: 1, queued: 2 },
-          { active: 1, queued: 1 },
+          { active: 1, queued: 0 },
         ]);
 
         const events = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
@@ -387,7 +374,7 @@ for (const [name, host] of [
           Stream.runCollect,
         );
 
-        expect(Array.map(events, (event) => event._tag)).toEqual(["Failed", "Ran", "Dropped"]);
+        expect(Array.map(events, (event) => event._tag)).toEqual(["Failed", "Dropped", "Ran"]);
         expect((yield* registry.status)[0]).toMatchObject({ active: 0, queued: 0 });
       }),
     );

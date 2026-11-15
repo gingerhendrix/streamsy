@@ -39,7 +39,7 @@ export type RunnerEvent = Data.TaggedEnum<{
     readonly projection: string;
     readonly params: Readonly<Record<string, string>>;
     readonly attempts: number;
-    /** Durable binding deadline; None for non-durable bindings, which retry with their pass. */
+    /** Binding backoff deadline in either durability mode. */
     readonly dueAt: Option.Option<number>;
   };
   Dropped: {
@@ -54,15 +54,15 @@ export const RunnerEvent = Data.taggedEnum<RunnerEvent>();
 export interface RunnerStatus {
   readonly projection: string;
   readonly state: "running" | "retrying" | "failed";
-  /** Consecutive failed passes, rather than failed durable bindings. */
+  /** Consecutive failed passes, rather than failed bindings. */
   readonly failures: number;
   /** Set while waiting for an automatic or explicitly requested pass retry. */
   readonly retryAt: Option.Option<number>;
   readonly active: number;
   readonly queued: number;
   readonly lastPassAt: Option.Option<number>;
-  /** None for a non-durable runner. The three counts are disjoint. */
-  readonly marks: Option.Option<ProjectionMarkSummary>;
+  /** Binding marks in either durability mode. The four counts are disjoint. */
+  readonly marks: ProjectionMarkSummary;
 }
 
 export interface RegistryApi {

@@ -365,7 +365,9 @@ same<AttachOptions, Real.AttachOptions>(true);
 | `retry`    | Timing only. The runner calls the schedule once per failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)                  |
 | `durable`  | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach` |
 | `triggers` | Local fixed-address wake classes whose rows request binding runs. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)                                          |
-| `batch`    | With `durable`, the most due marks that a pass reads. The default is `25`                                                                                                             |
+| `batch`    | The most due marks that a pass reads. The default is `25`                                                                                                                             |
+
+In both modes, a failed binding waits alone, from 1 s doubling to 1 hour. Handler errors and defects follow the same rule. The `retry` schedule paces only pass failures reading marks, cursors or triggers.
 
 In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks and runs those bindings. When a binding fails, the runner defers its mark and logs a warning, and the other bindings still run. The deferred binding runs again after 1 s, and the wait doubles with each failure, up to 1 hour. The runner removes a mark whose params no longer decode, and logs a warning.
 

@@ -190,7 +190,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       expect((yield* pull)[0]).toMatchObject({
         _tag: "Failed",
         attempts: 1,
-        dueAt: Option.none(),
+        dueAt: Option.some(1_000),
       });
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(pass);
@@ -199,9 +199,10 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
 
   for (const exhausted of [false, true]) {
     it.effect(
-      `non-durable Failed reports binding attempts and no binding deadline (exhausted: ${exhausted})`,
+      `non-durable Failed reports binding attempts and a binding deadline (exhausted: ${exhausted})`,
       () =>
         Effect.gen(function* () {
+          yield* TestClock.setTime(0);
           const params = { id: `memory-failed-${exhausted}` };
           const source = yield* Source;
           yield* source.create(params);
@@ -220,17 +221,16 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             projection: declaration.id,
             params,
             attempts: 1,
-            dueAt: Option.none(),
+            dueAt: Option.some(1_000),
           });
 
-          if (exhausted) yield* registry.retry(declaration);
-          else yield* TestClock.adjust(1_000);
+          yield* TestClock.adjust(1_000);
           expect((yield* pull)[0]).toEqual({
             _tag: "Failed",
             projection: declaration.id,
             params,
             attempts: 2,
-            dueAt: Option.none(),
+            dueAt: Option.some(3_000),
           });
         }),
     );
@@ -399,7 +399,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           expect(waiting.pollUnsafe()).toBeUndefined();
           yield* registry.schedule(binding);
           const exit = yield* Effect.exit(wakeup.run);
-          expect(Exit.isSuccess(exit)).toBe(durable);
+          expect(Exit.isSuccess(exit)).toBe(true);
           yield* Fiber.join(waiting);
           expect((yield* Projection.read(binding)).offsets.source).toBe(receipt.offset);
         }),

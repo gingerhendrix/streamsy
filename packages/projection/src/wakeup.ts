@@ -24,7 +24,7 @@ interface WakeupHost {
  * Durable by default: each commit writes a pending mark for its bindings in
  * the same transaction, so an eviction or a deploy between the commit and the
  * alarm loses no work. The host's acquire reconcile reads the marks and arms
- * the alarm. Pass `durable: false` for the in-memory set only.
+ * the alarm. Pass `durable: false` for private memory marks that reset on eviction.
  */
 const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
   projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
