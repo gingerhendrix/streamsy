@@ -408,6 +408,20 @@ same<typeof attach, typeof Projection.attach>(true);
 - Inputs on another owner need a local [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
 - A binding whose source was removed before its first run is dropped, with a warning.
 
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
+
 ### Binding retry
 
 All five constructors (`fold`, `process`, `emit`, `mapAccum` and `mapAccumBatch`)
@@ -591,14 +605,14 @@ same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 
 `ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. A cold start makes stopped durable bindings due once. Stopped marks alone arm no alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections) on Cloudflare.
 
-| Field       | Meaning                                                                                                                                                          |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`      | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                 |
-| `next`      | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, the earliest due time of the marks. `None` when no binding has work |
-| `run`       | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                |
-| `retry`     | `options.passRetry`, or the `ProjectionRetry` schedule                                                                                                           |
-| `retryable` | Classifies pass failures: known non-retryable projection or storage faults stop automatic retries                                                                |
-| `deferred`  | The sum of retry-due, backing-off and stopped marks after a binding failure. It counts private memory marks when `durable` is `false`                            |
+| Field       | Meaning                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`      | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                                            |
+| `next`      | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, the earliest due time of the marks, including sleeping timers. `None` when no binding has work |
+| `run`       | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                                           |
+| `retry`     | `options.passRetry`, or the `ProjectionRetry` schedule                                                                                                                                      |
+| `retryable` | Classifies pass failures: known non-retryable projection or storage faults stop automatic retries                                                                                           |
+| `deferred`  | The sum of retry-due, backing-off and stopped marks after a binding failure. It counts private memory marks when `durable` is `false`                                                       |
 
 ## Reads
 
@@ -1323,7 +1337,7 @@ A bound projection from any constructor is an `Executable`. `BoundState` is the 
 
 ## `Projection.Registry`
 
-`RunnerStatus` reports the pass `failure`, stopped binding count and each trigger stream's optional failure, alongside `state`, `failures`, `retryAt`, `active`, `queued`, `lastPassAt` and the mark summary in both modes. `RunnerFailure` holds `at`, `retryable`, optional projection-fault `reason` and a message capped at 1,000 characters. A good drain clears the pass failure.
+`RunnerStatus` reports the pass `failure`, stopped binding count and each trigger stream's optional failure, alongside `state`, `failures`, `retryAt`, `active`, `queued`, `lastPassAt` and the mark summary in both modes. `RunnerFailure` holds `at`, `retryable`, optional projection-fault `reason` and a message capped at 1,000 characters. A good drain clears the pass failure. Its five disjoint `marks` counts include `sleeping`, which has a recorded wake and no failure and is excluded from deferred work.
 
 `registry.failed(target, { limit })` lists failed bindings, stopped first and then by deadline. Targets are projection ids, declarations or bindings. Each result has encoded `params`, `attempts`, optional `dueAt`, `stopped`, `exhausted` and the stored failure (`at`, optional `reason`, `message`). The limit defaults to 100 and must be an integer from 1 to 1,000; an invalid limit dies with `RangeError`. Durable failures survive eviction.
 
@@ -1333,6 +1347,6 @@ Runner attachment requires `Registry.layer`. A hand-built `Registry.of(...)` val
 
 The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` resolves by `binding.id` and decodes its encoded params with the attached declaration. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. `schedule` fails with the exported `InvalidBinding { projection, params }` tagged error when encoded params do not round-trip through the attached declaration, including missing or extra keys. `retry` with those params returns zero. Neither request checks version or generation. Both requests end the current wait and start one pass. A projection-level retry also resumes stopped trigger streams. The return count includes only changed binding marks. Requests retain the pass schedule; after exhaustion another failed requested pass returns to `failed` with no automatic delay. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
 
-`registry.events` streams future `RunnerEvent` observations. The exported `RunnerEvent` value provides constructors, `$is` and `$match`. `Ran`, `Failed` and `Dropped` all carry `projection: string` and `params: Readonly<Record<string, string>>`. `Projection.Registry.isFor(binding)` matches both the id and encoded params, regardless of key order. `Ran` adds status, units and offsets; `Failed` adds attempts, `dueAt`, `failure` and `stopped`. A backoff has `Some(dueAt)` in both modes; a stop has `None`. Events use unbounded buffering; scope subscriptions to release them.
+`registry.events` streams future `RunnerEvent` observations. The exported `RunnerEvent` value provides constructors, `$is` and `$match`. `Ran`, `Failed` and `Dropped` all carry `projection: string` and `params: Readonly<Record<string, string>>`. `Projection.Registry.isFor(binding)` matches both the id and encoded params, regardless of key order. `Ran` adds status, units, offsets and `wakeAt: Option<number>` from the completed run; `Failed` adds attempts, `dueAt`, `failure` and `stopped`. A backoff has `Some(dueAt)` in both modes; a stop has `None`. Events use unbounded buffering; scope subscriptions to release them.
 
 `registry.awaitOffset(binding, input, offset)` waits until the binding's checkpoint for the named input reaches or exceeds the offset. It subscribes before calling `Projection.read`, then consumes matching `Ran` events and rereads the checkpoint on matching `Failed` events to include progress committed before a later unit failed. A binding whose version or generation differs from the attached runner fails with `ProjectionFault` (phase `load`, reason `identity-mismatch`) before the checkpoint read. It requires the checkpoint read's services and fails with `NotAttached` or `ProjectionFault`. It has no timeout: callers add `Effect.timeout`. Its subscription closes on completion or interruption. This observes one live process or object instance.

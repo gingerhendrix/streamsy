@@ -75,7 +75,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       if (url === undefined) return;
 
       // MySQL may have committed any subset of the v3 additions before a crash.
-      for (const prefix of dialect.name === "mysql" ? [0, 1, 2, 3, 4] : [0]) {
+      for (const prefix of dialect.name === "mysql" ? [0, 1, 2, 3, 4, 5] : [0]) {
         const result = await Effect.runPromise(
           withFreshDatabase(dialect, url, (fresh) =>
             Effect.gen(function* () {
@@ -117,6 +117,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             seq: 7,
             attempts: 3,
             dueAt: 1234567890123,
+            wakeAt: Option.none(),
             stopped: false,
             failure: Option.none(),
           },

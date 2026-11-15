@@ -9,7 +9,7 @@ export interface MarkFailure {
   readonly message: string;
 }
 
-/** One pending mark: a binding whose input has commits that may not have run. */
+/** One pending mark: a binding with input work, a retry, or a recorded wake. */
 export interface PendingMark {
   /** The binding's canonical params, as `canonicalParams` encodes them. */
   readonly params: string;
@@ -19,6 +19,8 @@ export interface PendingMark {
   readonly attempts: number;
   /** Epoch ms. 0 means due now; ignored while stopped. */
   readonly dueAt: number;
+  /** Recorded wake; when set, equals dueAt and the row has no failure or attempts. */
+  readonly wakeAt: Option.Option<number>;
   /** Waits until retry or resume. A mark preserves the stop. */
   readonly stopped: boolean;
   readonly failure: Option.Option<MarkFailure>;
@@ -27,10 +29,11 @@ export interface PendingMark {
 /** Disjoint counts of one projection's marks at the supplied time. */
 export interface ProjectionMarkSummary {
   readonly fresh: number;
+  readonly sleeping: number;
   readonly retryDue: number;
   readonly backingOff: number;
   readonly stopped: number;
-  /** Earliest due time across non-stopped marks, including fresh marks. */
+  /** Earliest due time across non-stopped marks, including fresh and sleeping marks. */
   readonly nextDueAt: Option.Option<number>;
 }
 
@@ -43,7 +46,8 @@ export interface ProjectionMarkSummary {
 export interface ProjectionMarksApi {
   /**
    * Insert a mark for each binding, or raise its `seq`. A raise keeps
-   * `attempts`, `dueAt`, `stopped` and `failure`, so a write never resets backoff or a stop.
+   * `attempts`, `stopped` and `failure`, so a write never resets backoff or a stop.
+   * A sleeping row becomes due now and loses its wake index.
    * Call it inside a commit hook. It joins the transaction and fails like the
    * transaction's own statements.
    */
@@ -53,7 +57,7 @@ export interface ProjectionMarksApi {
   ) => Effect.Effect<void, SqlError.SqlError>;
   /** The earliest `dueAt` of the projection's non-stopped marks. */
   readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
-  /** Four disjoint counts: fresh, retry due, backing off and stopped. */
+  /** Five disjoint counts: fresh, sleeping, retry due, backing off and stopped. */
   readonly summary: (
     projection: string,
     now: number,
@@ -69,11 +73,19 @@ export interface ProjectionMarksApi {
     projection: string,
     params: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyMap<string, PendingMark>, StorageFault>;
-  /** Delete on a matching `seq`; otherwise keep the row and reset its failure, attempts, dueAt and stop. */
+  /** Delete on a matching `seq`; otherwise keep the row and reset its failure, attempts, dueAt, wakeAt and stop. */
   readonly clear: (
     projection: string,
     params: string,
     seq: number,
+  ) => Effect.Effect<void, StorageFault>;
+  /** Keep a matching row asleep at wakeAt and reset failure state. A seq mismatch
+   * becomes fresh and due now. An absent row is inserted asleep with seq 1. */
+  readonly sleep: (
+    projection: string,
+    params: string,
+    seq: number,
+    wakeAt: number,
   ) => Effect.Effect<void, StorageFault>;
   /** Delete the mark whatever its `seq`. */
   readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;

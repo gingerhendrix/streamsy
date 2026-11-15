@@ -81,7 +81,21 @@ checkpoint; a failed write rolls them all back.
 the time. They do not wait for the deadline. `follow` can discover it on an input
 change or repair cycle. A cycle commits at most one due unit without input, even
 when the handler returns a time already passed. Return a time after `unit.due`
-for the next wake. Deadline scheduling in the attach hosts follows in the same release.
+for the next wake. `Projection.attach` and `ProjectionWakeup.attach` wake at the recorded deadline.
+
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
 
 ## SQL tables
 

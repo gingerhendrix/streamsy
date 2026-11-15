@@ -39,7 +39,14 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           failure: Option.none(),
           stopped: 0,
           triggers: [],
-          marks: { fresh: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: Option.none() },
+          marks: {
+            fresh: 0,
+            sleeping: 0,
+            retryDue: 0,
+            backingOff: 0,
+            stopped: 0,
+            nextDueAt: Option.none(),
+          },
         },
       ];
 
@@ -63,6 +70,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       ]);
       expect((yield* registry.status)[1]?.marks).toEqual({
         fresh: 0,
+        sleeping: 0,
         retryDue: 0,
         backingOff: 0,
         stopped: 0,
@@ -113,6 +121,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         expect(durable).toMatchObject({ active: 0, queued: 0, state: "running", failures: 0 });
         expect(durable.marks).toEqual({
           fresh: 0,
+          sleeping: 0,
           retryDue: 0,
           backingOff: 0,
           stopped: 0,
@@ -157,6 +166,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         expect(status.active).toBe(1);
         expect(status.marks).toEqual({
           fresh: 2,
+          sleeping: 0,
           retryDue: 1,
           backingOff: 1,
           stopped: 0,
@@ -212,7 +222,14 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       expect(only(yield* registry.status)).toMatchObject({
         active: 1,
         queued: 0,
-        marks: { fresh: 1, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: Option.some(0) },
+        marks: {
+          fresh: 1,
+          sleeping: 0,
+          retryDue: 0,
+          backingOff: 0,
+          stopped: 0,
+          nextDueAt: Option.some(0),
+        },
       });
     }),
   );
@@ -489,6 +506,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           expect(recovered).toMatchObject({ projection: declaration.id, active: 0, queued: 0 });
           expect(recovered.marks).toEqual({
             fresh: 0,
+            sleeping: 0,
             retryDue: 0,
             backingOff: 0,
             stopped: 0,

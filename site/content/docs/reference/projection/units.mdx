@@ -378,9 +378,11 @@ An attach options object that still contains `retry` throws a `RangeError` namin
 
 See [Binding concurrency](/docs/reference/projection/runners#binding-concurrency) for transaction, pool and handler rules.
 
+With `durable: false`, pending work and timers reset on restart; a recorded timer then waits for its next input.
+
 In both modes, a retryable failed binding uses the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), defaulting to 1 s doubling to 1 hour. Handler errors and defects follow the same rule. A non-retryable projection or storage fault stops its binding until retry, schedule or restart. The `passRetry` schedule paces retryable failures of the runner's own marks, cursor or trigger operations.
 
-In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks and runs those bindings. When a binding fails, the runner backs off or stops its mark and logs a warning, and the other bindings still run. A start makes stopped marks due once. By default a retryable failure starts a 1 s wait, doubling with consecutive failures up to 1 hour. The declaration's `retry` can change its timing and budget. The runner removes a mark whose params no longer decode, and logs a warning.
+In durable mode, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. A binding that catches up keeps a sleeping mark when its checkpoint records a wake; otherwise it deletes its mark, unless a write during the run marked it again. After a restart, an eviction, or a deploy, the runner reads the marks, runs due bindings and retains future timer deadlines. When a binding fails, the runner backs off or stops its mark and logs a warning, and the other bindings still run. A start makes stopped marks due once. By default a retryable failure starts a 1 s wait, doubling with consecutive failures up to 1 hour. The declaration's `retry` can change its timing and budget. The runner removes a mark whose params no longer decode, and logs a warning.
 
 Durable mode needs a local memory or SQL storage Layer, which provides the projection marks. Over other storage, such as remote storage, acquiring the runner dies. The runner throws a `RangeError` when `batch` is not a positive safe integer.
 

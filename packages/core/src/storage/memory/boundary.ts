@@ -159,6 +159,8 @@ export const makeBoundary = (
       read: (projection, params) => readMarks((table) => Marks.read(table, projection, params)),
       clear: (projection, params, seq) =>
         writeMarks((table) => Marks.clear(table, projection, params, seq)),
+      sleep: (projection, params, seq, wakeAt) =>
+        writeMarks((table) => Marks.sleep(table, projection, params, seq, wakeAt)),
       remove: (projection, params) =>
         writeMarks((table) => Marks.remove(table, projection, params)),
       fail: (projection, params, options) =>

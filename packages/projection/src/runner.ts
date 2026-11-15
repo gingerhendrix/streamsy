@@ -28,11 +28,15 @@ import { InvalidBinding, ProjectionFault } from "./fault.ts";
 import { canonicalParams, withParams, type Unit } from "./unit.ts";
 import { catchUp, progressOf, type RunContext } from "./run.ts";
 import { bindingDelay } from "./binding-retry.ts";
+
 import { Registry, RunnerEvent, eventPublisher, type RunnerFailure } from "./registry.ts";
 import { runnerFailure } from "./failure.ts";
 import { triggersOf } from "./triggers.ts";
 import { storageFault } from "./storage-fault.ts";
 import type { WakeOutput } from "./wake.ts";
+
+/** Re-read wall time after a suspended host resumes, even for distant deadlines. */
+const MAX_DUE_WAIT_MS = 30_000;
 
 export const DEFAULT_LIMIT = 100;
 
@@ -307,6 +311,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
                       status: progress.status,
                       units: progress.units,
                       offsets: progress.offsets,
+                      wakeAt: progress.wakeAt,
                     }),
                   ),
                 ),
@@ -400,7 +405,12 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
       // Wake on a commit or when the earliest deferred mark falls due.
       return yield* delay <= 0
         ? Effect.void
-        : take.pipe(Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.void }));
+        : take.pipe(
+            Effect.timeoutOrElse({
+              duration: Math.min(delay, MAX_DUE_WAIT_MS),
+              orElse: () => Effect.void,
+            }),
+          );
     });
 
     /** Wait for a commit or the next due mark. */
@@ -487,6 +497,8 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
 
           if (Exit.isSuccess(exit)) {
             if (exit.value.status === "limit-reached") pending.set(key, binding);
+            else if (Option.isSome(exit.value.wakeAt))
+              yield* marks.sleep(id, key, state?.seq ?? 0, exit.value.wakeAt.value);
             else if (state !== undefined) yield* marks.clear(id, key, state.seq);
 
             return;

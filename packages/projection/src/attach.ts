@@ -26,7 +26,8 @@ export interface AttachOptions {
    * Keep a pending mark for each binding in the storage owner, written in the
    * transaction of the commit that needs the run. After a restart or an
    * eviction, the runner finds the marks and runs those bindings. Otherwise
-   * pending work, binding backoff and stops live only for this runner.
+   * pending work, timers, binding backoff and stops live only for this runner.
+   * A non-durable timer loses its wake on restart until its next input.
    * Needs a local memory or SQL storage layer.
    *
    * Default: false for `Projection.attach`, true for `ProjectionWakeup.attach`.
@@ -58,7 +59,9 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * By default the set of bindings with work lives in memory. A crash after a
  * commit and before the run leaves that binding late until its source gets its
  * next write. With `durable: true`, a pending mark in storage covers that
- * window, and the layer runs due marks when it starts.
+ * window, and the layer runs due marks when it starts. Recorded process timers
+ * wake at their deadline; after host suspend, a capped wait rechecks within 30 s.
+ * Return a time after unit.due to avoid repeatedly running a passed deadline.
  * Inputs on another owner need a local wake stream in `triggers`. Do not run
  * an attached binding under `Projection.follow` too: use one writer per key.
  *

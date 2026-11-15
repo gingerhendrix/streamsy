@@ -136,7 +136,7 @@ Object hosts acquire `ProjectionWakeup.attach(projection)` from
 `@streamsy/projection` in their scope through `wakeups: [...]`. Local
 `Storage.committed` events populate its in-memory pending set, and each commit
 writes a durable pending mark in the same transaction. Alarms drain bounded
-passes. After an eviction, acquisition reads the marks and arms the alarm.
+passes. Sleeping process timers arm the alarm at their recorded deadline. After an eviction, acquisition reads the durable marks and restores timer alarms. With `durable: false`, pending work and timer wakes reset on eviction until the binding's next input.
 `passRetry` on attach takes an Effect `Schedule` for pass failures in marks, cursor
 or trigger operations; finite schedules stop those retries on exhaustion. A retryable failed binding
 waits alone, by default 1 s doubling to 1 hour, in both durability modes; the declaration's `retry` sets a schedule, budget and exhaustion hook. A non-retryable projection

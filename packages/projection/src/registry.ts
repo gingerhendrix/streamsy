@@ -42,6 +42,8 @@ export type RunnerEvent = Data.TaggedEnum<{
     readonly status: Progress<unknown>["status"];
     readonly units: number;
     readonly offsets: Readonly<Record<string, string>>;
+    /** Next recorded process wake after this run. */
+    readonly wakeAt: Option.Option<number>;
   };
   Failed: {
     readonly projection: string;
@@ -71,7 +73,7 @@ export interface RunnerStatus {
   readonly active: number;
   readonly queued: number;
   readonly lastPassAt: Option.Option<number>;
-  /** Binding marks in either durability mode. The four counts are disjoint. */
+  /** Binding marks in either durability mode. The five counts are disjoint. */
   readonly marks: ProjectionMarkSummary;
   /** Last pass failure, cleared by a successful drain. */
   readonly failure: Option.Option<RunnerFailure>;

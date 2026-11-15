@@ -191,6 +191,12 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       params: string,
       seq: number,
     ) => Effect.Effect<void, StorageFault>;
+    readonly sleep: (
+      projection: string,
+      params: string,
+      seq: number,
+      wakeAt: number,
+    ) => Effect.Effect<void, StorageFault>;
     readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
     readonly fail: (
       projection: string,
@@ -213,18 +219,20 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
 // Disjoint counts of one projection's marks at the supplied time.
 interface ProjectionMarkSummary {
   readonly fresh: number;
+  readonly sleeping: number;
   readonly retryDue: number;
   readonly backingOff: number;
   readonly stopped: number;
   readonly nextDueAt: Option.Option<number>;
 }
 
-// One pending mark: a binding whose input has commits that may not have run yet.
+// One pending mark: a binding with input work, a retry, or a recorded wake.
 interface PendingMark {
   readonly params: string;
   readonly seq: number;
   readonly attempts: number;
   readonly dueAt: number;
+  readonly wakeAt: Option.Option<number>;
   readonly stopped: boolean;
   readonly failure: Option.Option<MarkFailure>;
 }
@@ -247,9 +255,10 @@ The rules for these services are those of [`SqlStorage`](/docs/reference/storage
 
 `ProjectionMarks.mark` runs inside the commit hook and fails with `SqlError`; the other mark operations fail with `StorageFault`.
 
-- `summary(projection, now)` returns four disjoint counts: fresh, retry due, backing off and stopped. Its earliest due time excludes stopped marks, as do `nextDue` and `due`.
-- `mark` raises the sequence without changing attempts, due time, stop or failure. `fail(projection, params, { attempts, failure, dueAt })` preserves the sequence, inserts an absent mark, and records the failure with its message cut to 1,000 characters. `Some(dueAt)` backs off; `None` stops.
-- `clear` deletes on a matching sequence; a moved sequence keeps the row but resets attempts, due time, stop and failure.
-- `retry(projection, params?)` makes failed or stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed; a repeat before the marks run returns zero. It can select one binding by canonical params.
-- `resume(projection)` makes only stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed.
+- `summary(projection, now)` returns five disjoint counts: fresh, sleeping, retry due, backing off and stopped. Fresh rows have no wake and no failed attempts; sleeping rows have a wake and no failure or attempts. Its earliest due time includes sleeping marks and excludes stopped marks, as do `nextDue` and `due`.
+- `mark` raises the sequence, preserving attempts, stops and failure. A sleeping row becomes due now and clears its wake; other rows keep their due time, so writes never shorten backoff. `fail(projection, params, { attempts, failure, dueAt })` preserves the sequence, inserts an absent mark, and records the failure with its message cut to 1,000 characters. `Some(dueAt)` backs off; `None` stops. Both clear the wake index.
+- `clear` deletes on a matching sequence; a moved sequence keeps the row but resets attempts, due time, wake, stop and failure.
+- `sleep(projection, params, seq, wakeAt)` resets failure state and keeps a matching row with `dueAt` and `wakeAt` both set to the deadline. A moved sequence becomes fresh and due now; an absent row is inserted asleep with sequence 1. Past wake times are stored unchanged. The SQL store uses the existing `(projection, due_at)` index for both retries and sleeps.
+- `retry(projection, params?)` makes failed or stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed; a repeat before the marks run returns zero. Sleeping rows are left alone. It can select one binding by canonical params.
+- `resume(projection)` makes only stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed. Sleeping rows are left alone.
 - `failed(projection, limit)` lists at most `limit` marks with failed attempts, stopped first, then by due time and params. The old marks-level `deferred` count is `summary.retryDue + summary.backingOff + summary.stopped`.

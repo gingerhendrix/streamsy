@@ -231,7 +231,7 @@ Each input must give every projection param, so that one id picks one binding.
 never commit here, so they never trigger. Do not also run an attached binding
 under `Projection.follow`.
 
-By default `Projection.attach` keeps pending binding marks and backoff in private memory.
+By default `Projection.attach` keeps pending binding marks, timers and backoff in private memory.
 In both modes a retryable failed binding waits alone, by default from 1 s doubling to 1 hour, while
 its neighbours run. A non-retryable projection or storage fault stops only the binding that failed.
 Handler errors and defects retry. A local commit or trigger row does not shorten backoff or end a stop;
@@ -245,8 +245,9 @@ file does not show.
 
 Pass `durable: true` to close that gap. Each commit then also writes a pending
 mark for each binding it touches, in the same transaction, to
-`streamsy_projection_pending`. A binding that catches up deletes its mark,
-unless a write during the run marked it again. When the layer starts, it runs
+`streamsy_projection_pending`. A binding that catches up keeps a sleeping mark
+when its checkpoint records a wake; otherwise it deletes its mark, unless a write
+during the run marked it again. When the layer starts, it runs
 the bindings with due marks, up to `batch` (default 25) per pass. Durable mode needs a local memory or SQL storage layer.
 
 On Cloudflare, acquire a wakeup in the object's layer scope. Local commits
@@ -254,7 +255,7 @@ fill the same runner's pending set; `next` answers "now" while it has work,
 and each alarm drains one pass (100 units per binding by default).
 `ProjectionWakeup.attach` is durable by default, because Cloudflare evicts idle
 objects. After an eviction or a deploy, the object's acquire reads the marks
-and arms the alarm. Pass `durable: false` for private memory marks that reset on eviction.
+and arms the alarm, including sleeping timer deadlines. Pass `durable: false` for private memory marks and timers that reset on eviction until the binding's next input.
 
 ```ts
 StreamsyObject.make({
@@ -326,7 +327,20 @@ from `unit.due`; read `Clock` only to choose a late policy.
 for the deadline; `follow` can discover it on an input change or repair cycle.
 A `run` cycle makes at most one due unit without input, even if its handler returns
 a time already passed. Return a time after `unit.due` for the next wake.
-Hosts waking at the deadline follow in the same release.
+
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
 
 ## Run and recover
 

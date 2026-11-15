@@ -436,6 +436,7 @@ export const StorageContract = {
               seq: 2,
               attempts: 3,
               dueAt: 0,
+              wakeAt: Option.none(),
               stopped: false,
               failure: Option.some({ at: 1, reason: Option.none(), message: "failed" }),
             });
@@ -470,6 +471,7 @@ export const StorageContract = {
               seq: 2,
               attempts: 0,
               dueAt: 0,
+              wakeAt: Option.none(),
               stopped: false,
               failure: Option.none(),
             });
@@ -478,6 +480,7 @@ export const StorageContract = {
               seq: 1,
               attempts: 0,
               dueAt: 0,
+              wakeAt: Option.none(),
               stopped: false,
               failure: Option.none(),
             });
@@ -503,6 +506,7 @@ export const StorageContract = {
               seq: 2,
               attempts: 1,
               dueAt: 5_000,
+              wakeAt: Option.none(),
               stopped: false,
               failure: Option.some({ at: 1, reason: Option.none(), message: "failed" }),
             });
@@ -554,6 +558,7 @@ export const StorageContract = {
           Effect.gen(function* () {
             expect(yield* marks.summary("summary", 3_000)).toEqual({
               fresh: 0,
+              sleeping: 0,
               retryDue: 0,
               backingOff: 0,
               stopped: 0,
@@ -582,6 +587,7 @@ export const StorageContract = {
             });
             expect(yield* marks.summary("summary", 3_000)).toEqual({
               fresh: 1,
+              sleeping: 0,
               retryDue: 2,
               backingOff: 1,
               stopped: 0,
@@ -590,6 +596,7 @@ export const StorageContract = {
             yield* marks.remove("summary", "fresh");
             expect(yield* marks.summary("summary", 1_000)).toEqual({
               fresh: 0,
+              sleeping: 0,
               retryDue: 0,
               backingOff: 3,
               stopped: 0,
@@ -597,6 +604,7 @@ export const StorageContract = {
             });
             expect(yield* marks.summary("summary", 4_000)).toEqual({
               fresh: 0,
+              sleeping: 0,
               retryDue: 3,
               backingOff: 0,
               stopped: 0,

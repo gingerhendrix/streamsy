@@ -35,8 +35,21 @@ export const mark = (marks: MarkTable, projection: string, params: ReadonlyArray
     rows.set(
       value,
       found === undefined
-        ? { params: value, seq: 1, attempts: 0, dueAt: 0, stopped: false, failure: Option.none() }
-        : { ...found, seq: found.seq + 1 },
+        ? {
+            params: value,
+            seq: 1,
+            attempts: 0,
+            dueAt: 0,
+            stopped: false,
+            wakeAt: Option.none(),
+            failure: Option.none(),
+          }
+        : {
+            ...found,
+            seq: found.seq + 1,
+            dueAt: Option.isSome(found.wakeAt) ? 0 : found.dueAt,
+            wakeAt: Option.none(),
+          },
     );
   }
 };
@@ -81,7 +94,37 @@ export const clear = (marks: MarkTable, projection: string, params: string, seq:
   if (rows === undefined || row === undefined) return;
 
   if (row.seq === seq) rows.delete(params);
-  else rows.set(params, { ...row, attempts: 0, dueAt: 0, stopped: false, failure: Option.none() });
+  else
+    rows.set(params, {
+      ...row,
+      attempts: 0,
+      dueAt: 0,
+      stopped: false,
+      wakeAt: Option.none(),
+      failure: Option.none(),
+    });
+};
+
+/** Sleep only the seq that ran; a concurrent write must run before it can sleep. */
+export const sleep = (
+  marks: MarkTable,
+  projection: string,
+  params: string,
+  seq: number,
+  wakeAt: number,
+) => {
+  const rows = rowsOf(marks, projection);
+  const row = rows.get(params);
+  const matching = row === undefined || row.seq === seq;
+  rows.set(params, {
+    params,
+    seq: row?.seq ?? 1,
+    attempts: 0,
+    dueAt: matching ? wakeAt : 0,
+    wakeAt: matching ? Option.some(wakeAt) : Option.none(),
+    stopped: false,
+    failure: Option.none(),
+  });
 };
 
 export const remove = (marks: MarkTable, projection: string, params: string) => {
@@ -102,6 +145,7 @@ export const fail = (
     attempts: options.attempts,
     dueAt: Option.getOrElse(options.dueAt, () => 0),
     stopped: Option.isNone(options.dueAt),
+    wakeAt: Option.none(),
     failure: Option.some({ ...options.failure, message: options.failure.message.slice(0, 1_000) }),
   });
 };
@@ -156,6 +200,7 @@ export const summary = (
   now: number,
 ): ProjectionMarkSummary => {
   let fresh = 0;
+  let sleeping = 0;
   let retryDue = 0;
   let backingOff = 0;
   let stopped = 0;
@@ -167,13 +212,21 @@ export const summary = (
       continue;
     }
 
-    if (row.attempts === 0) fresh += 1;
+    if (Option.isSome(row.wakeAt)) sleeping += 1;
+    else if (row.attempts === 0) fresh += 1;
     else if (row.dueAt <= now) retryDue += 1;
     else backingOff += 1;
     earliest = earliest === undefined ? row.dueAt : Math.min(earliest, row.dueAt);
   }
 
-  return { fresh, retryDue, backingOff, stopped, nextDueAt: Option.fromUndefinedOr(earliest) };
+  return {
+    fresh,
+    sleeping,
+    retryDue,
+    backingOff,
+    stopped,
+    nextDueAt: Option.fromUndefinedOr(earliest),
+  };
 };
 
 /** A new private marks store. Each operation runs synchronously when its Effect executes. */
@@ -187,6 +240,8 @@ export const memoryProjectionMarks = (): ProjectionMarksApi => {
     due: (projection, now, limit) => Effect.sync(() => due(table, projection, now, limit)),
     read: (projection, params) => Effect.sync(() => read(table, projection, params)),
     clear: (projection, params, seq) => Effect.sync(() => clear(table, projection, params, seq)),
+    sleep: (projection, params, seq, wakeAt) =>
+      Effect.sync(() => sleep(table, projection, params, seq, wakeAt)),
     remove: (projection, params) => Effect.sync(() => remove(table, projection, params)),
     fail: (projection, params, options) =>
       Effect.sync(() => fail(table, projection, params, options)),

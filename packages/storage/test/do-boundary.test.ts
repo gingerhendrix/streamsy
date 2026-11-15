@@ -120,9 +120,9 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
       capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
       marksContractPassed: true,
       markSummaries: {
-        empty: { fresh: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: null },
-        mixed: { fresh: 1, retryDue: 2, backingOff: 1, stopped: 0, nextDueAt: 0 },
-        allDue: { fresh: 0, retryDue: 3, backingOff: 0, stopped: 0, nextDueAt: 2_000 },
+        empty: { fresh: 0, sleeping: 0, retryDue: 0, backingOff: 0, stopped: 0, nextDueAt: null },
+        mixed: { fresh: 1, sleeping: 0, retryDue: 2, backingOff: 1, stopped: 0, nextDueAt: 0 },
+        allDue: { fresh: 0, sleeping: 0, retryDue: 3, backingOff: 0, stopped: 0, nextDueAt: 2_000 },
       },
     },
   });
@@ -162,6 +162,7 @@ test("Durable Object acquisition upgrades v2 marks and can reopen v3", async () 
         seq: 7,
         attempts: 3,
         dueAt: 1234567890123,
+        wakeAt: { _id: "Option", _tag: "None" },
         stopped: false,
         failure: { _id: "Option", _tag: "None" },
       },

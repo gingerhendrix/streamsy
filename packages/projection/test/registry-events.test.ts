@@ -99,6 +99,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
           expect(events).toEqual([
             {
               _tag: "Ran",
+              wakeAt: Option.none(),
               projection: declaration.id,
               params,
               status: "limit-reached",
@@ -107,6 +108,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             },
             {
               _tag: "Ran",
+              wakeAt: Option.none(),
               projection: declaration.id,
               params,
               status: "limit-reached",
@@ -115,6 +117,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
             },
             {
               _tag: "Ran",
+              wakeAt: Option.none(),
               projection: declaration.id,
               params,
               status: "caught-up",
@@ -294,6 +297,7 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       expect(yield* late).toEqual([
         {
           _tag: "Ran",
+          wakeAt: Option.none(),
           projection: "one",
           params,
           status: "caught-up",

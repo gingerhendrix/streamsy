@@ -160,7 +160,7 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
 ) ENGINE=InnoDB`,
     ],
   },
-  // 3: explicit stops and the last binding failure. MySQL additions are guarded
+  // 3: explicit stops, the last binding failure and recorded process wakes. MySQL additions are guarded
   // by information_schema.columns in the migration runner under its named lock.
   {
     sqlite: [
@@ -168,18 +168,21 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
     ],
     pg: [
       `ALTER TABLE streamsy_projection_pending ADD COLUMN stopped SMALLINT NOT NULL DEFAULT 0`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
     ],
     mysql: [
       `ALTER TABLE streamsy_projection_pending ADD COLUMN stopped SMALLINT NOT NULL DEFAULT 0`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
     ],
   },
 ];

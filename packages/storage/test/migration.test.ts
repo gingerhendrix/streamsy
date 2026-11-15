@@ -165,6 +165,7 @@ test("public Bun acquisition upgrades v2 marks without changing seq, attempts or
     seq: 7,
     attempts: 3,
     dueAt: 1234567890123,
+    wakeAt: Option.none(),
     stopped: false,
     failure: Option.none(),
   });
@@ -175,10 +176,16 @@ test("public Bun acquisition upgrades v2 marks without changing seq, attempts or
   expect(
     upgraded
       .query(
-        "SELECT stopped, failed_at, failure_reason, failure_message FROM streamsy_projection_pending",
+        "SELECT stopped, failed_at, failure_reason, failure_message, wake_at FROM streamsy_projection_pending",
       )
       .get(),
-  ).toEqual({ stopped: 0, failed_at: null, failure_reason: null, failure_message: null });
+  ).toEqual({
+    stopped: 0,
+    failed_at: null,
+    failure_reason: null,
+    failure_message: null,
+    wake_at: null,
+  });
   upgraded.close(false);
 });
 
