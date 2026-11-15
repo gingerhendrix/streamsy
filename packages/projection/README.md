@@ -145,8 +145,9 @@ const filesWake = Projection.wake({
 ```
 
 Here `Files.at` takes `user` and `folderId`, and `UserWake.at` takes
-`user`. Each Files id supplies both params for attachment. The wake stream can live on another owner. The producer creates it on
-the first append, and a retry answers `Duplicate`, so delivery is effectively
+`user`. Each Files id supplies both params for attachment. The wake stream can live
+on another owner, where its owner must create it before the first append. The producer
+creates a missing output on its checkpoint owner only. A retry answers `Duplicate`, so delivery is effectively
 once for each binding. Rows of one source arrive in source order. A reader that
 comes before the first append gets 404 unless the owner calls the normal State
 service's `create` to make an empty stream available. `Streamsy.wake` is a State
@@ -221,7 +222,7 @@ its binding on its first commit, and the app names no bindings.
 ```ts
 const host = Layer.mergeAll(Api, Projection.attach(filesWake)).pipe(
   Layer.provideMerge(CheckpointStore.layer),
-  Layer.provideMerge(BunStorage.layer(streams, { path })),
+  Layer.provideMerge(BunStorage.layer(streams, { client: { filename: path } })),
 );
 ```
 
@@ -246,7 +247,7 @@ Pass `durable: true` to close that gap. Each commit then also writes a pending
 mark for each binding it touches, in the same transaction, to
 `streamsy_projection_pending`. A binding that catches up deletes its mark,
 unless a write during the run marked it again. When the layer starts, it runs
-the bindings that still have marks, up to `batch` (default 25) per pass. Durable mode needs a local memory or SQL storage layer.
+the bindings with due marks, up to `batch` (default 25) per pass. Durable mode needs a local memory or SQL storage layer.
 
 On Cloudflare, acquire a wakeup in the object's layer scope. Local commits
 fill the same runner's pending set; `next` answers "now" while it has work,
@@ -267,7 +268,7 @@ Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner c
 the schedule once per retryable failed pass with no input. Bun waits for its delays; the
 alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.
 A finite schedule stops pass retries when exhausted. Binding failures use their own
-backoff; the pass policy paces failures reading marks, cursors or triggers.
+backoff; the pass policy paces failures in marks, cursor or trigger operations.
 
 SQL hosts keep checkpoints in `streamsy_owner_records`. Older projection tables
 are not migrated or read; projections rebuild from zero.

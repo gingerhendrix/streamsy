@@ -428,7 +428,7 @@ same<Wakeups, Cloudflare.Wakeups>(true);
 
 Call `touch` before the handler returns. When a streamed body queues work after the handler returns, call `reconcile` instead. Work outside a request also calls `reconcile`.
 
-`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. `deferred` is the count that the `deferred` field of the wakeup reports, such as the deferred bindings of a durable [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). When `next` or `deferred` fails inside `status`, `status` dies.
+`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. `deferred` is the count that the `deferred` field of the wakeup reports, such as failed bindings, including stopped ones, in either durability mode of a [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). When `next` or `deferred` fails inside `status`, `status` dies.
 
 ### `Cloudflare.alarmSlotLayer`
 

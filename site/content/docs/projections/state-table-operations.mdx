@@ -24,7 +24,7 @@ A fold fix folds every source again from zero into empty rows. It uses the `gene
 1. Stop the old runners of every projection that writes the stream.
 2. Run `StateTable.reset(table)`. It appends a `reset`, which clears every row of the stream.
 3. Deploy every projection that writes the stream with a raised `generation`.
-4. Run each source address once. `attach` runs a binding only when its source gets a write, so a source with no new write stays unfolded until you run it.
+4. Run each source address once. A source with no pending mark or new source write or trigger request stays unfolded until you run or schedule its binding.
 
 A `reset` clears the whole stream, so the fix folds again every projection that writes it, not only the one with the bug. Readers see the rows empty and then fill again. Choose a time when that is acceptable.
 
@@ -63,14 +63,14 @@ A checkpoint that an operator moves by hand, to skip a bad record, needs no step
 
 ## Faults and recovery
 
-The table binding, `sync` and `rebuild` fail only with a `ProjectionFault`: when SQL or the stream storage fails (reason `storage-failure`, retryable), when the history after the head is gone (`history-unavailable`), or when a stored message is not a State message (`invalid-record`). Recovery is the usual projection recovery. A binding retries on its own backoff. You can also fix the cause and call `StateTable.rebuild`. See [Faults](/docs/projections/checkpoints#faults).
+The table binding, `sync` and `rebuild` report storage, history and message failures as `ProjectionFault`. A `storage-failure` is retryable unless its underlying stream fault is non-retryable. Missing history (`history-unavailable`), rejected reads (`invalid-source`) and invalid stored State messages (`invalid-record`) are non-retryable. An attached binding backs off alone on a retryable failure and stops on a non-retryable fault. You can also fix the cause and call `StateTable.rebuild`. See [Faults](/docs/projections/checkpoints#faults).
 
 A fault in the table also fails every fold that writes the stream with the same fault, because each fold calls `sync` before it reads rows.
 
-The first release has a known gap in that recovery:
+Recovery and health checks need to account for failed marks:
 
-- **A fix does not resume a deferred binding.** A binding that failed waits for its due time, from 1 s doubling to 1 hour. Fixing the cause, for example with `rebuild`, does not move that time. A source commit records work without shortening that backoff. The binding runs again at its due time, or sooner after `registry.retry` or `registry.schedule`.
-- **A health check that counts only fresh marks stays green.** When the table fails, every binding that writes the stream defers. A check that looks only at marks with no failed attempts still reports the host as ready. On a Durable Object, read the `deferred` count of [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) to see deferred bindings.
+- **Fixing the cause does not resume the binding.** Rebuilding the table, a source commit or a trigger row neither shortens backoff nor ends a stop. A retryable failure waits from 1 s doubling to 1 hour. A stopped binding waits for `registry.retry`, `registry.schedule` or a runner restart. After fixing the cause, request the binding when it must run sooner.
+- **Count every failed mark.** In either mode, inspect `marks.retryDue`, `marks.backingOff` and `marks.stopped`, and use `registry.failed` for the causes. A Durable Object's `Wakeups.status` reports their sum as the [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup) `deferred` count, including stopped bindings. Also inspect the runner's `failure` and `triggers` for pass and trigger-stream failures.
 
 ## SQLite only
 

@@ -44,13 +44,13 @@ The result type of the handler decides which Commit fits a constructor.
 
 Every stream write of the unit must be on the storage owner of the transaction. The writes on that owner commit or roll back with the checkpoint. The rule covers the declared outputs, and the `append`, `create`, `fork` and `remove` calls of the handler, through a stream service or through its `wire`.
 
-| Case                                                            | Phase        | Reason                    |
-| --------------------------------------------------------------- | ------------ | ------------------------- |
-| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition` |
-| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition` |
-| An output append fails                                          | `process`    | `invalid-output`          |
-| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`          |
-| The SQL transaction fails                                       | `checkpoint` | `storage-failure`         |
+| Case                                                            | Phase        | Reason                                                         |
+| --------------------------------------------------------------- | ------------ | -------------------------------------------------------------- |
+| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition`                                      |
+| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition`                                      |
+| An output append fails                                          | `process`    | `storage-failure`, `output-busy` or `invalid-output`, by cause |
+| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`                                               |
+| The SQL transaction fails                                       | `checkpoint` | `storage-failure`                                              |
 
 In each case the transaction rolls back, with the earlier writes of the unit. External calls in the handler, such as HTTP requests, are outside the transaction and run at least once.
 

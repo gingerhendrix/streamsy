@@ -20,7 +20,7 @@ A table indexes a State stream whoever writes it: a plain append, an HTTP client
 | `inputs`     | One input, `state`, which is the State stream            |
 | Commit       | `Commit.transaction`                                     |
 
-`define` takes no options and adds no collection. `table.at(params)` gives the bound table. A runner takes it as a bound projection, and it also has the reads and `sync`.
+`define` accepts an optional `{ accepted: AcceptedClass }` to publish accepted offsets and adds no collection. See [Accepted stream](/docs/projections/accepted). `table.at(params)` gives the bound table. A runner takes it as a bound projection, and it also has the reads and `sync`.
 
 ```ts
 // @filename: streams.ts
@@ -55,7 +55,7 @@ Call `StateTable.migrate(sql)` once at host start, before any table runs. It cre
 | `streamsy_state_heads` | One head for each stream: the offset that the rows reflect, and snapshot state |
 | `streamsy_state_rows`  | One row for each stream, collection and key, with the value as canonical JSON  |
 
-The tables sit outside the storage migrations. The storage version does not change, so an older release still opens the database. `migrate` supports the SQLite family only. On another dialect it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`.
+The table migration sits outside the storage migrations and does not change their schema version. Opening SQL storage upgrades it to schema version 3; a release that supports only version 2 cannot reopen it. See [Storage migrations](/docs/reference/storage/sql-storage#sqlstoragelayer). `migrate` supports the SQLite family only. On another dialect it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`.
 
 ## Keep the table current
 
@@ -210,7 +210,7 @@ const current = Effect.gen(function* () {
 
 A [keyed fold](/docs/projections/fold-by-key) calls `sync` before it reads rows, so it also moves the head. When the table binding gets a slice that starts at the head, it applies the slice items. Otherwise it calls `sync`.
 
-`sync` fails only with a `ProjectionFault`. A stream that does not exist gives reason `history-unavailable`, and a storage, transport or SQL failure gives the retryable reason `storage-failure`. See [`StateTable.Bound`](/docs/reference/projection/state-table#statetablebound) for each case. Do not use the fault to test whether a stream exists. Read `head` on the stream, or keep a registry.
+`sync` fails only with a `ProjectionFault`. A stream that does not exist gives reason `history-unavailable`, and a storage, transport or SQL failure gives reason `storage-failure`, retryable unless its underlying stream fault is non-retryable. See [`StateTable.Bound`](/docs/reference/projection/state-table#statetablebound) for each case. Do not use the fault to test whether a stream exists. Read `head` on the stream, or keep a registry.
 
 `sync` has no limit. It holds the write lock for the whole gap, and on Bun it also holds the event loop. In normal use the gap is one or a few appends. A bulk append by another writer, a rebuild, or a first run over a stream with history makes a large gap. On a laptop with in-memory SQLite, `sync` took 9 ms for 1,000 changes and 89 ms for 10,000 changes, the median of 5 runs with no disk I/O.
 

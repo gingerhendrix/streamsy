@@ -478,7 +478,8 @@ The handler fails with:
 | Cause                                                    | `phase`   | `reason`          |
 | -------------------------------------------------------- | --------- | ----------------- |
 | A storage or transport fault on the create or the append | `process` | `storage-failure` |
-| The output refuses the create or the append              | `process` | `invalid-output`  |
+| The output is busy                                       | `process` | `output-busy`     |
+| The output otherwise refuses the create or the append    | `process` | `invalid-output`  |
 | The SQL read of the stored rows fails                    | `process` | `storage-failure` |
 | A stored row does not decode with the collection schema  | `process` | `invalid-record`  |
 | A folded row does not encode with the collection schema  | `process` | `invalid-output`  |

@@ -39,7 +39,7 @@ The earliest deadline of all wakeups owns the alarm. The host reconciles the ala
 
 Reconciling reads every `next`, arms the alarm at the earliest deadline, and clears it when no wakeup has work. A due deadline arms the alarm at `now + 1`, so the work runs in an alarm turn, not in the request.
 
-A wakeup can implement `bind(host)`, which the host calls once at acquisition. `WakeupHost` supplies `reconcile` and the wakeup's current retry `state`, plus `retry` to clear this wakeup’s backoff floor without resetting the retry schedule. These effects work outside requests too. Reconciliation takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock. An optional `changed` effect runs after that wakeup’s `run` was attempted and the host updated its retry state. Wakeups skipped during an alarm receive no notification.
+A wakeup can implement `bind(host)`, which the host calls once at acquisition. `WakeupHost` supplies `reconcile` and the wakeup's current retry `state`, plus `retry` to clear this wakeup’s backoff floor without resetting the retry schedule. These effects work outside requests too. Reconciliation takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock. An optional `changed` effect runs after a run or a failed deadline read updates the host's retry state. Wakeups skipped during an alarm receive no notification.
 
 Writes arm the alarm on their own. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before its handler returns. A streamed response body that queues work after the handler returned, and work outside a request, call `Wakeups.use((wakeups) => wakeups.reconcile)`.
 
@@ -57,18 +57,19 @@ Each wakeup has one permit, so its `run` executes once at a time. A request that
 
 ## Failures
 
-A failure in one wakeup does not stop the others. The host logs it and backs off that wakeup only.
+A failure in one wakeup does not stop the others. The host logs it and backs off or stops that wakeup only.
 
-| Result of a run                                            | Next step                                  |
-| ---------------------------------------------------------- | ------------------------------------------ |
-| Fails                                                      | Back off, then retry                       |
-| Succeeds, and work that was due before it is still due     | Back off, as for a failure                 |
-| Returns `{ more: true }`, because it stopped at its bound  | Run again at once, with no failure counted |
-| Succeeds, and the next deadline is in the future or absent | Reset the failure count                    |
+| Result of a run                                            | Next step                                          |
+| ---------------------------------------------------------- | -------------------------------------------------- |
+| Fails, and `retryable(cause)` is absent or returns `true`  | Back off, then retry while the schedule allows     |
+| Fails, and `retryable(cause)` returns `false`              | Stop until `WakeupHost.retry` or a new acquisition |
+| Succeeds, and work that was due before it is still due     | Back off, as for a failure                         |
+| Returns `{ more: true }`, because it stopped at its bound  | Run again at once, with no failure counted         |
+| Succeeds, and the next deadline is in the future or absent | Reset the failure count                            |
 
-A `next` that fails also backs off, and the other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change it. A finite schedule stops the retries of that wakeup when it is exhausted.
+A retryable `next` failure also backs off; a `StorageFault` with `retryable: false` stops that wakeup without stepping the schedule. The other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change the timing. The host calls it once per retryable failed pass with no input. A finite schedule stops automatic retries on exhaustion; a dying step is logged and treated as exhaustion. `WakeupHost.retry` permits another attempt without resetting the schedule, so another failure after exhaustion stops again with no automatic delay.
 
-`WakeupHost.state` reports consecutive failed passes and the automatic or reconciled explicitly requested retry deadline. `Wakeups.status` returns each wakeup's `next`, `failures`, automatic `retryAt` floor, and `deferred` count. The backoff lives in memory and resets when the object is evicted.
+`WakeupHost.state` reports consecutive failed passes and the automatic or reconciled explicitly requested retry deadline. `Wakeups.status` returns each wakeup's `next`, `failures`, automatic `retryAt` floor, and `deferred` count, including stopped projection bindings. The host's pass backoff and exhaustion live in memory and reset when the object is evicted; durable projection binding marks keep their own backoff and failure records.
 
 ## Recovery
 

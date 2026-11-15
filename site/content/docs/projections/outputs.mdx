@@ -212,7 +212,7 @@ A Commit controls one projection. To combine SQL writes with outputs that commit
 With `Commit.transaction`, the Commit appends the items of each output in the SQL transaction that saves the checkpoint and the value. SQL through the provided `SqlClient`, the appends and the checkpoint commit together or roll back together. The appends carry no producer position.
 
 - Every output must use the same storage as the `Transaction` service. Before it runs the handler, the Commit checks each output and fails with phase `load` and reason `unsupported-composition` for an output on other storage.
-- The Commit does not create outputs. Create each output first. An append that fails, for example to a missing or closed output, fails the unit with phase `process` and reason `invalid-output`, and the transaction rolls back.
+- The Commit does not create outputs. Create each output first. A missing or closed output fails with phase `process` and reason `invalid-output`. A busy output uses `output-busy`, and storage or transport faults use `storage-failure`. Each failure rolls back the transaction.
 - An append that the handler makes itself, to a stream on other storage, fails with phase `process` and reason `unsupported-composition`.
 
 For the host Layers, see [Layers](/docs/projections/checkpoints#layers).

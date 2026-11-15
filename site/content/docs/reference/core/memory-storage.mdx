@@ -246,4 +246,4 @@ same<ProjectionMarkSummary, Internal.ProjectionMarkSummary>(true);
 - `resume(projection)` makes only stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed.
 - `failed(projection, limit)` lists at most `limit` marks with failed attempts, stopped first, then by due time and params. The old marks-level `deferred` count is `summary.retryDue + summary.backingOff + summary.stopped`.
 
-`memoryProjectionMarks()` from `@streamsy/core/internal` creates a standalone private in-memory `ProjectionMarksApi`. It shares the mark operations above but has no stream owner or transaction boundary; each call creates an empty store.
+`memoryProjectionMarks()` from `@streamsy/core/internal` creates a standalone private in-memory `ProjectionMarksApi`. It shares the mark operations above but has no stream owner or transaction boundary; each factory call creates an empty store.

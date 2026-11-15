@@ -81,7 +81,7 @@ same<typeof transaction, typeof Commit.transaction>(true);
 - Every declared output must be on the storage owner of the transaction. When one is not, the unit fails with phase `load` and reason `unsupported-composition`.
 - A stream append in the handler to a stream on another owner fails with phase `process` and reason `unsupported-composition`.
 - When the checkpoint changed after the runner read it, the unit fails with phase `checkpoint` and reason `token-conflict`.
-- When an output append fails, the unit fails with phase `process` and reason `invalid-output`.
+- An output append failure has phase `process`: storage or transport faults use `storage-failure`, a busy output uses `output-busy`, and other rejections or encoding failures use `invalid-output`.
 - Only `transaction`, alone or wrapped by `withCompensation`, accepts `prepare`. It runs `prepare` before it opens the transaction.
 - A retry reads the inputs again, so a longer tail can change `unit.key`. An external call in the handler happens at least once.
 
