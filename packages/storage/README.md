@@ -2,7 +2,7 @@
 
 SQL storage for `@streamsy/core`, built on Effect SQL. One entry for Bun
 SQLite, one for SQLite Durable Objects, and a driver-free root for your own
-SQLite or Postgres `SqlClient`. Version 0.4.0 requires `effect@4.0.1`.
+SQLite, Postgres or MySQL `SqlClient`. Requires `effect@4.1.2`.
 
 ```sh
 bun add @streamsy/storage @streamsy/core effect
@@ -30,7 +30,7 @@ exports `SqlStorage`, with `layer` over a `SqlClient` you supply and
 
 `SqlStorage.clientLayer` builds a client from its `make` function and provides it with the
 `Reactivity` it captured, so the client and the storage share one change graph.
-The root entry imports no driver. Add the one you use, at `4.0.1`.
+The root entry imports no driver. Add the one you use, at `4.1.2`.
 
 ```ts
 import { Layer, Redacted } from "effect";
@@ -120,6 +120,9 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 - Only files in the current storage format are accepted. Older Streamsy files,
   including those from earlier 0.4 builds, and newer unknown schemas are
   rejected without being changed. Use a fresh database path.
+- Opening a schema version 2 database upgrades it to version 3, adding explicit
+  stops, last-failure fields and a nullable `wake_at` timer index to projection marks. Sequence numbers, attempts
+  and due times survive the upgrade. A schema version 2 release cannot reopen it.
 - Stream ids are limited to 512 characters, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
 - Projection checkpoint keys have no length limit. MySQL stores 512 key

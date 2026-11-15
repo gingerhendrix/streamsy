@@ -93,7 +93,7 @@ The third type parameter of `StreamsyObject.make` is the services that the links
 
 The caller client sends a request only for a stream in the group, under the prefix. It answers other paths with 404 and calls no object. It declares producer and expected-offset support, because the owner is always a Streamsy mount.
 
-Use `full` for a wake stream with params, because the producer creates it with `PUT` when its first append answers 404. Use `append` when the owner creates each stream when it starts.
+The owner creates each remote wake stream before the producer's first append. Use `append` when callers only append, or `full` when trusted callers also need to create or remove streams.
 
 ## Trust
 
@@ -110,7 +110,7 @@ A linked stream must come from the link only. When the caller's `layer` also pro
 A link is a protocol client. A write through it is a separate request to the owner, so it does not join the caller's transaction:
 
 - `CommitBoundary.withTransaction` and `Commit.transaction` cover the caller's own storage only.
-- A projection that writes to a linked output uses `Commit.producer`. A retry sends the same producer positions, and the owner answers `Duplicate` for an append that it already has. The output must exist before the first append, except for a wake stream that the link lets the producer create. See [Commits](/docs/projections/commits#producer).
+- A projection that writes to a linked output uses `Commit.producer`. A retry sends the same producer positions, and the owner answers `Duplicate` for an append that it already has. The output must exist before the first append, including wake streams; producer auto-creation covers outputs on its checkpoint owner only. See [Commits](/docs/projections/commits#producer).
 - A fork source and its child must be on the same object.
 - Commits on the owner do not choose bindings of a wakeup on the caller. See [Projections](/docs/servers/cloudflare/alarms#projections).
 

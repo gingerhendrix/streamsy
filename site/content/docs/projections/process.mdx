@@ -7,12 +7,13 @@ description: Write each unit of input to your own SQL tables in the checkpoint t
 
 ## Process
 
-`process(batch, unit, context)` gets the whole unit and returns an `Effect` of `void`. `batch` has one `Slice` for each input, with its `items` in stream order. `context` is an object:
+`process(batch, unit, context)` gets the whole unit and returns an `Effect` of `void` or a [`WakeAt`](/docs/reference/projection/constructors#projectionwakeat) request. `batch` has one `Slice` for each input, with its `items` in stream order. `context` is an object:
 
 - `context.prepared` is the result of `prepare`, or `undefined` when the declaration has none. See [Prepare](#prepare).
+- `context.attempt` is the binding run attempt, starting at 1 and increasing after failed attached runs. Direct `run` and `follow` always supply 1.
 - `context.outputs` holds the bound addresses of the declared outputs. It exists only when the declaration lists `outputs`. See [Declared outputs](#declared-outputs).
 
-Destructure the fields that the handler uses, as in `process: (batch, unit, { prepared }) => ...`. A handler that uses neither can take `(batch, unit)`.
+Destructure the fields that the handler uses, as in `process: (batch, unit, { prepared }) => ...`. A handler that uses none can take `(batch, unit)`.
 
 To handle one entry at a time, wrap an entry handler in `Projection.each`. It runs the handler for every entry in order, one after another: all entries of the first declared input, then those of the next. It discards the results.
 
@@ -24,6 +25,78 @@ To handle one entry at a time, wrap an entry handler in `Projection.each`. It ru
 | `Commit.atLeastOnce` | Calls to other systems                         | The handler can run more than once for a unit |
 
 `Commit.checkpoint` and `Commit.producer` do not fit `process`, and the compiler rejects them. See [Commits](/docs/projections/commits).
+
+## Timers
+
+Return `Projection.wakeAt(time)` from a `process` handler to replace the binding's
+one recorded timer. `time` is epoch milliseconds or an Effect `DateTime`. It must
+convert to a non-negative safe integer; fractional, negative or unsafe times throw
+`RangeError`. Returning nothing clears the timer. Ordinary return values are
+discarded as before.
+
+Timers require `Commit.atLeastOnce` or `Commit.transaction`, including
+`Commit.withCompensation` around either. The compiler rejects a typed wake request
+paired with a custom `Commit<void>`. Custom timer Commits are not supported in this
+release. The context has no timer member.
+
+```ts
+import { Effect, Option } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+import { Schema } from "effect";
+
+class Deadlines extends Streamsy.json<Deadlines>()("Timers/Deadlines", "deadlines", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+const deadlines = Projection.process({
+  id: "deadlines",
+  params: {},
+  inputs: { deadlines: Deadlines },
+  commit: Commit.atLeastOnce,
+  process: (batch, unit) =>
+    Effect.gen(function* () {
+      if (Option.isSome(unit.due)) {
+        yield* Effect.log(`Deadline ${unit.due.value} is due`);
+      }
+      const next = batch.deadlines.items.at(-1);
+      return next === undefined ? undefined : Projection.wakeAt(next);
+    }),
+});
+```
+
+A due unit has `unit.due: Some(recordedTime)`. With no new input, every slice is
+empty and `unit.ranges` is `{}`. If input arrives after the deadline, one unit
+contains both the items and `unit.due`. Input before the deadline runs normally,
+with `unit.due: None`, and its result replaces or clears the timer. A deadline can
+still run after every input has closed. A due unit contributes no `accepted` row.
+
+Use the recorded `unit.due` to decide what is due. Reading `Clock` is useful for a
+late policy, but must not change which effects a pinned retry repeats. The unit
+key includes the recorded due time, and `Commit.atLeastOnce` pins that time with
+the ranges. `Commit.transaction` saves the next timer with the handler's SQL and
+checkpoint; a failed write rolls them all back.
+
+`Projection.run`, `pass` and `follow` make a due unit only when they run at or after
+the time. They do not wait for the deadline. `follow` can discover it on an input
+change or repair cycle. A cycle commits at most one due unit without input, even
+when the handler returns a time already passed. Return a time after `unit.due`
+for the next wake. `Projection.attach` and `ProjectionWakeup.attach` wake at the recorded deadline.
+
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
 
 ## SQL tables
 
@@ -148,4 +221,4 @@ const copyTotals = Projection.process({
 
 `Commit.atLeastOnce` needs only the `CheckpointStore` service, so it works on a memory host.
 
-When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. For a durable outbox with a bounded retry policy, see [Outbox](/docs/outbox).
+When the handler fails, the pass fails, the offsets stay, and the next pass runs the unit again. `Commit.atLeastOnce` keeps no delivery queue and has no retry policy of its own. Use `unit.key` as the external call's idempotency key, set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](#timers) for a deferred retry or a snooze. See the [effects guide](/docs/projections/effects) for the complete pattern.

@@ -74,6 +74,7 @@ export const { Folded, Emitted, Accumulated } = Data.taggedEnum<
 /** Custom Commits extend the input range on retry. Never store next when run fails;
  * condition the write on loaded.token (checkpoint / token-conflict when it moved),
  * and return token "0" for an absent record.
+ * Custom Commits do not support timer handlers in this release.
  * load must return the stored state. If run and the write are not atomic,
  * declare at-least-once. The guarantee must describe the actual write. */
 export const make = <Result, Provides = never, Requires = never>(

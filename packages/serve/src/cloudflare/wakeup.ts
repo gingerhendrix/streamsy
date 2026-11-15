@@ -2,6 +2,7 @@
 import {
   Array,
   Clock,
+  Cause,
   Context,
   Duration,
   Effect,
@@ -25,6 +26,19 @@ export interface WakeupProgress {
   readonly more: boolean;
 }
 
+/** Services bound to one acquired wakeup and safe to call outside a request. */
+export interface WakeupHost {
+  /** Recompute the alarm from every wakeup's next deadline. */
+  readonly reconcile: Effect.Effect<void>;
+  /** Clear this wakeup's backoff floor without resetting its retry schedule. */
+  readonly retry: Effect.Effect<void>;
+  /** Consecutive failed passes and the next automatic or explicitly requested retry. */
+  readonly state: Effect.Effect<{
+    readonly failures: number;
+    readonly retryAt: Option.Option<number>;
+  }>;
+}
+
 /** One source of deadline-driven work, derived from committed state. */
 export interface Wakeup<R = never> {
   readonly name: string;
@@ -34,13 +48,19 @@ export interface Wakeup<R = never> {
    * name is not reentrant, so a run must not call its own wakeup's `run`.
    */
   readonly run: Effect.Effect<void | WakeupProgress, unknown, R>;
-  /** Alarm retries use this schedule's delays without sleeping in an alarm. */
+  /** Timing only. The runner calls the schedule once per retryable failed pass with no input. */
   readonly retry?: Schedule.Schedule<unknown>;
+  /** Return false to stop automatic run retries until WakeupHost.retry or a new acquisition. */
+  readonly retryable?: (cause: Cause.Cause<unknown>) => boolean;
   /**
-   * Units of work that failed and wait on their own backoff, for `status`.
-   * A durable `ProjectionWakeup` counts its deferred bindings here.
+   * Units of work that failed and await another attempt, for `status`.
+   * A durable `ProjectionWakeup` counts retry-due, backing-off and stopped marks here.
    */
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
+  /** Called once at acquire, before the initial alarm reconciliation. */
+  readonly bind?: (host: WakeupHost) => Effect.Effect<void>;
+  /** Notification after a run or failed deadline read updates the host's retry state. */
+  readonly changed?: Effect.Effect<void>;
 }
 
 /** The host acquires effectful wakeups in the same scope as its storage layer. */
@@ -97,7 +117,7 @@ export class Wakeups extends Context.Service<
         readonly failures: number;
         /** The backoff floor. The wakeup does not run before this instant. */
         readonly retryAt: Option.Option<number>;
-        /** Units that wait on their own backoff, such as failed projection bindings. */
+        /** Units awaiting another attempt after failure, including stopped projection marks. */
         readonly deferred: number;
       }>
     >;
@@ -117,6 +137,9 @@ export const expiry: Wakeup<Storage> = Wakeup.make({
   ),
   run: Protocol.expireDue().pipe(Effect.asVoid),
 });
+
+const deadlineRetryable = (cause: Cause.Cause<StorageFault>) =>
+  !Array.some(cause.reasons, (reason) => Cause.isFailReason(reason) && !reason.error.retryable);
 
 /** Internal object owner. Its context closes over the same services as fetch. */
 export const makeWakeups = <R>(
@@ -152,6 +175,8 @@ export const makeWakeups = <R>(
           failures: 0,
           floor: 0,
           exhausted: false,
+          requested: false,
+          requestedAt: 0,
           policy,
           step: yield* Schedule.toStep(policy),
         };
@@ -164,17 +189,32 @@ export const makeWakeups = <R>(
 
     type State = (typeof states)[number];
 
-    const backOff = (state: State, at: number) =>
+    const changed = (state: State) =>
+      (state.wakeup.changed ?? Effect.void).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError(`Wakeup ${state.wakeup.name} notification failed`, cause),
+        ),
+      );
+
+    const backOff = (state: State, at: number, retryable = true) =>
       Effect.gen(function* () {
         state.failures += 1;
 
-        const delay = yield* state.step(at, undefined).pipe(
-          Effect.map(([, duration]) => Option.some(duration)),
-          Pull.catchDone(() => Effect.succeedNone),
-        );
+        const delay = yield* !retryable
+          ? Effect.succeedNone
+          : Effect.suspend(() => state.step(at, undefined)).pipe(
+              Effect.map(([, duration]) => Option.some(duration)),
+              Pull.catchDone(() => Effect.succeedNone),
+              Effect.catchCause((cause) =>
+                Effect.logError(`Wakeup ${state.wakeup.name} retry schedule failed`, cause).pipe(
+                  Effect.as(Option.none<Duration.Duration>()),
+                ),
+              ),
+            );
 
         state.exhausted = Option.isNone(delay);
         state.floor = Option.isSome(delay) ? at + Duration.toMillis(delay.value) : 0;
+        yield* changed(state);
       });
 
     const recover = (state: State) =>
@@ -209,7 +249,9 @@ export const makeWakeups = <R>(
             Effect.map(Option.map((next) => Math.max(next, state.floor))),
             Effect.catchCause((cause) => {
               return Effect.gen(function* () {
-                if (state.floor <= now) yield* backOff(state, now);
+                const retryable = deadlineRetryable(cause);
+
+                if (!retryable || state.floor <= now) yield* backOff(state, now, retryable);
                 yield* Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause);
 
                 return state.exhausted ? Option.none<number>() : Option.some(state.floor);
@@ -223,22 +265,40 @@ export const makeWakeups = <R>(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           let target = Infinity;
+          let kept = false;
+          const requested = new Map<State, number>();
 
           for (const state of states) {
             const next = yield* deadlineOf(state, now);
 
-            if (Option.isSome(next)) target = Math.min(target, next.value);
+            if (Option.isSome(next)) {
+              target = Math.min(target, next.value);
+
+              if (state.requested) requested.set(state, Math.max(next.value, now + 1));
+            }
           }
 
-          if (target === Infinity) return yield* slot.clear;
-          const current = yield* slot.current;
+          if (target === Infinity) yield* slot.clear;
+          else {
+            const current = yield* slot.current;
 
-          if (!force && Option.isSome(current) && now < current.value && current.value <= target)
-            return undefined;
+            kept =
+              !force && Option.isSome(current) && now < current.value && current.value <= target;
 
-          if (Option.isSome(current) && current.value <= now) yield* slot.clear;
+            if (!kept) {
+              if (Option.isSome(current) && current.value <= now) yield* slot.clear;
+              yield* slot.arm(Math.max(target, now + 1));
+            }
+          }
 
-          return yield* slot.arm(Math.max(target, now + 1));
+          // Publish only after reconciliation succeeds. A kept alarm retains its
+          // matching request time rather than reporting a newly computed deadline.
+          for (const state of states) {
+            const at = requested.get(state);
+
+            state.requestedAt =
+              at === undefined ? 0 : kept && state.requestedAt > 0 ? state.requestedAt : at;
+          }
         }),
       );
 
@@ -267,10 +327,16 @@ export const makeWakeups = <R>(
             const at = yield* Clock.currentTimeMillis;
 
             if (Option.isNone(next) || next.value > at) return;
+            state.requested = false;
+            state.requestedAt = 0;
             const exit = yield* Effect.exit(state.wakeup.run);
 
             if (Exit.isFailure(exit)) {
-              yield* backOff(state, yield* Clock.currentTimeMillis);
+              yield* backOff(
+                state,
+                yield* Clock.currentTimeMillis,
+                state.wakeup.retryable?.(exit.cause) ?? true,
+              );
               yield* Effect.logError(`Wakeup ${state.wakeup.name} failed`, exit.cause);
 
               return;
@@ -283,19 +349,22 @@ export const makeWakeups = <R>(
 
             if (!reportsMore(exit.value) && Option.isSome(after) && after.value <= at)
               yield* backOff(state, yield* Clock.currentTimeMillis);
-            else yield* recover(state);
+            else {
+              yield* recover(state);
+              yield* changed(state);
+            }
           });
 
           yield* attempt.pipe(
             Effect.catchCause((cause) =>
               Clock.currentTimeMillis.pipe(
-                Effect.flatMap((at) => {
-                  return backOff(state, at).pipe(
+                Effect.flatMap((at) =>
+                  backOff(state, at, deadlineRetryable(cause)).pipe(
                     Effect.andThen(
                       Effect.logError(`Wakeup ${state.wakeup.name} deadline failed`, cause),
                     ),
-                  );
-                }),
+                  ),
+                ),
               ),
             ),
           );
@@ -311,6 +380,29 @@ export const makeWakeups = <R>(
     );
 
     const complete = provided();
+
+    for (const state of states) {
+      yield* (
+        state.wakeup.bind?.({
+          reconcile: service.reconcile,
+          retry: Effect.sync(() => {
+            state.floor = 0;
+            state.exhausted = false;
+            state.requested = state.failures > 0;
+          }),
+          state: Effect.sync(() => ({
+            failures: state.failures,
+            retryAt:
+              state.floor > 0
+                ? Option.some(state.floor)
+                : state.requestedAt > 0
+                  ? Option.some(state.requestedAt)
+                  : Option.none<number>(),
+          })),
+        }) ?? Effect.void
+      );
+    }
+
     // A failing `next` must not make the object unavailable. The next write or alarm retries.
     yield* reconcile.pipe(
       Effect.provide(complete),

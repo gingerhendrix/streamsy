@@ -3,6 +3,7 @@ import * as FamilyFixture from "./families.ts";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Effect, Layer } from "effect";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { entryOffsets } from "./entry-offsets.ts";
 import { composition } from "./scenarios.ts";
 
 interface Env {
@@ -23,12 +24,14 @@ export class ProjectionObject {
   constructor(ctx: DurableObjectState) {
     this.#ctx = ctx;
   }
-  fetch(): Promise<Response> {
+  fetch(request: Request): Promise<Response> {
+    const offsets = new URL(request.url).pathname === "/offsets";
+
     const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layerProtocol({
           client: { storage: this.#ctx.storage },
-          readLimit: 1,
+          readLimit: offsets ? 3 : 1,
         }),
       ),
     );
@@ -38,7 +41,11 @@ export class ProjectionObject {
         Effect.gen(function* () {
           const services = yield* Layer.build(FamilyFixture.withFamilies(host));
 
-          return Response.json(yield* composition.pipe(Effect.provideContext(services)));
+          return Response.json(
+            offsets
+              ? yield* entryOffsets.pipe(Effect.provideContext(services))
+              : yield* composition.pipe(Effect.provideContext(services)),
+          );
         }),
       ),
     );

@@ -17,6 +17,8 @@ export const CheckpointRecord = Schema.Struct({
   /** Input key to accepted offset; the next pass reads after these. */
   inputs: Schema.Record(Schema.String, Schema.String),
   pending: Schema.optionalKey(PendingUnit),
+  /** Next process wake, in epoch milliseconds. Absent means no timer. */
+  wakeAt: Schema.optionalKey(Counter),
   /** Inputs whose terminal close has already been processed. */
   closed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   /** The final gone unit committed; only forgetting remains. */

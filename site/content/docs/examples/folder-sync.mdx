@@ -1,9 +1,9 @@
 ---
 title: Folder sync
-description: Files in State streams, conditional edits, live search and local mirrors that keep conflict copies.
+description: Files in State streams, versioned edits with parents, live search and local mirrors that retain history.
 ---
 
-This example is a file workspace. A browser shows live folders, edits text and opens earlier versions. A sync CLI mirrors folders to disk. An agent filesystem exposes them to just-bash and Better FS Tools. Each reader follows the same folder State stream. Writes use a JSON API. A stale edit gets 412, and the CLI keeps its bytes as a conflict copy.
+This example is a file workspace. A browser shows live folders, edits text and opens earlier versions. A sync CLI mirrors folders to disk. An agent filesystem exposes them to just-bash and Better FS Tools. Each reader follows the same folder State stream. Writes use a JSON API. Every accepted edit lands with the version it started from as its parent. The last append is the head, and history keeps concurrent edits.
 
 The source is in [`examples/folder-sync`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/folder-sync). Its README has the full contract, settings and measurements. Titled excerpts below come from that example. `// ...` marks omitted lines.
 
@@ -25,7 +25,7 @@ In another terminal, seed the docs:
 FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync seed
 ```
 
-The seed creates one folder per docs section and `docs/root` for root files. Matching content adds no version. It sends no precondition, so reseeding can replace user edits.
+The seed creates one folder per docs section and `docs/root` for root files. Matching content adds no version. It names the current head as its parent, so reseeding can replace user edits while retaining them in history.
 
 Start these in separate terminals with fresh mirror directories:
 
@@ -34,7 +34,7 @@ FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync syn
 FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
 ```
 
-Edit `docs/root/tutorial.mdx` in the browser or a writable mirror. The other readers update. Stop Bun, edit a mirror, then restart with the same database. Pending writes resume. Leave a browser draft open while a mirror changes its file, then save the draft. The browser keeps the draft and reports a stale edit. **Discard draft and reload** takes the current file.
+Edit `docs/root/tutorial.mdx` in the browser or a writable mirror. The other readers update. Stop Bun, edit a mirror, then restart with the same database. Pending writes resume. Leave a browser draft open while a mirror changes its file, then save the draft. The save lands as the head; history shows both edits with the same parent. **Discard draft and reload** takes the current file.
 
 For local workerd, replace the Bun server command with:
 
@@ -52,7 +52,7 @@ This builds the browser and Worker and starts Miniflare on port 1339. Durable Ob
 | `/streams/folders/<folderKey>/files` | `file`     | `path`           |
 | `/streams/wake`                      | `stream`   | source stream id |
 
-These routes use the stock read-only State server. PUT, POST and DELETE get 405. The registry holds folder IDs and titles. A file upsert holds `path`, `version`, `hash`, `size`, `author` and optional `text`. A delete has no value or version. Headers carry the operation, txid and server timestamp. Each append holds one change.
+These routes use the stock read-only State server. PUT, POST and DELETE get 405. The registry holds folder IDs and titles. A live file upsert holds `path`, `version`, `parent`, `hash`, `size` and `author`. A delete is a tombstone upsert with `path`, `version`, `parent`, `author` and `deleted: true`. Headers carry the operation, txid and server timestamp. Each append holds one change.
 
 ```ts title="server/streams.ts"
 export class Folders extends Streamsy.state<Folders>()("FolderSync/Folders", "folders", {
@@ -66,39 +66,39 @@ export class Files extends Streamsy.state<Files>()("FolderSync/Files", "folders/
 }) {}
 ```
 
-The owner assigns the next positive folder sequence to every upsert. Deletes take no number. The counter never goes down after deletion or restart. The append, head and counter commit together. A file's version stays in its value when copied or replayed. Compare versions only for equality on the same path in the same folder. Offsets are read cursors. `expectedOffset` guards the append against a moved tail.
+The owner derives the next positive folder sequence from its folded view and assigns it to every change, including tombstones. The sequence never goes down after deletion or restart. `Projection.decide` appends with the source offset it read, so competing writes fold and decide again. A file's version stays in its value when copied or replayed. Compare versions only for equality on the same path in the same folder. Offsets are read cursors. `expectedOffset` guards the append against a moved tail.
 
 Folder IDs are opaque strings, including slashes. API URLs percent-encode the whole ID as one segment. Stream URLs use `FolderKey`, the hex of its UTF-8 bytes. `docs` becomes `646f6373`. IDs have a limit of 100 UTF-16 code units and 249 UTF-8 bytes. File paths are relative POSIX paths; encode each segment separately.
 
 Read from `offset=-1`, consume every page and follow `Stream-Next-Offset`. Live reads support long polling and SSE. A `reset` control clears the folder state, applies changes that follow it in that response and advances the cursor. A 410 clears state and replays from `-1`. A stored reset never sends a reader back to itself.
 
-## Conditional JSON writes
+## JSON writes with parents
 
-Every write requires `Authorization: Bearer <writer token>`. Send JSON with `Content-Type: application/json`; bodies have a 512 KiB limit. Folder creation with another content type gets 415 on both hosts.
+Every write requires `Authorization: Bearer <writer token>`. Send JSON with `Content-Type: application/json`; JSON bodies have no size limit. Folder creation, file commits and deletes with another content type get 415 on both hosts.
 
-| Request                                 | Body                                  |
-| --------------------------------------- | ------------------------------------- |
-| `POST /api/folders`                     | `{ txid, folderId, title }`           |
-| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, hash, size, text? }` |
-| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author }`                    |
+| Request                                 | Body                                   |
+| --------------------------------------- | -------------------------------------- |
+| `POST /api/folders`                     | `{ txid, folderId, title }`            |
+| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, parent, hash, size }` |
+| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author, parent }`             |
 
-Send `If-Match: "41"` to replace only version 41. Send `If-None-Match: *` to create an absent path. No precondition means last writer wins. `If-Match: *`, weak tags and tag lists get 400. Delete rejects `If-None-Match`. A precondition miss gets 412 with the current `{ version, txid, hash }`, or `{ "head": null }`.
+`parent` is the version the edit started from, or `null` for an unseen path. The server records it without comparing it to the current head, so concurrent writes all land. A parent past the folder's latest version gets 400. `If-Match` and `If-None-Match` are unsupported and get 400.
 
-After validating content, the owner checks the current hash before the precondition. If it matches, the answer is the current head and nothing is appended. Otherwise the owner checks the precondition, assigns a version and appends. Success returns `{ version, txid, hash }` with `ETag: "<version>"`. A convenience GET on the file API returns bytes with the same version ETag, or 404.
+The owner first checks its retry memory of the last 1,024 changes by txid, returning the original result for a repeat. Reusing a txid for another path or change kind gets 400. Next it checks the current hash: identical content returns the current head without appending. Otherwise it assigns a version and appends. Success returns `{ version, parent, txid, hash }` with `ETag: "<version>"`. GET returns blob bytes with that version ETag, or 404; a tombstone returns 404 with `deleted: <version>`.
 
 Retry network errors or 5xx with the same request. Wait for the answer's txid on the stream; a no-op can return another writer's txid. Deleting an absent path returns `200 {}` with no txid and nothing to wait for. Creating the same folder ID and title is also a no-op. Another title gets 409.
 
 ## Upload blobs before committing
 
-Valid UTF-8 without NUL, at most 64 KiB, must use inline `text`. Other content uses a SHA-256 blob hash. The file limit is 64 MiB.
+All content, including small text, uses a SHA-256 blob hash. The file limit is 64 MiB.
 
-Upload bytes with `PUT /api/blobs/<hash>`, the writer token and `Content-Length`. Success is `200 { "hash": "<hash>" }`. A duplicate writes nothing. A wrong hash gets 400 and an oversized body gets 413. Then commit JSON with the hash and size, omitting `text`. A missing blob gets `409 { "error": "blob-missing", "hash": "..." }`; upload and commit again.
+Upload bytes with `PUT /api/blobs/<hash>`, the writer token and `Content-Length`. Success is `200 { "hash": "<hash>" }`. A duplicate writes nothing. A wrong hash gets 400 and an oversized body gets 413. Then commit JSON with the parent, hash and size. A missing blob gets `409 { "error": "blob-missing", "hash": "..." }`; upload and commit again.
 
-HEAD returns the stored size or 404. GET streams immutable bytes. Bun stores blobs on disk and syncs them before acknowledging. The Worker streams straight to R2 with SHA-256 verification. Worker uploads require `Content-Length`; Bun also accepts unknown-length streams. Failed or abandoned commits can leave orphan blobs.
+HEAD returns the stored size or 404. GET streams immutable bytes. Bun stores blobs on disk and syncs them before acknowledging. The Worker streams straight to R2 with SHA-256 verification. Local workerd requires `Content-Length`; Bun also accepts unknown-length streams. On deployed Cloudflare, the edge supplies a declared length for an upload sent without one. Failed or abandoned commits can leave orphan blobs.
 
 ## Browser and sync CLI
 
-The browser uses one `createStreamDB` for the registry and one for the open folder. React reads TanStack DB live queries. Upserts replace whole rows, so changing inline content to a blob removes the old text. An edit appears optimistically, sends `If-Match` and waits for the response's txid:
+The browser uses one `createStreamDB` for the registry and one for the open folder. React reads TanStack DB live queries. A client adapter turns tombstone upserts into State deletes for the live collections. An edit appears optimistically, uploads its blob, sends its base version as `parent` and waits for the response's txid:
 
 ```ts title="src/db.ts"
 mutationFn: async ({ file, base, txid, bytes, onAccepted }: EditFile) => {
@@ -108,9 +108,9 @@ mutationFn: async ({ file, base, txid, bytes, onAccepted }: EditFile) => {
 },
 ```
 
-History replays the folder stream and filters by path. Earlier content comes from its saved value or blob hash. Markdown and MDX display without executing HTML or JSX. Snippets render as escaped text. Drafts stay in memory and are lost on navigation or reload.
+History replays the folder stream and filters by path. Earlier content comes from the blob hash in the saved value. Markdown and MDX display without executing HTML or JSX. Snippets render as escaped text. Drafts stay in memory and are lost on navigation or reload.
 
-The CLI stores a cursor per folder and each path's version, remote hash and local hash. It bootstraps by replay, then follows one wake stream. Wake rows select the dirty folders to catch up. Each folder cursor settles before the page's wake cursor, so a restart safely replays unfinished work. An existing file uses its observed version with `If-Match`; a new file uses `If-None-Match: *`. A 412 keeps the local bytes as a `name.conflict-<client>[-n].ext` sibling, takes the server file at the original path and syncs the sibling as a new file. A delete without an observed version sends no request. Read-only edits are backed up before restoration.
+The CLI stores a cursor per folder and each path's version, remote hash and local hash. It bootstraps by replay, then follows one wake stream. Wake rows select the dirty folders to catch up. Each folder cursor settles before the page's wake cursor, so a restart safely replays unfinished work. A local edit names the version its disk copy came from as `parent`, or `null` when no version was observed. A pulled change installs at the original path; a queued local edit can land afterwards and become the head. History retains both. A delete without an observed version sends no request. Read-only edits are backed up before restoration.
 
 Before installing resumed files, the CLI compares each saved cursor with a HEAD tail. A tail lexicographically before the cursor stops it with `HistoryRewound`. Resolve the server restore or use a fresh mirror. A reset clears state and keeps the cursor moving; a 410 replays from `-1`.
 
@@ -120,7 +120,7 @@ Pending operations reference immutable files under `.folder-sync/content/<hash>`
 
 `createAgentFileSystem({ server, folders, writable, token })` in `agent/index.ts` returns the shared core, just-bash filesystem, `bash` session and Better FS Tools adapter. Files appear at `/<folderId>/<path>`. Discovery follows the registry; file maps follow folder streams. `folderDirectory(id)` uses the CLI's mapping rules. Writable folders default to none.
 
-Content writes use a version seen by a read or successful write, or an explicit version. A write to an unread path sends `If-None-Match: *`, even when listing found it. Deletes may use a listed version without reading the bytes. That version is pinned before refresh. A stale write or delete gets `ESTALE`; read again before retrying. The adapter supports atomic writes and compare-and-swap.
+Content writes name a version seen by a read or successful write as their parent. An unread path uses `null`, even when listing found it. Deletes may use a listed version without reading the bytes. A stale parent creates a fork in history rather than a refusal. An explicit `absent` or `version` precondition is checked against a fresh snapshot before commit and can fail with `EEXIST` or `ESTALE`, but the check is not atomic with commit. The adapter advertises atomic writes and no compare-and-swap.
 
 Shell globs use the session snapshot. List again after external edits. Empty directories are session-only. Links, persistent modes and atomic rename are unsupported. Handles buffer whole files. Ordinary grep keeps its usual flags and stdin. `grep --search <fts-query>` uses indexed candidates and confirms matches against file bytes. At 100 candidates it reports possible incompleteness. Requests support cancellation and bounded retries.
 
@@ -128,7 +128,7 @@ Shell globs use the session snapshot. List again after external edits. Empty dir
 
 `/api/ls` lists live metadata with optional folder, prefix and glob filters. `/api/search?q=<query>&folder=<id>` searches current text with FTS5, relevance ordering and a 100-hit limit. Bad queries get 400. Snippets are `{ text, match }` segments. Binary and deleted files have no search text. Blob text is capped at 1 MiB. Preparation reads one blob prefix at a time instead of holding every blob's text in memory.
 
-Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches its search driver to its own FolderWake commits and reads Files through a read-only `/__files` link. Index rows and consumed cursors commit together. Every attached projection is durable: each commit to its input also writes a pending mark in its transaction. After an eviction, a deploy or a Bun restart, the marks rerun the folders that the stop left behind, with no scan of every folder. On the Worker, the index object arms its alarm for the pending `wakeSearch` mark when it starts. Wake rows from a build older than the marks have no mark and wait for the next write to any folder. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
+Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches the same search projection with `triggers: [FolderWake]`, so each source id selects its own `folderId` binding, reading Files through a read-only `/__files` link. A failing folder backs off alone. Index rows and consumed source cursors commit together. Every attached projection is durable: source commits mark wake production, and trigger ingestion commits the wake cursor with pending search marks. At startup, unread wake rows or unfinished marks arm the index alarm with no new folder write. Bun also resumes pending marks after restart. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
 
 ## Measurements and limits
 
@@ -138,9 +138,9 @@ A 32 MiB binary upload and second-client pull took 0.719 s on Bun and 1.266 s on
 
 - Bootstrap and history replay every retained event. There is no State compaction.
 - There is no blob orphan sweep, multipart upload or local cache garbage collection. Storage, pending sources and backups have no quota.
-- Old mirror state has no migration. Use fresh directories. A writable stream import also needs its owner's durable counter and current heads.
+- Old mirror state has no migration. Use fresh directories. The folder stream supplies versions and heads; older unused view checkpoints and cursor tables are not migrated into the current view.
 - A restored missing blob is not reindexed until another write or an index rebuild.
 - Sync scans hash selected files. An editor can still save during the final local read-to-rename window. A stopped delete during an interrupted first install can be restored on restart.
-- Worker creation spans two objects. A crash between registration and initialization needs a create retry.
+- Worker creation spans two objects. The folder stream is created before registration; a crash between them can leave an unlisted empty folder, and a create retry registers it.
 - Pending marks cover commits made while the attach runs. A folder written by an older build, or while no attach ran, stays unindexed until its next write.
-- The browser has no phone cache. R2 verification and restart checks run on local workerd; there is no hosted deployment.
+- The browser has no phone cache. R2 verification and restart checks run on local workerd. Earlier deployed checks covered the HTTP smoke and clients; the attached indexing and startup catch-up changes have local workerd coverage.

@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 
 import { expect, layer } from "@effect/vitest";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Array, Effect, FileSystem, Path, Schema } from "effect";
 import { Miniflare } from "miniflare";
 
 layer(BunServices.layer, { excludeTestServices: true })((it) => {
@@ -63,6 +63,55 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
           }),
         }),
       )(yield* Effect.promise(() => response.json()));
+
+      const offsetsResponse = yield* Effect.promise(() =>
+        miniflare.dispatchFetch("http://projection.test/offsets"),
+      );
+
+      expect(offsetsResponse.status).toBe(200);
+
+      const sliceSchema = Schema.Struct({
+        items: Schema.Array(Schema.Finite),
+        offsets: Schema.Array(Schema.String),
+        nextOffset: Schema.String,
+      });
+
+      const offsets = yield* Schema.decodeUnknownEffect(
+        Schema.Struct({
+          expected: Schema.Array(Schema.String),
+          skippedOffsets: Schema.Array(Schema.Array(Schema.String)),
+          slices: Schema.Array(sliceSchema),
+          entries: Schema.Array(
+            Schema.Struct({ item: Schema.Finite, offset: Schema.String, index: Schema.Finite }),
+          ),
+          keys: Schema.Array(Schema.String),
+          first: Schema.String,
+          replay: Schema.Finite,
+          rest: Schema.Finite,
+        }),
+      )(yield* Effect.promise(() => offsetsResponse.json()));
+
+      expect(offsets.first).toBe("Failure");
+      expect(offsets.skippedOffsets).toEqual([[], [], []]);
+      expect(offsets.replay).toBe(3);
+      expect(offsets.rest).toBe(2);
+      expect(offsets.slices[1]).toEqual(offsets.slices[0]);
+      expect(offsets.keys[1]).toBe(offsets.keys[0]);
+      expect(offsets.entries.slice(3, 6)).toEqual(offsets.entries.slice(0, 3));
+      expect(
+        Array.flatMap([offsets.slices[0]!, offsets.slices[2]!], (slice) => slice.offsets),
+      ).toEqual(offsets.expected);
+      expect(
+        Array.map(
+          [...offsets.entries.slice(0, 3), ...offsets.entries.slice(6)],
+          (entry) => entry.offset,
+        ),
+      ).toEqual(offsets.expected);
+
+      for (const slice of offsets.slices) {
+        expect(slice.offsets).toHaveLength(slice.items.length);
+        expect(slice.offsets.at(-1)).toBe(slice.nextOffset);
+      }
 
       expect(result.first.status).toBe("limit-reached");
       expect(result.first.items).toBe(1);

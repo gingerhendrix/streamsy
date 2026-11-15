@@ -88,6 +88,26 @@ const cursors = new Map<StreamId, string>();
 const batches = Streamsy.followWake(UserWake, { user: "ann" }, { from: "-1", cursors });
 ```
 
+### `Streamsy.awaitWake`
+
+```ts
+// ---cut-start---
+import type { Context, Effect } from "effect";
+import { Streamsy, type FollowFailure, type StreamId } from "@streamsy/core";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+declare function awaitWake<Self, P>(
+  declaration: Context.Key<Self, Streamsy.Api<P, Streamsy.WakeEvent>>,
+  params: P,
+  target: { readonly stream: StreamId; readonly offset: string },
+  options?: Streamsy.AwaitWakeOptions,
+): Effect.Effect<void, FollowFailure, Self>;
+// ---cut-after---
+same<typeof awaitWake, typeof Streamsy.awaitWake>(true);
+```
+
+Wait for the source row to reach the requested offset under core `compare`. The helper catches up before checking, respecting resets, removals and snapshot controls across history pages. It uses the wake service over local or remote storage. `AwaitWakeOptions` is `Omit<Streamsy.FollowWakeOptions, "cursors">`: pass `from` to resume after a saved wake cursor, plus any `Streams.FollowOptions` except `offset`. Without `from`, each call reads the wake stream from the start. A saved cursor skips earlier rows, so the target must be observed after that cursor. Callers choose their own `Effect.timeout`; a closed wake stream without a matching row leaves the wait pending. See [Accepted stream](/docs/projections/accepted).
+
 ### `Streamsy.wakeActions`
 
 ```ts
@@ -135,11 +155,11 @@ same<WakeRow, Streamsy.WakeRow>(true);
 
 `WakeRow` is a row of a wake stream: the latest known state of a source stream. `Streamsy.WakeRow` is also the `Schema` of a row.
 
-| Field    | Meaning                                                                         |
-| -------- | ------------------------------------------------------------------------------- |
-| `stream` | The id of the source stream. It is also the State key of the row                |
-| `offset` | The tail of the source after the write, in the form of a saved read cursor      |
-| `closed` | `true` when the source stream is closed. A row for an open stream leaves it out |
+| Field    | Meaning                                                                                                   |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| `stream` | The id of the source stream. It is also the State key of the row                                          |
+| `offset` | A source position the writer vouches for: written in a source wake stream, accepted in an accepted stream |
+| `closed` | `true` when the source stream is closed. A row for an open stream leaves it out                           |
 
 A row lags its source by one projection pass, because only the projection writes the row. A write to the source alone writes no row.
 

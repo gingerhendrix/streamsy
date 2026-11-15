@@ -58,7 +58,7 @@ The protocol checks expiry on each call that reaches the id, and deletes an expi
 
 On Cloudflare, the object alarm deletes expired streams at their deadline. Other hosts have no sweeper. An expired stream stays in storage until a call reaches its id, or until the app runs `Protocol.expireDue()`. See [Run a process server](/docs/servers/process).
 
-A projection that stops reading an input no longer restarts its TTL, so the input can expire. The projection then stops with `history-unavailable` on its next read. See [Faults](/docs/projections/checkpoints#faults).
+A projection that stops reading an input no longer restarts its TTL, so the input can expire. With a checkpoint and no unfinished pinned unit, its next run handles a final `gone` unit and forgets the binding. Without a checkpoint it fails with `history-unavailable`; a pinned range that expiry removed fails with `range-unreproducible`. See [Faults](/docs/projections/checkpoints#faults).
 
 ## Fork
 

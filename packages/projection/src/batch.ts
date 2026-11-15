@@ -10,6 +10,12 @@ export interface Slice<A> {
   /** Cursor the read started after. Equal to `nextOffset` when the slice is empty. */
   readonly from: string;
   readonly items: ReadonlyArray<A>;
+  /**
+   * One storage offset per item, also the read cursor just after that item.
+   * For a non-empty local slice, offsets.at(-1) === nextOffset. Undefined for
+   * non-empty HTTP reads; empty slices always have offsets: [].
+   */
+  readonly offsets?: ReadonlyArray<string>;
   readonly nextOffset: string;
   readonly upToDate: boolean;
   readonly closed: boolean;
@@ -27,6 +33,8 @@ export type Entry<Inputs extends InputMap> = {
     readonly input: K;
     readonly item: ItemOf<Inputs[K]>;
     readonly index: number;
+    /** Storage offset of this item; reading from it resumes after the item. Absent over HTTP. */
+    readonly offset?: string;
   };
 }[keyof Inputs];
 
@@ -34,6 +42,7 @@ export type Entry<Inputs extends InputMap> = {
 export const emptySlice = <A>(from: string): Slice<A> => ({
   from,
   items: [],
+  offsets: [],
   nextOffset: from,
   upToDate: false,
   closed: false,

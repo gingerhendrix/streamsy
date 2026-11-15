@@ -3,6 +3,8 @@
   "pages": [
     "index",
     "memory-server",
+    "command-stream",
+    "timer-stream",
     "todo",
     "hackernews-newest-stream",
     "issue-tracker",

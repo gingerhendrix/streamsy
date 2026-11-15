@@ -161,6 +161,10 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       params: ReadonlyArray<string>,
     ) => Effect.Effect<void, SqlError.SqlError>;
     readonly nextDue: (projection: string) => Effect.Effect<Option.Option<number>, StorageFault>;
+    readonly summary: (
+      projection: string,
+      now: number,
+    ) => Effect.Effect<ProjectionMarkSummary, StorageFault>;
     readonly due: (
       projection: string,
       now: number,
@@ -175,29 +179,64 @@ interface ProjectionMarks extends Context.ServiceClass.Shape<
       params: string,
       seq: number,
     ) => Effect.Effect<void, StorageFault>;
-    readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
-    readonly defer: (
+    readonly sleep: (
       projection: string,
       params: string,
-      attempts: number,
-      dueAt: number,
+      seq: number,
+      wakeAt: number,
     ) => Effect.Effect<void, StorageFault>;
-    readonly deferred: (projection: string) => Effect.Effect<number, StorageFault>;
+    readonly remove: (projection: string, params: string) => Effect.Effect<void, StorageFault>;
+    readonly fail: (
+      projection: string,
+      params: string,
+      options: {
+        readonly attempts: number;
+        readonly failure: MarkFailure;
+        readonly dueAt: Option.Option<number>;
+      },
+    ) => Effect.Effect<void, StorageFault>;
+    readonly retry: (projection: string, params?: string) => Effect.Effect<number, StorageFault>;
+    readonly resume: (projection: string) => Effect.Effect<number, StorageFault>;
+    readonly failed: (
+      projection: string,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PendingMark>, StorageFault>;
   }
 > {}
 
-// One pending mark: a binding whose input has commits that may not have run yet.
+// Disjoint counts of one projection's marks at the supplied time.
+interface ProjectionMarkSummary {
+  readonly fresh: number;
+  readonly sleeping: number;
+  readonly retryDue: number;
+  readonly backingOff: number;
+  readonly stopped: number;
+  readonly nextDueAt: Option.Option<number>;
+}
+
+// One pending mark: a binding with input work, a retry, or a recorded wake.
 interface PendingMark {
   readonly params: string;
   readonly seq: number;
   readonly attempts: number;
   readonly dueAt: number;
+  readonly wakeAt: Option.Option<number>;
+  readonly stopped: boolean;
+  readonly failure: Option.Option<MarkFailure>;
+}
+
+interface MarkFailure {
+  readonly at: number;
+  readonly reason: Option.Option<string>;
+  readonly message: string;
 }
 // ---cut-after---
 same<OwnerRecords, Internal.OwnerRecords>(true);
 same<CommitHooks, Internal.CommitHooks>(true);
 same<ProjectionMarks, Internal.ProjectionMarks>(true);
 same<PendingMark, Internal.PendingMark>(true);
+same<MarkFailure, Internal.MarkFailure>(true);
+same<ProjectionMarkSummary, Internal.ProjectionMarkSummary>(true);
 ```
 
 `@streamsy/projection` uses each service for one job:
@@ -205,3 +244,15 @@ same<PendingMark, Internal.PendingMark>(true);
 - `OwnerRecords` holds the encoded records of the projection checkpoint store
 - `CommitHooks` runs each hook that `beforeCommit` registers inside every later owned transaction that writes at least one stream id. The hook runs after the body and before the commit, and receives the ids that the transaction created, appended to, or deleted. Its writes commit or roll back with the transaction. The memory store turns a hook failure into a defect. Closing the scope of `beforeCommit` removes the hook
 - `ProjectionMarks` holds the pending marks of durable attached projections, keyed by projection id and params. The memory store keeps them with the streams, so they are gone when the scope of the Layer closes. See [`AttachOptions`](/docs/reference/projection/units#attachoptions)
+
+`ProjectionMarks.mark` runs inside the commit hook and fails with `SqlError`; the other mark operations fail with `StorageFault`.
+
+- `summary(projection, now)` returns five disjoint counts: fresh, sleeping, retry due, backing off and stopped. Fresh rows have no wake and no failed attempts; sleeping rows have a wake and no failure or attempts. Its earliest due time includes sleeping marks and excludes stopped marks, as do `nextDue` and `due`.
+- `mark` raises the sequence, preserving attempts, stops and failure. A sleeping row becomes due now and clears its wake; other rows keep their due time, so writes never shorten backoff. `fail(projection, params, { attempts, failure, dueAt })` preserves the sequence, inserts an absent mark, and records the failure with its message cut to 1,000 characters. `Some(dueAt)` backs off; `None` stops. Both clear the wake index.
+- `clear` deletes on a matching sequence; a moved sequence keeps the row but resets attempts, due time, wake, stop and failure.
+- `sleep(projection, params, seq, wakeAt)` resets failure state and keeps a matching row with `dueAt` and `wakeAt` both set to the deadline. A moved sequence becomes fresh and due now; an absent row is inserted asleep with sequence 1. Past wake times are stored unchanged.
+- `retry(projection, params?)` makes failed or stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed; a repeat before the marks run returns zero. Sleeping rows are left alone. It can select one binding by canonical params.
+- `resume(projection)` makes only stopped marks due now and clears their stop, preserving attempts, sequence and failure. It returns the number changed. Sleeping rows are left alone.
+- `failed(projection, limit)` lists at most `limit` marks with failed attempts, stopped first, then by due time and params. The old marks-level `deferred` count is `summary.retryDue + summary.backingOff + summary.stopped`.
+
+`memoryProjectionMarks()` from `@streamsy/core/internal` creates a standalone private in-memory `ProjectionMarksApi`. It shares the mark operations above but has no stream owner or transaction boundary; each factory call creates an empty store.

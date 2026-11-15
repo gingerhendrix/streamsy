@@ -19,6 +19,7 @@ import {
 } from "@streamsy/projection";
 import { Facts, Workspace, Table, fold, sums, type Row, type Fact } from "./support/fold-by-key.ts";
 import { layerSqlite } from "./support/sqlite.ts";
+import { eventually } from "./support/eventually.ts";
 
 const host = (readLimit = 1000) => {
   const local = layerSqlite(readLimit);
@@ -31,18 +32,6 @@ const host = (readLimit = 1000) => {
     Layer.provideMerge(streams),
   );
 };
-
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, check: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1000; turn += 1) {
-      const value = yield* read;
-
-      if (check(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 const params = { workspace: "main", source: "events" };
 
@@ -643,7 +632,7 @@ for (const durable of [true, false]) {
           });
 
           yield* Layer.build(
-            Projection.attach(declaration, { durable, retry: Schedule.spaced("1 second") }),
+            Projection.attach(declaration, { durable, passRetry: Schedule.spaced("1 second") }),
           );
           yield* seed([{ id: "bad", n: 5 }], { workspace: "main", source: "bad" });
           yield* seed([{ id: "good", n: 7 }], { workspace: "main", source: "good" });
@@ -660,7 +649,8 @@ for (const durable of [true, false]) {
           expect(yield* eventually(readGood, (events) => events.length === 1)).toHaveLength(1);
           expect(attempts).toBeGreaterThan(0);
 
-          if (durable) expect(yield* (yield* ProjectionMarks).deferred(declaration.id)).toBe(1);
+          if (durable)
+            expect((yield* (yield* ProjectionMarks).failed(declaration.id, 1_000)).length).toBe(1);
           fixed = true;
           yield* TestClock.adjust("1 second");
           expect(yield* eventually(readGood, (events) => events.length === 2)).toHaveLength(2);

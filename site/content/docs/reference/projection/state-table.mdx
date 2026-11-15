@@ -46,14 +46,17 @@ declare function define<
   Codecs extends StreamRoute.ParamCodecs,
   C extends StreamAddress.Collections,
   R,
->(state: StateClass<Codecs, C, R>): StateTable.Declaration<Codecs, C, R>;
+>(
+  state: StateClass<Codecs, C, R>,
+  options?: { readonly accepted?: undefined },
+): StateTable.Declaration<Codecs, C, R>;
 // ---cut-after---
 type Codecs0 = typeof Workspace.paramCodecs;
 type C0 = typeof Workspace.collections;
 same<typeof define<Codecs0, C0, Workspace>, typeof StateTable.define<Codecs0, C0, Workspace>>(true);
 ```
 
-`define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class.
+`define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class. The optional second argument is `{ accepted: WakeOutput }`, with wake parameters drawn from the State class parameters. It adds the wake service requirement to the table declaration. See [Accepted stream](/docs/projections/accepted). The signature above shows the default without an accepted class.
 
 ### `StateTable.Declaration`
 
@@ -77,6 +80,10 @@ interface Declaration<
   readonly params: Codecs;
   readonly parse: (id: string) => Option.Option<StreamRoute.Params<Codecs>>;
   readonly at: (params: StreamRoute.Params<Codecs>) => StateTable.Bound<C, R>;
+  readonly retry?: import("@streamsy/projection").Declaration<
+    Codecs,
+    StateTable.Bound<C, R>
+  >["retry"];
   // Also `inputs`, with the State class as `state`.
 }
 // ---cut-after---
@@ -159,6 +166,7 @@ interface Bound<C extends StreamAddress.Collections, R> {
   readonly sync: () => Effect.Effect<void, ProjectionFault, Transaction | R>;
   // The members that make it a bound projection.
   readonly inputs: { readonly state: Streamsy.Address<string, R> };
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
   readonly commit: typeof Commit.transaction;
   readonly process: (
     batch: Slices<{ readonly state: Streamsy.Address<string, R> }>,
@@ -474,7 +482,8 @@ The handler fails with:
 | Cause                                                    | `phase`   | `reason`          |
 | -------------------------------------------------------- | --------- | ----------------- |
 | A storage or transport fault on the create or the append | `process` | `storage-failure` |
-| The output refuses the create or the append              | `process` | `invalid-output`  |
+| The output is busy                                       | `process` | `output-busy`     |
+| The output otherwise refuses the create or the append    | `process` | `invalid-output`  |
 | The SQL read of the stored rows fails                    | `process` | `storage-failure` |
 | A stored row does not decode with the collection schema  | `process` | `invalid-record`  |
 | A folded row does not encode with the collection schema  | `process` | `invalid-output`  |
@@ -518,4 +527,4 @@ same<Exclude<keyof Fields<Real.FoldByKeyError>, "brand">, "_tag">(true);
 
 `FoldByKeyError` is a `Schema.TaggedError` in the error channel of the handler. It is not a `ProjectionFault`, so it has no `phase` and no `reason`. The handler fails with it when a folded row carries a key that differs from the key that `key` returned. `message` names both keys. Import it from the top level of `@streamsy/projection`.
 
-The runners treat it like any handler error. Under durable `attach` the binding defers on its own backoff. See [Errors](/docs/projections/fold-by-key#errors).
+The runners treat it like any handler error. Under `attach` in either durability mode the binding defers on its own backoff. See [Errors](/docs/projections/fold-by-key#errors).

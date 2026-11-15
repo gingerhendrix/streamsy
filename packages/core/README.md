@@ -206,9 +206,9 @@ It has the normal State service, including `create`, `append`, `remove`,
 `read`, `follow`, `fold` and `collect`. Use `DurableState.materialize` to fold
 its events into the latest rows.
 
-`Projection.wake` opts its output into creation on the first append, including
-on another owner. The owner can call the normal State service's `create` to
-make an empty stream available before that append. A repeated create answers
+`Projection.wake` creates a missing output on its checkpoint owner. On another
+owner, the wake stream must already exist. Its owner calls the normal State
+service's `create` before the first append. A repeated create answers
 `Exists`:
 
 ```ts

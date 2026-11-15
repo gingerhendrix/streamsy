@@ -24,6 +24,7 @@ import {
 import { TestClock } from "effect/testing";
 import { StorageFault, TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
+import { StreamBusy } from "../../core/src/protocol/errors.ts";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
 import { memoryHost } from "./support/memory-host.ts";
@@ -1023,3 +1024,65 @@ layer(FamilyFixture.withFamilies(memoryHost(), FollowRoute1, FollowRoute2))((it)
     }),
   );
 });
+
+for (const reason of ["token-conflict", "output-busy"] as const) {
+  test(`follow retries ${reason} on its schedule`, () =>
+    run(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        yield* Streams.append(input, [1], { close: true });
+        let attempts = 0;
+        let steps = 0;
+        const store = yield* CheckpointStore;
+        const writer = yield* StreamsWriter;
+
+        const declaration = Projection.emit({
+          id: `follow-${reason}`,
+          params: {},
+          inputs: { input },
+          outputs: { output },
+          commit: Commit.producer,
+          emit: ({ item }) => ({ output: [item] }),
+        });
+
+        const result = yield* lastOf(
+          Projection.follow(declaration.at({}), {
+            retry: Schedule.recurs(1).pipe(
+              Schedule.tap(() =>
+                Effect.sync(() => {
+                  steps += 1;
+                }),
+              ),
+            ),
+          }),
+        ).pipe(
+          Effect.provideService(CheckpointStore, {
+            ...store,
+            compareAndSet: (...args) =>
+              Effect.suspend(() => {
+                if (reason === "token-conflict" && attempts++ === 0)
+                  return Effect.fail(
+                    new ProjectionFault({ phase: "checkpoint", reason, message: "raced" }),
+                  );
+
+                return store.compareAndSet(...args);
+              }),
+          }),
+          FamilyFixture.provideWriter({
+            ...writer,
+            append: (...args) =>
+              Effect.suspend(() => {
+                if (reason === "output-busy" && attempts++ === 0)
+                  return Effect.fail(new StreamBusy({ id: output.id }));
+
+                return writer.append(...args);
+              }),
+          }),
+        );
+
+        expect(result.status).toBe("source-closed");
+        expect(steps).toBe(1);
+        expect(yield* readAll(output)).toEqual([1]);
+      }),
+    ));
+}

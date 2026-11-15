@@ -21,6 +21,7 @@ export {
 export {
   wake,
   followWake,
+  awaitWake,
   wakeActions,
   WakeMessage,
   WakeRow,
@@ -30,6 +31,7 @@ export {
   type WakeEvent,
   WakeItem,
   type FollowWakeOptions,
+  type AwaitWakeOptions,
   type WakeActions,
   type WakeActionsOptions,
 } from "./toolkit/wake.ts";

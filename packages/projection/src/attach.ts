@@ -1,35 +1,51 @@
-import { Effect, Layer, Schedule, Schema } from "effect";
-import type { Storage } from "@streamsy/core";
+import { Clock, Duration, Effect, Exit, Layer, Option, Pull, Schedule, Schema } from "effect";
+import type { Storage, StorageFault } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
+import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
+import { retryable } from "./failure.ts";
 import { ProjectionRetry } from "./retry.ts";
+import type { WakeOutput } from "./wake.ts";
 
 export type { Attachable } from "./runner.ts";
 
 export interface AttachOptions {
+  /**
+   * Fixed-address wake classes whose source ids request binding runs. A provided
+   * stream service on another storage owner is remote; an absent service or a
+   * matching owner is local. Provide the remote class through Protocol.bind.
+   * Projection.attach follows remote triggers in scope; ProjectionWakeup.attach
+   * accepts only triggers on its own owner. Cursors persist in both modes.
+   */
+  readonly triggers?: ReadonlyArray<WakeOutput<{}>>;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number;
   /**
-   * Retry a failed drain pass, whether it failed with a typed error or a defect.
+   * Timing only. The runner calls the schedule once per retryable failed pass with no input.
+   * Paces retryable failures reading marks, cursors or triggers. Retryable binding
+   * failures use the declaration's binding retry policy. Non-retryable faults stop their unit.
    * Defaults to capped, jittered exponential backoff.
    */
-  readonly retry?: Schedule.Schedule<unknown>;
+  readonly passRetry?: Schedule.Schedule<unknown>;
   /**
    * Keep a pending mark for each binding in the storage owner, written in the
    * transaction of the commit that needs the run. After a restart or an
-   * eviction, the runner finds the marks and runs those bindings. A binding
-   * that fails waits alone, 1 s doubling to 1 hour, and its neighbours run.
+   * eviction, the runner finds the marks and runs those bindings. Otherwise
+   * pending work, timers, binding backoff and stops live only for this runner.
+   * A non-durable timer loses its wake on restart until its next input.
    * Needs a local memory or SQL storage layer.
    *
    * Default: false for `Projection.attach`, true for `ProjectionWakeup.attach`.
    */
   readonly durable?: boolean;
-  /** With `durable`, the due marks that one drain pass reads. Default 25. */
+  /** The due marks that one drain pass reads. Default 25. */
   readonly batch?: number;
+  /** Bindings run at once. Default 1. Must be a positive safe integer. */
+  readonly concurrency?: number;
 }
 
-/** A defect of one drain pass, as a failure that the retry schedule sees. */
+/** A defect of one drain pass, captured for logging with typed failures. */
 class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique symbol }>()(
   "PassDefect",
   {
@@ -49,8 +65,15 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * By default the set of bindings with work lives in memory. A crash after a
  * commit and before the run leaves that binding late until its source gets its
  * next write. With `durable: true`, a pending mark in storage covers that
- * window, and the layer runs due marks when it starts.
- * Inputs on another owner never commit here, so they never trigger. Do not run
+ * window, and the layer runs due marks when it starts. Recorded process timers
+ * wake at their deadline; after host suspend, a capped wait rechecks within 30 s.
+ * Return a time after unit.due to avoid repeatedly running a passed deadline.
+ * Inputs on another owner can use local or remote wake streams in `triggers`.
+ * A provided trigger service on another owner is read one page per pass outside
+ * the local transaction; durable marks and the page cursor then commit together.
+ * A scoped live-read follower signals new remote rows. Remote read failures use
+ * passRetry after local bindings drain; local commits during that backoff wait
+ * for it to end (up to 30 s with the default policy). Do not run
  * an attached binding under `Projection.follow` too: use one writer per key.
  *
  * ```ts
@@ -59,33 +82,129 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * );
  * ```
  */
-export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options: AttachOptions = {},
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>> => {
-  const runner = runnerOf(projection, {
-    limit: options.limit,
-    durable: options.durable ?? false,
-    batch: options.batch,
-  });
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>> => {
+  const runner = runnerOf(projection, options);
 
   return Layer.effectDiscard(
     Effect.gen(function* () {
-      const { wait, drain } = yield* runner;
-      const retry = options.retry ?? (yield* ProjectionRetry);
-      // A durable wait reads marks, so a failed read retries like a failed drain.
-      yield* wait.pipe(
-        Effect.andThen(drain),
-        // `Effect.retry` does not retry a defect, so a handler that throws would end this fiber.
-        Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
-        Effect.tapError((error) =>
-          Effect.logError(`Projection.attach ${projection.id} failed`, error),
-        ),
-        Effect.retry(retry),
-        Effect.repeat(Schedule.forever),
-        Effect.withSpan("Projection.attach"),
-        Effect.forkScoped,
-      );
+      const {
+        wait,
+        drain,
+        status,
+        schedule,
+        rescan,
+        retry,
+        failed,
+        interruptDelay,
+        resume,
+        follow,
+      } = yield* runner;
+
+      const policy = options.passRetry ?? (yield* ProjectionRetry);
+      const step = yield* Schedule.toStep(policy);
+      yield* follow(policy);
+
+      type Status = {
+        state: RunnerStatus["state"];
+        failures: number;
+        retryAt: Option.Option<number>;
+        lastPassAt: Option.Option<number>;
+        step: typeof step;
+      };
+
+      const current: Status = {
+        state: "running",
+        failures: 0,
+        retryAt: Option.none<number>(),
+        lastPassAt: Option.none<number>(),
+        step,
+      };
+
+      const registry = yield* Effect.serviceOption(Registry);
+
+      const changed = Option.isNone(registry)
+        ? Effect.void
+        : yield* registerRunner(registry.value, {
+            id: projection.id,
+            version: projection.version,
+            generation: projection.generation,
+            schedule,
+            rescan,
+            retry,
+            failed,
+            status: status.pipe(
+              Effect.map((runnerStatus): RunnerStatus => ({
+                projection: projection.id,
+                state: current.state,
+                failures: current.failures,
+                retryAt: current.retryAt,
+                lastPassAt: current.lastPassAt,
+                ...runnerStatus,
+              })),
+            ),
+          });
+
+      // A wait reads marks, so a failed read retries like a failed drain.
+      yield* Effect.gen(function* () {
+        let requested = false;
+
+        while (true) {
+          current.state = "running";
+          current.retryAt = Option.none();
+
+          const exit: Exit.Exit<{ readonly more: boolean }, StorageFault | PassDefect> =
+            yield* Effect.exit(
+              (requested ? Effect.void : wait).pipe(
+                Effect.andThen(drain),
+                Effect.catchDefect((defect) => Effect.fail(new PassDefect({ defect }))),
+              ),
+            );
+
+          requested = false;
+
+          current.lastPassAt = Option.some(yield* Clock.currentTimeMillis);
+
+          if (Exit.isSuccess(exit)) {
+            current.failures = 0;
+            current.step = yield* Schedule.toStep(policy);
+            yield* changed;
+            continue;
+          }
+
+          current.failures += 1;
+          yield* Effect.logError(`Projection.attach ${projection.id} failed`, exit.cause);
+
+          const now = yield* Clock.currentTimeMillis;
+
+          const delay: Option.Option<number> = yield* !retryable(exit.cause)
+            ? Effect.succeedNone
+            : Effect.suspend(() => current.step(now, undefined)).pipe(
+                Effect.map(([, duration]) => Option.some(Duration.toMillis(duration))),
+                Pull.catchDone(() => Effect.succeedNone),
+                Effect.catchCause((cause) =>
+                  Effect.logError(
+                    `Projection.attach ${projection.id} retry schedule failed`,
+                    cause,
+                  ).pipe(Effect.as(Option.none<number>())),
+                ),
+              );
+
+          if (Option.isSome(delay)) {
+            current.state = "retrying";
+            current.retryAt = Option.some((yield* Clock.currentTimeMillis) + delay.value);
+            yield* changed;
+            requested = yield* interruptDelay(delay.value);
+          } else {
+            current.state = "failed";
+            yield* changed;
+            // Exhaustion stops automatic retries; every request permits one more pass.
+            requested = yield* resume;
+          }
+        }
+      }).pipe(Effect.withSpan("Projection.attach"), Effect.forkScoped);
     }),
   );
 };

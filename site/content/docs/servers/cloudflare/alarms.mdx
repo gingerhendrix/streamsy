@@ -3,7 +3,7 @@ title: Schedule work with alarms
 description: Run bounded work on a Durable Object when no request is in flight, with wakeups that share the object's single alarm, retry on failure, and recover after eviction.
 ---
 
-A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn, with no request in flight.
+A Durable Object has one alarm slot. Streamsy shares it among wakeups. A wakeup reads its next deadline from committed state, and runs bounded, idempotent work when that deadline is due. The object runs due wakeups in an alarm turn.
 
 ```ts
 import { Effect, Option } from "effect";
@@ -39,6 +39,8 @@ The earliest deadline of all wakeups owns the alarm. The host reconciles the ala
 
 Reconciling reads every `next`, arms the alarm at the earliest deadline, and clears it when no wakeup has work. A due deadline arms the alarm at `now + 1`, so the work runs in an alarm turn, not in the request.
 
+A wakeup can implement `bind(host)`, which the host calls once at acquisition. `WakeupHost` supplies `reconcile` and the wakeup's current retry `state`, plus `retry` to clear this wakeup’s backoff floor without resetting the retry schedule. These effects work outside requests too. Reconciliation takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock. An optional `changed` effect runs after a run or a failed deadline read updates the host's retry state. Wakeups skipped during an alarm receive no notification.
+
 Writes arm the alarm on their own. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before its handler returns. A streamed response body that queues work after the handler returned, and work outside a request, call `Wakeups.use((wakeups) => wakeups.reconcile)`.
 
 ## Alarm turns
@@ -55,18 +57,19 @@ Each wakeup has one permit, so its `run` executes once at a time. A request that
 
 ## Failures
 
-A failure in one wakeup does not stop the others. The host logs it and backs off that wakeup only.
+A failure in one wakeup does not stop the others. The host logs it and backs off or stops that wakeup only.
 
-| Result of a run                                            | Next step                                  |
-| ---------------------------------------------------------- | ------------------------------------------ |
-| Fails                                                      | Back off, then retry                       |
-| Succeeds, and work that was due before it is still due     | Back off, as for a failure                 |
-| Returns `{ more: true }`, because it stopped at its bound  | Run again at once, with no failure counted |
-| Succeeds, and the next deadline is in the future or absent | Reset the failure count                    |
+| Result of a run                                            | Next step                                          |
+| ---------------------------------------------------------- | -------------------------------------------------- |
+| Fails, and `retryable(cause)` is absent or returns `true`  | Back off, then retry while the schedule allows     |
+| Fails, and `retryable(cause)` returns `false`              | Stop until `WakeupHost.retry` or a new acquisition |
+| Succeeds, and work that was due before it is still due     | Back off, as for a failure                         |
+| Returns `{ more: true }`, because it stopped at its bound  | Run again at once, with no failure counted         |
+| Succeeds, and the next deadline is in the future or absent | Reset the failure count                            |
 
-A `next` that fails also backs off, and the other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change it. A finite schedule stops the retries of that wakeup when it is exhausted.
+A retryable `next` failure also backs off; a `StorageFault` with `retryable: false` stops that wakeup without stepping the schedule. The other deadlines still arm. The default backoff starts at 1 s, doubles, and stops growing at 1 hour. Set `retry` to a `Schedule` to change the timing. The host calls it once per retryable failed pass with no input. A finite schedule stops automatic retries on exhaustion; a dying step is logged and treated as exhaustion. `WakeupHost.retry` permits another attempt without resetting the schedule, so another failure after exhaustion stops again with no automatic delay.
 
-`Wakeups.status` returns each wakeup's `next`, `failures`, `retryAt` floor, and `deferred` count. The backoff lives in memory and resets when the object is evicted.
+`WakeupHost.state` reports consecutive failed passes and the automatic or reconciled explicitly requested retry deadline. `Wakeups.status` returns each wakeup's `next`, `failures`, automatic `retryAt` floor, and `deferred` count, including stopped projection bindings. The host's pass backoff and exhaustion live in memory and reset when the object is evicted; durable projection binding marks keep their own backoff and failure records.
 
 ## Recovery
 
@@ -104,7 +107,7 @@ export const filesWake = Projection.wake({
 // ---cut---
 import { Layer } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, ProjectionWakeup } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionWakeup } from "@streamsy/projection";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Files, UserWake, filesWake } from "./wake-streams.ts";
@@ -112,7 +115,7 @@ import { Files, UserWake, filesWake } from "./wake-streams.ts";
 export class FilesObject extends StreamsyObject.make({
   app: Layer.empty,
   layer: (state) =>
-    CheckpointStore.layer.pipe(
+    Layer.mergeAll(CheckpointStore.layer, Projection.Registry.layer).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layer(Streamsy.group(Files, UserWake), {
           client: { storage: state.storage },
@@ -125,20 +128,20 @@ export class FilesObject extends StreamsyObject.make({
 
 The host acquires the wakeup in the object's layer scope, before any request writes. Put the checkpoint Layer and the input streams in `layer`, so the projection reads and commits on the object's own storage.
 
-The wakeup is durable by default. Each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and the next turn runs those bindings. A binding that catches up deletes its mark. A binding that fails waits alone, from 1 s doubling to 1 hour, while the other bindings run, and `Wakeups.status` counts it as `deferred`.
+With `Projection.Registry.layer` in that layer, request handlers can use `registry.schedule(bindingOrBindings)`, `registry.retry(declarationOrBinding)` and `registry.rescan(projectionOrId, WakeClassOrStreamId)`. A schedule array must name one projection and arms the alarm once for the whole call. Rescan resets that trigger's stored cursor to `ZERO_OFFSET` and clears its stop, for use after a fold fix. The cursor reset survives eviction in both durability modes; ingested marks survive only with durable marks. A first attach already reads from the start, so a new family needs no rescan. They record the request and reconcile the alarm before returning. See the [registry retry contract](/docs/projections/run#observe-attached-runners) and [Registry on a Durable Object](/docs/projections/run#registry-on-a-durable-object) for retry counts, status and wait lifetimes.
 
-Pass `durable: false` to keep only an in-memory set of bindings. Then a binding whose run did not happen before the object stopped stays late until its source gets its next write.
+The wakeup is durable by default. Each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and a due turn runs those bindings. A binding that catches up keeps a sleeping mark if its checkpoint records a wake; otherwise it deletes its mark unless a write during the run marked it again. A binding with a retryable failure waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), while the other bindings run, and `Wakeups.status` counts it as `deferred`.
+
+A non-retryable projection or storage fault stops only its failed unit. The registry reports the cause, and `registry.failed` reads stored binding failures even after an eviction. Each cold start makes stopped durable bindings due once; a still-broken binding stops again. A stopped mark arms no alarm. Poison trigger rows stop only their stream, leaving local commits and other triggers running.
+
+A process timer returned with `Projection.wakeAt` keeps a sleeping mark. The alarm is armed at its recorded deadline, and durable sleeping marks survive eviction. A wake during backoff waits for backoff to end; a stopped binding fires late after retry or restart. Return a time after `unit.due` for the next wake: returning a passed time keeps the binding immediately due.
+
+Pass `durable: false` to keep pending marks and binding backoff and stops in private memory, with the same retry timing and isolation. These reset on eviction. Timers lose their wake until the binding's next input. Then a binding whose run did not happen before the object stopped stays late until its source gets its next write.
 
 Only commits through this object's storage choose bindings. A projection with inputs on another object does not see their writes. To write a wake stream on another object, link that stream. See [Connect Durable Objects](/docs/servers/cloudflare/objects). For the projection itself, see [Attach](/docs/projections/run#attach) and [Commits](/docs/projections/commits).
-
-## Outbox
-
-`OutboxWakeup.make(definition, deliver, options)` from `@streamsy/serve/cloudflare` drains an [outbox](/docs/outbox) in alarm turns. `@streamsy/serve/alchemy` exports the same adapter. Its `next` is the due time of the next outbox entry. Its `run` is a drain pass in the same acquired context as requests. The object's `layer` must provide `OutboxStore` and the services of the delivery function.
-
-A pass that claims `limit` entries returns `{ more: true }`, so a large backlog drains in back-to-back turns. Set `ordered: true` to stop behind the oldest pending retry in the selected scope. The default lets later due entries pass a future retry. With `partitionId`, the wakeup drains that partition only, and its name is `streamsy/outbox/<name>/<partition>`. Without it, the name is `streamsy/outbox/<name>` and the scope is the whole outbox name.
-
-Request drains and alarm drains share a permit when they use the same store object. A delivery function must not drain its own outbox name. Across store objects or processes, keep one owner for overlapping scopes, because the outbox acquires no distributed leases. See [Schedule the next pass](/docs/outbox#schedule-the-next-pass) and [`OutboxWakeup`](/docs/reference/serve/cloudflare#cloudflareoutboxwakeup).
 
 ## Wake streams and alarms
 
 A wake stream and the alarm are different mechanisms. A [wake stream](/docs/streams/wake) is a Durable State stream that tells readers which source streams changed. The alarm is the host's scheduler for this object. Under `ProjectionWakeup.attach`, a `Projection.wake` binding writes its wake rows in an alarm turn. A reader of the wake stream reads it as any State stream, on any host.
+
+Pass `triggers: [LocalWake]` to `ProjectionWakeup.attach` to request bindings from wake rows on this object. At acquisition, a provided trigger service whose owner differs from this object's storage owner dies with a `RangeError` naming the trigger: `ProjectionWakeup.attach` accepts only triggers on its own storage owner. An absent service or a matching owner keeps the local path. Use the process host, `Projection.attach`, for remote trigger followers. The normal append path reconciles the alarm, and unread trigger rows arm it on acquisition after an eviction. With durability enabled, ingestion commits the trigger cursor and pending marks together. See [Trigger streams](/docs/projections/run#trigger-streams) for request offsets and non-durable loss on eviction.

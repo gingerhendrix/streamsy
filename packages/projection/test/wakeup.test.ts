@@ -1,7 +1,7 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Array, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
-import { Storage, StreamAddress, Streamsy } from "@streamsy/core";
+import { MemoryStorage, Storage, StreamAddress, Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import type { Wakeup } from "@streamsy/serve/cloudflare";
 import { Projection, ProjectionWakeup } from "@streamsy/projection";
@@ -141,5 +141,29 @@ layer(host())((it) => {
         yield* second.run;
         expect(yield* ops).toEqual(["upsert"]);
       }),
+  );
+});
+
+class RemoteWake extends Streamsy.wake<RemoteWake>()("Wakeup/RemoteWake", "remote-wake", {
+  params: {},
+}) {}
+
+layer(
+  host().pipe(
+    Layer.provideMerge(Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(RemoteWake))),
+  ),
+)((it) => {
+  it.effect("a remote trigger dies at attach with its id and owner restriction", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ProjectionWakeup.attach(filesWake, { triggers: [RemoteWake] }),
+      );
+
+      expect(Exit.isFailure(exit) && String(exit.cause)).toContain("RangeError");
+      expect(Exit.isFailure(exit) && String(exit.cause)).toContain(RemoteWake.address({}).id);
+      expect(Exit.isFailure(exit) && String(exit.cause)).toContain(
+        "ProjectionWakeup.attach accepts only triggers on its own storage owner",
+      );
+    }),
   );
 });

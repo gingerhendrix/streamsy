@@ -1,3 +1,4 @@
+import { withAccepted } from "./range.ts";
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
 import { Array, Effect, Option, Record } from "effect";
@@ -232,4 +233,4 @@ export const producer = pin(
         return yield* Effect.void;
       }),
   }),
-);
+).pipe(withAccepted);

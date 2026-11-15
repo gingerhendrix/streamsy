@@ -1,0 +1,115 @@
+---
+title: Effects
+description: Run effects with pinned units, binding retries and checkpointed timers.
+---
+
+An effect is a projection with `Commit.atLeastOnce`, a retry budget and a timer.
+
+`Projection.process` describes the work. `Commit.atLeastOnce` pins each unit's input ranges and recorded due time before calling the handler. If the handler or checkpoint settlement fails, it runs again with the same `unit.key`. Pass that key to the effect's destination as its idempotency key. The destination must remember completed keys; the checkpoint alone cannot prevent a repeated external call.
+
+The outbox package and action APIs were removed. Their replacement is a process projection: its checkpoint records progress, the declaration's `retry` controls binding failures, and a returned `Projection.wakeAt` records deferred work. Applications that need a separate per-entry queue can use the interop below.
+
+## Snooze and wake
+
+Here the input records the latest snooze or cancellation. `Delivery` is an application service: its `wake` implementation must deduplicate calls by key, and its `failed` implementation must deduplicate failure facts by key. Provide it alongside the stream and checkpoint services when attaching the projection.
+
+```ts
+import { Clock, Context, Effect, Schedule, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection, type RunnerFailure } from "@streamsy/projection";
+
+class Snoozes extends Streamsy.json<Snoozes>()("Effects/Snoozes", "snoozes/:id", {
+  params: { id: Schema.String },
+  schema: Schema.Struct({ token: Schema.String, until: Schema.NullOr(Schema.Finite) }),
+}) {}
+
+class Delivery extends Context.Service<
+  Delivery,
+  {
+    readonly wake: (key: string, token: string) => Effect.Effect<void, Error>;
+    readonly failed: (key: string, failure: RunnerFailure) => Effect.Effect<void, Error>;
+  }
+>()("Effects/Delivery") {}
+
+export const snoozeWake = Projection.process({
+  id: "snooze-wake",
+  params: { id: Schema.String },
+  inputs: { snoozes: Snoozes },
+  commit: Commit.atLeastOnce,
+  retry: {
+    schedule: Schedule.exponential("1 second"),
+    maxAttempts: 8,
+    onExhausted: (unit, failure) =>
+      Effect.flatMap(Delivery, (delivery) => delivery.failed(unit.key, failure)),
+  },
+  process: (_batch, unit) =>
+    Effect.gen(function* () {
+      const snoozes = yield* Snoozes;
+      const current = (yield* snoozes.collect(unit.params)).items.at(-1);
+      if (current === undefined || current.until === null) return;
+      if (current.until > (yield* Clock.currentTimeMillis)) {
+        return Projection.wakeAt(current.until);
+      }
+      yield* (yield* Delivery).wake(unit.key, current.token);
+      yield* snoozes.append(unit.params, [{ token: current.token, until: null }]);
+    }),
+});
+```
+
+The handler rereads the current facts because a timer-only unit has empty input slices. This small example retains and reads the whole snooze history; a larger application can read its materialized current state instead. Appending `until: null` records completion and gives the next pass nothing to append. A new snooze input before the wake runs the handler and replaces the recorded time. A cancellation input makes it return nothing and clears the timer. There is no cancel API.
+
+A due unit carries the recorded deadline in `unit.due`, even if the host wakes late. A handler that requests another wake must advance the time; repeatedly returning a passed time can run it at pass speed. The snooze handler either records a future wake or finishes.
+
+## Retry budget
+
+`retry` belongs to the declaration and both attach hosts apply it. The example stops the binding after eight failed runs. New input during backoff preserves its deadline and attempt count; a success resets them. Without a policy, binding retry doubles from one second to one hour with no attempt limit. A custom schedule must depend only on step count, not input or elapsed time; a finite schedule also exhausts the binding when it ends.
+
+`onExhausted` runs at least once, outside the handler transaction, before the binding stops. Use `unit.key` to deduplicate its failure fact. A failure before any unit forms counts toward the budget but skips the hook and logs why. A hook failure is logged and the binding stops anyway. Non-retryable faults stop without calling the hook. Exhaustion retains the failed unit; it does not skip it. Inspect `registry.failed` and use `registry.retry` to permit another attempt. See [Binding retry](/docs/reference/projection/runners#binding-retry).
+
+The attach option `passRetry` separately paces failures of the runner's marks, cursors or trigger operations. `context.attempt` starts at one inside a process handler; direct `run` and `follow` always use one and do not apply the declaration's binding policy.
+
+## Appending to your own input
+
+A handler that appends to its own input must reach a state where it appends nothing. Otherwise each append requests another run. A continue-confirm flow has this terminating shape: the continue input appends a confirmation input, that input appends nothing, and the confirmation wake finishes without requesting another wake.
+
+```ts
+import { Clock, Effect, Option, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+class Continue extends Streamsy.json<Continue>()("Effects/Continue", "continue", {
+  params: {},
+  schema: Schema.Literals(["continue", "confirm"]),
+}) {}
+
+export const continueConfirm = Projection.process({
+  id: "continue-confirm",
+  params: {},
+  inputs: { input: Continue },
+  commit: Commit.atLeastOnce,
+  process: (batch, unit) =>
+    Effect.gen(function* () {
+      if (batch.input.items.includes("continue")) {
+        yield* (yield* Continue).append({}, ["confirm"]);
+      }
+      if (Option.isSome(unit.due)) return;
+      return Projection.wakeAt((yield* Clock.currentTimeMillis) + 1_000);
+    }),
+});
+```
+
+An at-least-once retry may repeat the confirmation append. For a business effect, use a caller key or a destination that deduplicates; for facts on the same SQL storage owner, use `Commit.transaction` to commit the append and checkpoint together. The [command stream pattern](/docs/projections/command-streams) shows a transactional local effect with a receipt.
+
+## Per-entry queue interop
+
+An application that wants a per-entry queue can offer to Effect's `PersistedQueue` inside a `Commit.transaction` handler.
+
+Read from Effect 4.1.2's `effect/persistence/PersistedQueue` source: `makeStoreSql` (also exposed through `layerStoreSql`) captures `SqlClient.withoutTransforms()`. Its `offer` runs an insert through that client in the calling fiber and uses `sql.afterCommit` to nudge local takers after commit. The offer joins the checkpoint transaction when the queue's SQL store is built from the **same `SqlClient` and transaction context** used by Streamsy's `Transaction` service. Build its store before running handlers, so the queue's migrations finish first. Offer in the handler fiber, with a stable queue entry id for deduplication.
+
+This source reading supports atomic SQL enqueue and checkpoint settlement on that shared client. It does not establish atomicity for the memory or Redis stores, for a queue built from a different SQL client or database, or for the consumer's external effect. Taking and acknowledging an entry have their own queue retry and delivery rules.
+
+## Hosts
+
+On a Bun or Node process, build a [`Projection.attach`](/docs/projections/run#attach) Layer over the storage and application services before writes begin. On Cloudflare, acquire [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) in the object Layer. Both hosts wake for recorded timers. Use `durable: true` on persistent storage to recover pending work and future wakes after a restart or eviction. Wakes may be late, and backoff or a stopped binding delays a wake.
+
+For many timer rows in one binding, use a due table and return its earliest time. The [timer stream example](/docs/examples/timer-stream) shows a one-shot row, cancellation and cron catch-up.

@@ -77,6 +77,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -84,6 +85,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -119,7 +121,7 @@ same<typeof pass, typeof Projection.pass>(true);
 
 `pass` runs at most one unit and returns a [`PassResult`](/docs/reference/projection/units#passresult). It loads the checkpoint through the Commit, reads one page of each input in declaration order, runs the handler, and passes the unit to the Commit.
 
-- When no input has items and no input reached a new close or removal, `pass` commits nothing. Its status is `source-closed` when every input is closed, and `caught-up` otherwise.
+- When no input has items, no input reached a new close or removal, and no timer is due, `pass` commits nothing. Its status is `source-closed` when every input is closed, and `caught-up` otherwise.
 - When the checkpoint holds a pinned unit, `pass` reads the pinned ranges again and runs that unit first. A Commit that does not pin fails with reason `invalid-record`.
 - When an input is gone, `pass` runs one final unit with `gone` on its slice, then forgets the binding. Its status is `source-closed`.
 - A handler failure fails `pass` with the error of the handler. `pass` does not wrap it.
@@ -168,6 +170,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -175,6 +178,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -209,7 +213,7 @@ declare function run<Inputs extends InputMap, E, R, Q, Result, P, S = never, OR 
 same<typeof run, typeof Projection.run>(true);
 ```
 
-`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state once.
+`run` repeats [`pass`](#projectionpass) until a pass commits nothing, or until it has committed `options.limit` units. It returns a [`Progress`](/docs/reference/projection/units#progress) with the state and offsets that the last pass left, and decodes the state once. It handles recorded wakes when due but does not wait for a future deadline. A cycle commits at most one due unit without input; return a time after `unit.due` for the next wake.
 
 - With no `limit`, `run` continues until the inputs are caught up or closed.
 - When `limit` is not a positive safe integer, `run` fails with a `ProjectionFault` with phase `load` and reason `invalid-options`.
@@ -259,6 +263,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -266,6 +271,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -351,6 +357,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -358,6 +365,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -380,10 +388,10 @@ type Readable<Inputs extends InputMap, S, Q> = Identity & {
   readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
 };
 // ---cut-end---
-declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
   options?: AttachOptions,
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | InputServices<I>>;
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>>;
 // ---cut-after---
 same<typeof attach, typeof Projection.attach>(true);
 ```
@@ -393,12 +401,100 @@ same<typeof attach, typeof Projection.attach>(true);
 - The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
-- `attach` throws a `RangeError` when `limit` or `batch` is not a positive safe integer.
-- A failed pass, or a failed read of the marks, logs an error and runs again under `retry`. A binding that fails or reaches `limit` stays in the set of bindings with work.
+- `attach` throws a `RangeError` when `limit`, `batch` or `concurrency` is not a positive safe integer.
+- A retryable failed pass in marks, cursor or trigger operations logs an error and runs again under `passRetry`. A binding with a retryable failure uses its declaration's `retry` policy, defaulting to 1 s doubling to 1 hour in either mode. A binding that reaches `limit` runs again next.
 - By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
-- With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding defers its own mark and does not fail the pass. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
-- An input on another storage owner never commits here, so it never triggers a run.
+- With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding backs off or stops its own mark and does not fail the pass. Non-retryable projection or storage faults stop only their unit; handler errors and defects retry. A start makes stopped marks due once. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
+- Inputs on another owner need a [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
 - A binding whose source was removed before its first run is dropped, with a warning.
+
+A trigger is local when its stream service is absent or its owner matches any of the ambient `Storage`, `OwnerRecords` and `CommitBoundary` services; otherwise it is remote. These three services share an owner; wrappers must keep at least one unwrapped so its owner metadata survives. Provide a remote class at runtime, such as `Protocol.bind(RemoteStreams.layerProtocol(...), Streamsy.group(Wake))` or another owner's protocol layer. `Projection.attach` follows each remote trigger with a scoped live-read fiber, which signals new data and ends with the layer scope. `ProjectionWakeup.attach` rejects a remote trigger at acquisition with a `RangeError` naming its stream: it accepts only triggers on its own storage owner.
+
+A pass reads local triggers, drains local bindings, then reads one page per remote trigger outside the local transaction. It commits the page's `nextOffset` with its durable marks in one local transaction; it does not derive per-message offsets. `StreamNotFound` and `StreamGone` leave the cursor unchanged without a fault. `InvalidReadRequest`, invalid wake data or an invalid page cursor stops only that trigger as `invalid-source`. Remote `TransportFault` and `StorageFault` failures are retryable pass failures; all remote triggers are attempted before the first failure is returned. Local commits during pass backoff wait until it ends (default cap 30 s). The follower retries with its own `passRetry` schedule steps and never signals a read failure. `next` reads no network and a failing remote alone does not make it report immediate work. See [Trigger streams](/docs/projections/run#trigger-streams) for cursor recovery and rescan.
+
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
+
+### Binding retry
+
+All five constructors (`fold`, `process`, `emit`, `mapAccum` and `mapAccumBatch`)
+accept a binding `retry` policy on the declaration. Both attach hosts use it.
+`run` and `follow` do not apply this policy.
+
+```ts
+// ---cut-start---
+import { Effect, Schedule } from "effect";
+import type { Unit, RunnerFailure } from "@streamsy/projection";
+declare function recordFailure(key: string, failure: RunnerFailure): Effect.Effect<void>;
+// ---cut-end---
+const retry = {
+  schedule: Schedule.exponential("1 second"),
+  maxAttempts: 3,
+  onExhausted: (unit: Unit<{ id: string }>, failure: RunnerFailure) =>
+    recordFailure(unit.key, failure),
+};
+```
+
+- `schedule` controls timing only. The default doubles from 1 s to 1 hour, with no limit.
+  On each retryable failure, a fresh `Schedule.toStep` is stepped `attempts` times
+  with no input and a fixed timestamp. The last delay sets the stored `dueAt`.
+  Schedules that depend on input or elapsed time are unsupported. A finite schedule
+  that ends exhausts the binding; a dying schedule is logged and treated as ended.
+- `maxAttempts` limits failed runs, including load or read failures before a unit forms.
+  With `3`, the third failed run stops. The default is unlimited. New input during
+  backoff preserves the attempt count and deadline. Success clears the count.
+- `onExhausted(unit, failure)` runs before the exhausted binding stops. The unit has
+  the declaration's decoded params. The hook runs at least once: dedupe with `unit.key`.
+  If the exhausting failure occurs before any unit forms, the hook is skipped and the
+  runner logs why. A hook failure is logged and the binding stops anyway. The hook
+  does not run for a non-retryable fault, which already has its own fault reason.
+  Hooks run outside the handler transaction and may overlap other bindings' handlers.
+
+Exhaustion keeps the failed unit and stops its mark with `dueAt: None`.
+`registry.failed` lists it with `exhausted: true` when stopped and either the attempt
+budget or schedule has ended. No exhaustion flag is stored: changing a declaration's
+policy changes this derived view. A non-retryable fault after earlier retryable failures
+can also meet this definition. `registry.retry` permits one more run; another failure
+stops it again if the budget is still exhausted. A runner start also makes stopped marks
+due once. Durable backoff retains its stored deadline across restarts without stepping
+the schedule again.
+
+The attach option `passRetry` separately paces failed drain passes in marks, cursors
+or triggers. Both hosts reject the removed attach option `retry` with a `RangeError`
+naming `passRetry`. The returned wakeup's `retry` field and `Wakeup.bind` keep their names.
+
+### Binding concurrency
+
+Both attach forms accept `concurrency` (default `1`), the most bindings run at once.
+It must be a positive safe integer. Each binding still runs in at most one fiber;
+units within that binding run in order.
+
+| Host                        | `Commit.transaction`                                                                     | `Commit.atLeastOnce`                 |
+| --------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| SQLite (Bun, Node and Deno) | Transaction bodies serialize; reads and `prepare` can overlap another unit's transaction | Handler bodies run in parallel       |
+| Durable Objects             | As SQLite                                                                                | Handler bodies overlap across awaits |
+| Postgres and MySQL          | Handler bodies run in parallel up to the pool size, subject to shared output row locks   | Handler bodies run in parallel       |
+
+Keep `concurrency` below the pool size: each `Commit.transaction` unit holds one
+pooled connection for its whole handler. Both server drivers default to 10 connections;
+leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the
+provided `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
+handler's transaction context waits forever on SQLite, and on a pool once every
+connection holds a transaction. Appending to a shared output last keeps its row
+lock short: units serialize from that append until commit. Units that lock streams
+in opposite orders across separate appends can deadlock on Postgres or MySQL; the
+database aborts one transaction and its binding backs off before retrying.
 
 Do not also run an attached binding under `follow`.
 
@@ -406,7 +502,7 @@ Do not also run an attached binding under `follow`.
 
 ```ts
 // ---cut-start---
-import type { Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
+import type { Cause, Effect, Layer, Option, Schedule, Scope, Stream } from "effect";
 import type { AppendFailure, Decided, Storage, StorageFault, Streamsy } from "@streamsy/core";
 import type * as Real from "@streamsy/projection";
 import {
@@ -445,6 +541,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -452,6 +549,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -473,22 +571,31 @@ type Readable<Inputs extends InputMap, S, Q> = Identity & {
   readonly state?: BoundState<S>;
   readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
 };
+interface WakeupHost {
+  readonly reconcile: Effect.Effect<void>;
+  readonly retry: Effect.Effect<void>;
+  readonly state: Effect.Effect<{
+    readonly failures: number;
+    readonly retryAt: Option.Option<number>;
+  }>;
+}
 // ---cut-end---
 declare const ProjectionWakeup: {
-  attach: <I extends InputMap, E, R, Q, Result, P, OR = never>(
-    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>>,
+  attach: <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
+    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
     options?: AttachOptions,
   ) => Effect.Effect<
     {
       name: string;
       next: Effect.Effect<Option.Option<number>, StorageFault>;
-      // The in-memory and the durable pass each return `{ more: boolean }`,
-      // so the declared type names it twice.
+      retryable: (cause: Cause.Cause<unknown>) => boolean;
       run: Effect.Effect<
-        { more: boolean } | { more: boolean },
-        E | ProjectionFault | StorageFault,
-        Exclude<R, P> | Q | OR | InputServices<I>
+        { more: boolean },
+        StorageFault,
+        Exclude<R, P> | Q | OR | HR | InputServices<I>
       >;
+      bind: (host: WakeupHost) => Effect.Effect<void>;
+      changed: Effect.Effect<void>;
       retry: Schedule.Schedule<unknown>;
       deferred: Effect.Effect<number, StorageFault>;
     },
@@ -500,15 +607,16 @@ declare const ProjectionWakeup: {
 same<typeof ProjectionWakeup, typeof Real.ProjectionWakeup>(true);
 ```
 
-`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections) on Cloudflare.
+`ProjectionWakeup.attach` returns the wakeup of a projection for the `wakeups` of a Cloudflare object. It uses the same runner as [`attach`](#projectionattach), and the same rules apply, except that `durable` defaults to `true`. After an eviction or a deploy, the acquisition of the object reads the marks and arms the alarm. A cold start makes stopped durable bindings due once. Stopped marks alone arm no alarm. Acquire it in the scope of the object Layer, before any request writes. See [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections) on Cloudflare.
 
-| Field      | Meaning                                                                                                                                              |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`     | `streamsy/projection/` followed by the URI-encoded projection id                                                                                     |
-| `next`     | The current time while a binding has work in memory. Otherwise, in durable mode, the earliest due time of the marks. `None` when no binding has work |
-| `run`      | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                    |
-| `retry`    | `options.retry`, or the `ProjectionRetry` schedule                                                                                                   |
-| `deferred` | The number of bindings whose marks wait on their own backoff after a failure. It is always `0` when `durable` is `false`                             |
+| Field       | Meaning                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`      | `streamsy/projection/` followed by the URI-encoded projection id                                                                                                                            |
+| `next`      | The current time while a binding has work in memory or a trigger has unread rows. Otherwise, the earliest due time of the marks, including sleeping timers. `None` when no binding has work |
+| `run`       | The Effect that runs each binding with work. Its `more` is `true` when a binding still has due work after the run                                                                           |
+| `retry`     | `options.passRetry`, or the `ProjectionRetry` schedule                                                                                                                                      |
+| `retryable` | Classifies pass failures: known non-retryable projection or storage faults stop automatic retries                                                                                           |
+| `deferred`  | The sum of retry-due, backing-off and stopped marks after a binding failure. It counts private memory marks when `durable` is `false`                                                       |
 
 ## Reads
 
@@ -555,6 +663,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -562,6 +671,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -640,6 +750,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -647,6 +758,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -726,6 +838,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -733,6 +846,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -838,6 +952,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -845,6 +960,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -925,6 +1041,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -932,6 +1049,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1006,6 +1124,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -1013,6 +1132,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1087,6 +1207,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -1094,6 +1215,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1169,6 +1291,7 @@ interface Executable<
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, OR>;
   readonly commit: Commit.Commit<Result, P, Q>;
   readonly prepare?: (batch: Slices<I>, unit: Unit) => Effect.Effect<unknown, E, Q>;
   readonly process: (
@@ -1176,6 +1299,7 @@ interface Executable<
     unit: Unit,
     encoded?: string,
     prepared?: unknown,
+    attempt?: number,
   ) => Effect.Effect<Result, E, R | P>;
 }
 
@@ -1214,3 +1338,99 @@ same<typeof read, typeof Projection.read>(true);
 ```
 
 A bound projection from any constructor is an `Executable`. `BoundState` is the state of a bound projection: `initial` already has the params bound, and it runs only when no state is stored.
+
+## `Projection.Registry`
+
+`RunnerStatus` reports the pass `failure`, stopped binding count and each trigger stream's optional failure, alongside `state`, `failures`, `retryAt`, `active`, `queued`, `lastPassAt` and the mark summary in both modes. `RunnerFailure` holds `at`, `retryable`, optional projection-fault `reason` and a message capped at 1,000 characters. A good drain clears the pass failure. Its five disjoint `marks` counts include `sleeping`, which has a recorded wake and no failure and is excluded from deferred work.
+
+`registry.failed(target, { limit })` lists failed bindings, stopped first and then by deadline. Targets are projection ids, declarations or bindings. Each result has encoded `params`, `attempts`, optional `dueAt`, `stopped`, `exhausted` and the stored failure (`at`, optional `reason`, `message`). The limit defaults to 100 and must be an integer from 1 to 1,000; an invalid limit dies with `RangeError`. Durable failures survive eviction.
+
+Provide `Projection.Registry.layer` below attach layers to share one in-process registry. Its `status` effect reads the attached runners and `changes` streams full snapshots, starting with the current snapshot. A slow consumer retains at most one pending notification and reads the latest snapshot when it resumes. Runners unregister when their attach scope closes.
+
+Runner attachment requires `Registry.layer`. A hand-built `Registry.of(...)` value has no private registration support, so attachment dies with a clear error.
+
+### `registry.schedule`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StorageFault } from "@streamsy/core";
+import type { Identity, InvalidBinding, NotAttached, RegistryApi } from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Binding = Pick<Identity, "id" | "params">;
+declare function schedule(
+  binding: Binding | ReadonlyArray<Binding>,
+): Effect.Effect<void, InvalidBinding | NotAttached | StorageFault>;
+// ---cut-after---
+same<typeof schedule, RegistryApi["schedule"]>(true);
+```
+
+The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` or `registry.schedule(bindings)` resolves by projection id and decodes every binding's encoded params with the attached declaration before writing any marks. Arrays must name one projection; mixed ids die with `RangeError` before writing. Empty arrays do nothing and duplicates coalesce. Marks are written in chunks of 100, followed by one runner wake. A later storage fault may leave earlier chunks marked; repeating the request is safe. The call returns before processing finishes. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. `schedule` fails with the exported `InvalidBinding { projection, params }` tagged error when encoded params do not round-trip through the attached declaration, including missing or extra keys. `retry` with those params returns zero. Schedule and retry resolve the attached identity without checking version or generation. Schedule, retry and rescan end the current wait and start one pass. A projection-level retry also resumes stopped trigger streams. The return count includes only changed binding marks. Requests retain the pass schedule; after exhaustion another failed requested pass returns to `failed` with no automatic delay. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
+
+For an attached family, schedule several members in one call:
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+class Members extends Streamsy.json<Members>()("Schedule/Members", "members/:id", {
+  params: { id: Schema.String },
+  schema: Schema.Finite,
+}) {}
+const family = Projection.fold({
+  id: "member-totals",
+  params: { id: Schema.String },
+  inputs: { members: Members },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+});
+export const backfill = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.schedule([family.at({ id: "one" }), family.at({ id: "two" })]);
+});
+```
+
+### `registry.rescan`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { StorageFault } from "@streamsy/core";
+import type {
+  Attachable,
+  Identity,
+  NotAttached,
+  RegistryApi,
+  WakeOutput,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut-end---
+type Binding = Pick<Identity, "id" | "params">;
+type Declaration = Omit<Attachable<Binding>, "retry">;
+declare function rescan(
+  target: string | Declaration,
+  trigger: WakeOutput<{}> | string,
+): Effect.Effect<void, NotAttached | StorageFault>;
+// ---cut-after---
+same<typeof rescan, RegistryApi["rescan"]>(true);
+```
+
+`registry.rescan(target, trigger)` takes a projection id or declaration and a wake class from its `triggers` option or the stream id shown in `RunnerStatus.triggers`. It resets that stream's owner-record cursor to `ZERO_OFFSET` in a transaction, clears only that stream's stop, and wakes the runner. An unattached projection fails with `NotAttached`; a trigger not attached to that projection dies with `RangeError` naming both ids. A concurrent trigger read finishes before the reset, so the next pass rereads from zero. The cursor lives in storage and the reset survives restart in both durability modes; ingested binding marks survive restart only with `durable: true`. Use rescan after a fold fix with the appropriate version or generation: it does not reset binding checkpoints or override binding backoff or stops. A first attach with no saved cursor already reads from the start, so a new family needs no rescan. A still-invalid trigger row stops the stream again. See [Trigger streams](/docs/projections/run#trigger-streams).
+
+For example, reset a trigger by the stream id reported in `RunnerStatus.triggers`:
+
+```ts
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+
+export const rescanMembers = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.rescan("member-totals", "member-wake");
+});
+```
+
+`registry.events` streams future `RunnerEvent` observations. The exported `RunnerEvent` value provides constructors, `$is` and `$match`. `Ran`, `Failed` and `Dropped` all carry `projection: string` and `params: Readonly<Record<string, string>>`. `Projection.Registry.isFor(binding)` matches both the id and encoded params, regardless of key order. `Ran` adds status, units, offsets and `wakeAt: Option<number>` from the completed run; `Failed` adds attempts, `dueAt`, `failure` and `stopped`. A backoff has `Some(dueAt)` in both modes; a stop has `None`. Events use unbounded buffering; scope subscriptions to release them.
+
+`registry.awaitOffset(binding, input, offset)` waits until the binding's checkpoint for the named input reaches or exceeds the offset. It subscribes before calling `Projection.read`, then consumes matching `Ran` events and rereads the checkpoint on matching `Failed` events to include progress committed before a later unit failed. A binding whose version or generation differs from the attached runner fails with `ProjectionFault` (phase `load`, reason `identity-mismatch`) before the checkpoint read. It requires the checkpoint read's services and fails with `NotAttached` or `ProjectionFault`. It has no timeout: callers add `Effect.timeout`. Its subscription closes on completion or interruption. This observes one live process or object instance.

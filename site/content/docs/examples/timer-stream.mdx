@@ -1,0 +1,153 @@
+---
+title: Timer stream
+description: One-shot and cron rows sharing a transactional due table and one checkpointed wake.
+---
+
+A State stream records timer rows. A fire projection maintains a SQLite due table and appends fired facts. Many rows share **one wake per binding**: the binding returns `Projection.wakeAt` for the due table's `MIN(due_at)`.
+
+## Run
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run smoke:timer-stream
+bun run --cwd examples/timer-stream test:unit
+```
+
+This is a Bun process example with no network, Docker or credentials. Each run creates a fresh SQLite file in a scoped temporary directory under `examples/timer-stream/.data/`. Scope cleanup stops the attachment, closes SQLite and removes the directory on success or failure. The real-time flow has an eight-second timeout. Its `start` script runs the same finite flow.
+
+## Timer rows and facts
+
+`cron: null` is a one-shot. Cron expressions use UTC. `dueAt` is the next epoch-millisecond deadline. The State stream is the schedule change feed; the due table owns active deadlines. Firing changes the due table and writes a fact without rewriting the source timer row. Upserting a completed one-shot schedules it again.
+
+```ts title="src/streams.ts"
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export const Timer = Schema.Struct({
+  id: Schema.String,
+  dueAt: Schema.Finite,
+  cron: Schema.NullOr(Schema.String),
+});
+
+export class Timers extends Streamsy.state<Timers>()("Timers/Rows", "timers", {
+  params: {},
+  collections: { timer: { schema: Timer, key: "id" } },
+}) {}
+
+export class Fired extends Streamsy.json<Fired>()("Timers/Fired", "timer-fired", {
+  params: {},
+  schema: Schema.Struct({ id: Schema.String, dueAt: Schema.Finite, firedAt: Schema.Finite }),
+}) {}
+
+export class Accepted extends Streamsy.wake<Accepted>()("Timers/Accepted", "timer-accepted", {
+  params: {},
+}) {}
+```
+
+## Fire projection
+
+The application creates `due_timers (id, due_at, cron, seen)` and the streams before appending schedules. The handler applies State upserts and deletes to the due table. It also handles reset and snapshot controls; `seen` tracks rows retained by a snapshot.
+
+A timer-only unit has empty slices and `unit.due` set to its recorded wake time. The handler reads rows due through that time. It removes one-shots and advances cron rows. The fired facts, due-table updates, accepted input progress, checkpoint and next wake commit in the same transaction. Keep all SQL in the handler's fiber on the supplied `SqlClient`.
+
+```ts title="src/app.ts"
+export const fire = Projection.process({
+  id: "fire-timers",
+  params: {},
+  inputs: { timers: Timers },
+  outputs: { fired: Fired },
+  accepted: Accepted,
+  commit: Commit.transaction,
+  process: (batch, unit, { outputs }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      for (const event of batch.timers.items) {
+        if (!("type" in event)) {
+          if (event.headers.control === "reset") yield* sql`DELETE FROM due_timers`;
+
+          if (event.headers.control === "snapshot-start")
+            yield* sql`UPDATE due_timers SET seen = 0`;
+
+          if (event.headers.control === "snapshot-end")
+            yield* sql`DELETE FROM due_timers WHERE seen = 0`;
+        } else if ("value" in event) {
+          const row = event.value;
+          yield* sql`INSERT INTO due_timers (id, due_at, cron, seen) VALUES (${row.id}, ${row.dueAt}, ${row.cron}, 1)
+          ON CONFLICT (id) DO UPDATE SET due_at = excluded.due_at, cron = excluded.cron, seen = 1`;
+        } else {
+          yield* sql`DELETE FROM due_timers WHERE id = ${event.key}`;
+        }
+      }
+
+      const now = yield* Clock.currentTimeMillis;
+
+      if (Option.isSome(unit.due)) {
+        const rows = yield* sql<{ id: string; due_at: number; cron: string | null }>`
+        SELECT id, due_at, cron FROM due_timers WHERE due_at <= ${unit.due.value} ORDER BY due_at, id`;
+
+        for (const row of rows) {
+          yield* Streams.append(outputs.fired, [{ id: row.id, dueAt: row.due_at, firedAt: now }]);
+
+          if (row.cron === null) {
+            yield* sql`DELETE FROM due_timers WHERE id = ${row.id}`;
+          } else {
+            // Catch up once: publish one overdue fact, then advance strictly past now.
+            const next = Cron.next(Cron.parseUnsafe(row.cron, "UTC"), now).getTime();
+            yield* sql`UPDATE due_timers SET due_at = ${next} WHERE id = ${row.id}`;
+          }
+        }
+      }
+
+      const rows = yield* sql<{ at: number | null }>`SELECT MIN(due_at) AS at FROM due_timers`;
+
+      return rows[0]?.at == null ? undefined : Projection.wakeAt(rows[0].at);
+    }),
+});
+```
+
+The catch-up policy is **once**: a late wake publishes one overdue fact for each cron row, then `Cron.next(cron, now)` advances strictly beyond now. This avoids a burst of missed occurrences after a long host suspension. Use the fact's `dueAt` to see the deadline that fired and `firedAt` to see when the handler ran. A policy that must publish every missed occurrence needs a loop and a work bound.
+
+There is one recorded wake per binding, not one wake per timer row. The due table and its `MIN` select the next row while retaining later rows. Returning nothing when it empties clears the wake. Returning a passed deadline repeatedly can run the handler at pass speed; this handler removes a one-shot or advances cron past now.
+
+## Real-time smoke
+
+Effect 4.1.2's `Cron.parse` accepts six fields including seconds. The smoke schedules a one-shot about one second ahead, a row to cancel at the same time, and a seconds cron with its first deadline computed by `Cron.next`.
+
+```ts title="src/app.ts"
+const flow = Effect.gen(function* () {
+  // ...
+  const now = yield* Clock.currentTimeMillis;
+  const onceAt = now + 1_000;
+  const expression = "* * * * * *";
+  const cronAt = Cron.next(Cron.parseUnsafe(expression, "UTC"), onceAt).getTime();
+  yield* timers.append(
+    {},
+    DurableState.changes(Timers.at({}), {}, [
+      DurableState.upsert("timer", { id: "once", dueAt: onceAt, cron: null }),
+      DurableState.upsert("timer", { id: "cancelled", dueAt: onceAt, cron: null }),
+      DurableState.upsert("timer", { id: "cron", dueAt: cronAt, cron: expression }),
+    ]),
+  );
+
+  const cancelled = yield* timers.append(
+    {},
+    DurableState.changes(Timers.at({}), {}, [DurableState.remove("timer", "cancelled")]),
+  );
+
+  // ...
+});
+```
+
+The cancellation is a State delete before the deadline. New input runs the handler before its old wake: deleting or moving a row changes the next `MIN`, and the returned wake replaces the previous one. There is no timer cancel API.
+
+The smoke waits for accepted schedule progress, checks that two due rows share one sleeping binding, then waits for both the one-shot and cron facts. It checks that no fact fired early, the cancelled row emitted nothing, the one-shot emitted once and was removed, and cron's next deadline advanced. The vitest test runs the same real-time flow on fresh storage.
+
+## Host and cost
+
+`src/host.ts` provides checkpoints and transactions over a single `BunStorage.layerProtocol`. The app builds `Projection.Registry.layer` and `Projection.attach(fire, { durable: true })` over it before writing schedules. A persistent application keeps the database and initializes its private tables before attaching the runner. This demo creates its private due table for each run; it adds no Streamsy storage migration.
+
+`SELECT MIN(due_at)` scans this small due table. Add an application index on `due_at` when the row count calls for one. The source and fired fact streams also grow and need an application retention policy. On Cloudflare the same declaration can run through [ProjectionWakeup.attach](/docs/servers/cloudflare/alarms#projections) when the input, output and SQL transaction share the object's storage owner. Wakes can be late; process waits recheck wall time at least every thirty seconds while a deadline exists. See [Effects](/docs/projections/effects) for retry budgets and host recovery.

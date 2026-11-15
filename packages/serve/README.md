@@ -1,7 +1,7 @@
 # @streamsy/serve
 
 Effect HttpRouter routes for streams, Durable State and JSON values, plus Bun,
-Node, Deno and Cloudflare host glue and outbox wakeups. Requires Effect
+Node, Deno and Cloudflare host glue and projection wakeups. Requires Effect
 `4.1.2`.
 
 ```ts
@@ -85,11 +85,10 @@ The Durable Object host does not get a stop signal and uses neither.
 | `/bun`        | `listener`, its options and defaults                                                                                                                               |
 | `/node`       | `listener`, its options and defaults                                                                                                                               |
 | `/deno`       | `listener`, its options and defaults; `nodeSqliteCompat`                                                                                                           |
-| `/cloudflare` | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`, `OutboxWakeup`                                                             |
-| `/alchemy`    | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`, `OutboxWakeup`                                                               |
+| `/cloudflare` | `StreamsyObject`, placement router/rules, alarm service, `ObjectLink`, `ObjectStreams`                                                                             |
+| `/alchemy`    | `objectHandlers`, placement router/rules, alarm service, `ObjectLink`, `objectFetch`                                                                               |
 
 Seven physical entries expose the routes, contracts and runtime hosts.
-Outbox declarations, stores and delivery live in `@streamsy/outbox`.
 State/stream recovery is `replay-from-start`; state consumers clear their local
 collection before replay. Old sink headers and snapshot reset exports are gone.
 Fingerprints cover route/address metadata and an optional `contract` revision;
@@ -136,7 +135,11 @@ Object hosts acquire `ProjectionWakeup.attach(projection)` from
 `@streamsy/projection` in their scope through `wakeups: [...]`. Local
 `Storage.committed` events populate its in-memory pending set, and each commit
 writes a durable pending mark in the same transaction. Alarms drain bounded
-passes. After an eviction, acquisition reads the marks and arms the alarm.
-Retry options take an Effect `Schedule`; finite schedules stop on exhaustion.
-`Wakeups.status` reports each wakeup's deferred bindings.
+passes. Sleeping process timers arm the alarm at their recorded deadline. After an eviction, acquisition reads the durable marks and restores timer alarms. With `durable: false`, pending work and timer wakes reset on eviction until the binding's next input.
+`passRetry` on attach takes an Effect `Schedule` for pass failures in marks, cursor
+or trigger operations; finite schedules stop those retries on exhaustion. A retryable failed binding
+waits alone, by default 1 s doubling to 1 hour, in both durability modes; the declaration's `retry` sets a schedule, budget and exhaustion hook. A non-retryable projection
+or storage fault stops the failed unit. `Wakeups.status` includes stopped bindings
+in `deferred`; the registry reports their causes. A cold start makes stopped durable
+bindings due once, and a still-broken binding stops again without arming an alarm.
 See the [projections on Cloudflare guide](https://streamsy.dev/docs/servers/cloudflare/alarms#projections).

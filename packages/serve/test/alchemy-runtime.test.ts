@@ -1,10 +1,4 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context -- Exercises the public Wakeup.run boundary, whose app error type is unknown. */
-import { BunStorage } from "@streamsy/storage/bun";
-import { Outbox, OutboxStore } from "@streamsy/outbox";
-import { layerMemory } from "@streamsy/outbox/memory";
-import { layerSql, migrateOutbox } from "@streamsy/outbox/sql";
-import { OutboxWakeup } from "@streamsy/serve/alchemy";
-import { SqlClient } from "effect/sql";
 import {
   type StreamsReader,
   type StreamsWriter,
@@ -188,8 +182,6 @@ baseIt.effect.each(["typed", "defect"])(
       expect(releases).toBe(2);
     }),
 );
-
-const protocolStreams = Streamsy.group(Streamsy.Wildcard);
 
 const request = (
   handlers: import("../src/alchemy.ts").ObjectHandlers,
@@ -468,52 +460,6 @@ baseIt.effect("work that falls due during a run is not counted as a failure", ()
   }),
 );
 
-baseIt.effect("an outbox wakeup that fills its limit re-arms at once", () =>
-  Effect.gen(function* () {
-    const { slot, layer } = recordingSlot();
-    const backing = Context.get(yield* Layer.build(layerMemory), OutboxStore);
-
-    const notes = Outbox.define({
-      name: "app.notes",
-      payload: Schema.Struct({ id: Schema.String }),
-      idempotencyKey: (note) => note.id,
-      partitionBy: () => "main",
-      retry: { maxAttempts: 3, initialDelayMs: 1000, maxDelayMs: 10_000, factor: 2 },
-    });
-
-    yield* Outbox.enqueue(
-      notes,
-      Array.map(["a", "b", "c", "d", "e"], (id) => ({ id })),
-    ).pipe(Effect.provideService(OutboxStore, backing), Effect.orDie);
-    const delivered: string[] = [];
-
-    const handler: Outbox.Deliver<typeof notes.payload.Type> = (delivery) =>
-      Effect.sync(() => {
-        delivered.push(delivery.idempotencyKey);
-      });
-
-    const context = yield* Layer.build(
-      Layer.mergeAll(MemoryStorage.layerProtocol(), Layer.succeed(OutboxStore, backing), layer),
-    );
-
-    const scheduler = yield* makeWakeups(context, [
-      OutboxWakeup.make(notes, handler, { limit: 2 }),
-    ]);
-
-    yield* scheduler.alarm;
-    expect(delivered).toEqual(["a", "b"]);
-    expect(slot.current).toEqual(Option.some(1));
-    yield* TestClock.setTime(1);
-    yield* scheduler.alarm;
-    expect(slot.current).toEqual(Option.some(2));
-    yield* TestClock.setTime(2);
-    yield* scheduler.alarm;
-    expect(delivered).toEqual(["a", "b", "c", "d", "e"]);
-    expect((yield* Context.get(scheduler.context, Wakeups).status)[1]?.failures).toBe(0);
-    expect(slot.current).toEqual(Option.none());
-  }),
-);
-
 baseIt.effect("a failing app next still arms expiry after a PUT with a TTL", () =>
   Effect.gen(function* () {
     const { slot, layer } = recordingSlot();
@@ -740,70 +686,44 @@ baseIt.effect("request and alarm runs of a wakeup share one permit", () =>
   }),
 );
 
-baseIt.effect("POST enqueue arms the alarm and its turn delivers the SQLite outbox", () =>
+baseIt.effect("POST enqueue touches the wakeups and its alarm turn delivers app work", () =>
   Effect.gen(function* () {
-    let scheduled = Option.none<number>();
-
-    const notices = Outbox.define({
-      name: "folder.notice",
-      payload: Schema.Struct({ id: Schema.String }),
-      idempotencyKey: (notice) => notice.id,
-      partitionBy: () => "docs",
-      retry: { maxAttempts: 3, initialDelayMs: 1000, maxDelayMs: 10_000, factor: 2 },
-    });
-
-    const outbox = Layer.merge(
-      layerSql,
-      Layer.effectDiscard(Effect.flatMap(SqlClient.SqlClient, migrateOutbox)),
-    );
-
-    const layer = outbox.pipe(
-      Layer.provideMerge(BunStorage.layer(protocolStreams, { client: { filename: ":memory:" } })),
-    );
-
-    const context = yield* Layer.build(layer);
-    const store = Context.get(context, OutboxStore);
+    const { slot, layer } = recordingSlot();
+    const pending: string[] = [];
     const delivered: string[] = [];
-
-    const handler: Outbox.Deliver<typeof notices.payload.Type> = (delivery) =>
-      Effect.sync(() => {
-        delivered.push(delivery.idempotencyKey);
-      });
 
     const handlers = yield* objectHandlers({
       app: HttpRouter.add(
         "POST",
         "/enqueue",
         Effect.gen(function* () {
-          yield* Outbox.enqueue(notices, [{ id: "docs/version-1" }]).pipe(Effect.orDie);
+          pending.push("docs/version-1");
+          yield* Wakeups.use((service) => service.touch);
 
           return HttpServerResponse.text("queued");
         }),
       ),
-      layer: Layer.merge(
-        Layer.succeedContext(context),
-        Layer.succeed(AlarmSlot, {
-          current: Effect.sync(() => scheduled),
-          arm: (at) =>
-            Effect.sync(() => {
-              scheduled = Option.some(at);
-            }),
-          clear: Effect.sync(() => {
-            scheduled = Option.none();
+      layer: Layer.merge(MemoryStorage.layerProtocol(), layer),
+      wakeups: [
+        Wakeup.make({
+          name: "app/notices",
+          next: Effect.sync(() => (pending.length > 0 ? Option.some(0) : Option.none())),
+          run: Effect.sync(() => {
+            delivered.push(...pending.splice(0));
           }),
         }),
-      ),
-      wakeups: [OutboxWakeup.make(notices, handler, { ordered: true })],
+      ],
     });
 
     expect((yield* request(handlers, "/enqueue", "POST")).status).toBe(200);
-    expect(scheduled).toEqual(Option.some(1));
-    expect((yield* store.list({ name: notices.name }))[0]?.state).toBe("pending");
+    expect(slot.current).toEqual(Option.some(1));
+    expect(pending).toEqual(["docs/version-1"]);
+    expect(delivered).toEqual([]);
     yield* TestClock.setTime(1);
     yield* handlers.alarm();
     expect(delivered).toEqual(["docs/version-1"]);
-    expect((yield* store.list({ name: notices.name }))[0]?.state).toBe("delivered");
-    expect(scheduled).toEqual(Option.none());
+    expect(pending).toEqual([]);
+    expect(slot.current).toEqual(Option.none());
   }),
 );
 

@@ -1,9 +1,11 @@
 /* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
+import type { WakeOutput } from "./wake.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Entry } from "./batch.ts";
 import type { Emitted } from "./commit.ts";
 import {
   build,
+  type AcceptedServices,
   type Common,
   type Inputs,
   type Addresses,
@@ -25,8 +27,11 @@ export function emit<
   R = never,
   P = never,
   Q = never,
+  W extends WakeOutput | undefined = undefined,
+  HE = never,
+  HR = never,
 >(
-  definition: Common<C, I> &
+  definition: Common<C, I, W, HE, HR> &
     Committing<Emitted<NoInfer<O>>, P, Q> & {
       readonly outputs: O & OutputsWithin<C, O>;
       readonly emit: ((
@@ -37,7 +42,7 @@ export function emit<
           ? unknown
           : { readonly undeclaredOutput: Exclude<keyof X, keyof O> });
     },
-): OutputDeclaration<C, I, O, E, R, Emitted<O>, P, Q>;
+): OutputDeclaration<C, I, O, E, R, Emitted<O>, P, Q, never, AcceptedServices<W>, HE, HR>;
 export function emit(definition: Parameters<typeof build>[1]): unknown {
   return build("emit", definition);
 }

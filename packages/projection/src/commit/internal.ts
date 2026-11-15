@@ -5,10 +5,12 @@ import type { StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, Writer } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
 import type { Commit, Pending, Folded, Emitted, Accumulated, OutputNames } from "./model.ts";
+import type { WakeAt } from "../wake-at.ts";
 import type { PinnedRange } from "../unit.ts";
 
 export type Result =
   | void
+  | WakeAt
   | Folded<unknown>
   | Emitted<OutputNames>
   | Accumulated<unknown, OutputNames>;
@@ -47,8 +49,13 @@ export const load: Commit<never, never, CheckpointStore>["load"] = (key) =>
 export const remove: NonNullable<Commit<never, never, CheckpointStore>["remove"]> = (key) =>
   CheckpointStore.use((store) => store.remove(key));
 
-export const withState = (next: CheckpointRecord, result: Result): CheckpointRecord =>
-  result !== undefined && "encoded" in result ? { ...next, state: result.encoded } : next;
+/** Merge the handler's state and timer into the same checkpoint write. */
+export const withState = (next: CheckpointRecord, result: Result): CheckpointRecord => {
+  const stored =
+    result !== undefined && "encoded" in result ? { ...next, state: result.encoded } : next;
+
+  return result !== undefined && "wakeAt" in result ? { ...stored, wakeAt: result.wakeAt } : stored;
+};
 
 export const beforeRecord = (pending: Pending<unknown, unknown>): CheckpointRecord =>
   Option.getOrElse(pending.loaded.record, () => ({

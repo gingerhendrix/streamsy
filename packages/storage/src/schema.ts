@@ -1,6 +1,6 @@
 import type { DialectSql } from "./dialect.ts";
 
-export const STORAGE_SCHEMA_VERSION = 2;
+export const STORAGE_SCHEMA_VERSION = 3;
 
 export const STORAGE_VERSION_TABLE = "streamsy_schema";
 
@@ -50,7 +50,7 @@ const MYSQL_PROJECTION_PARAMS = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8
  * Migration versions in order. Version `n` is entry `n - 1`. SQLite and
  * Postgres run one version inside the migration transaction. MySQL commits
  * each DDL statement by itself, so every MySQL statement must be safe to run
- * twice.
+ * twice, either on its own or through a guard in the migration runner.
  */
 export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>> = [
   {
@@ -158,6 +158,31 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
  PRIMARY KEY(projection, params),
  INDEX idx_streamsy_projection_pending_due (projection, due_at)
 ) ENGINE=InnoDB`,
+    ],
+  },
+  // 3: explicit stops, the last binding failure and recorded process wakes. MySQL additions are guarded
+  // by information_schema.columns in the migration runner under its named lock.
+  {
+    sqlite: [
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN stopped SMALLINT NOT NULL DEFAULT 0`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
+    ],
+    pg: [
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN stopped SMALLINT NOT NULL DEFAULT 0`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
+    ],
+    mysql: [
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN stopped SMALLINT NOT NULL DEFAULT 0`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failed_at BIGINT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
     ],
   },
 ];

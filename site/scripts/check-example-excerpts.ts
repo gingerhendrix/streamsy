@@ -48,6 +48,8 @@ export const pageExamples = new Map<string, readonly [string, ...Array<string>]>
   ],
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
+  ["command-stream", ["examples/command-stream"]],
+  ["timer-stream", ["examples/timer-stream"]],
   ["todo", ["examples/todo"]],
   ["fold-agent", ["examples/fold-agent"]],
   ["folder-sync", ["examples/folder-sync"]],

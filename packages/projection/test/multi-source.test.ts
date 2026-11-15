@@ -102,6 +102,9 @@ layer(FamilyFixture.withFamilies(memoryHost({ readLimit: 1000 })))((it) => {
         inputs: { a, b },
         process: (batch) =>
           Effect.sync(() => {
+            if (batch.a.items.length === 0) expect(batch.a.offsets).toEqual([]);
+
+            if (batch.b.items.length === 0) expect(batch.b.offsets).toEqual([]);
             batches.push({
               a: { closed: batch.a.closed, items: batch.a.items.length },
               b: { closed: batch.b.closed, items: batch.b.items.length },

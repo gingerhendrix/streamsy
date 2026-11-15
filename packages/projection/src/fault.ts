@@ -1,6 +1,17 @@
 import { Schema } from "effect";
 import { isStreamsFault } from "@streamsy/core";
 
+/** No live runner for this declaration exists in the selected registry. */
+export class NotAttached extends Schema.TaggedError<NotAttached>()("NotAttached", {
+  projection: Schema.String,
+}) {}
+
+/** Encoded params do not round-trip through the attached declaration's codecs. */
+export class InvalidBinding extends Schema.TaggedError<InvalidBinding>()("InvalidBinding", {
+  projection: Schema.String,
+  params: Schema.Record(Schema.String, Schema.String),
+}) {}
+
 /** Phase says where the run stopped; a `checkpoint` failure means processing already completed. */
 export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("ProjectionFault", {
   phase: Schema.Literals(["load", "read", "pin", "process", "checkpoint"]),
@@ -12,6 +23,7 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
     "invalid-options",
     "invalid-output",
     "token-conflict",
+    "output-busy",
     "range-unreproducible",
     "stale-epoch",
     "storage-failure",
@@ -22,8 +34,24 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
   cause: Schema.optionalKey(Schema.Defect()),
 }) {
   get retryable(): boolean {
-    return (
-      this.reason === "storage-failure" && (!isStreamsFault(this.cause) || this.cause.retryable)
-    );
+    switch (this.reason) {
+      case "storage-failure":
+        return !isStreamsFault(this.cause) || this.cause.retryable;
+      case "token-conflict":
+      case "output-busy":
+        return true;
+      case "history-unavailable":
+      case "identity-mismatch":
+      case "invalid-record":
+      case "invalid-source":
+      case "invalid-options":
+      case "invalid-output":
+      case "range-unreproducible":
+      case "stale-epoch":
+      case "unsupported-composition":
+        return false;
+    }
+
+    return false;
   }
 }

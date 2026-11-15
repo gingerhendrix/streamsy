@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/any-unknown-in-error-context, anti-slop/no-unknown-parameters -- The public constructor overloads retain exact E, R and prepared types; this adapter is their internal erased implementation. */
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The constructor signatures check each adapter before this internal runtime boundary erases its mapped types. */
+import { isWakeAt } from "./wake-at.ts";
 import { Folded } from "./commit.ts";
 import { Array, Effect, Record } from "effect";
 import type { InputMap, Slices } from "./batch.ts";
@@ -30,10 +31,14 @@ export const adapt = (
   unit: Unit<any>,
   encoded?: string,
   prepared?: unknown,
+  attempt = 1,
 ): Effect.Effect<any, any, any> =>
   Effect.gen(function* () {
     if (kind === "process")
-      return yield* Effect.asVoid(handler(batch, unit, { prepared, outputs: streams }));
+      return yield* Effect.map(
+        handler(batch, unit, { prepared, outputs: streams, attempt }),
+        (result) => (isWakeAt(result) ? result : undefined),
+      );
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
 
     const buffers: Record<string, unknown[]> = Record.fromEntries(

@@ -125,8 +125,28 @@ const migrateVersions = (
 
       if (statements === undefined) return yield* Effect.die(new Error("Missing migration"));
 
-      for (const statement of statements)
+      for (const statement of statements) {
+        // MySQL DDL commits immediately. A crash may leave any prefix of v3
+        // applied without its version row. The named lock and reserved connection
+        // cover both this inspection and the addition, so a repeat skips it.
+        if (dialect === "mysql" && version === 3) {
+          const column = statement.match(/ADD COLUMN (\w+)/)?.[1];
+
+          if (column === undefined) return yield* Effect.die(new Error("Missing v3 column"));
+
+          const existing = yield* sqlAttempt(
+            "migration.inspect-column",
+            sql`SELECT column_name FROM information_schema.columns
+ WHERE table_schema = DATABASE() AND table_name = 'streamsy_projection_pending'
+ AND column_name = ${column}`,
+          );
+
+          if (existing.length > 0) continue;
+        }
+
         yield* sqlAttempt(`migration.apply.${version}`, sql.unsafe(statement).pipe(Effect.asVoid));
+      }
+
       const appliedAtMs = yield* Clock.currentTimeMillis;
       // MySQL may rerun a version after a crash, so its version row must be safe to insert twice.
       yield* sqlAttempt(

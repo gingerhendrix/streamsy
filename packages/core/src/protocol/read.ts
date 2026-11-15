@@ -4,6 +4,7 @@ import type { StreamId, StreamRecord } from "../schema/index.ts";
 import { Offset } from "../schema/index.ts";
 import { ZERO_OFFSET, isValid } from "../offset/index.ts";
 import type { Storage } from "../storage/storage.ts";
+import { attachOffsets } from "../internal/read-offsets.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
 import { expireIfNeeded, touch } from "./expiry.ts";
 import {
@@ -56,13 +57,16 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
   const nextOffset = messages.at(-1)?.offset ?? record.currentOffset;
   const upToDate = nextOffset === record.currentOffset;
 
-  return {
-    contentType: record.config.contentType,
-    messages: Array.map(messages, (message) => ({ data: message.data })),
-    nextOffset,
-    upToDate,
-    closed: record.lifecycle.closed && upToDate,
-  };
+  return attachOffsets(
+    {
+      contentType: record.config.contentType,
+      messages: Array.map(messages, (message) => ({ data: message.data })),
+      nextOffset,
+      upToDate,
+      closed: record.lifecycle.closed && upToDate,
+    },
+    Array.map(messages, (message) => message.offset),
+  );
 });
 
 export const read = Effect.fn("Protocol.read")(function* (

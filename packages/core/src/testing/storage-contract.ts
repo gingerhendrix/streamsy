@@ -32,6 +32,11 @@ import { OwnerRecords, type OwnerRecordsApi } from "../internal/owner-records.ts
 import { CommitHooks, type CommitHooksApi } from "../internal/commit-hooks.ts";
 import { ProjectionMarks, type ProjectionMarksApi } from "../internal/projection-marks.ts";
 
+import {
+  projectionMarksContract,
+  projectionMarksTransactionContract,
+} from "./projection-marks-contract.ts";
+
 export interface StorageContractOptions {
   readonly name: string;
   readonly layer: Layer.Layer<Storage>;
@@ -402,7 +407,56 @@ export const StorageContract = {
           }),
       );
       recordsTest(
-        "R7 projection marks raise seq, clear by seq, defer, and list due marks in order",
+        "R7c retry selects failed marks, preserves attempts and seq, and rolls back",
+        ({ boundary, marks }) =>
+          Effect.gen(function* () {
+            expect(yield* marks.retry("retry")).toBe(0);
+            yield* Effect.orDie(marks.mark("retry", ["fresh", "a", "b"]));
+            yield* Effect.orDie(marks.mark("retry", ["a"]));
+            yield* marks.fail("retry", "a", {
+              attempts: 3,
+              dueAt: Option.some(10_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            yield* marks.fail("retry", "b", {
+              attempts: 1,
+              dueAt: Option.some(20_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            yield* marks.fail("other", "a", {
+              attempts: 2,
+              dueAt: Option.some(30_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            expect(yield* marks.retry("retry", "absent")).toBe(0);
+            expect(yield* marks.retry("retry", "fresh")).toBe(0);
+            expect(yield* marks.retry("retry", "a")).toBe(1);
+            expect((yield* marks.read("retry", ["a"])).get("a")).toEqual({
+              params: "a",
+              seq: 2,
+              attempts: 3,
+              dueAt: 0,
+              wakeAt: Option.none(),
+              stopped: false,
+              failure: Option.some({ at: 1, reason: Option.none(), message: "failed" }),
+            });
+
+            const failed = yield* Effect.exit(
+              boundary.withTransaction(
+                marks.retry("retry").pipe(Effect.andThen(Effect.fail("rollback"))),
+              ),
+            );
+
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect((yield* marks.read("retry", ["b"])).get("b")?.dueAt).toBe(20_000);
+            expect(yield* marks.retry("retry")).toBe(1);
+            expect(yield* marks.retry("retry")).toBe(0);
+            expect((yield* marks.failed("retry", 1_000)).length).toBe(2);
+            expect((yield* marks.read("other", ["a"])).get("a")?.dueAt).toBe(30_000);
+          }),
+      );
+      recordsTest(
+        "R7 projection marks raise seq, clear by seq, fail, and list due marks in order",
         ({ marks }) =>
           Effect.gen(function* () {
             expect(yield* marks.nextDue("p")).toEqual(Option.none());
@@ -412,8 +466,24 @@ export const StorageContract = {
             yield* Effect.orDie(marks.mark("q", ["a"]));
             const read = yield* marks.read("p", ["a", "b", "absent"]);
             expect(Array.sort([...read.keys()], Order.String)).toEqual(["a", "b"]);
-            expect(read.get("a")).toEqual({ params: "a", seq: 2, attempts: 0, dueAt: 0 });
-            expect(read.get("b")).toEqual({ params: "b", seq: 1, attempts: 0, dueAt: 0 });
+            expect(read.get("a")).toEqual({
+              params: "a",
+              seq: 2,
+              attempts: 0,
+              dueAt: 0,
+              wakeAt: Option.none(),
+              stopped: false,
+              failure: Option.none(),
+            });
+            expect(read.get("b")).toEqual({
+              params: "b",
+              seq: 1,
+              attempts: 0,
+              dueAt: 0,
+              wakeAt: Option.none(),
+              stopped: false,
+              failure: Option.none(),
+            });
             expect(yield* marks.nextDue("p")).toEqual(Option.some(0));
 
             // A clear with an old seq keeps the row. The current seq deletes it.
@@ -424,20 +494,31 @@ export const StorageContract = {
             // Another projection's mark with the same params is separate.
             expect((yield* marks.read("q", ["a"])).get("a")?.seq).toBe(1);
 
-            // A defer sets attempts and due time. A later mark keeps both.
-            yield* marks.defer("p", "b", 1, 5_000);
+            // A failure sets attempts and due time. A later mark keeps the failure and deadline.
+            yield* marks.fail("p", "b", {
+              attempts: 1,
+              dueAt: Option.some(5_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
             yield* Effect.orDie(marks.mark("p", ["b"]));
             expect((yield* marks.read("p", ["b"])).get("b")).toEqual({
               params: "b",
               seq: 2,
               attempts: 1,
               dueAt: 5_000,
+              wakeAt: Option.none(),
+              stopped: false,
+              failure: Option.some({ at: 1, reason: Option.none(), message: "failed" }),
             });
-            expect(yield* marks.deferred("p")).toBe(1);
+            expect((yield* marks.failed("p", 1_000)).length).toBe(1);
             expect(yield* marks.nextDue("p")).toEqual(Option.some(5_000));
-            // A defer of an absent mark inserts it.
-            yield* marks.defer("p", "c", 2, 3_000);
-            expect(yield* marks.deferred("p")).toBe(2);
+            // A failure of an absent mark inserts it.
+            yield* marks.fail("p", "c", {
+              attempts: 2,
+              dueAt: Option.some(3_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            expect((yield* marks.failed("p", 1_000)).length).toBe(2);
 
             // Due marks come earliest first, then by params, up to the limit.
             yield* Effect.orDie(marks.mark("p", ["e", "d"]));
@@ -459,7 +540,7 @@ export const StorageContract = {
 
             yield* marks.remove("p", "b");
             yield* marks.remove("p", "absent");
-            expect(yield* marks.deferred("p")).toBe(1);
+            expect((yield* marks.failed("p", 1_000)).length).toBe(1);
 
             // Many bindings in one call: SQL hosts split the statements.
             const many = Array.makeBy(150, (index) => `m${String(index).padStart(3, "0")}`);
@@ -470,6 +551,73 @@ export const StorageContract = {
             expect(Array.every([...all.values()], (row) => row.seq === 2)).toBe(true);
             expect(yield* marks.due("many", 0, 1_000)).toHaveLength(150);
           }),
+      );
+      recordsTest(
+        "R7b projection mark summaries have disjoint fresh, due retry and backoff counts",
+        ({ marks }) =>
+          Effect.gen(function* () {
+            expect(yield* marks.summary("summary", 3_000)).toEqual({
+              fresh: 0,
+              sleeping: 0,
+              retryDue: 0,
+              backingOff: 0,
+              stopped: 0,
+              nextDueAt: Option.none(),
+            });
+            yield* Effect.orDie(marks.mark("summary", ["fresh"]));
+            yield* marks.fail("summary", "past", {
+              attempts: 1,
+              dueAt: Option.some(2_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            yield* marks.fail("summary", "now", {
+              attempts: 2,
+              dueAt: Option.some(3_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            yield* marks.fail("summary", "future", {
+              attempts: 3,
+              dueAt: Option.some(4_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            yield* marks.fail("other", "future", {
+              attempts: 1,
+              dueAt: Option.some(5_000),
+              failure: { at: 1, reason: Option.none(), message: "failed" },
+            });
+            expect(yield* marks.summary("summary", 3_000)).toEqual({
+              fresh: 1,
+              sleeping: 0,
+              retryDue: 2,
+              backingOff: 1,
+              stopped: 0,
+              nextDueAt: Option.some(0),
+            });
+            yield* marks.remove("summary", "fresh");
+            expect(yield* marks.summary("summary", 1_000)).toEqual({
+              fresh: 0,
+              sleeping: 0,
+              retryDue: 0,
+              backingOff: 3,
+              stopped: 0,
+              nextDueAt: Option.some(2_000),
+            });
+            expect(yield* marks.summary("summary", 4_000)).toEqual({
+              fresh: 0,
+              sleeping: 0,
+              retryDue: 3,
+              backingOff: 0,
+              stopped: 0,
+              nextDueAt: Option.some(2_000),
+            });
+          }),
+      );
+      recordsTest("R7d stops, failures, resume, listings and moved seq resets", ({ marks }) =>
+        projectionMarksContract(marks),
+      );
+      recordsTest(
+        "R7e failure, resume and clear roll back with the boundary",
+        ({ boundary, marks }) => projectionMarksTransactionContract(marks, boundary),
       );
       recordsTest(
         "R8 marks written by a commit hook commit and roll back with the write",

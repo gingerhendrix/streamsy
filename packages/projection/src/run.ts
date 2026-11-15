@@ -1,5 +1,6 @@
+import { acceptedOutput, acceptedResult, acceptedKey } from "./accepted.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord and Range are Schema.Struct plain data records. */
-import { Array, Effect, Option, Record } from "effect";
+import { Array, Clock, Effect, Option, Record } from "effect";
 import {
   inputEntries,
   emptySlice,
@@ -29,9 +30,9 @@ import {
   type Snapshot,
   type StateValue,
 } from "./snapshot.ts";
-import { unitOf } from "./unit.ts";
+import { unitOf, type Unit } from "./unit.ts";
 
-/** The result of one `pass`: one committed unit (`progress`), or no input to commit. */
+/** The result of one `pass`: one committed unit (`progress`), or no input or wake to commit. */
 export interface PassResult<Inputs extends InputMap = InputMap> {
   readonly status: "progress" | "caught-up" | "source-closed";
   readonly units: number;
@@ -42,6 +43,8 @@ export interface PassResult<Inputs extends InputMap = InputMap> {
 /** One runner cycle: the committed state and offsets, plus the work that the cycle did. */
 export interface Progress<S, Inputs extends InputMap = InputMap> extends Snapshot<S, Inputs> {
   readonly status: "caught-up" | "limit-reached" | "source-closed";
+  /** Next recorded process wake, in epoch milliseconds. */
+  readonly wakeAt: Option.Option<number>;
   /** Units that this cycle committed. */
   readonly units: number;
   /** Input items in those units. */
@@ -51,6 +54,8 @@ export interface Progress<S, Inputs extends InputMap = InputMap> extends Snapsho
 /** Internal: a pass result plus the encoded state of the record that the pass left. */
 interface Step<Inputs extends InputMap = InputMap> extends PassResult<Inputs> {
   readonly encoded: string | undefined;
+  readonly wakeAt: Option.Option<number>;
+  readonly dueOnly?: boolean;
 }
 
 /**
@@ -60,6 +65,12 @@ interface Step<Inputs extends InputMap = InputMap> extends PassResult<Inputs> {
 export type Cycle<Inputs extends InputMap = InputMap> = Omit<Progress<unknown, Inputs>, "state"> & {
   readonly encoded: string | undefined;
 };
+
+/** Internal run metadata, never exposed as Projection.run options. */
+export interface RunContext {
+  readonly attempt: number;
+  readonly unit: (unit: Unit | undefined) => void;
+}
 
 /**
  * Internal: one pass that also returns the encoded state it committed, or the stored
@@ -75,11 +86,14 @@ const step = Effect.fn("Projection.pass")(function* <
   OR = never,
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
+  context?: RunContext,
+  allowEmptyDue = true,
 ): Effect.fn.Return<
   Step<Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
 > {
+  context?.unit(undefined);
   const before = yield* restore(projection, projection.commit);
 
   if (before.record.ended) {
@@ -92,6 +106,7 @@ const step = Effect.fn("Projection.pass")(function* <
       items: 0,
       offsets: offsetsOf<Inputs>(before.record),
       encoded: before.record.state,
+      wakeAt: Option.fromUndefinedOr(before.record.wakeAt),
     };
   }
 
@@ -105,6 +120,14 @@ const step = Effect.fn("Projection.pass")(function* <
     });
   let batch: Slices<Inputs>;
   let count = 0;
+  let due = pending?.due;
+  let dueOnly = pending !== undefined && due !== undefined && Record.isEmptyRecord(pending.ranges);
+
+  if (pending === undefined && before.record.wakeAt !== undefined) {
+    const now = yield* Clock.currentTimeMillis;
+
+    if (before.record.wakeAt <= now) due = before.record.wakeAt;
+  }
 
   if (pending !== undefined) {
     const slices: Record<string, Slice<unknown>> = {};
@@ -139,7 +162,7 @@ const step = Effect.fn("Projection.pass")(function* <
         slice.gone === true || (slice.closed && slice.upToDate && !before.record.closed?.[name]),
     );
 
-    if (count === 0 && !terminal)
+    if (count === 0 && !terminal && (due === undefined || !allowEmptyDue))
       return {
         status: Array.every(Record.values<string, Slice<unknown>>(batch), (slice) => slice.closed)
           ? "source-closed"
@@ -148,7 +171,20 @@ const step = Effect.fn("Projection.pass")(function* <
         items: 0,
         offsets: offsetsOf<Inputs>(before.record),
         encoded: before.record.state,
+        wakeAt: Option.fromUndefinedOr(before.record.wakeAt),
       };
+
+    dueOnly = count === 0 && !terminal;
+
+    if (dueOnly) {
+      // Closed inputs have already contributed their terminal ranges. A wake alone
+      // carries empty slices and no ranges, even when all inputs are closed.
+      // SAFETY: every declared key is retained, and an empty slice fits every item codec.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Record.map erases mapped input keys while retaining every slice.
+      batch = Record.map(batch, (_slice, name) =>
+        emptySlice(before.record.inputs[name] ?? ""),
+      ) as Slices<Inputs>;
+    }
   }
 
   const gone = Array.some(
@@ -156,7 +192,7 @@ const step = Effect.fn("Projection.pass")(function* <
     (slice) => slice.gone === true,
   );
 
-  const ranges = pending?.ranges ?? rangesOf(batch);
+  const ranges = pending?.ranges ?? (dueOnly ? {} : rangesOf(batch));
 
   const unit = unitOf(
     projection.id,
@@ -164,9 +200,12 @@ const step = Effect.fn("Projection.pass")(function* <
     projection.generation,
     projection.params,
     ranges,
+    due,
   );
 
-  const { pending: _pending, ...record } = before.record;
+  context?.unit(unit);
+
+  const { pending: _pending, wakeAt: _wakeAt, ...record } = before.record;
   const closed = { ...record.closed };
 
   for (const [name, slice] of Record.toEntries<string, Slice<unknown>>(batch)) {
@@ -187,13 +226,36 @@ const step = Effect.fn("Projection.pass")(function* <
     outputs[name] = { address, service };
   }
 
+  if (projection.accepted !== undefined) {
+    const address = projection.accepted;
+    outputs[acceptedKey] = { address, service: yield* address.stream };
+  }
+
   let prepared: unknown;
   // The last result of `run`. The Commit stores the state of the run that it commits.
   let result: Result | undefined;
 
   const processed = Effect.suspend(() =>
-    projection.process(batch, unit, before.record.state, prepared),
+    projection.process(batch, unit, before.record.state, prepared, context?.attempt ?? 1),
   ).pipe(
+    Effect.map((value) => {
+      if (projection.accepted === undefined) return value;
+
+      // SAFETY: build validates an output-writing Commit before accepted is installed.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The kernel adds outputs while retaining the handler's encoded state.
+      const handled = value as Settled;
+
+      const output = acceptedOutput(
+        projection.accepted,
+        projection.inputs,
+        unit,
+        before.record.closed,
+      );
+
+      // SAFETY: only the two built-in output Commit strategies consume this enriched result.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The encoded state and original output batches are retained by the adapter.
+      return acceptedResult(handled, output) as Result;
+    }),
     Effect.tap((value) =>
       Effect.sync(() => {
         result = value;
@@ -250,7 +312,7 @@ const step = Effect.fn("Projection.pass")(function* <
     ),
   );
 
-  // SAFETY: every Commit settles a Result of the shared union; settled() reads only `encoded`.
+  // SAFETY: every Commit settles a Result of the shared union; settled() reads the encoded state and wake request.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Declarations produce the Commit Result union; the generic Result erases it.
   const stored = settled(next, result as Settled);
 
@@ -263,6 +325,8 @@ const step = Effect.fn("Projection.pass")(function* <
     items: count,
     offsets: offsetsOf<Inputs>(next),
     encoded: stored.state,
+    wakeAt: Option.fromUndefinedOr(stored.wakeAt),
+    dueOnly,
   };
 });
 
@@ -273,9 +337,15 @@ export const pass = <Inputs extends InputMap, E, R, Q, Result, P, OR = never>(
   PassResult<Inputs>,
   E | ProjectionFault,
   Exclude<R, P> | Q | OR | InputServices<Inputs>
-> => Effect.map(step(projection), ({ encoded: _encoded, ...result }) => result);
+> =>
+  Effect.map(
+    step(projection),
+    ({ encoded: _encoded, wakeAt: _wakeAt, dueOnly: _dueOnly, ...result }) => result,
+  );
 
-/** Internal: repeats pass until caught up, closed, or limited. The caller validates options. */
+/** Internal: repeats pass until caught up, closed, or limited. At most one empty due
+ * unit runs per cycle, so a handler returning a past deadline cannot loop forever.
+ * The caller validates options. */
 export const catchUp = Effect.fnUntraced(function* <
   Inputs extends InputMap,
   E,
@@ -287,6 +357,7 @@ export const catchUp = Effect.fnUntraced(function* <
 >(
   projection: Executable<Inputs, E, R, Q, Result, P, unknown, OR>,
   options: RunOptions,
+  context?: RunContext,
 ): Effect.fn.Return<
   Cycle<Inputs>,
   E | ProjectionFault,
@@ -297,19 +368,24 @@ export const catchUp = Effect.fnUntraced(function* <
   let items = 0;
   let offsets: Offsets<Inputs>;
   let encoded: string | undefined;
+  let wakeAt: Option.Option<number>;
+  let allowEmptyDue = true;
 
   do {
-    const result = yield* step(projection);
+    const result = yield* step(projection, context, allowEmptyDue);
+
+    if (result.dueOnly) allowEmptyDue = false;
     units += result.units;
     items += result.items;
     offsets = result.offsets;
     encoded = result.encoded;
+    wakeAt = result.wakeAt;
 
     if (result.status !== "progress")
-      return { status: result.status, units, items, offsets, encoded };
+      return { status: result.status, units, items, offsets, encoded, wakeAt };
   } while (units < cap);
 
-  return { status: "limit-reached", units, items, offsets, encoded };
+  return { status: "limit-reached", units, items, offsets, encoded, wakeAt };
 });
 
 /** Internal: a cycle with its state decoded once. It reads no checkpoint. */
@@ -321,7 +397,8 @@ export const progressOf = <Inputs extends InputMap, S>(
 
 /**
  * Repeats pass until caught up, closed, or limited, then decodes the state of the last
- * pass once. After a gone input, the result holds the state that the final unit
+ * pass once. Recorded wakes run when due; this call does not wait for a future wake.
+ * At most one due unit without input runs per cycle. After a gone input, the result holds the state that the final unit
  * committed, although the kernel then deletes the record. Use one writer per key.
  */
 export const run = Effect.fn("Projection.run")(function* <

@@ -32,7 +32,7 @@ The result type of the handler decides which Commit fits a constructor.
 | `Commit.atLeastOnce` | `process`                                              | At least once                       | `CheckpointStore`                |
 | `Commit.make`        | By the result type of its `apply`                      | The `guarantee` that it declares    | What its `load` and `apply` need |
 
-`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `process`, `emit`, `mapAccum` and `mapAccumBatch` require `commit`. `wake` always uses `Commit.producer` and accepts no `commit`. A Commit whose result type does not fit the constructor is a type error at the `commit` field. Every Commit names its guarantee in its `guarantee` field: `"exactly-once"`, `"effectively-once"` or `"at-least-once"`.
+`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `process`, `emit`, `mapAccum` and `mapAccumBatch` require `commit`. `wake` always uses `Commit.producer` and accepts no `commit`. Timer handlers fit `Commit.atLeastOnce` and `Commit.transaction`, including compensation wrappers. Custom timer Commits are not supported in this release; a typed wake request does not fit a custom `Commit<void>`. A Commit whose result type does not fit the constructor is a type error at the `commit` field. Every Commit names its guarantee in its `guarantee` field: `"exactly-once"`, `"effectively-once"` or `"at-least-once"`.
 
 ## `checkpoint`
 
@@ -40,17 +40,17 @@ The result type of the handler decides which Commit fits a constructor.
 
 ## `transaction`
 
-`Commit.transaction` opens one SQL transaction on the storage owner of the checkpoint. In that transaction it checks that the record token has not moved, runs the handler, appends the items of the declared outputs, and saves the checkpoint. The handler gets the `SqlClient` of the transaction, so its SQL commits or rolls back with the checkpoint. See [SQL tables](/docs/projections/process#sql-tables).
+`Commit.transaction` opens one SQL transaction on the storage owner of the checkpoint. In that transaction it checks that the record token has not moved, runs the handler, appends the items of the declared outputs, and saves the checkpoint. The handler gets the `SqlClient` of the transaction, so its SQL and any returned `wakeAt` commit or roll back with the checkpoint. See [SQL tables](/docs/projections/process#sql-tables).
 
 Every stream write of the unit must be on the storage owner of the transaction. The writes on that owner commit or roll back with the checkpoint. The rule covers the declared outputs, and the `append`, `create`, `fork` and `remove` calls of the handler, through a stream service or through its `wire`.
 
-| Case                                                            | Phase        | Reason                    |
-| --------------------------------------------------------------- | ------------ | ------------------------- |
-| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition` |
-| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition` |
-| An output append fails                                          | `process`    | `invalid-output`          |
-| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`          |
-| The SQL transaction fails                                       | `checkpoint` | `storage-failure`         |
+| Case                                                            | Phase        | Reason                                                         |
+| --------------------------------------------------------------- | ------------ | -------------------------------------------------------------- |
+| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition`                                      |
+| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition`                                      |
+| An output append fails                                          | `process`    | `storage-failure`, `output-busy` or `invalid-output`, by cause |
+| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`                                               |
+| The SQL transaction fails                                       | `checkpoint` | `storage-failure`                                              |
 
 In each case the transaction rolls back, with the earlier writes of the unit. External calls in the handler, such as HTTP requests, are outside the transaction and run at least once.
 
@@ -76,9 +76,9 @@ For the producer position of each output and the output rules, see [Output strea
 
 ## `atLeastOnce`
 
-`Commit.atLeastOnce` pins the input ranges of the unit, runs the handler, and then saves the new offsets. It fits `process`. When the handler or the last save fails, the next pass runs the same items again with the same `unit.key`.
+`Commit.atLeastOnce` pins the input ranges and recorded due time of the unit, runs the handler, and then saves the new offsets and any returned `wakeAt`. It fits `process`. When the handler or the last save fails, the next pass runs the same items again with the same `unit.key`.
 
-Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. For durable delivery of external effects, use an [outbox](/docs/outbox).
+Use `unit.key` as the idempotency key of an external call, so that the external system can drop a repeat. A due unit's key includes its recorded due time: retries keep it, and different deadlines have different keys. Units without a due time retain their existing keys. Set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](/docs/projections/process#timers) for a deferred retry or a snooze. See the [effects guide](/docs/projections/effects) for the complete pattern.
 
 ## Compensation
 
@@ -115,7 +115,7 @@ The wrapped Commit keeps its name, its guarantee, its pinning and its `prepare` 
 | Result              | Constructor                 |
 | ------------------- | --------------------------- |
 | `Folded<S>`         | `fold`                      |
-| `void`              | `process`                   |
+| `void`              | `process` without timers    |
 | `Emitted<O>`        | `emit`                      |
 | `Accumulated<S, O>` | `mapAccum`, `mapAccumBatch` |
 
@@ -129,7 +129,7 @@ A custom Commit must follow these rules:
 4. Return the stored `state` from `load`, so that `Projection.read` can read it.
 5. Declare the guarantee of the actual write. When `run` and the write are not atomic, declare `"at-least-once"`.
 
-A custom Commit reads the inputs again from the saved offsets on a retry. Pinning is internal to the built-in Commits. A custom Commit does not accept `prepare`. It cannot finish a unit that a pinned Commit left in the record, and the pass fails with phase `load` and reason `invalid-record`.
+A custom Commit reads the inputs again from the saved offsets on a retry. Pinning is internal to the built-in Commits. A custom Commit does not accept `prepare` or support timer handlers in this release. It cannot finish a unit that a pinned Commit left in the record, and the pass fails with phase `load` and reason `invalid-record`.
 
 This bucket Commit stores the value and offsets of a pure fold in one conditional object write. The bucket adapter must make `put` atomic, treat the token `"0"` as create-if-absent, and fail with phase `checkpoint` and reason `token-conflict` when the precondition fails.
 

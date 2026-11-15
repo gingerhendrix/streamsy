@@ -8,7 +8,7 @@ import { ProjectionFault, ProjectionRetry } from "@streamsy/projection";
 import type { Context, Schedule } from "effect";
 ```
 
-A runner fails with a `ProjectionFault`, or with the error of the handler itself. `follow` and the attached runners retry a retryable fault under `ProjectionRetry`. See [Faults](/docs/projections/checkpoints#faults).
+A runner fails with a `ProjectionFault`, or with the error of the handler itself. `follow` retries retryable projection faults under `ProjectionRetry`. Attached bindings use their own backoff; `ProjectionRetry` paces retryable failures of the runner's own storage operations. See [Faults](/docs/projections/checkpoints#faults).
 
 ## `ProjectionFault`
 
@@ -28,6 +28,7 @@ interface ProjectionFault {
     | "invalid-options"
     | "invalid-output"
     | "token-conflict"
+    | "output-busy"
     | "range-unreproducible"
     | "stale-epoch"
     | "storage-failure"
@@ -49,21 +50,22 @@ same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
 | `process`    | The handler result, or a write while the handler ran           |
 | `checkpoint` | The checkpoint write after the handler. The handler has run    |
 
-| Reason                    | Meaning                                                                                       |
-| ------------------------- | --------------------------------------------------------------------------------------------- |
-| `history-unavailable`     | An input does not have the history after its checkpoint offset                                |
-| `identity-mismatch`       | The stream id or content type of an input differs from the record. Use a new generation       |
-| `invalid-record`          | The stored record or state does not decode, or a pinned unit does not fit the Commit          |
-| `invalid-source`          | An input read is invalid, does not advance, or does not decode                                |
-| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                  |
-| `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append |
-| `token-conflict`          | Another writer changed the record first                                                       |
-| `range-unreproducible`    | A pinned range cannot be read again                                                           |
-| `stale-epoch`             | A newer generation has written to an output                                                   |
-| `storage-failure`         | Storage, transport, or SQL failed                                                             |
-| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                  |
+| Reason                    | Meaning                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `history-unavailable`     | An input does not have the history after its checkpoint offset                                               |
+| `identity-mismatch`       | An input differs from the stored identity, or `awaitOffset` names a different attached version or generation |
+| `invalid-record`          | The stored record or state does not decode, or a pinned unit does not fit the Commit                         |
+| `invalid-source`          | An input read is invalid, does not advance, or does not decode                                               |
+| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                                 |
+| `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append                |
+| `output-busy`             | An output stream is busy; retry later                                                                        |
+| `token-conflict`          | Another writer changed the record first                                                                      |
+| `range-unreproducible`    | A pinned range cannot be read again                                                                          |
+| `stale-epoch`             | A newer generation has written to an output                                                                  |
+| `storage-failure`         | Storage, transport, or SQL failed                                                                            |
+| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                 |
 
-`retryable` is `true` when `reason` is `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
+`retryable` is `true` for `token-conflict` and `output-busy`. It is also `true` for `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. Every other reason is non-retryable. Attached runners stop the binding, trigger stream or runner that hit a non-retryable fault; handler errors and defects retry. `follow` fails its stream on handler errors, defects and non-retryable faults. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
 
 ## `ProjectionRetry`
 
@@ -78,7 +80,9 @@ declare const ProjectionRetry: Context.Reference<Schedule.Schedule<unknown>>;
 same<typeof ProjectionRetry, typeof Real.ProjectionRetry>(true);
 ```
 
-`ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of a runner takes precedence over it.
+`ProjectionRetry` is a `Context.Reference` that holds the default retry schedule of [`Projection.follow`](/docs/reference/projection/runners#projectionfollow), [`Projection.attach`](/docs/reference/projection/runners#projectionattach), and [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). The `retry` option of `follow` or `passRetry` of either attach host takes precedence over it.
+
+For attached runners the schedule controls timing only: the runner calls it once per retryable failed pass with no input. A dying step is logged and treated as exhaustion. Retryable binding failures back off separately, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), in both durability modes; a finite pass policy does not stop them.
 
 The default schedule never stops. Its delay starts at 200 ms, doubles after each retry, has jitter, and is at most 30 s. To change the default for every runner, provide another schedule for `ProjectionRetry`.
 

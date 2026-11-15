@@ -9,7 +9,7 @@ A runner reads each input of a bound projection after its checkpoint offset, run
 
 | Runner                                     | Takes              | Returns                     | Runs                                                           |
 | ------------------------------------------ | ------------------ | --------------------------- | -------------------------------------------------------------- |
-| `Projection.pass(projection)`              | A bound projection | An Effect of a `PassResult` | One unit, or nothing when no input has new items               |
+| `Projection.pass(projection)`              | A bound projection | An Effect of a `PassResult` | One unit for input or a due timer, or nothing                  |
 | `Projection.run(projection, options?)`     | A bound projection | An Effect of a `Progress`   | Units until the inputs are caught up or closed, or `limit`     |
 | `Projection.follow(projection, options?)`  | A bound projection | A `Stream` of `Progress`    | One `run` cycle, then a wait for a change, then the next cycle |
 | `Projection.attach(declaration, options?)` | A declaration      | A `Layer`                   | `run` for each binding whose input a local commit writes       |
@@ -48,6 +48,21 @@ const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 `limit` is the most units that a `run` call commits. With no `limit`, `run` continues until the inputs are caught up or closed. A `limit` that is not a positive safe integer fails the call with a `ProjectionFault` with phase `load` and reason `invalid-options`. See [`RunOptions`](/docs/reference/projection/units#runoptions).
 
+### Recorded wakes
+
+A [`process` timer](/docs/projections/process#timers) makes a due unit when `pass`,
+`run` or a `follow` cycle runs at or after the recorded deadline. Without new input,
+the slices and ranges are empty; with input, one unit carries both the input and
+`unit.due`. This also works after all inputs close. These calls do not wait for a
+future deadline, and `follow` discovers one on an input change or repair cycle.
+`Projection.attach` and `ProjectionWakeup.attach` wake at the recorded deadline.
+
+Each `run` or `follow` cycle makes at most one due unit without input. A handler
+that returns a time already passed therefore cannot loop forever inside a cycle.
+Return a time after `unit.due` for the next wake. Units with input are not limited
+by this rule. `Progress.wakeAt` is the timer recorded after the cycle, including
+when the cycle stops at its limit.
+
 ### Results
 
 `pass` gives a [`PassResult`](/docs/reference/projection/units#passresult). `run` and each `follow` element give a [`Progress`](/docs/reference/projection/units#progress).
@@ -58,9 +73,10 @@ const progress = await Effect.runPromise(program.pipe(Effect.provide(host)));
 | `units`   | `1` when the pass committed a unit, else `0` | The units that the cycle committed                                                 |
 | `items`   | The input items in the unit                  | The input items in those units                                                     |
 | `offsets` | The offset of each input after the pass      | The offsets that the last pass left                                                |
+| `wakeAt`  | Not present                                  | Next recorded wake as `Option<number>` in epoch milliseconds                       |
 | `state`   | Not present                                  | The state that the last pass left. `undefined` when the projection has no `state:` |
 
-`state` and `offsets` in a `Progress` come from the same checkpoint record, so they always match.
+`state`, `offsets` and `wakeAt` in a `Progress` come from the same checkpoint record, so they always match.
 
 | Status          | Returned by        | Meaning                                             |
 | --------------- | ------------------ | --------------------------------------------------- |
@@ -111,13 +127,13 @@ const consumer = Effect.gen(function* () {
 - after each later cycle that commits a unit or reaches `limit`,
 - after the last cycle, when every input is closed and read or an input is gone. Then the stream ends.
 
-A wait that ends with no new input emits nothing. `limit` applies to each cycle. After a cycle that reaches `limit`, the next cycle starts at the next pull, with no wait.
+A wait that ends with no new input or due timer emits nothing. `limit` applies to each cycle. After a cycle that reaches `limit`, the next cycle starts at the next pull, with no wait.
 
 After a cycle that is caught up, `follow` makes one long-poll read on each input from its offset. The first input with new items, or an input that is removed, ends the wait, and the next cycle runs. A close with no new items does not end the wait. `repairIntervalMs` bounds each wait. When the interval ends with no change, `follow` runs a cycle anyway, and that cycle sees any close. The default is 30000 ms. A value that is not a positive safe integer fails the stream with reason `invalid-options`. `follow` checks its options at the first pull, not when you call it.
 
 The stream is pull based. The next cycle runs only when the consumer pulls. A slow consumer gets one element for all the input that arrived while it worked, so the consumer's pace sets the follower's pace. To decouple them, add `Stream.buffer({ capacity: 1, strategy: "sliding" })`. A consumer failure stops the follower, so catch render errors in the consumer. To stop the follower, interrupt its fiber.
 
-`follow` retries a retryable `ProjectionFault`: reason `storage-failure`, unless its cause is a `StorageFault` or `TransportFault` whose `retryable` is `false`. It logs a warning for each retry. The schedule is `options.retry` when you pass one, else the `ProjectionRetry` reference. The default `ProjectionRetry` is exponential from 200 ms, jittered, with each wait capped at 30 s, and has no limit. Provide your own `ProjectionRetry` to change it for every follower and attached runner. Every other fault, and every handler error, fails the stream. See [`FollowOptions`](/docs/reference/projection/units#followoptions) and [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).
+`follow` retries a retryable `ProjectionFault`: reasons `token-conflict` and `output-busy`, and `storage-failure` unless its cause is a `StorageFault` or `TransportFault` whose `retryable` is `false`. It logs a warning for each retry. The schedule is `options.retry` when you pass one, else the `ProjectionRetry` reference. The default `ProjectionRetry` is exponential from 200 ms, jittered, with each wait capped at 30 s, and has no limit. Provide your own `ProjectionRetry` to change it for every follower and attached runner. Every other fault, and every handler error, fails the stream. See [`FollowOptions`](/docs/reference/projection/units#followoptions) and [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).
 
 Create every input before you start the follower. An input that does not exist and has no checkpoint fails the first cycle with reason `history-unavailable`.
 
@@ -144,7 +160,7 @@ export const orderTotals = Projection.emit({
 // ---cut---
 import { Layer } from "effect";
 import { MemoryStorage } from "@streamsy/core";
-import { CheckpointStore, Projection } from "@streamsy/projection";
+import { CheckpointStore, Projection, RunnerEvent } from "@streamsy/projection";
 import { orderTotals } from "./order-totals.ts";
 import { shop } from "./streams.ts";
 
@@ -152,24 +168,219 @@ const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(s
 const attached = Projection.attach(orderTotals, { durable: true }).pipe(Layer.provideMerge(host));
 ```
 
-Build the Layer before the application writes. A commit before the subscription exists does not start a run. Only a commit through this process's `Storage` starts a run. Remote inputs, inputs on another storage owner, and commits by another process on the same database do not.
+Build the Layer before the application writes. A commit before the subscription exists does not start a run. Local input commits start runs through this process's `Storage`. For remote inputs, append a row to a trigger stream as described below; the process host can follow a trigger on another owner. A second process writing the same database starts no run.
 
 Each input must give every projection parameter, so that one stream id picks one binding. `attach` throws a `RangeError` when an input template lacks a parameter, or when `limit` or `batch` is not a positive safe integer.
 
-| Option    | Default           | Effect                                                                              |
-| --------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `limit`   | `100`             | The most units for each binding in a run. A binding that reaches it runs again next |
-| `retry`   | `ProjectionRetry` | The schedule for a retry after a failed pass                                        |
-| `durable` | `false`           | Keep a pending mark for each binding with work in storage                           |
-| `batch`   | `25`              | With `durable`, the most due marks that a pass reads                                |
+| Option      | Default           | Effect                                                                                        |
+| ----------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| `limit`     | `100`             | The most units for each binding in a run. A binding that reaches it runs again next           |
+| `passRetry` | `ProjectionRetry` | Timing only. Called once per retryable failed pass with no input                              |
+| `durable`   | `false`           | Keep a pending mark for each binding with work in storage                                     |
+| `triggers`  | `[]`              | Fixed-address wake declarations whose rows request binding runs; remote on process hosts only |
+| `batch`     | `25`              | The most due marks that a pass reads                                                          |
 
-By default the set of bindings with work lives in memory. A crash after a commit and before the run leaves that binding late until its source gets its next write. In this mode a failed binding stays in the set, the other bindings still run, and then the runner logs the failure and retries the pass with `retry`. A handler that throws fails the pass the same way: the runner logs the defect and retries.
+A retry schedule that dies is logged and treated as exhausted. A registry request still permits another pass.
 
-With `durable: true`, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. When the Layer starts, it runs the bindings that have marks. A binding that catches up deletes its mark, unless a write during the run marked it again. A binding that fails waits alone, from 1 s doubling to 1 hour, and the runner logs a warning while the other bindings run. `durable: true` needs a local memory or SQL storage Layer. Over other storage, building the Layer dies. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
+`durable` chooses whether pending binding work, timers, backoff and stored failures survive a restart. By default these live in private memory and reset when the runner restarts. With `durable: false`, a recorded timer loses its wake on restart until the binding receives its next input. A crash after a commit and before the run leaves that binding late until its source gets its next write. In both modes a retryable failed binding waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), while its neighbours run. Handler errors and defects retry too. A non-retryable `ProjectionFault` or `StorageFault` stops only the binding that failed. A local commit or trigger row records work without shortening backoff or ending a stop; `registry.retry` or `registry.schedule` makes the binding due now. The `passRetry` schedule paces retryable failures in the runner's own marks, cursor or trigger operations; a finite pass policy does not bound binding retries.
+
+With `durable: true`, each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction. Before its first deadline read, wait or drain, the runner makes stopped marks due once. When the Layer starts, it runs the bindings that have due marks. A binding that catches up keeps a sleeping mark when its checkpoint records a wake; otherwise it deletes its mark, unless a write during the run marked it again. A failed binding logs a warning and backs off or stops as in non-durable mode. `durable: true` needs a local memory or SQL storage Layer. Over other storage, building the Layer dies. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
+
+The runner retries a failure that can succeed without a change. It stops the unit that hit any other failure, reports the cause, and waits for `registry.retry`. A stop lasts until that call or until the runner next starts. `registry.schedule(binding)` also overrides that binding's backoff or stop.
 
 The runner drops a binding whose source was removed before its first run, and logs a warning. To write wake rows for each source stream, see [Wake streams](/docs/streams/wake).
 
 On a Cloudflare Durable Object, use [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) in place of `Projection.attach`. It runs the same runner in an alarm turn, and it is durable by default.
+
+`Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
+wait re-reads the wall clock at least every 30 seconds while a deadline exists,
+so after host suspend a passed wake is discovered within 30 seconds of resume.
+`ProjectionWakeup.attach` exposes that deadline to the Durable Object alarm host,
+which arms its alarm for the wake time. Wakes can be late; handlers use `unit.due`
+to apply their late policy. A wake during backoff waits for backoff to end. A
+stopped binding keeps its checkpoint timer and fires late after retry or restart.
+With `durable: false`, pending work and timers live in private memory: restart or
+eviction loses a timer's wake until the binding's next input. Use durable marks
+on persistent storage for restart recovery.
+
+Return a time after `unit.due` for the next wake. Repeatedly returning a passed
+time leaves the mark due immediately and can run the handler at pass speed.
+
+### Trigger streams
+
+Pass `triggers: [FolderWake]` to request work for inputs on another owner. `Projection.attach` accepts local and remote wake streams. `ProjectionWakeup.attach` accepts only triggers on its own storage owner; a remote trigger dies at attach with a `RangeError` naming the stream. Each trigger is a fixed-address `Streamsy.wake` class with `params: {}`, typed as `WakeOutput<{}>`. `WakeOutput` is the exported type for wake classes; its type parameter describes the decoded params. Its owner must create the stream before writers append to it. The input services can use local storage, a remote layer, or an ObjectLink.
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
+
+class Files extends Streamsy.json<Files>()("TriggerDemo/Files", "folders/:folderId/files", {
+  params: { folderId: Schema.String },
+  schema: Schema.String,
+}) {}
+class FolderWake extends Streamsy.wake<FolderWake>()("TriggerDemo/Wake", "wake", { params: {} }) {}
+
+const index = Projection.fold({
+  id: "trigger-demo-index",
+  params: { folderId: Schema.String },
+  inputs: { files: Files },
+  commit: Commit.checkpoint,
+  state: { schema: Schema.Number, initial: 0 },
+  fold: (count) => count + 1,
+});
+const attached = Projection.attach(index, { durable: true, triggers: [FolderWake] });
+const wakeup = ProjectionWakeup.attach(index, { triggers: [FolderWake] });
+```
+
+At layer build, the runner resolves each trigger's stream service if provided. A service on another storage owner makes that trigger remote. A matching owner, or an absent service, keeps the local storage path. Provide a remote trigger's stream class at runtime, for example with `Protocol.bind(RemoteStreams.layerProtocol(...), Streamsy.group(FolderWake))`, or bind it to another owner's protocol layer. The `triggers` option does not add this runtime service to the attachment's required types.
+
+For each remote trigger, a scoped fiber long-polls `wire.readNext` from the locally committed cursor and signals new data without an input commit on the runner's owner. Closing the attachment scope stops the follower. Only a drain pass ingests rows: it reads one remote page outside the local transaction, then commits marks and the page's `nextOffset` together locally. Remote messages have no per-message offsets. A page with `upToDate: false` keeps the trigger ahead so the next pass reads another page; `next` itself makes no network request. The follower retries read failures with its own steps of `passRetry` and never signals a failure.
+
+A missing or deleted remote wake stream (`StreamNotFound` or `StreamGone`) leaves the cursor unchanged without failing the pass. `InvalidReadRequest`, invalid wake data or an invalid page cursor stops only that trigger with `invalid-source`. Remote `TransportFault` and `StorageFault` failures become retryable pass failures. The pass drains local bindings first and attempts every remote trigger before returning the first failure. Local commits during pass backoff wait for it to end, up to 30 seconds under the default `passRetry`; they do not shorten that wait. A failing remote owner does not make `next` report immediate work.
+
+Each drain reads local trigger messages before running bindings and one page per remote trigger after running bindings, from the saved cursor. With no saved cursor, the first attach reads from the start, so a new family needs no rescan. Each upsert's `row.stream` is parsed by the projection's inputs to choose one binding, just as a local input commit does. A State delete requests a run for its key, so removed sources can clear their outputs. State controls advance the cursor without requesting a binding. Several requests for one binding coalesce. An unmatched source id is skipped and logged, and the cursor still advances past it. The row's `offset` is never compared: even a repeated or smaller offset requests work. Triggered bindings share the ordinary queue, registry events, and failure and retry paths. A failed binding keeps its own backoff or stop when another trigger row or a local input commit requests it. Use `registry.retry` or `registry.schedule` to run it sooner.
+
+A trigger row that does not decode stops only that trigger stream. Its cursor stays, and `status.triggers` reports the stream and failure, including the row offset for local reads or the page's starting cursor for remote reads. Local commits, scheduled bindings and other trigger streams continue. `registry.retry(projectionId)` resumes stopped trigger streams; a binding target does not. Trigger stops live in memory, so a restart reads the row once more and stops again if it still does not decode.
+
+After a fold fix, call `registry.rescan(index, FolderWake)` to reset that trigger's saved cursor to `ZERO_OFFSET` and wake the runner. The next pass requests every member named by the retained trigger history again. This clears that stream's stop; a row that still does not decode stops it again. Rescan does not reset binding checkpoints or override binding backoff and stops. Use the appropriate version or generation for the fold fix. The cursor reset commits to storage in both durability modes and survives restart; only durable marks preserve work already ingested before a shutdown. A rescan during ingestion waits for that stream's read to finish, then the following pass reads from zero.
+
+The runner's next deadline is now while a non-stopped trigger is known to be ahead of its cursor. A local trigger wakes through `Storage.committed`. On a Durable Object, the ordinary append route reconciles the alarm; acquisition also finds unread rows after an eviction. No extra wake signal is required.
+
+With `durable: true`, trigger cursors and pending binding marks commit in one owner transaction. A shutdown after ingestion leaves marks for unfinished bindings; a row written while the runner is down is read on startup. This gives restart safety on persistent storage. Use one runner for each projection id on an owner, retain trigger history, and never reuse a removed stream id.
+
+With `durable: false`, the saved cursor still advances at ingestion, but the requested work then lives only in memory. A process shutdown or eviction before the binding finishes loses that request. Restart does not replay rows already read. Use `durable: true` when trigger requests must survive a restart. It is the default for `ProjectionWakeup.attach`; Bun's `Projection.attach` defaults to `false`.
+
+A hand-written request must include a valid `WakeRow.offset`:
+
+- If the wake stream is also a served index, read the source head and write its real tail. This keeps the row truthful for other readers, as in folder-sync's `FolderWake`.
+- For a stream used only to trigger, use the zero offset `0000000000000000_0000000000000000`. It requests a run, but a `followWake` reader comparing saved source offsets may report no `Dirty` item for it. `"-1"` and a missing offset do not decode as `WakeRow`.
+
+`Projection.wake` already publishes real source tails across owners with producer deduplication. The [folder-sync example](/docs/examples/folder-sync) uses it to trigger one search binding per folder on the index object, so a failing folder backs off alone.
+
+### Observe attached runners
+
+`Projection.Registry` is an optional service for runners in this process. Provide `Projection.Registry.layer` **below the attach layers**, so each attachment sees the same registry. Each runner registers when its attach layer is built and unregisters when that scope closes. Without the registry, attachments run as usual. `ProjectionWakeup.attach` also registers when the object's layer provides the registry.
+
+Use `Registry.layer` to create the registry. Attaching a runner to a hand-built `Registry.of(...)` value dies with a clear error because it has no private registration support.
+
+```ts
+// @filename: streams.ts
+export * from "./shop-streams.ts";
+// @filename: order-totals.ts
+import { Commit, Projection } from "@streamsy/projection";
+import { Orders, OrderTotals } from "./streams.ts";
+
+export const orderTotals = Projection.emit({
+  id: "order-totals",
+  params: {},
+  inputs: { input: Orders },
+  outputs: { totals: OrderTotals },
+  commit: Commit.producer,
+  emit: ({ item }) => ({ totals: [{ orderId: item.orderId, total: item.amount }] }),
+});
+// @filename: index.ts
+// ---cut---
+import { Array, Effect, Layer, Stream } from "effect";
+import { MemoryStorage } from "@streamsy/core";
+import { CheckpointStore, Projection, RunnerEvent } from "@streamsy/projection";
+import { orderTotals } from "./order-totals.ts";
+import { shop } from "./streams.ts";
+
+const host = CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(shop)));
+const app = Layer.mergeAll(
+  Projection.attach(orderTotals, { durable: true }),
+  // Other application layers that use Projection.Registry go here.
+).pipe(Layer.provideMerge(Projection.Registry.layer), Layer.provideMerge(host));
+
+const drained = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  return yield* registry.changes.pipe(
+    Stream.filter(
+      Array.every(
+        (runner) =>
+          runner.active === 0 &&
+          runner.queued === 0 &&
+          runner.marks.fresh === 0 &&
+          runner.marks.retryDue === 0,
+      ),
+    ),
+    Stream.runHead,
+    Effect.timeout("60 seconds"),
+  );
+});
+
+// An ops route can retry by id without importing a declaration.
+const retryRoute = (projectionId: string) =>
+  Effect.gen(function* () {
+    const registry = yield* Projection.Registry;
+    return yield* registry.retry(projectionId);
+  });
+
+const requestTotals = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  yield* registry.schedule(orderTotals.at({}));
+  const retried = yield* registry.retry(orderTotals);
+  // Select just one binding instead:
+  const bindingRetried = yield* registry.retry(orderTotals.at({}));
+  return { retried, bindingRetried };
+});
+
+const awaitTotals = (receipt: { readonly offset: string }) =>
+  Effect.gen(function* () {
+    const registry = yield* Projection.Registry;
+    yield* registry
+      .awaitOffset(orderTotals.at({}), "input", receipt.offset)
+      .pipe(Effect.timeout("10 seconds"));
+  });
+
+const observeTotals = Effect.gen(function* () {
+  const registry = yield* Projection.Registry;
+  return yield* registry.events.pipe(
+    Stream.filter(Projection.Registry.isFor(orderTotals.at({}))),
+    Stream.filter(RunnerEvent.$is("Ran")),
+    Stream.runForEach((event) => Effect.log("accepted offsets", event.offsets)),
+  );
+});
+```
+
+Run the startup `drained` effect inside the application's scope, after its attach layers are built. The registry's `status` effect returns a `ReadonlyArray<RunnerStatus>`; `changes` emits an initial snapshot, then the full list after each pass, registration, removal and retry transition. `status` fails with `StorageFault` if a mark summary cannot be read. `changes` logs and skips that snapshot, keeps the subscription open, and emits the next good snapshot; its error type is `never`. This also applies to a failed initial read. Reading status does not consume pending commits. Each subscriber reads the full status when it consumes a notification; with no subscribers, passes perform no status or mark-summary reads. A slow `changes` consumer keeps at most one pending notification, coalescing changes until it reads the current snapshot; stop the stream when the wait is complete.
+
+Each status includes the projection id, `active` bindings executing now, `queued` bindings in memory, and `lastPassAt` (`None` before any pass completes). `state` is `running` while waiting or processing, `retrying` while an automatic or explicitly requested pass retry is armed, or `failed` when a pass hits a non-retryable fault or its retry policy stops with no retry armed. `failures` counts consecutive failed passes and resets after a successful pass. `retryAt` is set only while `retrying`. A failed binding backs off or stops its own mark without failing the pass, so inspect the mark counts too. `failure` holds the last pass failure and clears after a good pass. `stopped` counts stopped bindings, and `triggers` lists each stream with its optional failure. The exported `RunnerFailure` has `at` (epoch ms), `retryable`, `reason: Option<ProjectionFault["reason"]>` and `message` (at most 1,000 characters). Handler errors and defects have no reason.
+
+`marks` is a summary in both modes, with five disjoint counts: `fresh` has no failed attempts or recorded wake, `sleeping` has a wake and no failed attempts, `retryDue` has failed attempts and is due now, `backingOff` has failed attempts and is due later, and `stopped` counts marks with an explicit stop. `nextDueAt` is the earliest due time across non-stopped marks, including sleeping timers, or `None` when there are none. The startup filter above allows bindings still backing off or stopped, stopped trigger streams and failed passes. For a health check, also require `marks.backingOff === 0`, `marks.stopped === 0`, no trigger failures and `state !== "failed"`. An empty registry also passes the filter, so check layer order if expected runners are missing. A registry that closes without ever registering a runner logs a debug message.
+
+`registry.schedule(binding)` or `registry.schedule(bindings)` queues work and wakes its attached runner once, without another source write. Every binding in an array must have the same projection id; mixed ids die with `RangeError` before writing. Empty arrays do nothing, and duplicate encoded params coalesce. All bindings are decoded before any mark is written: the first invalid binding fails with `InvalidBinding { projection, params }`. A durable runner records marks in chunks of 100 before returning; a non-durable runner keeps marks in memory. A storage fault in a later chunk can leave earlier marks written; repeating the request is safe. Schedule returns before processing finishes. Each runner uses the storage it acquired, even when the registry holds runners from different storage layers.
+
+`registry.rescan(target, trigger)` resets one trigger cursor to `ZERO_OFFSET`, clears that stream's stop, and wakes the runner. `target` is a projection id or declaration; `trigger` is its wake class or the stream id shown in `status.triggers`. Use it after a fold fix; [Trigger streams](#trigger-streams) explains checkpoint identity and restart behavior. An unattached projection fails with `NotAttached`; an unknown trigger dies with `RangeError` naming the projection and stream. The reset is stored in both durability modes. A first attach already reads a trigger stream from its start.
+
+`registry.schedule(binding)` overrides that binding's backoff or stop for the next pass. `registry.retry(target)` makes failed and stopped bindings due and returns how many marks it changed; resuming trigger streams or a failed pass does not add to the count. Schedule, retry and rescan end the runner's current wait and start one pass, whatever caused the wait. If a binding fails again, it backs off or stops according to its failure. A retryable failure in the runner's storage operations uses the pass policy. Requests preserve that policy: after exhaustion each request permits one pass, and another failure returns straight to `failed` with no automatic delay. A non-retryable pass fault stops again without stepping the policy.
+
+Pass a projection id or declaration to retry all its failed and stopped bindings and resume its trigger streams, or a binding to select one. Requests preserve the retry schedule and can resume an exhausted finite policy. Retry excludes sleeping timers and bindings that only reached their unit limit. Retry preserves attempts, stored failures and sequence numbers, clears stops and sets due times to zero in both modes; a repeat before the marks run returns zero.
+
+`registry.failed(target, { limit: 100 })` lists failed bindings, stopped first and then by deadline. The default limit is 100; it must be an integer from 1 to 1,000. Use a projection id or declaration for its failed bindings, or a binding to select one. Each entry has encoded `params`, `attempts`, `dueAt` (`None` while stopped), `stopped`, `exhausted` and the optional stored `failure` (`at`, `reason`, `message`). Durable failures remain readable after eviction; attempts and the failure remain until the binding catches up and clears its mark, or it is dropped.
+
+These methods resolve the runner by projection id and fail with `NotAttached`, exported from `@streamsy/projection`, if that id is not registered. Attaching an id already present in the same registry dies at layer build with an error naming the id. A binding supplies encoded params, which the runner decodes with its declaration. A missing attachment writes no mark. `schedule` fails with `InvalidBinding`, exported from `@streamsy/projection`, when params do not decode and re-encode to the same binding, including missing or extra keys. `retry` with such params selects nothing and returns zero. Storage failures are reported as `StorageFault`.
+
+`registry.events` is a `Stream<RunnerEvent>` combining binding observations from all registered runners, on both hosts. Each event has `projection` (the declaration id) and `params` (the binding's encoded param record). `RunnerEvent` exports constructors, `$is` and `$match`. Use `Projection.Registry.isFor(binding)` to match an event by id and encoded params. The cases are:
+
+- `Ran`: every binding run that returns, including runs with zero units or `limit-reached`. It includes the run's `status`, committed `units` count, reached `offsets` keyed by input name, and next recorded `wakeAt: Option<number>`.
+- `Failed`: a failed binding run, with consecutive binding `attempts` and `dueAt: Option<number>`. Both modes publish immediately with `failure` and `stopped`; `Some(dueAt)` means backoff and `None` means stopped. Catching up clears the binding’s failure and attempts.
+- `Dropped`: a binding whose source was removed before its first run. It is dropped instead of emitting `Failed`.
+
+Events have no replay or initial snapshot: a subscriber sees only events published after subscription. The stream uses unbounded in-memory buffering so a slow subscriber never blocks or fails a projection pass. A consumer that falls behind can retain an increasing amount of memory. Close subscriptions when finished; the wait above does this automatically. Without a registry, runners construct and publish no events.
+
+For in-process read-your-writes, call `registry.awaitOffset(binding, input, receipt.offset)` while the attachment is alive. It subscribes to events before reading the checkpoint with `Projection.read`, then waits for the matching binding's input offset to reach or exceed the receipt under core `compare`. A completed run cannot fall between the subscription and the read. On a matching `Failed` event it rereads the checkpoint, so progress committed before a later unit failed can satisfy the wait. The helper fails with `NotAttached` for an unregistered id, `ProjectionFault` with phase `load` and reason `identity-mismatch` if the binding's version or generation differs from the attached runner, or the checkpoint read's own error. `schedule` and `retry` continue to resolve by id and params alone. It has no timeout; add `Effect.timeout` as above. The subscription closes when the wait completes or is interrupted. A metrics fold over `events` is left to the host.
+
+### Registry on a Durable Object
+
+Put `Projection.Registry.layer` in the object's `layer`, alongside `CheckpointStore.layer`, using `Layer.mergeAll`. The host acquires `ProjectionWakeup.attach` with that context, and request handlers see the same registry. See the [object setup example](/docs/servers/cloudflare/alarms#projections).
+
+On an object, schedule records the request and immediately reconciles the host alarm before returning. Retry makes failed work due and reconciles too. Neither needs another write or `Wakeups.touch`; the same effects work from a request, an RPC method, or another wakeup's run. A binding normally backs off on its own mark without failing the whole pass.
+
+The registry reads the host’s failure count and retry deadline. After schedule or retry resumes a failed runner, it reports `retrying` with the reconciled retry deadline until the next pass starts. `Wakeups.status` continues to describe every wakeup and reports only its automatic backoff floor as `retryAt`. Failure counts, last-pass times, in-memory pending work and stream subscriptions reset on eviction, as they do on a process restart. Durable marks and stored failures persist; non-durable requests can be lost on eviction. At each cold start stopped durable bindings become due once. A still-broken binding stops again, and a stopped mark arms no alarm.
+
+The workerd tests confirm that an alarm can run while a fetch waits on `registry.changes` or `registry.events`. The wait observes only that live object instance and request; it does not survive eviction or span requests. Use a caller-chosen timeout and resubscribe after reconnecting.
 
 ## Closed and gone inputs
 

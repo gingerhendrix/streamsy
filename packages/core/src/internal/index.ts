@@ -17,7 +17,18 @@ export {
   type CommitHooksApi,
 } from "./commit-hooks.ts";
 
-export { ProjectionMarks, type PendingMark, type ProjectionMarksApi } from "./projection-marks.ts";
+export {
+  ProjectionMarks,
+  type MarkFailure,
+  type PendingMark,
+  type ProjectionMarkSummary,
+  type ProjectionMarksApi,
+} from "./projection-marks.ts";
 
 /** The parameter names from the route grammar, shared with projection binding. */
 export { compileSegments } from "../toolkit/route-internal.ts";
+
+export { memoryProjectionMarks } from "../storage/memory/marks.ts";
+
+/** Storage message offsets consumed by projection reads. */
+export { attachOffsets, offsetsOf } from "./read-offsets.ts";

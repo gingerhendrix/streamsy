@@ -172,7 +172,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
     );
 
     it.effect(
-      "a durable wake-search mark indexes a dirty wake row after restart without a new write, and folder deletion clears search",
+      "an unread trigger row indexes its folder after restart without a new write, and folder deletion clears search",
       () =>
         Effect.gen(function* () {
           const directory = yield* testDirectory("worker-dirty-restart-");
@@ -202,8 +202,8 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
           });
 
           yield* unpause.text;
-          // Acquire finds the durable `wakeSearch` mark from before the stop and arms the
-          // alarm, which indexes the folder with no new write.
+          // Acquire sees FolderWake ahead of its trigger cursor and arms the alarm.
+          // Each folder runs as its own durable search binding, with no new write.
           yield* until(listed(host.url), (current) => current.length === 1);
           expect(yield* listed(host.url)).toEqual([{ folderId: "dirty" }]);
 
@@ -228,7 +228,7 @@ layer(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer), { excludeTestSer
               expect(
                 db
                   .query(
-                    "SELECT owner_key FROM streamsy_owner_records WHERE owner_key LIKE '%folder-index%'",
+                    "SELECT owner_key FROM streamsy_owner_records WHERE owner_key LIKE '%folder-index%' AND owner_key NOT LIKE '%projection.trigger%'",
                   )
                   .all(),
               ).toEqual([]);

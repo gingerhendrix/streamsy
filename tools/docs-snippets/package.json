@@ -11,7 +11,6 @@
     "@effect/platform-bun": "4.1.2",
     "@effect/sql-sqlite-bun": "4.1.2",
     "@streamsy/core": "workspace:*",
-    "@streamsy/outbox": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",

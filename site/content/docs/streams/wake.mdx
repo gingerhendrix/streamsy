@@ -28,7 +28,7 @@ export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/
 
 `Streamsy.wake` calls `Streamsy.state` with `Streamsy.wakeCollections`, so a wake class has the normal State service and the item format of a [Durable State stream](/docs/streams/durable-state#items). The declaration takes no `collections` and names no sources. The service name, template, and params work as for every stream class. See [Declare streams](/docs/streams/declare).
 
-The only collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is the tail of the source after the write. `closed` is `true` when the source is closed, and a row for an open source leaves it out.
+The only collection has the State `type` `stream`. Each row is a `Streamsy.WakeRow`, `{ stream, offset, closed? }`. `stream` is the id of the source stream and is also the State key of the row. `offset` is a position in the source that the row's writer vouches for. The stream holding the row says what is vouched: written, for a source wake stream, or accepted, for a projection's [accepted stream](/docs/projections/accepted). `closed` is `true` when the source is closed, and a row for an open source leaves it out.
 
 ## Write rows
 
@@ -148,3 +148,5 @@ const actionsOf = (
 The cursor rule is the same. Save the `stream-next-offset` of a page as the wake cursor after you handle its items. Serve a wake stream as any State stream. See [State routes](/docs/servers/serve#state-routes). The sync CLI of the [folder sync example](/docs/examples/folder-sync#browser-and-sync-cli) follows one wake stream this way.
 
 For every signature and the full rules of `wakeActions`, see [Wake streams](/docs/reference/core/wake) in the reference.
+
+For a single source offset, `Streamsy.awaitWake(Wake, params, { stream, offset }, options?)` waits for an equal or later row. Without `options.from`, each call reads the wake stream from the start. Pass a saved wake cursor and follow options to start after that cursor; only later rows can satisfy that wait. See [Accepted stream](/docs/projections/accepted).

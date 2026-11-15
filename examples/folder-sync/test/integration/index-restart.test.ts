@@ -2,12 +2,11 @@ import { BunServices } from "@effect/platform-bun";
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Array, Effect, Layer, Schedule, Schema } from "effect";
-import { CheckpointStore, Projection, ProjectionWakeup } from "@streamsy/projection";
-import { Files } from "../../server/streams.ts";
-import { search } from "../../server/search-index.ts";
+import { CheckpointStore, Projection } from "@streamsy/projection";
+import { Files, FolderWake } from "../../server/streams.ts";
+import { initialiseSearch, search } from "../../server/search-index.ts";
 import { filesWake } from "../../server/wake.ts";
 import { FileIndex, FileIndexLive } from "../../server/file-index.ts";
-import { IndexLive } from "../../server/index-live.ts";
 import { FolderStore, FolderStoreLive, Initialise } from "../../server/folder-store.ts";
 import { sqliteHost } from "../../server/storage.ts";
 import { testDirectory } from "../../scripts/test-directory.ts";
@@ -30,13 +29,17 @@ const until = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boole
 
 const graph = (filename: string) =>
   Layer.merge(FolderStoreLive, FileIndexLive).pipe(
-    Layer.provideMerge(IndexLive),
+    Layer.provideMerge(
+      Projection.attach(search, { durable: true, triggers: [FolderWake] }).pipe(
+        Layer.provide(Layer.effectDiscard(initialiseSearch)),
+      ),
+    ),
     Layer.provideMerge(Initialise),
     Layer.provideMerge(sqliteHost(filename)),
   );
 
 layer(BunServices.layer, { excludeTestServices: true })((it) => {
-  it.effect("startup indexes a folder from its pending mark without another source write", () =>
+  it.effect("startup indexes an unread trigger row without another source write", () =>
     Effect.gen(function* () {
       const directory = yield* testDirectory("index-dirty-restart-");
       const storage = sqliteHost(`${directory}/index.sqlite`);
@@ -47,9 +50,7 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
           );
 
           yield* Effect.gen(function* () {
-            // A durable runner that never drains: the commits write search marks,
-            // and the stop comes before any search run.
-            yield* ProjectionWakeup.attach(search);
+            // No search runner exists: only the wake row records the request.
             const store = yield* FolderStore;
             yield* store.create("dirty", "Dirty", "create");
             yield* store.commit("dirty", "a", {
@@ -79,7 +80,6 @@ layer(BunServices.layer, { excludeTestServices: true })((it) => {
         Effect.gen(function* () {
           const context = yield* Layer.build(storage);
           yield* Effect.gen(function* () {
-            yield* ProjectionWakeup.attach(search);
             yield* (yield* Files).remove({ folderId: "dirty" });
             yield* Projection.run(filesWake.at({ folderId: "dirty" }));
           }).pipe(Effect.provideContext(context));

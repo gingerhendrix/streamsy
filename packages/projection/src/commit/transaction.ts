@@ -1,5 +1,6 @@
-import { Array, Effect, Record } from "effect";
+import { Array, Effect, Predicate, Record } from "effect";
 import { SqlClient } from "effect/sql";
+import { isStreamsFault } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";
@@ -8,7 +9,7 @@ import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
 
-import { withPrepare } from "./range.ts";
+import { withPrepare, withAccepted } from "./range.ts";
 
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
@@ -78,7 +79,11 @@ export const transaction = withPrepare(
                     (cause) =>
                       new ProjectionFault({
                         phase: "process",
-                        reason: "invalid-output",
+                        reason: isStreamsFault(cause)
+                          ? "storage-failure"
+                          : Predicate.isTagged(cause, "StreamBusy")
+                            ? "output-busy"
+                            : "invalid-output",
                         message: `Cannot append to ${output.address.id}`,
                         cause,
                       }),
@@ -96,4 +101,4 @@ export const transaction = withPrepare(
         return yield* Effect.void;
       }),
   }),
-);
+).pipe(withAccepted);

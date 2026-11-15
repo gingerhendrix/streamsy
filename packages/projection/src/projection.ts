@@ -43,4 +43,14 @@ export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
 
-export { wake } from "./wake.ts";
+export { wake, type WakeOutput } from "./wake.ts";
+
+export {
+  Registry,
+  type RegistryApi,
+  RunnerEvent,
+  type RunnerStatus,
+  type RunnerFailure,
+} from "./registry.ts";
+
+export { wakeAt, type WakeAt } from "./wake-at.ts";

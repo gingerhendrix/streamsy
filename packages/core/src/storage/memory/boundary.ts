@@ -141,27 +141,33 @@ export const makeBoundary = (
     const readMarks = <A>(f: (marks: Marks.MarkTable) => A) =>
       Effect.map(current, (draft) => f(Option.isSome(draft) ? draft.value.marks : committedMarks));
 
-    const writeMarks = (f: (marks: Marks.MarkTable) => void) =>
+    const writeMarks = <A>(f: (marks: Marks.MarkTable) => A) =>
       withTransaction(
         Effect.map(current, (draft) => {
           if (Option.isNone(draft)) throw new Error("Memory mark write requires an owner");
-          f(draft.value.marks);
+
+          return f(draft.value.marks);
         }),
       );
 
     const marks = ProjectionMarks.of({
       mark: (projection, params) => writeMarks((table) => Marks.mark(table, projection, params)),
       nextDue: (projection) => readMarks((table) => Marks.nextDue(table, projection)),
+      summary: (projection, now) => readMarks((table) => Marks.summary(table, projection, now)),
       due: (projection, now, limit) =>
         readMarks((table) => Marks.due(table, projection, now, limit)),
       read: (projection, params) => readMarks((table) => Marks.read(table, projection, params)),
       clear: (projection, params, seq) =>
         writeMarks((table) => Marks.clear(table, projection, params, seq)),
+      sleep: (projection, params, seq, wakeAt) =>
+        writeMarks((table) => Marks.sleep(table, projection, params, seq, wakeAt)),
       remove: (projection, params) =>
         writeMarks((table) => Marks.remove(table, projection, params)),
-      defer: (projection, params, attempts, dueAt) =>
-        writeMarks((table) => Marks.defer(table, projection, params, attempts, dueAt)),
-      deferred: (projection) => readMarks((table) => Marks.deferred(table, projection)),
+      fail: (projection, params, options) =>
+        writeMarks((table) => Marks.fail(table, projection, params, options)),
+      resume: (projection) => writeMarks((table) => Marks.resume(table, projection)),
+      failed: (projection, limit) => readMarks((table) => Marks.failed(table, projection, limit)),
+      retry: (projection, params) => writeMarks((table) => Marks.retry(table, projection, params)),
     });
 
     return {

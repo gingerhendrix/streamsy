@@ -150,13 +150,13 @@ A unit of `FoldByKey.process` fails in one of four ways:
 
 An interruption stays an interruption. For the reason of each `ProjectionFault`, see [`FoldByKey.Handler`](/docs/reference/projection/state-table#foldbykeyhandler).
 
-`FoldByKeyError` is a handler error, not a `ProjectionFault`. The runners treat it like any handler failure. `run` fails with it. Under durable `attach`, the binding waits on its own backoff while its neighbours run. Under memory `attach`, the runner logs it and retries the pass. A key mismatch is a bug in the fold, so it fails again on every retry until you fix the code.
+`FoldByKeyError` is a handler error, not a `ProjectionFault`. The runners treat it like any handler failure. `run` fails with it. Under `attach` in either durability mode, the runner logs it and the binding waits on its own backoff while its neighbours run. A key mismatch is a bug in the fold, so it fails again on every retry until you fix the code.
 
-A `ProjectionFault` with reason `storage-failure` is retryable, so `Projection.follow` retries it. See [Faults](/docs/projections/checkpoints#faults).
+A `ProjectionFault` with reason `storage-failure` is retryable unless its underlying stream fault is non-retryable. `output-busy` is also retryable. `Projection.follow` retries these faults; other faults and handler errors end its stream. See [Faults](/docs/projections/checkpoints#faults).
 
 ### Attach folds durably
 
-Attach every fold with `durable: true`. A fold that fails then defers its own binding, and the other bindings run. In memory mode, a failed binding fails the whole pass, and the runner logs the failure and retries every pending binding of that projection on one schedule. That holds for a typed failure and for a fold that throws.
+Attach every fold with `durable: true` when pending work and backoff must survive a restart. In both modes, a retryable failed binding waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), and other bindings continue. Handler errors, including `FoldByKeyError`, and defects use that backoff too. A non-retryable projection or storage fault stops only the failed binding until `registry.retry`, `registry.schedule` or the runner next starts.
 
 On a Durable Object, `ProjectionWakeup.attach` is durable by default.
 

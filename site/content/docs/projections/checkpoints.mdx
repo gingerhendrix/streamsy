@@ -113,7 +113,7 @@ A new `version` also names a new record. `Commit.producer` then appends under a 
 
 Each record write is a compare-and-set on the token that the runner loaded. Run one writer for each record key, either the follower or one `run` at a time. When a second writer saves first, the slower writer fails with reason `token-conflict`. The phase is `checkpoint`, or `pin` when the pin write of `Commit.producer` lost.
 
-`token-conflict` is a deployment fault, and a retry does not fix it. The handler of the slower writer may already have run its external effects. Stop the second writer.
+`token-conflict` reports a second writer; a retry reloads the token and may succeed. `follow` retries it on its schedule, and attached bindings retry on their own backoff. The handler of the slower writer may already have run its external effects. Stop the second writer.
 
 ## Forget
 
@@ -140,6 +140,7 @@ A pass fails with a `ProjectionFault`, or with the error of the handler. The run
 
 | Reason                    | Cause                                                                                                              | What to do                                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `output-busy`             | An output stream is busy                                                                                           | Retry later                                                                                          |
 | `storage-failure`         | Storage, transport or SQL failed                                                                                   | Retry. `follow` retries it when `retryable` is `true`                                                |
 | `token-conflict`          | Another writer saved the record first                                                                              | Run one writer for each key. See [One writer](#one-writer)                                           |
 | `identity-mismatch`       | An input changed its name, stream id or content type                                                               | Declare a new generation                                                                             |
@@ -152,4 +153,4 @@ A pass fails with a `ProjectionFault`, or with the error of the handler. The run
 | `invalid-output`          | An output item or the state does not encode, or an output is missing, closed, or refused the append                |                                                                                                      |
 | `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                       | See [`transaction`](/docs/projections/commits#transaction) and [Several backends](#several-backends) |
 
-`run` retries no fault. `follow` and the attached runners retry a fault whose `retryable` is `true`. `retryable` is `true` for `storage-failure`, unless its `cause` is a stream fault that is not retryable. See [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).
+`run` retries no fault. `follow` retries a projection fault whose `retryable` is `true`. An attached binding retries these faults under the declaration's `retry` binding policy and stops on a non-retryable projection or storage fault; handler errors and defects retry. `retryable` is `true` for `token-conflict`, `output-busy`, and `storage-failure`, unless the storage failure's `cause` is a stream fault that is not retryable. See [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry).

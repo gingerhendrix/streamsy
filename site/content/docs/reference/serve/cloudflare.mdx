@@ -349,7 +349,15 @@ The router adds a trailing slash to the prefix when it has none, and then strips
 // ---cut-start---
 import * as Cloudflare from "@streamsy/serve/cloudflare";
 import type * as Workers from "@cloudflare/workers-types";
-import { Context, type Effect, type Layer, type Option, type Schedule, type Scope } from "effect";
+import {
+  Context,
+  type Cause,
+  type Effect,
+  type Layer,
+  type Option,
+  type Schedule,
+  type Scope,
+} from "effect";
 import type { HttpClientError, HttpRouter, HttpServerRespondable } from "effect/http";
 import type { Storage, StorageFault, Streamsy } from "@streamsy/core";
 import { same } from "./reference-check.ts";
@@ -359,7 +367,10 @@ interface Wakeup<R = never> {
   readonly next: Effect.Effect<Option.Option<number>, StorageFault, R>;
   readonly run: Effect.Effect<void | Cloudflare.WakeupProgress, unknown, R>;
   readonly retry?: Schedule.Schedule<unknown>;
+  readonly retryable?: (cause: Cause.Cause<unknown>) => boolean;
   readonly deferred?: Effect.Effect<number, StorageFault, R>;
+  readonly bind?: (host: Cloudflare.WakeupHost) => Effect.Effect<void>;
+  readonly changed?: Effect.Effect<void>;
 }
 
 declare const Wakeup: {
@@ -375,50 +386,48 @@ same<typeof Wakeup, typeof Cloudflare.Wakeup>(true);
 
 `Cloudflare.Wakeup` is a kind of scheduled work in an object: a bounded, idempotent `run`, and a `next` that reads its due time from committed state. `Wakeup.make` runs `run` under the permit of the object for that name. The permit is not reentrant, so a `run` must not call its own `run`.
 
-| Field      | Meaning                                                                                                        |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| `name`     | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
-| `next`     | The next due time in epoch milliseconds, or `None` when there is no work                                       |
-| `run`      | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
-| `retry`    | The schedule whose delays set the earliest retry time after a failure                                          |
-| `deferred` | The number of units that failed and wait on their own backoff. Without it, `status` reports `0`                |
+| Field       | Meaning                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `name`      | A name unique in the object. Stream expiry uses `streamsy/expiry`                                              |
+| `next`      | The next due time in epoch milliseconds, or `None` when there is no work                                       |
+| `run`       | The work, which can run more than once. Returns `{ more: true }` when it stops at its bound with due work left |
+| `retry`     | Timing only. The runner calls the schedule once per retryable failed pass with no input                        |
+| `retryable` | Optional predicate on a failed run's cause. `false` stops automatic retries without stepping the schedule      |
+| `deferred`  | The number of failed units awaiting another attempt, including stopped units. Without it, `status` reports `0` |
+| `bind`      | Receives the wakeup's host once at acquisition, before the initial alarm reconciliation                        |
+| `changed`   | Runs after a run or failed deadline read updates the host's retry state                                        |
 
 The host runs stream expiry first, and then the other wakeups in declaration order. Two wakeups with the same name fail the acquisition. When one wakeup fails in `next` or `run`, the others still run.
 
-Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends, the host stops retrying. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
+Without `retry`, the backoff after each failure doubles from 1 second, up to 1 hour. A run that reports no more work also backs off when work that was due before it started is still due. When a finite `retry` schedule ends or its step dies, the host stops retrying. A dying step is logged. A `retryable` predicate returning `false`, or a `next` failure with `StorageFault.retryable: false`, also stops automatic retries without stepping the schedule. `WakeupHost.retry` or a new acquisition resumes the wakeup. A run that makes progress resets the failure count. The backoff state is in memory, so an eviction clears it.
 
-### `Cloudflare.OutboxWakeup`
+### `Cloudflare.WakeupHost`
 
 ```ts
 // ---cut-start---
-import type * as Real from "@streamsy/serve/cloudflare";
+import type * as Cloudflare from "@streamsy/serve/cloudflare";
+import type { Effect, Option } from "effect";
 import { same } from "./reference-check.ts";
-import type { Outbox, OutboxStore } from "@streamsy/outbox";
-import type { Wakeup } from "@streamsy/serve/cloudflare";
-type Definition<Payload> = Outbox.Definition<Payload>;
-type Deliver<Payload, R> = Outbox.Deliver<Payload, R>;
-type DrainOptions = Outbox.DrainOptions;
 // ---cut-end---
-declare const OutboxWakeup: {
-  make: <Payload, R = never>(
-    definition: Definition<Payload>,
-    deliver: Deliver<Payload, R>,
-    options?: DrainOptions,
-  ) => Wakeup<OutboxStore | R>;
-};
+interface WakeupHost {
+  readonly reconcile: Effect.Effect<void>;
+  readonly retry: Effect.Effect<void>;
+  readonly state: Effect.Effect<{
+    readonly failures: number;
+    readonly retryAt: Option.Option<number>;
+  }>;
+}
 // ---cut-after---
-same<typeof OutboxWakeup, typeof Real.OutboxWakeup>(true);
+same<WakeupHost, Cloudflare.WakeupHost>(true);
 ```
 
-`OutboxWakeup.make` adapts an outbox scope to the object's alarm scheduler. It is also exported from `@streamsy/serve/alchemy`. Register the result in the object's `wakeups` array. Provide `OutboxStore` and the delivery function's services in the acquired storage Layer.
+`Cloudflare.WakeupHost` supplies effects bound to one acquired wakeup. They also work outside requests. See [Alarms](/docs/servers/cloudflare/alarms).
 
-`next` calls `store.nextDue` with the definition name, partition, and ordering option. It maps every store failure to a retryable `StorageFault` with operation `outbox.nextDue`. `run` calls `Outbox.drain` once and passes on the report's `more` flag. An invalid `limit` fails `run` with `InvalidConfiguration`, not a storage fault. The host reads `next` again to decide whether to arm another alarm.
-
-The wakeup name is `streamsy/outbox/<encoded name>`, with `/<encoded partition>` when a partition is supplied. Each component uses `encodeURIComponent`. An empty partition adds a trailing slash. An omitted partition covers all partitions.
-
-The [`DrainOptions`](/docs/reference/outbox/outbox#drainoptions) select the scope and ordering. Drains of one name share a permit only through the same store object. Across store objects or processes, the host must ensure one owner for overlapping scopes. The outbox acquires no distributed leases. Delivery must not recursively drain its own name.
-
-After enqueue in a request, call `Wakeups.touch` before returning. Outside a request, call `Wakeups.reconcile` after commit. See [Schedule the next pass](/docs/outbox#schedule-the-next-pass).
+| Field       | Meaning                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `reconcile` | Recomputes the alarm from every wakeup's next deadline; it can also run inside a wakeup's `run`     |
+| `retry`     | Clears this wakeup’s backoff floor without resetting its retry schedule                             |
+| `state`     | Reads consecutive failed passes and the automatic or reconciled explicitly requested retry deadline |
 
 ### `Cloudflare.Wakeups`
 
@@ -464,7 +473,7 @@ same<Wakeups, Cloudflare.Wakeups>(true);
 
 Call `touch` before the handler returns. When a streamed body queues work after the handler returns, call `reconcile` instead. Work outside a request also calls `reconcile`.
 
-`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. `deferred` is the count that the `deferred` field of the wakeup reports, such as the deferred bindings of a durable [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). When `next` or `deferred` fails inside `status`, `status` dies.
+`reconcile` does not run due work inside the request. It arms the alarm for `now + 1` instead. An alarm turn arms a recovery alarm 30 seconds ahead before it runs due work, and reconciles again after the work. In `status`, `retryAt` is the earliest time at which the backoff lets the wakeup run. `deferred` is the count that the `deferred` field of the wakeup reports, such as failed bindings, including stopped ones, in either durability mode of a [`ProjectionWakeup`](/docs/reference/projection/runners#projectionwakeup). When `next` or `deferred` fails inside `status`, `status` dies.
 
 ### `Cloudflare.alarmSlotLayer`
 

@@ -15,6 +15,7 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import { layerSqlite } from "./support/sqlite.ts";
+import { eventually } from "./support/eventually.ts";
 
 const Row = Schema.Struct({ id: Schema.String, count: Schema.Finite });
 
@@ -66,18 +67,6 @@ const host = () => {
 
 const transaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Transaction, (tx) => tx.withTransaction(body));
-
-const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, check: (value: A) => boolean) =>
-  Effect.gen(function* () {
-    for (let turn = 0; turn < 1000; turn += 1) {
-      const value = yield* read;
-
-      if (check(value)) return value;
-      yield* Effect.yieldNow;
-    }
-
-    return yield* read;
-  });
 
 const upsert = (id: string, count: number): Entry => DurableState.upsert("issue", { id, count });
 

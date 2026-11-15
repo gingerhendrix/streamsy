@@ -40,7 +40,7 @@ export {
   type ProjectionKey,
 } from "./checkpoint-store.ts";
 
-export { ProjectionFault } from "./fault.ts";
+export { InvalidBinding, NotAttached, ProjectionFault } from "./fault.ts";
 
 export { Transaction } from "./transaction.ts";
 
@@ -59,3 +59,14 @@ export { CheckpointRecord } from "./checkpoint-store.ts";
 export { ProjectionRetry } from "./retry.ts";
 
 export { ProjectionWakeup } from "./wakeup.ts";
+
+export {
+  RunnerEvent,
+  type RegistryApi,
+  type RunnerStatus,
+  type RunnerFailure,
+} from "./registry.ts";
+
+export type { WakeOutput } from "./wake.ts";
+
+export type { WakeAt } from "./wake-at.ts";

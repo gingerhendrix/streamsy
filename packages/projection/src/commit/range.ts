@@ -13,6 +13,8 @@ export const isPinned = (commit: object): boolean =>
 export const inherit = <A extends object>(source: object, target: A): A => {
   if (supportsPrepare(source)) withPrepare(target);
 
+  if (supportsAccepted(source)) withAccepted(target);
+
   return isPinned(source) ? pin(target) : extend(target);
 };
 
@@ -23,3 +25,11 @@ export const withPrepare = <A extends object>(commit: A): A =>
 
 export const supportsPrepare = (commit: object): boolean =>
   PrepareKey in commit && commit[PrepareKey] === true;
+
+const AcceptedKey = Symbol.for("@streamsy/projection/internal/Accepted");
+
+export const withAccepted = <A extends object>(commit: A): A =>
+  Object.defineProperty(commit, AcceptedKey, { value: true });
+
+export const supportsAccepted = (commit: object): boolean =>
+  AcceptedKey in commit && commit[AcceptedKey] === true;
