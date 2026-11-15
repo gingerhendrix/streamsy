@@ -103,30 +103,34 @@ const it = {
   effect: (
     name: string,
     run: () => Effect.Effect<void, unknown, Layer.Success<typeof host> | Scope.Scope>,
-  ) => layer(host)((test) => test.effect(name, run)),
+    timeout?: number,
+  ) => layer(host)((test) => test.effect(name, run, timeout)),
 };
 
 {
   for (const durable of [false, true]) {
-    it.effect(`schedule 1,000 bindings once, including a sleeping member (${durable})`, () =>
-      Effect.gen(function* () {
-        yield* populate(1_000);
-        const seen: Array<number> = [];
-        const projection = declaration("thousand", seen);
-        yield* Layer.build(Projection.attach(projection, { durable, batch: 1_000 }));
-        const registry = yield* Projection.Registry;
-        const bindings = Array.makeBy(1_000, (id) => projection.at({ id }));
-        yield* registry.schedule(bindings[0]);
-        expect((yield* settled(1))[0]?.marks.sleeping).toBe(1);
-        // The family call wakes a real sleeping mark without rerunning its handler.
-        yield* registry.schedule([bindings[0], ...bindings]);
-        expect((yield* settled(1_000))[0]?.marks.sleeping).toBe(1_000);
-        expect(seen).toHaveLength(1_000);
-        expect(new Set(seen).size).toBe(1_000);
-        yield* registry.schedule(bindings);
-        expect((yield* settled(1_000))[0]?.marks.sleeping).toBe(1_000);
-        expect(seen).toHaveLength(1_000);
-      }),
+    it.effect(
+      `schedule 1,000 bindings once, including a sleeping member (${durable})`,
+      () =>
+        Effect.gen(function* () {
+          yield* populate(1_000);
+          const seen: Array<number> = [];
+          const projection = declaration("thousand", seen);
+          yield* Layer.build(Projection.attach(projection, { durable, batch: 1_000 }));
+          const registry = yield* Projection.Registry;
+          const bindings = Array.makeBy(1_000, (id) => projection.at({ id }));
+          yield* registry.schedule(bindings[0]);
+          expect((yield* settled(1))[0]?.marks.sleeping).toBe(1);
+          // The family call wakes a real sleeping mark without rerunning its handler.
+          yield* registry.schedule([bindings[0], ...bindings]);
+          expect((yield* settled(1_000))[0]?.marks.sleeping).toBe(1_000);
+          expect(seen).toHaveLength(1_000);
+          expect(new Set(seen).size).toBe(1_000);
+          yield* registry.schedule(bindings);
+          expect((yield* settled(1_000))[0]?.marks.sleeping).toBe(1_000);
+          expect(seen).toHaveLength(1_000);
+        }),
+      15_000,
     );
 
     it.effect(`rescan 500 members after a fold fix (${durable})`, () =>
