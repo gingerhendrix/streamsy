@@ -124,7 +124,8 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
           versions: [1, 2, 3],
         });
       }
-    });
+      // MySQL builds six fresh databases here. On a CI runner that takes about 5 s.
+    }, 30_000);
 
     test("creates, appends and reads through the storage layer", async () => {
       if (url === undefined) return;
