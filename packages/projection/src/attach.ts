@@ -34,6 +34,8 @@ export interface AttachOptions {
   readonly durable?: boolean;
   /** The due marks that one drain pass reads. Default 25. */
   readonly batch?: number;
+  /** Bindings run at once. Default 1. Must be a positive safe integer. */
+  readonly concurrency?: number;
 }
 
 /** A defect of one drain pass, captured for logging with typed failures. */
@@ -74,6 +76,7 @@ export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never>(
     limit: options.limit,
     durable: options.durable ?? false,
     batch: options.batch,
+    concurrency: options.concurrency,
     triggers: options.triggers,
   });
 

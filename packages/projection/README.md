@@ -264,6 +264,26 @@ StreamsyObject.make({
 });
 ```
 
+Both attach forms accept `concurrency` (default `1`), the most bindings run at once.
+It must be a positive safe integer. Each binding still runs in at most one fiber;
+units within that binding run in order.
+
+| Host                        | `Commit.transaction`                                                                     | `Commit.atLeastOnce`                 |
+| --------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| SQLite (Bun, Node and Deno) | Transaction bodies serialize; reads and `prepare` can overlap another unit's transaction | Handler bodies run in parallel       |
+| Durable Objects             | As SQLite                                                                                | Handler bodies overlap across awaits |
+| Postgres and MySQL          | Handler bodies run in parallel up to the pool size, subject to shared output row locks   | Handler bodies run in parallel       |
+
+Keep `concurrency` below the pool size: each `Commit.transaction` unit holds one
+pooled connection for its whole handler. Both server drivers default to 10 connections;
+leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the
+provided `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
+handler's transaction context waits forever on SQLite, and on a pool once every
+connection holds a transaction. Appending to a shared output last keeps its row
+lock short: units serialize from that append until commit. Units that lock streams
+in opposite orders across separate appends can deadlock on Postgres or MySQL; the
+database aborts one transaction and its binding backs off before retrying.
+
 Both forms accept `retry: Schedule.Schedule<unknown>`. Timing only: the runner calls
 the schedule once per retryable failed pass with no input. Bun waits for its delays; the
 alarm host uses them to re-arm. A dying schedule is logged and treated as exhausted. The default is capped, jittered exponential backoff.

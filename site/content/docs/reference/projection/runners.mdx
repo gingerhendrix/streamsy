@@ -397,12 +397,34 @@ same<typeof attach, typeof Projection.attach>(true);
 - The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
-- `attach` throws a `RangeError` when `limit` or `batch` is not a positive safe integer.
+- `attach` throws a `RangeError` when `limit`, `batch` or `concurrency` is not a positive safe integer.
 - A retryable failed pass in marks, cursor or trigger operations logs an error and runs again under `retry`. A binding with a retryable failure backs off alone, from 1 s doubling to 1 hour, in either mode. A binding that reaches `limit` runs again next.
 - By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
 - With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding backs off or stops its own mark and does not fail the pass. Non-retryable projection or storage faults stop only their unit; handler errors and defects retry. A start makes stopped marks due once. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
 - Inputs on another owner need a local [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
 - A binding whose source was removed before its first run is dropped, with a warning.
+
+### Binding concurrency
+
+Both attach forms accept `concurrency` (default `1`), the most bindings run at once.
+It must be a positive safe integer. Each binding still runs in at most one fiber;
+units within that binding run in order.
+
+| Host                        | `Commit.transaction`                                                                     | `Commit.atLeastOnce`                 |
+| --------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| SQLite (Bun, Node and Deno) | Transaction bodies serialize; reads and `prepare` can overlap another unit's transaction | Handler bodies run in parallel       |
+| Durable Objects             | As SQLite                                                                                | Handler bodies overlap across awaits |
+| Postgres and MySQL          | Handler bodies run in parallel up to the pool size, subject to shared output row locks   | Handler bodies run in parallel       |
+
+Keep `concurrency` below the pool size: each `Commit.transaction` unit holds one
+pooled connection for its whole handler. Both server drivers default to 10 connections;
+leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the
+provided `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
+handler's transaction context waits forever on SQLite, and on a pool once every
+connection holds a transaction. Appending to a shared output last keeps its row
+lock short: units serialize from that append until commit. Units that lock streams
+in opposite orders across separate appends can deadlock on Postgres or MySQL; the
+database aborts one transaction and its binding backs off before retrying.
 
 Do not also run an attached binding under `follow`.
 

@@ -1,14 +1,16 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
+/* oxlint-disable effecttsgo/strict-effect-provide -- Each test provides its host within the fresh database scope. */
 /**
  * Checkpoints on the storage owner (`CheckpointStore.layer`) and fused commits on
- * Postgres and MySQL. Each dialect runs in its own fresh database and skips when
- * its URL is absent.
+ * Postgres and MySQL, plus runner concurrency on all three SQL dialects. Server
+ * dialects use fresh databases and skip when their URL is absent.
  */
 import { describe, expect, test } from "vitest";
-import { Array, Context, Effect, Layer, Option, Order, Result } from "effect";
-import { SqlClient } from "effect/sql";
-import { Storage, StreamId } from "@streamsy/core";
+import { Array, Context, Deferred, Effect, Layer, Option, Order, Result, Schema } from "effect";
+import { SqlClient, SqlError } from "effect/sql";
+import { Storage, StorageFault, StreamId, Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
+import { BunStorage } from "@streamsy/storage/bun";
 import { SqlStorage } from "@streamsy/storage";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
 import {
@@ -16,6 +18,7 @@ import {
   Commit,
   Projection,
   ProjectionFault,
+  ProjectionWakeup,
   Transaction,
 } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
@@ -446,6 +449,209 @@ for (const dialect of dialects) {
           ordered: true,
           tail: true,
         });
+      },
+      TIMEOUT_MS,
+    );
+  });
+}
+
+class ConcurrentSource extends Streamsy.json<ConcurrentSource>()(
+  "SqlConcurrency/Source",
+  "concurrent/:id",
+  {
+    params: { id: Schema.String },
+    schema: Schema.Finite,
+  },
+) {}
+
+/** One runner over the same client and transaction owner as its input and outputs. */
+const concurrentHost = <A, E, R>(
+  base: Layer.Layer<A | StreamsWriter | import("@streamsy/core/protocol").StreamsReader, E, R>,
+) =>
+  FamilyFixture.withFamilies(
+    Layer.mergeAll(CheckpointStore.layer, Transaction.layer, Projection.Registry.layer).pipe(
+      Layer.provideMerge(base),
+    ),
+    ConcurrentSource,
+  );
+
+const concurrentUnits = (overlap: boolean) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE concurrent_seen (id VARCHAR(10) PRIMARY KEY)`;
+    yield* Streams.create(output);
+    const both = yield* Deferred.make<void>();
+    let active = 0;
+    let maximum = 0;
+
+    const declaration = Projection.process({
+      id: "concurrent-units",
+      params: { id: Schema.String },
+      inputs: { source: ConcurrentSource },
+      commit: Commit.transaction,
+      process: (_batch, unit) =>
+        Effect.gen(function* () {
+          const txSql = yield* SqlClient.SqlClient;
+          active += 1;
+          maximum = Math.max(maximum, active);
+
+          if (active === 2) yield* Deferred.succeed(both, undefined);
+          // Parallel dialects must meet at the latch. Serial drivers yield while holding their permit.
+          yield* overlap ? Deferred.await(both) : Effect.sleep("20 millis");
+          yield* txSql`INSERT INTO concurrent_seen ${txSql.insert({ id: unit.params.id })}`;
+          yield* Streams.append(output, [Number(unit.params.id)]);
+          active -= 1;
+        }),
+    });
+
+    const wakeup = yield* ProjectionWakeup.attach(declaration, { concurrency: 2 });
+    const source = yield* ConcurrentSource;
+
+    for (const id of ["1", "2"]) {
+      yield* source.create({ id });
+      yield* source.append({ id }, [1]);
+    }
+
+    expect(yield* wakeup.run).toEqual({ more: false });
+    const rows = yield* sql<{ id: string }>`SELECT id FROM concurrent_seen ORDER BY id`;
+    expect(Array.map(rows, ({ id }) => id)).toEqual(["1", "2"]);
+    expect(Array.sort([...(yield* readAll(output))], Order.Number)).toEqual([1, 2]);
+    expect(maximum).toBe(overlap ? 2 : 1);
+    const store = yield* CheckpointStore;
+
+    for (const id of ["1", "2"]) {
+      expect((yield* store.load(Projection.key(declaration.at({ id })))).token).toBe("1");
+    }
+
+    expect(yield* (yield* Projection.Registry).failed(declaration)).toEqual([]);
+  });
+
+test(
+  "SQLite concurrent transaction bindings serialize their handler bodies and both commit",
+  () =>
+    Effect.runPromise(
+      concurrentUnits(false).pipe(
+        Effect.provide(
+          concurrentHost(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
+        ),
+        Effect.scoped,
+      ),
+    ),
+  TIMEOUT_MS,
+);
+
+for (const dialect of dialects) {
+  const url = dialect.url;
+  describe.skipIf(url === undefined)(`${dialect.name} parallel bindings`, () => {
+    for (const pool of [10, 1]) {
+      test(
+        `transaction bindings both commit with pool size ${pool}`,
+        async () => {
+          if (url === undefined) return;
+          await onFreshDatabase(dialect, url, (fresh) =>
+            concurrentUnits(pool > 1).pipe(
+              Effect.provide(
+                concurrentHost(
+                  SqlStorage.layerProtocol().pipe(
+                    Layer.provideMerge(dialectClient(dialect, fresh, { maxConnections: pool })),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+        TIMEOUT_MS,
+      );
+    }
+
+    test(
+      "opposite stream lock orders back off the aborted binding and both eventually commit",
+      async () => {
+        if (url === undefined) return;
+        await onFreshDatabase(dialect, url, (fresh) =>
+          Effect.gen(function* () {
+            const left = FamilyFixture.json("lock-left", { schema: Schema.Finite });
+            const right = FamilyFixture.json("lock-right", { schema: Schema.Finite });
+            yield* Streams.create(left);
+            yield* Streams.create(right);
+            const bothLocked = yield* Deferred.make<void>();
+            let locked = 0;
+            const deadlocks: boolean[] = [];
+            const attempts = new Map<string, number>();
+
+            const declaration = Projection.process({
+              id: "deadlock-units",
+              params: { id: Schema.String },
+              inputs: { source: ConcurrentSource },
+              commit: Commit.transaction,
+              process: (_batch, unit) =>
+                Effect.gen(function* () {
+                  const attempt = (attempts.get(unit.params.id) ?? 0) + 1;
+                  attempts.set(unit.params.id, attempt);
+                  const streams = unit.params.id === "1" ? [left, right] : [right, left];
+                  yield* Streams.append(streams[0]!, [Number(unit.params.id)]);
+
+                  if (attempt === 1) {
+                    locked += 1;
+
+                    if (locked === 2) yield* Deferred.succeed(bothLocked, undefined);
+                    yield* Deferred.await(bothLocked);
+                  }
+
+                  yield* Streams.append(streams[1]!, [Number(unit.params.id)]).pipe(
+                    Effect.tapError((fault) =>
+                      Effect.sync(() => {
+                        deadlocks.push(
+                          Schema.is(StorageFault)(fault) &&
+                            SqlError.isSqlError(fault.cause) &&
+                            Schema.is(SqlError.DeadlockError)(fault.cause.reason),
+                        );
+                      }),
+                    ),
+                  );
+                }),
+            });
+
+            const wakeup = yield* ProjectionWakeup.attach(declaration, { concurrency: 2 });
+            const source = yield* ConcurrentSource;
+
+            for (const id of ["1", "2"]) {
+              yield* source.create({ id });
+              yield* source.append({ id }, [1]);
+            }
+
+            yield* wakeup.run;
+            const registry = yield* Projection.Registry;
+            const failed = yield* registry.failed(declaration);
+            expect(deadlocks).toEqual([true]);
+            expect(failed).toHaveLength(1);
+            expect(failed[0]).toMatchObject({ attempts: 1, stopped: false });
+            expect(Option.isSome(failed[0]!.dueAt)).toBe(true);
+            // Direct handler appends expose a retryable StorageFault, which has no ProjectionFault reason.
+            expect(Option.getOrThrow(failed[0]!.failure).reason).toEqual(Option.none());
+            // Let the binding's recorded backoff elapse; the successful peer must not rerun.
+            yield* Effect.sleep("1100 millis");
+            yield* wakeup.run;
+            expect(yield* registry.failed(declaration)).toEqual([]);
+            expect(Array.sort([...attempts.values()], Order.Number)).toEqual([1, 2]);
+
+            for (const stream of [left, right]) {
+              expect(Array.sort([...(yield* readAll(stream))], Order.Number)).toEqual([1, 2]);
+            }
+
+            const store = yield* CheckpointStore;
+
+            for (const id of ["1", "2"]) {
+              expect((yield* store.load(Projection.key(declaration.at({ id })))).token).toBe("1");
+            }
+          }).pipe(
+            Effect.provide(
+              concurrentHost(
+                SqlStorage.layerProtocol().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
+              ),
+            ),
+          ),
+        );
       },
       TIMEOUT_MS,
     );

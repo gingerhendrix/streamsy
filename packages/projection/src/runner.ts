@@ -51,6 +51,8 @@ export interface RunnerOptions {
   readonly durable?: boolean | undefined;
   /** Due marks read in one drain pass. Default 25. */
   readonly batch?: number | undefined;
+  /** Bindings run at once. Default 1. */
+  readonly concurrency?: number | undefined;
 }
 
 /** The part of a projection declaration that the attach runner reads. */
@@ -237,12 +239,16 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
 ) => {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const batch = options.batch ?? DEFAULT_BATCH;
+  const concurrency = options.concurrency ?? 1;
 
   if (!Number.isSafeInteger(limit) || limit <= 0)
     throw new RangeError("Projection.attach limit must be a positive safe integer");
 
   if (!Number.isSafeInteger(batch) || batch <= 0)
     throw new RangeError("Projection.attach batch must be a positive safe integer");
+
+  if (!Number.isSafeInteger(concurrency) || concurrency <= 0)
+    throw new RangeError("Projection.attach concurrency must be a positive safe integer");
   const match = matcher(declaration);
 
   type Binding = Executable<I, E, R, Q, Result, P, unknown, OR>;
@@ -445,50 +451,53 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR>(
         }
       }
 
-      for (const [key, binding] of work) {
-        working.delete(key);
-        const exit = yield* Effect.exit(runActive(binding));
-        const state = states.get(key);
+      const runBinding = ([key, binding]: readonly [string, Binding]) =>
+        Effect.gen(function* () {
+          working.delete(key);
+          const exit = yield* Effect.exit(runActive(binding));
+          const state = states.get(key);
 
-        if (Exit.isSuccess(exit)) {
-          if (exit.value.status === "limit-reached") pending.set(key, binding);
-          else if (state !== undefined) yield* marks.clear(id, key, state.seq);
+          if (Exit.isSuccess(exit)) {
+            if (exit.value.status === "limit-reached") pending.set(key, binding);
+            else if (state !== undefined) yield* marks.clear(id, key, state.seq);
 
-          continue;
-        }
+            return;
+          }
 
-        if (yield* sourceGone(binding.inputs, exit.cause)) {
-          yield* dropped(key, binding);
-          yield* marks.remove(id, key);
+          if (yield* sourceGone(binding.inputs, exit.cause)) {
+            yield* dropped(key, binding);
+            yield* marks.remove(id, key);
 
-          continue;
-        }
+            return;
+          }
 
-        const attempts = (state?.attempts ?? 0) + 1;
-        const failed = runnerFailure(exit.cause, yield* Clock.currentTimeMillis);
+          const attempts = (state?.attempts ?? 0) + 1;
+          const failed = runnerFailure(exit.cause, yield* Clock.currentTimeMillis);
 
-        const dueAt = failed.retryable
-          ? Option.some(failed.at + deferDelay(attempts))
-          : Option.none<number>();
+          const dueAt = failed.retryable
+            ? Option.some(failed.at + deferDelay(attempts))
+            : Option.none<number>();
 
-        yield* marks.fail(id, key, { attempts, dueAt, failure: failed });
+          yield* marks.fail(id, key, { attempts, dueAt, failure: failed });
 
-        if (publish !== undefined)
-          yield* publish(
-            RunnerEvent.Failed({
-              projection: id,
-              params: binding.params,
-              attempts,
-              dueAt,
-              failure: failed,
-              stopped: !failed.retryable,
-            }),
+          if (publish !== undefined)
+            yield* publish(
+              RunnerEvent.Failed({
+                projection: id,
+                params: binding.params,
+                attempts,
+                dueAt,
+                failure: failed,
+                stopped: !failed.retryable,
+              }),
+            );
+          yield* Effect.logWarning(
+            `Projection ${id} binding ${key} failed (attempt ${attempts}); ${failed.retryable ? `it runs again in ${deferDelay(attempts)} ms` : "stopped until retry or restart"}`,
+            exit.cause,
           );
-        yield* Effect.logWarning(
-          `Projection ${id} binding ${key} failed (attempt ${attempts}); ${failed.retryable ? `it runs again in ${deferDelay(attempts)} ms` : "stopped until retry or restart"}`,
-          exit.cause,
-        );
-      }
+        });
+
+      yield* Effect.forEach(work, runBinding, { concurrency, discard: true });
 
       yield* absorb;
 

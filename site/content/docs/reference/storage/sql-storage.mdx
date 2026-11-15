@@ -16,6 +16,8 @@ import type { SqlClient } from "effect/sql";
 
 The [`BunStorage`](/docs/reference/storage/bun-storage) and [`DurableObjectStorage`](/docs/reference/storage/durable-object-storage) Layers build the client for you, and run `SqlStorage` over it. The [Storage contract](/docs/reference/core/storage) page describes the services that all three provide.
 
+For concurrent projection handlers, see [Binding concurrency](/docs/reference/projection/runners#binding-concurrency) for pool sizing, transaction context and shared output locks.
+
 ## Layers
 
 ### `SqlStorage.layer`
