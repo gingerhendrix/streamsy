@@ -375,7 +375,7 @@ same<AttachOptions, Real.AttachOptions>(true);
 | `limit`       | The most units for each binding in a run. The default is `100`                                                                                                                        |
 | `passRetry`   | Timing only. The runner calls the schedule once per retryable failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)        |
 | `durable`     | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach` |
-| `triggers`    | Local fixed-address wake classes whose rows request binding runs. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)                                          |
+| `triggers`    | Fixed-address wake classes whose rows request binding runs. Remote triggers require the process host. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)      |
 | `batch`       | The most due marks that a pass reads. The default is `25`                                                                                                                             |
 | `concurrency` | The most bindings run at once. The default is `1`; must be a positive safe integer                                                                                                    |
 
