@@ -1,52 +1,69 @@
 ---
 title: Examples
-description: Runnable Streamsy example applications, from a plain HTTP host to projection-backed apps.
+description: Runnable Streamsy applications, grouped by what they show. An example can appear in more than one group.
 ---
 
-## Streams Server
+Each example is a runnable app in the repository's `examples/` folder, and each has a page that walks through its code. The groups below say what each example shows. Some examples appear in more than one group.
 
-| Example                                                                    | What it does                                                    | Shows                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Memory server](/docs/examples/memory-server)                              | A Durable Streams server with full protocol support             | Protocol routes, the memory Layer, a storage swap              |
+To start, read the [Memory server](/docs/examples/memory-server) for the protocol, then [Todo](/docs/examples/todo) for the smallest app built on events.
 
-## Events and Projections
+## Run a Durable Streams server
 
-| Example                                                                    | What it does                                                    | Shows                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Todo](/docs/examples/todo)                                                | A todo API whose code is one file                               | Decide over a fold, attached checkpoints, Serve values         |
-| [Hacker News newest](/docs/examples/hackernews-newest-stream)              | A live list of the newest Hacker News stories in the browser    | State streams, read, decide, append, SQLite restart            |
-| [Hex board](/docs/examples/hex-board)                                      | A board game whose board survives restarts                      | Projection state, rollback, state size                         |
-| [Bugsy](/docs/examples/bugsy)                                              | An issue tracker with derived rows, transitions, and a summary  | SQL transactions, producer outputs, triggers, Serve values     |
-| [Command stream](/docs/examples/command-stream)                            | Requests performed once with an accepted receipt                | Caller keys, transactional effects, triggers, awaitWake        |
-| [Timer stream](/docs/examples/timer-stream)                                | One-shot, cancellation and cron timers in one binding           | State changes, due table, wakeAt, Cron.next                    |
+The [Memory server](/docs/examples/memory-server) is a complete [Durable Streams](https://durablestreams.com/) server in a few lines. It serves every stream over the protocol routes and keeps them in memory. One Layer swap moves the streams to SQLite.
 
-## Sync
+[Folder sync](/docs/examples/folder-sync) runs one app on two hosts. Bun keeps its streams in SQLite. Cloudflare workerd keeps them in Durable Objects, with file blobs in R2.
 
-| Example                                                                    | What it does                                                    | Shows                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Folder sync](/docs/examples/folder-sync)                                  | Files with history, live search, and local mirrors              | State streams, conditional writes, transactional indexes, sync |
+For the pieces these servers use, see [Choose storage](/docs/storage) and [Servers and clients](/docs/servers).
 
-## Issue Tracker
+## Event sourcing
 
-| Example                                                                    | What it does                                                    | Shows                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Issue tracker](/docs/examples/issue-tracker)                              | A small issue tracker with live updates                         | Read, fold, append, Serve routes, browser state                |
-| [Issue tracker, event sourced](/docs/examples/issue-tracker/event-sourced) | The same issue tracker with a server that appends domain events | Decide over a projection, producer outputs, runtime keys       |
-| [Issue tracker, Foldkit](/docs/examples/issue-tracker/foldkit)             | The same issue tracker with a Foldkit frontend                  | Stream reads as Messages, optimistic writes in update          |
-| [Issue tracker, Effect Atom](/docs/examples/issue-tracker/atom)            | The same issue tracker with Effect Atom in React                | Live queries as derived atoms, typed writes, txid confirmation |
+These apps store what happened instead of the current state. A write appends a domain event to a stream. A projection folds the events into the state that reads need, and a restart resumes each projection from its checkpoint.
+
+- [Todo](/docs/examples/todo) is the smallest. All of its code is in one file. Each list is a stream of events, and a read replays a list into its current todos.
+- [Hex board](/docs/examples/hex-board) folds game events into a complete board. The projection saves the board and its checkpoint in one SQLite transaction, so a restarted process reads the board without board tables of its own. Its tests are the example.
+- [Bugsy](/docs/examples/bugsy) turns issue commands into facts, then runs two projections. One writes SQL tables in the checkpoint transaction. The other writes board rows, label counts and a change feed as output streams.
+- [Issue tracker, event sourced](/docs/examples/issue-tracker/event-sourced) replaces the base issue tracker's server with one that appends domain events such as `IssueRenamed`. A projection writes the same rows to the same State stream, so the browser cannot tell the two servers apart.
+
+[How projections work](/docs/projections) explains folds, checkpoints and output streams.
+
+## Browser sync
+
+These apps put [Durable State](https://durablestreams.com/durable-state) on the wire. The server writes keyed row changes to a stream and serves it over HTTP. The browser reads the stream from the start, folds it into rows and then follows it live, so every open tab sees each change. When the browser writes, it posts to a JSON API and waits for the write's txid on the stream to confirm it. [Durable State streams](/docs/streams/durable-state) describes the stream format.
+
+Three examples read the stream with `createStreamDB` from `@durable-streams/state`. It replays the stream into [TanStack DB](https://tanstack.com/db) collections, and React renders them with `useLiveQuery`.
+
+- The [Issue tracker](/docs/examples/issue-tracker) shows your own change at once, faded. The change turns solid when its txid arrives, or goes away with a message when the server refuses it.
+- [Hacker News newest](/docs/examples/hackernews-newest-stream) shows the 50 newest stories. A server-side poller writes each change, and the page updates its rows without a reload.
+- [Folder sync](/docs/examples/folder-sync) shows live folders, file history and search in the browser. A sync CLI follows the same folder streams to mirror the folders to disk.
+
+TanStack DB is one option. Two issue tracker variants keep the server and the wire contract and fold the stream in another frontend:
+
+- [Issue tracker, Foldkit](/docs/examples/issue-tracker/foldkit) turns each stream read into a Message. The `update` function folds the rows into the Model and owns the optimistic writes.
+- [Issue tracker, Effect Atom](/docs/examples/issue-tracker/atom) folds the stream in an atom with `Stream.scan`. Each live query becomes a derived atom, and writes go through a typed `HttpApiClient`.
 
 ## Binary streams
 
-| Example                                                                    | What it does                                                    | Shows                                                            |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [Doom](/docs/examples/doom)                                                | Doom in the browser, recorded as a stream of inputs             | Binary streams, native forks, placement, wake links, projections |
-| [Yjs editor](/docs/examples/yjs-editor)                                    | A collaborative ProseMirror editor on Cloudflare                | Custom streams, placement, a compaction fold, Yjs wire protocol  |
+[Doom](/docs/examples/doom) records player inputs as bytes. A spectator's browser replays those inputs to watch live, rewinds using snapshots, or forks the recording to play from an earlier point.
 
-## AI and Agents
+The [Yjs editor](/docs/examples/yjs-editor) streams binary Yjs updates between browsers editing the same document. A projection builds snapshots so a new browser can load a snapshot and read only the updates that follow it.
 
-| Example                                                                    | What it does                                                    | Shows                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Fold agent](/docs/examples/fold-agent)                                    | An agent session log that one process owns at a time            | Conditional writes as a fence                                  |
-| [Durable response](/docs/examples/durable-response)                        | Four browser demos that share and stop scripted responses       | SQLite logs, replay, saved offsets, and cancellation           |
+## Concurrent writers
 
-These examples range from streams and HTTP to apps built with projection features.
+These apps append with `expectedOffset`, the stream offset that the writer last read. If another writer moved the stream first, the append fails with `OffsetMismatch`, and the app decides what happens next. [Write](/docs/streams/write) covers conditional appends.
+
+- The [Issue tracker](/docs/examples/issue-tracker) reads the workspace again and retries. A project allows three issues in progress, so two tabs that race for the last place get one success and one rollback.
+- [Hacker News newest](/docs/examples/hackernews-newest-stream) retries the whole poll pass.
+- [Folder sync](/docs/examples/folder-sync) answers a stale edit with 412. The CLI keeps the stale bytes as a conflict copy, and the browser keeps the draft.
+- [Fold agent](/docs/examples/fold-agent) uses the failure as a fence. When a second process resumes a session, the first process can no longer write to it.
+
+## Agents
+
+[Fold agent](/docs/examples/fold-agent) is a command-line AI agent whose session log is a stream. Another process can resume the session after a crash, or print its log.
+
+[Folder sync](/docs/examples/folder-sync) gives agents a filesystem over its folders, for just-bash and Better FS Tools.
+
+[Durable response](/docs/examples/durable-response) records a scripted AI response in a stream backed by SQLite. Two tabs can follow one generation, and **Stop** in either tab aborts it for every reader. The demos cover Effect Atom, Foldkit, AI SDK and TanStack AI.
+
+## The issue tracker variants
+
+The [Issue tracker](/docs/examples/issue-tracker) is a base app with three variants. Each variant changes one side and keeps the product and the wire contract. The [event sourced](/docs/examples/issue-tracker/event-sourced) variant changes the server. The [Foldkit](/docs/examples/issue-tracker/foldkit) and [Effect Atom](/docs/examples/issue-tracker/atom) variants change the browser. Read the base page first, because each variant page shows only what differs.
