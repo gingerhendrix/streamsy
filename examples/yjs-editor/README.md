@@ -46,20 +46,24 @@ ProseMirror + y-prosemirror
 stock YjsProvider (HTTP writes, binary SSE live reads)
         │ /v1/yjs/:service/docs/:docPath
 Cloudflare Worker → one DocumentObject per service/document
-        │ small Yjs protocol adapter
-Streamsy HTTP + DurableObjectStorage (SQLite)
+        │ Effect HttpRouter: Yjs routes + backing-stream routes
+Streamsy services + DurableObjectStorage (SQLite)
         └─ Projection.fold → durable checkpoint → snapshot + index
 ```
 
-`worker/index.ts` chooses the object by the complete document identity, so nested
-document paths stay on the same owner as all their internal streams. The object
-uses `StreamsyObject` for the Streamsy HTTP app, storage lifecycle and TTL alarm
-scheduler. The reference server's Node HTTP server and in-memory compaction map
-are not used.
+`worker/index.ts` builds an Effect `HttpRouter` web handler once per isolate and
+receives Worker bindings through request context. It chooses the object by the
+complete document identity, so nested paths and their internal streams share one
+owner. The object runs Yjs and backing-stream routes in `StreamsyObject`'s app,
+using its storage lifecycle and TTL alarm scheduler. The page and protocol share
+an origin, so no CORS middleware is needed.
 
 The Yjs adapter implements document PUT/HEAD/GET/POST/DELETE, snapshot discovery
-and named awareness streams. It delegates base stream reads, producer sequencing,
-binary SSE/base64 delivery and TTL expiry to Streamsy. `live=true` selects
+and named awareness streams. It calls Streamsy readers/writers directly, uses
+`Http.read` for live reads,
+and runs the base `Http.app` program with a substituted request for writes,
+preserving producer sequencing without self-HTTP. Streamsy supplies binary
+SSE/base64 delivery and TTL expiry. `live=true` selects
 long-poll for documents and SSE for awareness, matching the reference server.
 Document POST forwards producer headers and forces `application/octet-stream`.
 It deliberately filters base-protocol `Stream-Closed`: the stock provider calls
@@ -111,9 +115,10 @@ After a successful write, a local storage transaction:
 
 The constructor's default `Commit.checkpoint` joins this surrounding
 `Transaction.withTransaction`; publication and the checkpoint therefore commit
-together. The only in-memory queue serializes mutations and snapshot discovery;
+together. An object-layer semaphore serializes mutations and snapshot discovery;
 no compaction counters or document state depend on it. SSE and long-poll reads
-never hold that queue.
+never hold its permit. The object layer supplies `COMPACTION_THRESHOLD` through
+Effect `Config`.
 
 Snapshot discovery also runs the fold. If an object stops after an append but
 before folding it, the next write or discovery catches up. No background
