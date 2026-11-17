@@ -1,0 +1,40 @@
+{
+  "name": "durable-response-tanstack",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "bun run src/index.ts",
+    "start": "bun run server-dist/index.js",
+    "build": "vite build && bun build src/index.ts --target bun --packages external --outdir server-dist",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun --bun vitest run --dir test"
+  },
+  "dependencies": {
+    "@durable-streams/client": "0.2.7",
+    "@durable-streams/tanstack-ai-transport": "0.0.10",
+    "@effect/platform-bun": "4.1.2",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "@tanstack/ai": "1.4.0",
+    "@tanstack/ai-client": "1.1.0",
+    "@tanstack/ai-react": "1.0.2",
+    "effect": "4.1.2",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "6.2.1",
+    "happy-dom": "21.0.4",
+    "typescript": "catalog:",
+    "vite": "8.3.5",
+    "vitest": "catalog:"
+  }
+}
