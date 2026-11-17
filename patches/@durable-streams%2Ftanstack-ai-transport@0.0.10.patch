@@ -1,0 +1,120 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 59424152e996ea74f5bf1c7ac75b5bb0352f63a9..0acff1aba62e5f054de86f20a305563a4ea73fec 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -72,6 +72,35 @@ function durableStreamConnection(options) {
+ 				headers: mergeHeaders(options.headers),
+ 				signal: abortSignal
+ 			});
++			if (options.emitSnapshotOnSubscribe === false) {
++				// Raw replay has no batch checkpoint API. Preserve the requested start
++				// offset and consume native items through body completion, not `closed`.
++				// Reader errors are propagated below; observe duplicate lifecycle rejection.
++				void streamResponse.closed.catch(() => {});
++				const reader = streamResponse.jsonStream().getReader();
++				const cancel = () => {
++					streamResponse.cancel(abortSignal?.reason);
++					void reader.cancel(abortSignal?.reason).catch(() => {});
++				};
++				abortSignal?.addEventListener(`abort`, cancel, { once: true });
++				try {
++					if (abortSignal?.aborted) return;
++					while (!abortSignal?.aborted) {
++						const { done, value } = await reader.read();
++						if (done || abortSignal?.aborted) break;
++						yield value;
++					}
++				} catch (error) {
++					if (!abortSignal?.aborted) throw error;
++				} finally {
++					abortSignal?.removeEventListener(`abort`, cancel);
++					streamResponse.cancel();
++					await reader.cancel().catch(() => {});
++					reader.releaseLock();
++				}
++				return;
++			}
++
+ 			const emitSnapshot = options.emitSnapshotOnSubscribe !== false;
+ 			const shouldEmitSnapshot = emitSnapshot && state.offset === void 0;
+ 			let hasEmittedSnapshot = !shouldEmitSnapshot;
+diff --git a/dist/index.js b/dist/index.js
+index be5317bc7b454b477bf0e483d0b6428b39c051bc..7f84d3c7bbc5918a44541254e975cfa28b90175e 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -48,6 +48,35 @@ function durableStreamConnection(options) {
+ 				headers: mergeHeaders(options.headers),
+ 				signal: abortSignal
+ 			});
++			if (options.emitSnapshotOnSubscribe === false) {
++				// Raw replay has no batch checkpoint API. Preserve the requested start
++				// offset and consume native items through body completion, not `closed`.
++				// Reader errors are propagated below; observe duplicate lifecycle rejection.
++				void streamResponse.closed.catch(() => {});
++				const reader = streamResponse.jsonStream().getReader();
++				const cancel = () => {
++					streamResponse.cancel(abortSignal?.reason);
++					void reader.cancel(abortSignal?.reason).catch(() => {});
++				};
++				abortSignal?.addEventListener(`abort`, cancel, { once: true });
++				try {
++					if (abortSignal?.aborted) return;
++					while (!abortSignal?.aborted) {
++						const { done, value } = await reader.read();
++						if (done || abortSignal?.aborted) break;
++						yield value;
++					}
++				} catch (error) {
++					if (!abortSignal?.aborted) throw error;
++				} finally {
++					abortSignal?.removeEventListener(`abort`, cancel);
++					streamResponse.cancel();
++					await reader.cancel().catch(() => {});
++					reader.releaseLock();
++				}
++				return;
++			}
++
+ 			const emitSnapshot = options.emitSnapshotOnSubscribe !== false;
+ 			const shouldEmitSnapshot = emitSnapshot && state.offset === void 0;
+ 			let hasEmittedSnapshot = !shouldEmitSnapshot;
+diff --git a/src/client.ts b/src/client.ts
+index a53d6c93730575e99867c46247d60f77fb0e91fd..f92f50d84fd9ab3cd653fb0b6280682ecee0eff0 100644
+--- a/src/client.ts
++++ b/src/client.ts
+@@ -77,6 +77,35 @@ export function durableStreamConnection(
+         signal: abortSignal,
+       })
+ 
++      if (options.emitSnapshotOnSubscribe === false) {
++        // Raw replay has no batch checkpoint API. Preserve the requested start
++        // offset and consume native items through body completion, not `closed`.
++        // Reader errors are propagated below; observe duplicate lifecycle rejection.
++        void streamResponse.closed.catch(() => {})
++        const reader = streamResponse.jsonStream().getReader()
++        const cancel = () => {
++          streamResponse.cancel(abortSignal?.reason)
++          void reader.cancel(abortSignal?.reason).catch(() => {})
++        }
++        abortSignal?.addEventListener(`abort`, cancel, { once: true })
++        try {
++          if (abortSignal?.aborted) return
++          while (!abortSignal?.aborted) {
++            const { done, value } = await reader.read()
++            if (done || abortSignal?.aborted) break
++            yield value
++          }
++        } catch (error) {
++          if (!abortSignal?.aborted) throw error
++        } finally {
++          abortSignal?.removeEventListener(`abort`, cancel)
++          streamResponse.cancel()
++          await reader.cancel().catch(() => {})
++          reader.releaseLock()
++        }
++        return
++      }
++
+       const emitSnapshot = options.emitSnapshotOnSubscribe !== false
+       const shouldEmitSnapshot = emitSnapshot && state.offset === undefined
+       let hasEmittedSnapshot = !shouldEmitSnapshot

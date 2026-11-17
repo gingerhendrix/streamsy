@@ -693,6 +693,7 @@
   },
   "patchedDependencies": {
     "just-bash@3.6.0": "patches/just-bash@3.6.0.patch",
+    "@durable-streams/tanstack-ai-transport@0.0.10": "patches/@durable-streams%2Ftanstack-ai-transport@0.0.10.patch",
   },
   "overrides": {
     "@durable-streams/client": "^0.2.7",
