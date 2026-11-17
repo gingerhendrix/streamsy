@@ -1,0 +1,28 @@
+{
+  "name": "durable-response",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun --bun vitest run --dir test",
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun build src/index.ts --target bun --packages external --outdir dist"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.1.2",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/durable-response-contract": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.1.2"
+  },
+  "devDependencies": {
+    "@durable-streams/client": "^0.2.7",
+    "@types/bun": "^1.4.3",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
