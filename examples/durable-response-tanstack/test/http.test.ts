@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- HTTP proofs exercise the unchanged published writer and raw replay connection against actual SQLite Serve.layer. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- HTTP proofs exercise the unchanged published writer and patched raw replay connection against actual SQLite Serve.layer. */
 import { afterEach, describe, expect, it } from "vitest";
 import { Array, Number } from "effect";
 import { EventType, type StreamChunk } from "@tanstack/ai";
