@@ -1,0 +1,44 @@
+{
+  "name": "yjs-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run dev:worker",
+    "dev:worker": "bun run build:web && bun run build:worker && bun scripts/local-worker.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build:web": "vite build",
+    "build:worker": "bun scripts/build-worker.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "bun run test:worker",
+    "test:worker": "bun run build:web && bun run build:worker && bun --bun vitest run",
+    "deploy": "bun run build:web && bun run build:worker && node node_modules/alchemy/bin/cli.js deploy"
+  },
+  "dependencies": {
+    "@durable-streams/y-durable-streams": "0.2.9",
+    "@effect/platform-bun": "4.1.2",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.1.2",
+    "lib0": "^0.2.99",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-schema-basic": "^1.2.4",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-view": "^1.41.3",
+    "y-prosemirror": "^1.3.7",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.24"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
+    "@cloudflare/workers-types": "4.20251228.0",
+    "alchemy": "2.0.0-beta.85",
+    "bun-types": "^1.4.3",
+    "miniflare": "4.20260730.0",
+    "typescript": "catalog:",
+    "vite": "^8.0.7",
+    "vitest": "catalog:"
+  }
+}

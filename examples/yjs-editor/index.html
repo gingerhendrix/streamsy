@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Streamsy · Shared pages</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <a class="brand" href="/">streamsy<span> / shared pages</span></a
+        ><span id="status" role="status">Connecting</span>
+      </header>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">A SMALL COLLABORATIVE WORKSPACE</p>
+          <h1>Put your heads together.</h1>
+          <p>One page, shared live. Open the same room in another window to write together.</p>
+        </div>
+        <span class="page-mark" aria-hidden="true">↗</span>
+      </section>
+      <section class="workspace">
+        <aside>
+          <p class="eyebrow">ROOMS</p>
+          <nav id="rooms" aria-label="Choose a room"></nav>
+          <div class="identity">
+            <label for="name">Your name</label><input id="name" maxlength="40" />
+            <p>Visible to everyone in this room.</p>
+          </div>
+          <div class="presence">
+            <p class="eyebrow">HERE TOGETHER</p>
+            <ul id="people"></ul>
+          </div>
+        </aside>
+        <div class="page">
+          <div class="page-header">
+            <h2 id="room-title">Notes</h2>
+            <span>Shared document</span>
+          </div>
+          <div id="toolbar" role="toolbar" aria-label="Text formatting"></div>
+          <div id="editor" aria-label="Shared editor"></div>
+          <footer id="editor-footer">Changes sync while connected</footer>
+        </div>
+      </section>
+      <p class="footnote">Built with Streamsy, Yjs &amp; ProseMirror · Hosted on Cloudflare</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
