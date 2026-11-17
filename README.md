@@ -58,6 +58,9 @@ below show complete applications, from a plain HTTP host to served projections.
   routes.
 - [Hex board](examples/hex-board/README.md): a whole game board kept as fold
   state in the checkpoint transaction, with SQLite restart tests.
+- [Yjs editor](examples/yjs-editor/README.md): a collaborative ProseMirror editor
+  with the stock Durable Streams Yjs provider and a durable compaction fold on
+  Cloudflare Workers and Durable Objects.
 - [Fold agent](examples/fold-agent/README.md): an agent loop whose durable log
   lives in Streamsy and fences competing writers by offset.
 
